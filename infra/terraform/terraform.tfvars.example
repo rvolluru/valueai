@@ -1,0 +1,10 @@
+project_name            = "valueai-mvp"
+aws_region              = "us-east-1"
+api_key                 = "replace-me"
+container_image         = "123456789012.dkr.ecr.us-east-1.amazonaws.com/valueai-mvp-api:latest"
+db_name                 = "valueai"
+db_username             = "valueai"
+db_password             = "replace-me"
+brand_accept_score      = 78
+brand_accept_score_low  = 70
+brand_gap_min           = 8

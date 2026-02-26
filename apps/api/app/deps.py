@@ -1,0 +1,70 @@
+from __future__ import annotations
+
+from functools import lru_cache
+
+from brand import BrandAnalyzer, BrandConfig
+from condition import ConditionAnalyzer, ConditionConfig
+from valuation import ValuationConfig, ValuationService
+
+from .db import Database
+from .settings import Settings, get_settings
+from .storage import Storage, build_storage
+
+
+@lru_cache(maxsize=1)
+def get_db() -> Database:
+    db = Database(get_settings().database_url)
+    db.initialize()
+    return db
+
+
+@lru_cache(maxsize=1)
+def get_storage() -> Storage:
+    return build_storage(get_settings())
+
+
+@lru_cache(maxsize=1)
+def get_brand_analyzer() -> BrandAnalyzer:
+    s = get_settings()
+    return BrandAnalyzer(
+        BrandConfig(
+            accept_score=s.brand_accept_score,
+            accept_score_low=s.brand_accept_score_low,
+            gap_min=s.brand_gap_min,
+            enable_logo_classifier=s.brand_enable_logo_classifier,
+            enable_gpt_vision=s.brand_enable_gpt_vision,
+            gpt_vision_model=s.brand_gpt_vision_model,
+            gpt_vision_timeout_s=s.brand_gpt_vision_timeout_s,
+            openai_api_key=s.openai_api_key,
+            debug_default=s.brand_debug,
+            detector_weights_path=s.brand_detector_weights_path,
+            logo_classifier_weights_path=s.brand_logo_classifier_weights_path,
+        )
+    )
+
+
+@lru_cache(maxsize=1)
+def get_condition_analyzer() -> ConditionAnalyzer:
+    s = get_settings()
+    return ConditionAnalyzer(
+        ConditionConfig(
+            rembg_enabled=s.condition_rembg_enabled,
+            category_model_weights_path=s.condition_category_weights_path,
+            condition_model_weights_path=s.condition_grade_weights_path,
+        )
+    )
+
+
+@lru_cache(maxsize=1)
+def get_valuation_service() -> ValuationService:
+    s = get_settings()
+    providers = [p.strip() for p in s.valuation_providers.split(",") if p.strip()]
+    return ValuationService(
+        ValuationConfig(
+            enabled=s.valuation_enabled,
+            providers=providers or ["stub"],
+            currency=s.valuation_currency,
+            min_comps=s.valuation_min_comps,
+            max_comps=s.valuation_max_comps,
+        )
+    )

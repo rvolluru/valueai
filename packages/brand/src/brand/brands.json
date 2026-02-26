@@ -1,0 +1,851 @@
+[
+  {
+    "name": "Nike",
+    "aliases": []
+  },
+  {
+    "name": "Adidas",
+    "aliases": []
+  },
+  {
+    "name": "Puma",
+    "aliases": []
+  },
+  {
+    "name": "Reebok",
+    "aliases": []
+  },
+  {
+    "name": "New Balance",
+    "aliases": []
+  },
+  {
+    "name": "Converse",
+    "aliases": []
+  },
+  {
+    "name": "Vans",
+    "aliases": []
+  },
+  {
+    "name": "ASICS",
+    "aliases": []
+  },
+  {
+    "name": "Saucony",
+    "aliases": []
+  },
+  {
+    "name": "Brooks",
+    "aliases": []
+  },
+  {
+    "name": "Under Armour",
+    "aliases": []
+  },
+  {
+    "name": "Fila",
+    "aliases": []
+  },
+  {
+    "name": "Skechers",
+    "aliases": []
+  },
+  {
+    "name": "Hoka",
+    "aliases": []
+  },
+  {
+    "name": "Salomon",
+    "aliases": []
+  },
+  {
+    "name": "Merrell",
+    "aliases": []
+  },
+  {
+    "name": "Timberland",
+    "aliases": []
+  },
+  {
+    "name": "Dr. Martens",
+    "aliases": [
+      "dr martens",
+      "doc martens"
+    ]
+  },
+  {
+    "name": "Crocs",
+    "aliases": []
+  },
+  {
+    "name": "Birkenstock",
+    "aliases": []
+  },
+  {
+    "name": "Jordan",
+    "aliases": []
+  },
+  {
+    "name": "Champion",
+    "aliases": []
+  },
+  {
+    "name": "The North Face",
+    "aliases": [
+      "north face"
+    ]
+  },
+  {
+    "name": "Patagonia",
+    "aliases": []
+  },
+  {
+    "name": "Columbia",
+    "aliases": []
+  },
+  {
+    "name": "Arc'teryx",
+    "aliases": []
+  },
+  {
+    "name": "Lululemon",
+    "aliases": []
+  },
+  {
+    "name": "Athleta",
+    "aliases": []
+  },
+  {
+    "name": "Alo Yoga",
+    "aliases": []
+  },
+  {
+    "name": "Outdoor Voices",
+    "aliases": []
+  },
+  {
+    "name": "Ralph Lauren",
+    "aliases": [
+      "polo ralph lauren",
+      "ralph lauren polo"
+    ]
+  },
+  {
+    "name": "Polo Ralph Lauren",
+    "aliases": [
+      "polo",
+      "polo by ralph lauren"
+    ]
+  },
+  {
+    "name": "Calvin Klein",
+    "aliases": []
+  },
+  {
+    "name": "Tommy Hilfiger",
+    "aliases": []
+  },
+  {
+    "name": "Lacoste",
+    "aliases": []
+  },
+  {
+    "name": "Levi's",
+    "aliases": [
+      "levis"
+    ]
+  },
+  {
+    "name": "Wrangler",
+    "aliases": []
+  },
+  {
+    "name": "Lee",
+    "aliases": []
+  },
+  {
+    "name": "Diesel",
+    "aliases": []
+  },
+  {
+    "name": "Guess",
+    "aliases": []
+  },
+  {
+    "name": "Zara",
+    "aliases": []
+  },
+  {
+    "name": "H&M",
+    "aliases": [
+      "hm",
+      "h and m"
+    ]
+  },
+  {
+    "name": "Mango",
+    "aliases": []
+  },
+  {
+    "name": "Uniqlo",
+    "aliases": []
+  },
+  {
+    "name": "Massimo Dutti",
+    "aliases": []
+  },
+  {
+    "name": "COS",
+    "aliases": []
+  },
+  {
+    "name": "& Other Stories",
+    "aliases": []
+  },
+  {
+    "name": "Aritzia",
+    "aliases": []
+  },
+  {
+    "name": "Everlane",
+    "aliases": []
+  },
+  {
+    "name": "J.Crew",
+    "aliases": [
+      "jcrew",
+      "j crew"
+    ]
+  },
+  {
+    "name": "Banana Republic",
+    "aliases": []
+  },
+  {
+    "name": "Gap",
+    "aliases": []
+  },
+  {
+    "name": "Old Navy",
+    "aliases": []
+  },
+  {
+    "name": "Abercrombie & Fitch",
+    "aliases": []
+  },
+  {
+    "name": "Hollister",
+    "aliases": []
+  },
+  {
+    "name": "American Eagle",
+    "aliases": []
+  },
+  {
+    "name": "Free People",
+    "aliases": []
+  },
+  {
+    "name": "Anthropologie",
+    "aliases": []
+  },
+  {
+    "name": "Madewell",
+    "aliases": []
+  },
+  {
+    "name": "Theory",
+    "aliases": []
+  },
+  {
+    "name": "Vince",
+    "aliases": []
+  },
+  {
+    "name": "Club Monaco",
+    "aliases": []
+  },
+  {
+    "name": "AllSaints",
+    "aliases": []
+  },
+  {
+    "name": "Sandro",
+    "aliases": []
+  },
+  {
+    "name": "Maje",
+    "aliases": []
+  },
+  {
+    "name": "Reformation",
+    "aliases": []
+  },
+  {
+    "name": "Frame",
+    "aliases": []
+  },
+  {
+    "name": "Paige",
+    "aliases": []
+  },
+  {
+    "name": "AG Jeans",
+    "aliases": []
+  },
+  {
+    "name": "DL1961",
+    "aliases": []
+  },
+  {
+    "name": "Michael Kors",
+    "aliases": []
+  },
+  {
+    "name": "Coach",
+    "aliases": []
+  },
+  {
+    "name": "Kate Spade",
+    "aliases": []
+  },
+  {
+    "name": "Tory Burch",
+    "aliases": []
+  },
+  {
+    "name": "Marc Jacobs",
+    "aliases": []
+  },
+  {
+    "name": "Rebecca Minkoff",
+    "aliases": []
+  },
+  {
+    "name": "Dooney & Bourke",
+    "aliases": []
+  },
+  {
+    "name": "Longchamp",
+    "aliases": []
+  },
+  {
+    "name": "Furla",
+    "aliases": []
+  },
+  {
+    "name": "MCM",
+    "aliases": [
+      "mcm worldwide"
+    ]
+  },
+  {
+    "name": "Louis Vuitton",
+    "aliases": [
+      "lv",
+      "louis vuitton paris"
+    ]
+  },
+  {
+    "name": "Gucci",
+    "aliases": []
+  },
+  {
+    "name": "Prada",
+    "aliases": []
+  },
+  {
+    "name": "Saint Laurent",
+    "aliases": [
+      "ysl",
+      "saint laurent paris"
+    ]
+  },
+  {
+    "name": "Balenciaga",
+    "aliases": []
+  },
+  {
+    "name": "Bottega Veneta",
+    "aliases": []
+  },
+  {
+    "name": "Fendi",
+    "aliases": []
+  },
+  {
+    "name": "Dior",
+    "aliases": []
+  },
+  {
+    "name": "Chanel",
+    "aliases": []
+  },
+  {
+    "name": "Celine",
+    "aliases": []
+  },
+  {
+    "name": "Givenchy",
+    "aliases": []
+  },
+  {
+    "name": "Burberry",
+    "aliases": []
+  },
+  {
+    "name": "Hermes",
+    "aliases": []
+  },
+  {
+    "name": "Loewe",
+    "aliases": []
+  },
+  {
+    "name": "Valentino",
+    "aliases": []
+  },
+  {
+    "name": "Versace",
+    "aliases": []
+  },
+  {
+    "name": "Dolce & Gabbana",
+    "aliases": [
+      "dolce gabbana",
+      "d g"
+    ]
+  },
+  {
+    "name": "Salvatore Ferragamo",
+    "aliases": []
+  },
+  {
+    "name": "Tod's",
+    "aliases": []
+  },
+  {
+    "name": "Chloe",
+    "aliases": []
+  },
+  {
+    "name": "Miu Miu",
+    "aliases": []
+  },
+  {
+    "name": "Goyard",
+    "aliases": []
+  },
+  {
+    "name": "Rimowa",
+    "aliases": []
+  },
+  {
+    "name": "Tumi",
+    "aliases": []
+  },
+  {
+    "name": "Samsonite",
+    "aliases": []
+  },
+  {
+    "name": "Dagne Dover",
+    "aliases": []
+  },
+  {
+    "name": "Cuyana",
+    "aliases": []
+  },
+  {
+    "name": "Mansur Gavriel",
+    "aliases": []
+  },
+  {
+    "name": "Polene",
+    "aliases": []
+  },
+  {
+    "name": "Strathberry",
+    "aliases": []
+  },
+  {
+    "name": "Nike ACG",
+    "aliases": [
+      "acg"
+    ]
+  },
+  {
+    "name": "On",
+    "aliases": []
+  },
+  {
+    "name": "Veja",
+    "aliases": []
+  },
+  {
+    "name": "Golden Goose",
+    "aliases": []
+  },
+  {
+    "name": "Common Projects",
+    "aliases": []
+  },
+  {
+    "name": "Alexander McQueen",
+    "aliases": [
+      "mcqueen"
+    ]
+  },
+  {
+    "name": "Maison Margiela",
+    "aliases": []
+  },
+  {
+    "name": "Off-White",
+    "aliases": []
+  },
+  {
+    "name": "Palm Angels",
+    "aliases": []
+  },
+  {
+    "name": "Amiri",
+    "aliases": []
+  },
+  {
+    "name": "Supreme",
+    "aliases": []
+  },
+  {
+    "name": "Stussy",
+    "aliases": []
+  },
+  {
+    "name": "Bape",
+    "aliases": []
+  },
+  {
+    "name": "Kith",
+    "aliases": []
+  },
+  {
+    "name": "Fear of God",
+    "aliases": []
+  },
+  {
+    "name": "Essentials",
+    "aliases": []
+  },
+  {
+    "name": "Carhartt WIP",
+    "aliases": []
+  },
+  {
+    "name": "Stone Island",
+    "aliases": []
+  },
+  {
+    "name": "CP Company",
+    "aliases": []
+  },
+  {
+    "name": "Moncler",
+    "aliases": []
+  },
+  {
+    "name": "Canada Goose",
+    "aliases": []
+  },
+  {
+    "name": "Moose Knuckles",
+    "aliases": []
+  },
+  {
+    "name": "Mackage",
+    "aliases": []
+  },
+  {
+    "name": "Woolrich",
+    "aliases": []
+  },
+  {
+    "name": "Barbour",
+    "aliases": []
+  },
+  {
+    "name": "Belstaff",
+    "aliases": []
+  },
+  {
+    "name": "Helly Hansen",
+    "aliases": []
+  },
+  {
+    "name": "Marmot",
+    "aliases": []
+  },
+  {
+    "name": "Mountain Hardwear",
+    "aliases": []
+  },
+  {
+    "name": "Rab",
+    "aliases": []
+  },
+  {
+    "name": "Pendleton",
+    "aliases": []
+  },
+  {
+    "name": "Filson",
+    "aliases": []
+  },
+  {
+    "name": "Orvis",
+    "aliases": []
+  },
+  {
+    "name": "L.L.Bean",
+    "aliases": [
+      "ll bean"
+    ]
+  },
+  {
+    "name": "Eddie Bauer",
+    "aliases": []
+  },
+  {
+    "name": "Wellensteyn",
+    "aliases": []
+  },
+  {
+    "name": "Brunello Cucinelli",
+    "aliases": []
+  },
+  {
+    "name": "Loro Piana",
+    "aliases": []
+  },
+  {
+    "name": "Zegna",
+    "aliases": []
+  },
+  {
+    "name": "Canali",
+    "aliases": []
+  },
+  {
+    "name": "Hugo Boss",
+    "aliases": []
+  },
+  {
+    "name": "Armani",
+    "aliases": []
+  },
+  {
+    "name": "Emporio Armani",
+    "aliases": [
+      "ea7",
+      "emporio"
+    ]
+  },
+  {
+    "name": "Giorgio Armani",
+    "aliases": [
+      "armani"
+    ]
+  },
+  {
+    "name": "Max Mara",
+    "aliases": []
+  },
+  {
+    "name": "Weekend Max Mara",
+    "aliases": []
+  },
+  {
+    "name": "Moncler Grenoble",
+    "aliases": []
+  },
+  {
+    "name": "Kenzo",
+    "aliases": []
+  },
+  {
+    "name": "A.P.C.",
+    "aliases": [
+      "apc"
+    ]
+  },
+  {
+    "name": "Acne Studios",
+    "aliases": []
+  },
+  {
+    "name": "Toteme",
+    "aliases": []
+  },
+  {
+    "name": "Khaite",
+    "aliases": []
+  },
+  {
+    "name": "The Row",
+    "aliases": []
+  },
+  {
+    "name": "Rag & Bone",
+    "aliases": []
+  },
+  {
+    "name": "Ulla Johnson",
+    "aliases": []
+  },
+  {
+    "name": "Zimmermann",
+    "aliases": []
+  },
+  {
+    "name": "Self-Portrait",
+    "aliases": []
+  },
+  {
+    "name": "Alice + Olivia",
+    "aliases": []
+  },
+  {
+    "name": "Saks Potts",
+    "aliases": []
+  },
+  {
+    "name": "Nanushka",
+    "aliases": []
+  },
+  {
+    "name": "Charles & Keith",
+    "aliases": []
+  },
+  {
+    "name": "Steve Madden",
+    "aliases": []
+  },
+  {
+    "name": "Sam Edelman",
+    "aliases": []
+  },
+  {
+    "name": "Cole Haan",
+    "aliases": []
+  },
+  {
+    "name": "Aldo",
+    "aliases": []
+  },
+  {
+    "name": "Clarks",
+    "aliases": []
+  },
+  {
+    "name": "ECCO",
+    "aliases": []
+  },
+  {
+    "name": "Geox",
+    "aliases": []
+  },
+  {
+    "name": "Stuart Weitzman",
+    "aliases": []
+  },
+  {
+    "name": "Jimmy Choo",
+    "aliases": []
+  },
+  {
+    "name": "Manolo Blahnik",
+    "aliases": []
+  },
+  {
+    "name": "Christian Louboutin",
+    "aliases": [
+      "louboutin"
+    ]
+  },
+  {
+    "name": "Roger Vivier",
+    "aliases": []
+  },
+  {
+    "name": "Bally",
+    "aliases": []
+  },
+  {
+    "name": "Berluti",
+    "aliases": []
+  },
+  {
+    "name": "Delvaux",
+    "aliases": []
+  },
+  {
+    "name": "Mulberry",
+    "aliases": []
+  },
+  {
+    "name": "Anya Hindmarch",
+    "aliases": []
+  },
+  {
+    "name": "JW Anderson",
+    "aliases": []
+  },
+  {
+    "name": "Telfar",
+    "aliases": []
+  },
+  {
+    "name": "Coperni",
+    "aliases": []
+  },
+  {
+    "name": "By Far",
+    "aliases": []
+  },
+  {
+    "name": "Ganni",
+    "aliases": []
+  },
+  {
+    "name": "Loeffler Randall",
+    "aliases": []
+  },
+  {
+    "name": "Rothy's",
+    "aliases": [
+      "rothys"
+    ]
+  },
+  {
+    "name": "Veja x Rick Owens",
+    "aliases": []
+  },
+  {
+    "name": "Sezane",
+    "aliases": [
+      "s\u00e9zane"
+    ]
+  },
+  {
+    "name": "Rouje",
+    "aliases": []
+  },
+  {
+    "name": "Mugler",
+    "aliases": []
+  },
+  {
+    "name": "Jacquemus",
+    "aliases": []
+  }
+]

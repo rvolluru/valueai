@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ValueAI Analyzer UI</title>
+  <link rel="stylesheet" href="/ui/styles.css" />
+</head>
+<body>
+  <div class="bg-orb orb-a"></div>
+  <div class="bg-orb orb-b"></div>
+  <main class="shell">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">ValueAI</p>
+        <h1>Fashion Resale Analyzer</h1>
+        <p class="subtitle">Upload item images, run brand/condition/valuation analysis, and inspect debug evidence in one place.</p>
+      </div>
+      <button id="healthBtn" class="ghost-btn" type="button">Check API Health</button>
+    </header>
+
+    <section class="grid">
+      <section class="panel panel-form">
+        <h2>Analyze Item</h2>
+        <form id="analyzeForm">
+          <div class="field-row two">
+            <label>
+              <span>API Key</span>
+              <input id="apiKey" name="apiKey" type="text" placeholder="local-dev-key" value="local-dev-key" />
+            </label>
+            <label>
+              <span>Item ID</span>
+              <input id="itemId" name="itemId" type="text" placeholder="item-001" required />
+            </label>
+          </div>
+
+          <div class="field-row two">
+            <label>
+              <span>Category (optional)</span>
+              <select id="category" name="category">
+                <option value="">Auto-detect</option>
+                <option value="clothes">clothes</option>
+                <option value="shoes">shoes</option>
+                <option value="handbag">handbag</option>
+              </select>
+            </label>
+            <label>
+              <span>Purchase Year (optional)</span>
+              <input id="purchaseYear" name="purchaseYear" type="number" min="1980" max="2100" step="1" placeholder="2019" />
+            </label>
+          </div>
+
+          <label>
+            <span>Item Description (helps valuation providers)</span>
+            <textarea id="itemDescription" name="itemDescription" rows="3" placeholder="Louis Vuitton Neverfull MM Monogram Tote"></textarea>
+          </label>
+
+          <label class="dropzone">
+            <input id="images" name="images" type="file" accept="image/*" multiple required />
+            <div>
+              <strong>Drop 1-4 images</strong>
+              <p>Required: full item photo. Recommended: tag/logo close-up, hardware, defect.</p>
+            </div>
+          </label>
+          <div id="previewGrid" class="preview-grid"></div>
+
+          <div class="field-row two compact">
+            <label class="check">
+              <input id="debug" name="debug" type="checkbox" checked />
+              <span>Debug mode</span>
+            </label>
+            <label class="check">
+              <input id="showRawJson" name="showRawJson" type="checkbox" checked />
+              <span>Show raw JSON</span>
+            </label>
+          </div>
+
+          <div class="actions">
+            <button id="analyzeBtn" class="primary-btn" type="submit">Run Analysis</button>
+            <button id="sampleBtn" class="ghost-btn" type="button">Load Sample IDs</button>
+          </div>
+        </form>
+        <div id="status" class="status">Idle</div>
+      </section>
+
+      <section class="panel panel-results">
+        <div class="panel-head">
+          <h2>Results</h2>
+          <span id="latencyBadge" class="badge muted">No request yet</span>
+        </div>
+
+        <div id="summaryCards" class="summary-cards empty">
+          <div class="empty-state">
+            <p>Submit an analysis request to see brand, condition, valuation, and debug evidence.</p>
+          </div>
+        </div>
+
+        <div id="debugSections" class="debug-sections hidden">
+          <details open>
+            <summary>Brand Debug</summary>
+            <pre id="brandDebug" class="json-block"></pre>
+          </details>
+          <details>
+            <summary>Condition Debug</summary>
+            <pre id="conditionDebug" class="json-block"></pre>
+          </details>
+          <details>
+            <summary>Valuation Debug</summary>
+            <pre id="valuationDebug" class="json-block"></pre>
+          </details>
+          <details>
+            <summary>Raw Response JSON</summary>
+            <pre id="rawJson" class="json-block"></pre>
+          </details>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <script src="/ui/app.js"></script>
+</body>
+</html>
