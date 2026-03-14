@@ -1,0 +1,26 @@
+<annotation>
+  <folder>cartier</folder>
+  <filename>img000096</filename>
+  <path>LogoDataset\cartier\img000096.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>2735</width>
+    <height>2735</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>cartier</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>1131</xmin>
+      <ymin>1030</ymin>
+      <xmax>1454</xmax>
+      <ymax>1084</ymax>
+    </bndbox>
+  </object>
+</annotation>

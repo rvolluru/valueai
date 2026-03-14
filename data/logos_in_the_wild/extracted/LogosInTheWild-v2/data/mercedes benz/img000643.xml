@@ -1,0 +1,26 @@
+<annotation>
+  <folder>mercedes benz</folder>
+  <filename>img000643</filename>
+  <path>LogoDataset\mercedes benz\img000643.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>1024</width>
+    <height>768</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>mercedesbenz-logo</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>304</xmin>
+      <ymin>170</ymin>
+      <xmax>319</xmax>
+      <ymax>196</ymax>
+    </bndbox>
+  </object>
+</annotation>

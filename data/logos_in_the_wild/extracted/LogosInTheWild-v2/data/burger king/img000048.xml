@@ -1,0 +1,38 @@
+<annotation>
+  <folder>burger king</folder>
+  <filename>img000048</filename>
+  <path>LogoDataset\burger king\img000048.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>442</width>
+    <height>227</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>burgerking-schriftzug</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>162</xmin>
+      <ymin>75</ymin>
+      <xmax>206</xmax>
+      <ymax>90</ymax>
+    </bndbox>
+  </object>
+  <object>
+    <name>burgerking-schriftzug</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>33</xmin>
+      <ymin>76</ymin>
+      <xmax>63</xmax>
+      <ymax>91</ymax>
+    </bndbox>
+  </object>
+</annotation>

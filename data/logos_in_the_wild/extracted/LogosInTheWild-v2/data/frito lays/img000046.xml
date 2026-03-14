@@ -1,0 +1,50 @@
+<annotation>
+  <folder>frito lays</folder>
+  <filename>img000046</filename>
+  <path>LogoDataset\frito lays\img000046.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>640</width>
+    <height>360</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>Lays</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>81</xmin>
+      <ymin>52</ymin>
+      <xmax>226</xmax>
+      <ymax>136</ymax>
+    </bndbox>
+  </object>
+  <object>
+    <name>Lays</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>273</xmin>
+      <ymin>47</ymin>
+      <xmax>383</xmax>
+      <ymax>125</ymax>
+    </bndbox>
+  </object>
+  <object>
+    <name>Sunchips</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>483</xmin>
+      <ymin>44</ymin>
+      <xmax>585</xmax>
+      <ymax>127</ymax>
+    </bndbox>
+  </object>
+</annotation>

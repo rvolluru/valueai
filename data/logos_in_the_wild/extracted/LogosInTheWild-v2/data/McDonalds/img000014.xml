@@ -1,0 +1,26 @@
+<annotation>
+  <folder>McDonalds</folder>
+  <filename>img000014</filename>
+  <path>LogoDataset\McDonalds\img000014.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>450</width>
+    <height>275</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>mcdonalds</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>55</xmin>
+      <ymin>132</ymin>
+      <xmax>79</xmax>
+      <ymax>153</ymax>
+    </bndbox>
+  </object>
+</annotation>

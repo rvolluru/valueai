@@ -1,0 +1,26 @@
+<annotation>
+  <folder>heineken</folder>
+  <filename>img000131</filename>
+  <path>LogoDataset\heineken\img000131.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>480</width>
+    <height>360</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>Heineken-teilsichtbar</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>74</xmin>
+      <ymin>75</ymin>
+      <xmax>136</xmax>
+      <ymax>90</ymax>
+    </bndbox>
+  </object>
+</annotation>

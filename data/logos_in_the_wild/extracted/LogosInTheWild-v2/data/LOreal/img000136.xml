@@ -1,0 +1,26 @@
+<annotation>
+  <folder>LOreal</folder>
+  <filename>img000136</filename>
+  <path>LogoDataset\LOreal\img000136.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>550</width>
+    <height>550</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>loreal</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>222</xmin>
+      <ymin>244</ymin>
+      <xmax>323</xmax>
+      <ymax>266</ymax>
+    </bndbox>
+  </object>
+</annotation>

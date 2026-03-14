@@ -1,0 +1,38 @@
+<annotation>
+  <folder>hp</folder>
+  <filename>img000083</filename>
+  <path>LogoDataset\hp\img000083.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>400</width>
+    <height>533</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>hp</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>223</xmin>
+      <ymin>472</ymin>
+      <xmax>258</xmax>
+      <ymax>495</ymax>
+    </bndbox>
+  </object>
+  <object>
+    <name>green hills</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>153</xmin>
+      <ymin>478</ymin>
+      <xmax>198</xmax>
+      <ymax>495</ymax>
+    </bndbox>
+  </object>
+</annotation>

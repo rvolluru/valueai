@@ -1,0 +1,50 @@
+<annotation>
+  <folder>red bull</folder>
+  <filename>img000764</filename>
+  <path>LogoDataset\red bull\img000764.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>2000</width>
+    <height>1000</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>RedBull</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>1150</xmin>
+      <ymin>350</ymin>
+      <xmax>1831</xmax>
+      <ymax>657</ymax>
+    </bndbox>
+  </object>
+  <object>
+    <name>RedBull-logo</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>1293</xmin>
+      <ymin>592</ymin>
+      <xmax>1748</xmax>
+      <ymax>798</ymax>
+    </bndbox>
+  </object>
+  <object>
+    <name>RedBull-logo-teilsichtbar</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>813</xmin>
+      <ymin>778</ymin>
+      <xmax>1183</xmax>
+      <ymax>978</ymax>
+    </bndbox>
+  </object>
+</annotation>

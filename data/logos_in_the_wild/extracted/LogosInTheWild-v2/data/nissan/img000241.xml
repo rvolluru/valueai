@@ -1,0 +1,26 @@
+<annotation>
+  <folder>nissan</folder>
+  <filename>img000241</filename>
+  <path>LogoDataset\nissan\img000241.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>770</width>
+    <height>513</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>nissan-schrift</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>361</xmin>
+      <ymin>317</ymin>
+      <xmax>425</xmax>
+      <ymax>337</ymax>
+    </bndbox>
+  </object>
+</annotation>

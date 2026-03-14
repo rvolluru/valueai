@@ -1,0 +1,50 @@
+<annotation>
+  <folder>kraft</folder>
+  <filename>img000038</filename>
+  <path>LogoDataset\kraft\img000038.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>272</width>
+    <height>176</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>cracker barrel</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>43</xmin>
+      <ymin>60</ymin>
+      <xmax>97</xmax>
+      <ymax>85</ymax>
+    </bndbox>
+  </object>
+  <object>
+    <name>cracker barrel</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>104</xmin>
+      <ymin>47</ymin>
+      <xmax>165</xmax>
+      <ymax>68</ymax>
+    </bndbox>
+  </object>
+  <object>
+    <name>cracker barrel</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>180</xmin>
+      <ymin>62</ymin>
+      <xmax>231</xmax>
+      <ymax>91</ymax>
+    </bndbox>
+  </object>
+</annotation>

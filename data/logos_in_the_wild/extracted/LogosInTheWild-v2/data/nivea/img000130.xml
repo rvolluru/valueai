@@ -1,0 +1,26 @@
+<annotation>
+  <folder>nivea</folder>
+  <filename>img000130</filename>
+  <path>LogoDataset\nivea\img000130.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>500</width>
+    <height>500</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>nivea</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>204</xmin>
+      <ymin>43</ymin>
+      <xmax>298</xmax>
+      <ymax>138</ymax>
+    </bndbox>
+  </object>
+</annotation>

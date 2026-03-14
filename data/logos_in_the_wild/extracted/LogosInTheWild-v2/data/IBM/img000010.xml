@@ -1,0 +1,26 @@
+<annotation>
+  <folder>IBM</folder>
+  <filename>img000010</filename>
+  <path>LogoDataset\IBM\img000010.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>550</width>
+    <height>309</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>IBM</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>40</xmin>
+      <ymin>14</ymin>
+      <xmax>471</xmax>
+      <ymax>188</ymax>
+    </bndbox>
+  </object>
+</annotation>

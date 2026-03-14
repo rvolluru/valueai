@@ -1,0 +1,38 @@
+<annotation>
+  <folder>red bull</folder>
+  <filename>img000443</filename>
+  <path>LogoDataset\red bull\img000443.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>940</width>
+    <height>627</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>RedBull</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>478</xmin>
+      <ymin>249</ymin>
+      <xmax>521</xmax>
+      <ymax>312</ymax>
+    </bndbox>
+  </object>
+  <object>
+    <name>RedBull-logo</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>474</xmin>
+      <ymin>274</ymin>
+      <xmax>500</xmax>
+      <ymax>308</ymax>
+    </bndbox>
+  </object>
+</annotation>

@@ -1,0 +1,26 @@
+<annotation>
+  <folder>visa</folder>
+  <filename>img000034</filename>
+  <path>LogoDataset\visa\img000034.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>600</width>
+    <height>450</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>VISA</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>417</xmin>
+      <ymin>90</ymin>
+      <xmax>520</xmax>
+      <ymax>144</ymax>
+    </bndbox>
+  </object>
+</annotation>

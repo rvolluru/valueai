@@ -1,0 +1,26 @@
+<annotation>
+  <folder>intel</folder>
+  <filename>img000033</filename>
+  <path>LogoDataset\intel\img000033.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>586</width>
+    <height>439</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>RedBull</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>191</xmin>
+      <ymin>318</ymin>
+      <xmax>215</xmax>
+      <ymax>333</ymax>
+    </bndbox>
+  </object>
+</annotation>

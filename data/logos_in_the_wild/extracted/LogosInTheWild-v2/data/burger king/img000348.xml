@@ -1,0 +1,38 @@
+<annotation>
+  <folder>burger king</folder>
+  <filename>img000348</filename>
+  <path>LogoDataset\burger king\img000348.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>920</width>
+    <height>642</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>popeyes</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>395</xmin>
+      <ymin>200</ymin>
+      <xmax>583</xmax>
+      <ymax>258</ymax>
+    </bndbox>
+  </object>
+  <object>
+    <name>popeyes</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>156</xmin>
+      <ymin>256</ymin>
+      <xmax>231</xmax>
+      <ymax>305</ymax>
+    </bndbox>
+  </object>
+</annotation>

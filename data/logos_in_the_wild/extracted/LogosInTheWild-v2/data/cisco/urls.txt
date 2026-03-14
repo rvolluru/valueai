@@ -1,0 +1,17 @@
+000000	http://i.investopedia.com/content/article/is_cisco_stock_suita/cisco_building.jpg
+000002	http://images.channeltimes.com/2016/09/cisco_FUdvQ.jpg
+000004	http://www.cibsejournal.com/wp-content/uploads/2015/11/Johnson-Controls.jpg
+000005	http://cdn.learncomputer.com/wp-content/uploads/2011/08/cisco-juniper-building.jpg
+000006	http://c8.alamy.com/comp/EHRN76/cisco-building-at-chicago-ohare-airport-rosemont-illinois-usa-EHRN76.jpg
+000008	http://c8.alamy.com/comp/DRA48Y/cisco-systems-office-building-at-dubai-internet-city-in-united-arab-DRA48Y.jpg
+000010	http://c8.alamy.com/comp/CPC4DP/cisco-headquarters-building-san-jose-california-CPC4DP.jpg
+000011	http://images.techhive.com/images/article/2017/01/20170201-cisco-digital-building-series-switch-100706771-orig.jpg
+000015	http://ash-cges-management.com/img/projects/corporate/cisco-systems-international-dubai-uae/01.jpg
+000016	http://im.rediff.com/money/2012/aug/13cis1.jpg
+000017	http://www.cisco.com/c/m/en_ca/innovationcenter/toronto/_jcr_content/Grid/category_atl_f5cb/layout-category-atl/marquee_inpage_0/image.img.jpg/1491994624911.jpg
+000019	http://l7.alamy.com/zooms/f452c2726f2440589122e0553f638b00/the-headquarters-campus-of-cisco-systems-in-san-jose-california-dp9m6r.jpg
+000020	http://news.theregistrysf.com/wp-content/uploads/2012/07/Cisco-Tower.jpg
+000022	http://c8.alamy.com/comp/ENDXWR/cisco-systems-inc-headquarters-san-jose-ca-ENDXWR.jpg
+000024	http://media.bizj.us/view/img/2871441/cisco-1*1200xx2500-1406-0-123.jpg
+000030	http://archive.fortune.com/assets/i2.cdn.turner.com/money/.element/img/1.0/sections/mag/fortune/bestcompanies/2008/snapshots/cisco_building.jpg
+000033	http://www.gadgetsnow.com/thumb/msid-37713709,width-640,resizemode-4/37713709.jpg

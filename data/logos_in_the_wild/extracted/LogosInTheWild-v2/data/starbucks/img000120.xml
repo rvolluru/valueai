@@ -1,0 +1,26 @@
+<annotation>
+  <folder>starbucks</folder>
+  <filename>img000120</filename>
+  <path>LogoDataset\starbucks\img000120.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>491</width>
+    <height>740</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>starbucks-logo</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>162</xmin>
+      <ymin>285</ymin>
+      <xmax>347</xmax>
+      <ymax>463</ymax>
+    </bndbox>
+  </object>
+</annotation>

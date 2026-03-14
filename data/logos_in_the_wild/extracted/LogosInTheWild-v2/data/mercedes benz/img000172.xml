@@ -1,0 +1,38 @@
+<annotation>
+  <folder>mercedes benz</folder>
+  <filename>img000172</filename>
+  <path>LogoDataset\mercedes benz\img000172.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>1200</width>
+    <height>830</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>mercedesbenz-schriftzug</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>777</xmin>
+      <ymin>592</ymin>
+      <xmax>905</xmax>
+      <ymax>626</ymax>
+    </bndbox>
+  </object>
+  <object>
+    <name>mercedesbenz-logo</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>705</xmin>
+      <ymin>586</ymin>
+      <xmax>725</xmax>
+      <ymax>613</ymax>
+    </bndbox>
+  </object>
+</annotation>

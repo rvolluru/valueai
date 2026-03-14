@@ -1,0 +1,38 @@
+<annotation>
+  <folder>mercedes benz</folder>
+  <filename>img000154</filename>
+  <path>LogoDataset\mercedes benz\img000154.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>347</width>
+    <height>540</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>mercedesbenz-logo</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>208</xmin>
+      <ymin>31</ymin>
+      <xmax>252</xmax>
+      <ymax>72</ymax>
+    </bndbox>
+  </object>
+  <object>
+    <name>saturn-teilsichtbar</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>194</xmin>
+      <ymin>281</ymin>
+      <xmax>226</xmax>
+      <ymax>303</ymax>
+    </bndbox>
+  </object>
+</annotation>

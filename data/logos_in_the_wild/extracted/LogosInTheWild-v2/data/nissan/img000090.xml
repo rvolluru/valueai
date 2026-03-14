@@ -1,0 +1,26 @@
+<annotation>
+  <folder>nissan</folder>
+  <filename>img000090</filename>
+  <path>LogoDataset\nissan\img000090.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>462</width>
+    <height>262</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>nissan-schrift-teilsichtbar</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>125</xmin>
+      <ymin>132</ymin>
+      <xmax>171</xmax>
+      <ymax>148</ymax>
+    </bndbox>
+  </object>
+</annotation>

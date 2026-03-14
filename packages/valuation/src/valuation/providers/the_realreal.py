@@ -27,7 +27,14 @@ class TheRealRealProvider(CompsProvider):
         self.last_debug = {}
 
     def fetch_comps(self, request: ValuationRequest) -> list[MarketComp]:
-        query = query_for_request(request.brand, request.category, request.model_hint, request.title_hint)
+        query = query_for_request(
+            request.brand,
+            request.category,
+            request.model_hint,
+            request.title_hint,
+            request.item_description,
+            request.size,
+        )
         params = {"q": query}
         request_url = build_request_url("https://www.therealreal.com/search", params)
         try:

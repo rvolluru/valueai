@@ -1,0 +1,26 @@
+<annotation>
+  <folder>budweiser</folder>
+  <filename>img000173</filename>
+  <path>LogoDataset\budweiser\img000173.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>615</width>
+    <height>409</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>adidas</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>416</xmin>
+      <ymin>195</ymin>
+      <xmax>450</xmax>
+      <ymax>220</ymax>
+    </bndbox>
+  </object>
+</annotation>

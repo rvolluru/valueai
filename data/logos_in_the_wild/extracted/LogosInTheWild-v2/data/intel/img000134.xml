@@ -1,0 +1,26 @@
+<annotation>
+  <folder>intel</folder>
+  <filename>img000134</filename>
+  <path>LogoDataset\intel\img000134.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>416</width>
+    <height>234</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>intel</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>282</xmin>
+      <ymin>58</ymin>
+      <xmax>298</xmax>
+      <ymax>70</ymax>
+    </bndbox>
+  </object>
+</annotation>

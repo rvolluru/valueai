@@ -1,0 +1,38 @@
+<annotation>
+  <folder>mercedes benz</folder>
+  <filename>img000583</filename>
+  <path>LogoDataset\mercedes benz\img000583.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>1200</width>
+    <height>799</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>mercedesbenz-logo</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>147</xmin>
+      <ymin>443</ymin>
+      <xmax>193</xmax>
+      <ymax>516</ymax>
+    </bndbox>
+  </object>
+  <object>
+    <name>mercedesbenz-logo-teilsichtbar</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>593</xmin>
+      <ymin>594</ymin>
+      <xmax>615</xmax>
+      <ymax>617</ymax>
+    </bndbox>
+  </object>
+</annotation>

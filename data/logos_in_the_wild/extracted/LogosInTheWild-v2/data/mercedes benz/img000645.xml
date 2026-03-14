@@ -1,0 +1,38 @@
+<annotation>
+  <folder>mercedes benz</folder>
+  <filename>img000645</filename>
+  <path>LogoDataset\mercedes benz\img000645.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>1024</width>
+    <height>683</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>mercedesbenz-logo</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>247</xmin>
+      <ymin>370</ymin>
+      <xmax>269</xmax>
+      <ymax>394</ymax>
+    </bndbox>
+  </object>
+  <object>
+    <name>DeutscheBank</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>102</xmin>
+      <ymin>3</ymin>
+      <xmax>261</xmax>
+      <ymax>70</ymax>
+    </bndbox>
+  </object>
+</annotation>

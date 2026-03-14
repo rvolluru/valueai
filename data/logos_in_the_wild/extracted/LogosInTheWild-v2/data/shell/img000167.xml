@@ -1,0 +1,26 @@
+<annotation>
+  <folder>shell</folder>
+  <filename>img000167</filename>
+  <path>LogoDataset\shell\img000167.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>1100</width>
+    <height>598</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>shell-logo</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>418</xmin>
+      <ymin>169</ymin>
+      <xmax>442</xmax>
+      <ymax>218</ymax>
+    </bndbox>
+  </object>
+</annotation>

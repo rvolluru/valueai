@@ -1,0 +1,26 @@
+<annotation>
+  <folder>kelloggs</folder>
+  <filename>img000218</filename>
+  <path>LogoDataset\kelloggs\img000218.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>768</width>
+    <height>1024</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>kellogg`s</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>66</xmin>
+      <ymin>96</ymin>
+      <xmax>322</xmax>
+      <ymax>163</ymax>
+    </bndbox>
+  </object>
+</annotation>

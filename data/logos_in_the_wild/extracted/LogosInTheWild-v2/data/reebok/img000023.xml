@@ -1,0 +1,26 @@
+<annotation>
+  <folder>reebok</folder>
+  <filename>img000023</filename>
+  <path>LogoDataset\reebok\img000023.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>621</width>
+    <height>414</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>Reebok</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>153</xmin>
+      <ymin>7</ymin>
+      <xmax>351</xmax>
+      <ymax>60</ymax>
+    </bndbox>
+  </object>
+</annotation>

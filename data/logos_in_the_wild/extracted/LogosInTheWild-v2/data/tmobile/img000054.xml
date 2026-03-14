@@ -1,0 +1,26 @@
+<annotation>
+  <folder>tmobile</folder>
+  <filename>img000054</filename>
+  <path>LogoDataset\tmobile\img000054.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>5370</width>
+    <height>2326</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>T-Mobile</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>3258</xmin>
+      <ymin>893</ymin>
+      <xmax>4124</xmax>
+      <ymax>1141</ymax>
+    </bndbox>
+  </object>
+</annotation>

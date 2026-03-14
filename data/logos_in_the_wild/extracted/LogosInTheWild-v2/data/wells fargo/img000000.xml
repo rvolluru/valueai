@@ -1,0 +1,26 @@
+<annotation>
+  <folder>wells fargo</folder>
+  <filename>img000000</filename>
+  <path>LogoDataset\wells fargo\img000000.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>672</width>
+    <height>448</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>WellsFargo</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>185</xmin>
+      <ymin>62</ymin>
+      <xmax>363</xmax>
+      <ymax>115</ymax>
+    </bndbox>
+  </object>
+</annotation>

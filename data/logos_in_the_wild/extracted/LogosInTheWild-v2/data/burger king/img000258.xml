@@ -1,0 +1,26 @@
+<annotation>
+  <folder>burger king</folder>
+  <filename>img000258</filename>
+  <path>LogoDataset\burger king\img000258.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>800</width>
+    <height>453</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>burgerking-teilsichtbar</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>18</xmin>
+      <ymin>247</ymin>
+      <xmax>640</xmax>
+      <ymax>427</ymax>
+    </bndbox>
+  </object>
+</annotation>

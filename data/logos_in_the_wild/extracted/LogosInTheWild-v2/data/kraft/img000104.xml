@@ -1,0 +1,26 @@
+<annotation>
+  <folder>kraft</folder>
+  <filename>img000104</filename>
+  <path>LogoDataset\kraft\img000104.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>650</width>
+    <height>427</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>honda</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>10</xmin>
+      <ymin>143</ymin>
+      <xmax>320</xmax>
+      <ymax>188</ymax>
+    </bndbox>
+  </object>
+</annotation>

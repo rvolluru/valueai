@@ -1,0 +1,26 @@
+<annotation>
+  <folder>aldi</folder>
+  <filename>img000091</filename>
+  <path>LogoDataset\aldi\img000091.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>640</width>
+    <height>427</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>aldi-teilsichtbar</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>414</xmin>
+      <ymin>194</ymin>
+      <xmax>437</xmax>
+      <ymax>232</ymax>
+    </bndbox>
+  </object>
+</annotation>

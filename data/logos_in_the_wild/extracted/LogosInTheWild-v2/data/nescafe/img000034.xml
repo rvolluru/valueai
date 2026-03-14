@@ -1,0 +1,26 @@
+<annotation>
+  <folder>nescafe</folder>
+  <filename>img000034</filename>
+  <path>LogoDataset\nescafe\img000034.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>800</width>
+    <height>800</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>nescafe</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>293</xmin>
+      <ymin>255</ymin>
+      <xmax>499</xmax>
+      <ymax>315</ymax>
+    </bndbox>
+  </object>
+</annotation>

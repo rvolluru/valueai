@@ -1,0 +1,26 @@
+<annotation>
+  <folder>subway</folder>
+  <filename>img000107</filename>
+  <path>LogoDataset\subway\img000107.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>640</width>
+    <height>383</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>subway</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>121</xmin>
+      <ymin>278</ymin>
+      <xmax>187</xmax>
+      <ymax>299</ymax>
+    </bndbox>
+  </object>
+</annotation>

@@ -1,0 +1,26 @@
+<annotation>
+  <folder>FedEx</folder>
+  <filename>img000077</filename>
+  <path>LogoDataset\FedEx\img000077.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>595</width>
+    <height>335</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>FedEx</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>200</xmin>
+      <ymin>103</ymin>
+      <xmax>277</xmax>
+      <ymax>185</ymax>
+    </bndbox>
+  </object>
+</annotation>

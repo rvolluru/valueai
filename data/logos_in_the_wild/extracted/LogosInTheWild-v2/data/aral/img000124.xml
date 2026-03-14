@@ -1,0 +1,26 @@
+<annotation>
+  <folder>aral</folder>
+  <filename>img000124</filename>
+  <path>LogoDataset\aral\img000124.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>169</width>
+    <height>225</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>Bosch</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>18</xmin>
+      <ymin>23</ymin>
+      <xmax>114</xmax>
+      <ymax>50</ymax>
+    </bndbox>
+  </object>
+</annotation>

@@ -1,0 +1,26 @@
+<annotation>
+  <folder>hp</folder>
+  <filename>img000020</filename>
+  <path>LogoDataset\hp\img000020.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>670</width>
+    <height>430</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>hp</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>269</xmin>
+      <ymin>363</ymin>
+      <xmax>298</xmax>
+      <ymax>392</ymax>
+    </bndbox>
+  </object>
+</annotation>

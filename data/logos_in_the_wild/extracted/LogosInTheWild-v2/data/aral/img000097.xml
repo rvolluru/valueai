@@ -1,0 +1,26 @@
+<annotation>
+  <folder>aral</folder>
+  <filename>img000097</filename>
+  <path>LogoDataset\aral\img000097.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>400</width>
+    <height>300</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>aral</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>216</xmin>
+      <ymin>104</ymin>
+      <xmax>289</xmax>
+      <ymax>182</ymax>
+    </bndbox>
+  </object>
+</annotation>

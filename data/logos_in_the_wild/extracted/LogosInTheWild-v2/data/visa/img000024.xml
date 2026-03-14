@@ -1,0 +1,38 @@
+<annotation>
+  <folder>visa</folder>
+  <filename>img000024</filename>
+  <path>LogoDataset\visa\img000024.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>1032</width>
+    <height>646</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>VISA</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>748</xmin>
+      <ymin>468</ymin>
+      <xmax>998</xmax>
+      <ymax>587</ymax>
+    </bndbox>
+  </object>
+  <object>
+    <name>British airways</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>40</xmin>
+      <ymin>81</ymin>
+      <xmax>530</xmax>
+      <ymax>131</ymax>
+    </bndbox>
+  </object>
+</annotation>

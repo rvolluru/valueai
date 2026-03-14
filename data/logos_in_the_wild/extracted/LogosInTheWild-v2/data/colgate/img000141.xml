@@ -1,0 +1,26 @@
+<annotation>
+  <folder>colgate</folder>
+  <filename>img000141</filename>
+  <path>LogoDataset\colgate\img000141.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>200</width>
+    <height>300</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>colgate</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>59</xmin>
+      <ymin>116</ymin>
+      <xmax>133</xmax>
+      <ymax>134</ymax>
+    </bndbox>
+  </object>
+</annotation>

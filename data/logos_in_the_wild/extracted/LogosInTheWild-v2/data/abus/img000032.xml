@@ -1,0 +1,26 @@
+<annotation>
+  <folder>abus</folder>
+  <filename>img000032</filename>
+  <path>LogoDataset\abus\img000032.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>400</width>
+    <height>190</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>abus</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>13</xmin>
+      <ymin>114</ymin>
+      <xmax>69</xmax>
+      <ymax>132</ymax>
+    </bndbox>
+  </object>
+</annotation>

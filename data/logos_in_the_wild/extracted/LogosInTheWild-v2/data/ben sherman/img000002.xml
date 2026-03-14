@@ -1,0 +1,62 @@
+<annotation>
+  <folder>ben sherman</folder>
+  <filename>img000002</filename>
+  <path>LogoDataset\ben sherman\img000002.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>1170</width>
+    <height>975</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>ben sherman</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>558</xmin>
+      <ymin>58</ymin>
+      <xmax>681</xmax>
+      <ymax>74</ymax>
+    </bndbox>
+  </object>
+  <object>
+    <name>ben sherman</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>830</xmin>
+      <ymin>603</ymin>
+      <xmax>901</xmax>
+      <ymax>634</ymax>
+    </bndbox>
+  </object>
+  <object>
+    <name>ben sherman</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>656</xmin>
+      <ymin>726</ymin>
+      <xmax>718</xmax>
+      <ymax>769</ymax>
+    </bndbox>
+  </object>
+  <object>
+    <name>ben sherman</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>557</xmin>
+      <ymin>392</ymin>
+      <xmax>614</xmax>
+      <ymax>405</ymax>
+    </bndbox>
+  </object>
+</annotation>

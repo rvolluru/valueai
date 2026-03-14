@@ -1,0 +1,26 @@
+<annotation>
+  <folder>uniqlo</folder>
+  <filename>img000003</filename>
+  <path>LogoDataset\uniqlo\img000003.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>700</width>
+    <height>525</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>h&amp;m</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>379</xmin>
+      <ymin>200</ymin>
+      <xmax>458</xmax>
+      <ymax>275</ymax>
+    </bndbox>
+  </object>
+</annotation>

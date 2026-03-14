@@ -1,0 +1,50 @@
+<annotation>
+  <folder>bem wireless</folder>
+  <filename>img000098</filename>
+  <path>LogoDataset\bem wireless\img000098.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>1200</width>
+    <height>1200</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>bem</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>269</xmin>
+      <ymin>649</ymin>
+      <xmax>322</xmax>
+      <ymax>748</ymax>
+    </bndbox>
+  </object>
+  <object>
+    <name>bem</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>198</xmin>
+      <ymin>555</ymin>
+      <xmax>256</xmax>
+      <ymax>582</ymax>
+    </bndbox>
+  </object>
+  <object>
+    <name>bem</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>638</xmin>
+      <ymin>895</ymin>
+      <xmax>732</xmax>
+      <ymax>934</ymax>
+    </bndbox>
+  </object>
+</annotation>

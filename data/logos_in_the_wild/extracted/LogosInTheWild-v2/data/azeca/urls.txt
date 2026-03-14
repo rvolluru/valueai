@@ -1,0 +1,8 @@
+000001	http://www.azecastore.com/assets/images/azeca_btt009_736_mn.jpg
+000013	http://www.azecastore.com/assets/images/_Retractable-Package-Azeca-Blue.jpg
+000014	http://3936fe6a280d5ad38b90-e8a43afd12aae363bbf177a3329a9da5.r37.cf2.rackcdn.com/images/500xblank/AZM02.jpg
+000017	http://3936fe6a280d5ad38b90-e8a43afd12aae363bbf177a3329a9da5.r37.cf2.rackcdn.com/images/500xblank/AZM04.jpg
+000022	http://3936fe6a280d5ad38b90-e8a43afd12aae363bbf177a3329a9da5.r37.cf2.rackcdn.com/images/500xblank/AZM04-2.jpg
+000028	http://3936fe6a280d5ad38b90-e8a43afd12aae363bbf177a3329a9da5.r37.cf2.rackcdn.com/images/500xblank/AZM02-4.jpg
+000032	http://3936fe6a280d5ad38b90-e8a43afd12aae363bbf177a3329a9da5.r37.cf2.rackcdn.com/images/500xblank/AZM02-2.jpg
+000035	http://3936fe6a280d5ad38b90-e8a43afd12aae363bbf177a3329a9da5.r37.cf2.rackcdn.com/images/500xblank/AZM04-4.jpg

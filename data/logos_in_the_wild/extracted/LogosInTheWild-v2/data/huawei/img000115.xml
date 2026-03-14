@@ -1,0 +1,26 @@
+<annotation>
+  <folder>huawei</folder>
+  <filename>img000115</filename>
+  <path>LogoDataset\huawei\img000115.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>2048</width>
+    <height>1363</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>huawei-logo-teilsichtbar</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>934</xmin>
+      <ymin>517</ymin>
+      <xmax>1055</xmax>
+      <ymax>612</ymax>
+    </bndbox>
+  </object>
+</annotation>

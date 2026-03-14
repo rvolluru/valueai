@@ -1,0 +1,26 @@
+<annotation>
+  <folder>chanel</folder>
+  <filename>img000089</filename>
+  <path>LogoDataset\chanel\img000089.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>468</width>
+    <height>354</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>chanel-logo</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>334</xmin>
+      <ymin>87</ymin>
+      <xmax>394</xmax>
+      <ymax>152</ymax>
+    </bndbox>
+  </object>
+</annotation>

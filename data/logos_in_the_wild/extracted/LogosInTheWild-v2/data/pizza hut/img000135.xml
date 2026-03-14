@@ -1,0 +1,38 @@
+<annotation>
+  <folder>pizza hut</folder>
+  <filename>img000135</filename>
+  <path>LogoDataset\pizza hut\img000135.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>640</width>
+    <height>500</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>PizzaHut</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>245</xmin>
+      <ymin>232</ymin>
+      <xmax>359</xmax>
+      <ymax>259</ymax>
+    </bndbox>
+  </object>
+  <object>
+    <name>PizzaHut-hut</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>95</xmin>
+      <ymin>240</ymin>
+      <xmax>122</xmax>
+      <ymax>263</ymax>
+    </bndbox>
+  </object>
+</annotation>

@@ -1,0 +1,26 @@
+<annotation>
+  <folder>BASF</folder>
+  <filename>img000128</filename>
+  <path>LogoDataset\BASF\img000128.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>1280</width>
+    <height>906</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>BASF</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>1022</xmin>
+      <ymin>758</ymin>
+      <xmax>1207</xmax>
+      <ymax>794</ymax>
+    </bndbox>
+  </object>
+</annotation>

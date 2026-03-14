@@ -1,0 +1,26 @@
+<annotation>
+  <folder>hyundai</folder>
+  <filename>img000367</filename>
+  <path>LogoDataset\hyundai\img000367.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>680</width>
+    <height>510</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>hyundai-logo</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>77</xmin>
+      <ymin>288</ymin>
+      <xmax>112</xmax>
+      <ymax>314</ymax>
+    </bndbox>
+  </object>
+</annotation>

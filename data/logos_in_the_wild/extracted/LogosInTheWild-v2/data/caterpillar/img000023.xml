@@ -1,0 +1,26 @@
+<annotation>
+  <folder>caterpillar</folder>
+  <filename>img000023</filename>
+  <path>LogoDataset\caterpillar\img000023.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>800</width>
+    <height>609</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>cat</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>404</xmin>
+      <ymin>223</ymin>
+      <xmax>429</xmax>
+      <ymax>252</ymax>
+    </bndbox>
+  </object>
+</annotation>

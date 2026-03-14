@@ -1,0 +1,38 @@
+<annotation>
+  <folder>bertha watches</folder>
+  <filename>img000023</filename>
+  <path>LogoDataset\bertha watches\img000023.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>750</width>
+    <height>669</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>bertha</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>251</xmin>
+      <ymin>316</ymin>
+      <xmax>294</xmax>
+      <ymax>340</ymax>
+    </bndbox>
+  </object>
+  <object>
+    <name>bertha</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>551</xmin>
+      <ymin>194</ymin>
+      <xmax>622</xmax>
+      <ymax>227</ymax>
+    </bndbox>
+  </object>
+</annotation>

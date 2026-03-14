@@ -41,13 +41,29 @@ class Settings(BaseSettings):
     brand_debug: bool = False
     brand_detector_weights_path: str | None = None
     brand_logo_classifier_weights_path: str | None = None
+    brand_force_logo_classifier: bool = False
+    brand_logo_model_type: str = "efficientnet"
+    brand_logo_yolo_weights_path: str | None = None
+    brand_logo_yolo_confidence: float = 0.35
+    gpt_item_profile_enabled: bool = False
+    gpt_item_profile_model: str = "gpt-5"
+    gpt_item_profile_timeout_s: float = 25.0
 
     condition_rembg_enabled: bool = False
     condition_category_weights_path: str | None = None
     condition_grade_weights_path: str | None = None
+    condition_force_category_classifier: bool = False
+    condition_force_efficientnet: bool = False
 
     max_images_per_request: int = Field(default=4, ge=1, le=8)
     openai_api_key: str | None = None
+
+    clerk_enabled: bool = False
+    clerk_issuer: str | None = None
+    clerk_jwks_url: str | None = None
+    clerk_audience: str | None = None
+    clerk_authorized_parties: str | None = None
+    cors_allow_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
 
     valuation_enabled: bool = True
     valuation_providers: str = "stub"

@@ -1,0 +1,26 @@
+<annotation>
+  <folder>ape</folder>
+  <filename>img000025</filename>
+  <path>LogoDataset\ape\img000025.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>967</width>
+    <height>1500</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>apecase</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>623</xmin>
+      <ymin>889</ymin>
+      <xmax>649</xmax>
+      <ymax>953</ymax>
+    </bndbox>
+  </object>
+</annotation>

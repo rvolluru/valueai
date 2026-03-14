@@ -1,0 +1,74 @@
+<annotation>
+  <folder>bank of america</folder>
+  <filename>img000089</filename>
+  <path>LogoDataset\bank of america\img000089.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>1920</width>
+    <height>1080</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>samsung</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>388</xmin>
+      <ymin>286</ymin>
+      <xmax>502</xmax>
+      <ymax>387</ymax>
+    </bndbox>
+  </object>
+  <object>
+    <name>bank of america-schriftzug</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>941</xmin>
+      <ymin>397</ymin>
+      <xmax>1156</xmax>
+      <ymax>481</ymax>
+    </bndbox>
+  </object>
+  <object>
+    <name>bank of america-logo</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>1165</xmin>
+      <ymin>466</ymin>
+      <xmax>1236</xmax>
+      <ymax>497</ymax>
+    </bndbox>
+  </object>
+  <object>
+    <name>mastercard</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>985</xmin>
+      <ymin>590</ymin>
+      <xmax>1119</xmax>
+      <ymax>660</ymax>
+    </bndbox>
+  </object>
+  <object>
+    <name>samsung</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>387</xmin>
+      <ymin>440</ymin>
+      <xmax>465</xmax>
+      <ymax>504</ymax>
+    </bndbox>
+  </object>
+</annotation>

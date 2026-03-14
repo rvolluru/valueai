@@ -1,0 +1,26 @@
+<annotation>
+  <folder>costco</folder>
+  <filename>img000148</filename>
+  <path>LogoDataset\costco\img000148.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>4032</width>
+    <height>3024</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>dollarama</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>390</xmin>
+      <ymin>2</ymin>
+      <xmax>1987</xmax>
+      <ymax>1075</ymax>
+    </bndbox>
+  </object>
+</annotation>

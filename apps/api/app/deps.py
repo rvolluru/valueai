@@ -7,6 +7,7 @@ from condition import ConditionAnalyzer, ConditionConfig
 from valuation import ValuationConfig, ValuationService
 
 from .db import Database
+from .gpt_item_profile import GptItemProfiler
 from .settings import Settings, get_settings
 from .storage import Storage, build_storage
 
@@ -39,6 +40,10 @@ def get_brand_analyzer() -> BrandAnalyzer:
             debug_default=s.brand_debug,
             detector_weights_path=s.brand_detector_weights_path,
             logo_classifier_weights_path=s.brand_logo_classifier_weights_path,
+            force_logo_classifier=s.brand_force_logo_classifier,
+            logo_model_type=s.brand_logo_model_type,
+            logo_yolo_weights_path=s.brand_logo_yolo_weights_path,
+            logo_yolo_confidence=s.brand_logo_yolo_confidence,
         )
     )
 
@@ -51,6 +56,8 @@ def get_condition_analyzer() -> ConditionAnalyzer:
             rembg_enabled=s.condition_rembg_enabled,
             category_model_weights_path=s.condition_category_weights_path,
             condition_model_weights_path=s.condition_grade_weights_path,
+            force_category_classifier=s.condition_force_category_classifier,
+            force_efficientnet=s.condition_force_efficientnet,
         )
     )
 
@@ -67,4 +74,15 @@ def get_valuation_service() -> ValuationService:
             min_comps=s.valuation_min_comps,
             max_comps=s.valuation_max_comps,
         )
+    )
+
+
+@lru_cache(maxsize=1)
+def get_gpt_item_profiler() -> GptItemProfiler:
+    s = get_settings()
+    return GptItemProfiler(
+        enabled=s.gpt_item_profile_enabled,
+        api_key=s.openai_api_key,
+        model=s.gpt_item_profile_model,
+        timeout_s=s.gpt_item_profile_timeout_s,
     )

@@ -1,0 +1,26 @@
+<annotation>
+  <folder>McDonalds</folder>
+  <filename>img000006</filename>
+  <path>LogoDataset\McDonalds\img000006.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>720</width>
+    <height>581</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>mcdonalds-teilsichtbar</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>295</xmin>
+      <ymin>232</ymin>
+      <xmax>355</xmax>
+      <ymax>322</ymax>
+    </bndbox>
+  </object>
+</annotation>

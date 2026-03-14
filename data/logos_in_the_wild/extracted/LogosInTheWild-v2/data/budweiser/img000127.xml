@@ -1,0 +1,26 @@
+<annotation>
+  <folder>budweiser</folder>
+  <filename>img000127</filename>
+  <path>LogoDataset\budweiser\img000127.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>940</width>
+    <height>470</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>Budweiser-schriftzug</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>307</xmin>
+      <ymin>226</ymin>
+      <xmax>795</xmax>
+      <ymax>454</ymax>
+    </bndbox>
+  </object>
+</annotation>

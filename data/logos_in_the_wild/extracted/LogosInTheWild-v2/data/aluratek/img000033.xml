@@ -1,0 +1,26 @@
+<annotation>
+  <folder>aluratek</folder>
+  <filename>img000033</filename>
+  <path>LogoDataset\aluratek\img000033.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>400</width>
+    <height>400</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>Aluratek</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>104</xmin>
+      <ymin>139</ymin>
+      <xmax>144</xmax>
+      <ymax>155</ymax>
+    </bndbox>
+  </object>
+</annotation>

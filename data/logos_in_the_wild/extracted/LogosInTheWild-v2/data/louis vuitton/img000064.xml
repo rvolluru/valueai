@@ -1,0 +1,50 @@
+<annotation>
+  <folder>louis vuitton</folder>
+  <filename>img000064</filename>
+  <path>LogoDataset\louis vuitton\img000064.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>577</width>
+    <height>476</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>louis vuitton</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>102</xmin>
+      <ymin>451</ymin>
+      <xmax>365</xmax>
+      <ymax>471</ymax>
+    </bndbox>
+  </object>
+  <object>
+    <name>louis vuitton-teilsichtbar</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>405</xmin>
+      <ymin>259</ymin>
+      <xmax>494</xmax>
+      <ymax>304</ymax>
+    </bndbox>
+  </object>
+  <object>
+    <name>VL-logo</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>395</xmin>
+      <ymin>433</ymin>
+      <xmax>435</xmax>
+      <ymax>463</ymax>
+    </bndbox>
+  </object>
+</annotation>

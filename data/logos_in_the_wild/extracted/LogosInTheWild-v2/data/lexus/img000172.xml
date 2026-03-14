@@ -1,0 +1,26 @@
+<annotation>
+  <folder>lexus</folder>
+  <filename>img000172</filename>
+  <path>LogoDataset\lexus\img000172.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>550</width>
+    <height>309</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>lexus-logo</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>399</xmin>
+      <ymin>171</ymin>
+      <xmax>420</xmax>
+      <ymax>188</ymax>
+    </bndbox>
+  </object>
+</annotation>

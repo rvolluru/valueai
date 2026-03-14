@@ -1,0 +1,26 @@
+<annotation>
+  <folder>bello digital</folder>
+  <filename>img000020</filename>
+  <path>LogoDataset\bello digital\img000020.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>3648</width>
+    <height>2736</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>bd-logo</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>1814</xmin>
+      <ymin>693</ymin>
+      <xmax>2822</xmax>
+      <ymax>2105</ymax>
+    </bndbox>
+  </object>
+</annotation>

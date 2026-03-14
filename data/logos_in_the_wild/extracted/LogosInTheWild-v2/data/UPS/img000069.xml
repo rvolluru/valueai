@@ -1,0 +1,26 @@
+<annotation>
+  <folder>UPS</folder>
+  <filename>img000069</filename>
+  <path>LogoDataset\UPS\img000069.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>800</width>
+    <height>450</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>ups-teilsichtbar</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>203</xmin>
+      <ymin>108</ymin>
+      <xmax>246</xmax>
+      <ymax>199</ymax>
+    </bndbox>
+  </object>
+</annotation>

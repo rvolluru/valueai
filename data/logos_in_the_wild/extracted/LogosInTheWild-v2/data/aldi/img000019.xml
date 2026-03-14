@@ -1,0 +1,26 @@
+<annotation>
+  <folder>aldi</folder>
+  <filename>img000019</filename>
+  <path>LogoDataset\aldi\img000019.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>634</width>
+    <height>423</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>aldi</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>269</xmin>
+      <ymin>108</ymin>
+      <xmax>359</xmax>
+      <ymax>206</ymax>
+    </bndbox>
+  </object>
+</annotation>

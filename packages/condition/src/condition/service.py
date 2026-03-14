@@ -15,13 +15,16 @@ class ConditionAnalyzer:
         self.config = config or ConditionConfig()
         self.cropper = ProductCropper(rembg_enabled=self.config.rembg_enabled)
         self.category_classifier = CategoryClassifier(self.config.category_model_weights_path)
-        self.condition_model = ConditionModel(self.config.condition_model_weights_path)
+        self.condition_model = ConditionModel(
+            self.config.condition_model_weights_path,
+            force_efficientnet=self.config.force_efficientnet,
+        )
 
     def analyze(
         self, primary_image: bytes, category_hint: str | None = None, debug: bool = False
     ) -> ConditionResult:
         crop, crop_meta = self.cropper.crop(primary_image)
-        if category_hint:
+        if category_hint and not self.config.force_category_classifier:
             category, cat_conf, cat_meta = category_hint, 1.0, {"source": "user_provided"}
         else:
             category, cat_conf, cat_meta = self.category_classifier.predict(crop)

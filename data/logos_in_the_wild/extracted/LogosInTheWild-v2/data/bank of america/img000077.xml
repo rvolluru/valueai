@@ -1,0 +1,38 @@
+<annotation>
+  <folder>bank of america</folder>
+  <filename>img000077</filename>
+  <path>LogoDataset\bank of america\img000077.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>490</width>
+    <height>360</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>bank of america-schriftzug</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>160</xmin>
+      <ymin>10</ymin>
+      <xmax>338</xmax>
+      <ymax>38</ymax>
+    </bndbox>
+  </object>
+  <object>
+    <name>bank of america-logo</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>345</xmin>
+      <ymin>11</ymin>
+      <xmax>406</xmax>
+      <ymax>42</ymax>
+    </bndbox>
+  </object>
+</annotation>

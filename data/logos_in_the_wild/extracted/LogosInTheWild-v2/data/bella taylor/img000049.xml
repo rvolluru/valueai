@@ -1,0 +1,50 @@
+<annotation>
+  <folder>bella taylor</folder>
+  <filename>img000049</filename>
+  <path>LogoDataset\bella taylor\img000049.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>1000</width>
+    <height>1000</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>bella taylor</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>235</xmin>
+      <ymin>578</ymin>
+      <xmax>245</xmax>
+      <ymax>664</ymax>
+    </bndbox>
+  </object>
+  <object>
+    <name>bella taylor</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>241</xmin>
+      <ymin>351</ymin>
+      <xmax>268</xmax>
+      <ymax>426</ymax>
+    </bndbox>
+  </object>
+  <object>
+    <name>bella taylor-teilsichtbar</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>267</xmin>
+      <ymin>371</ymin>
+      <xmax>289</xmax>
+      <ymax>411</ymax>
+    </bndbox>
+  </object>
+</annotation>

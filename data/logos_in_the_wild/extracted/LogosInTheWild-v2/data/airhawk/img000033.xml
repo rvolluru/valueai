@@ -1,0 +1,26 @@
+<annotation>
+  <folder>airhawk</folder>
+  <filename>img000033</filename>
+  <path>LogoDataset\airhawk\img000033.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>800</width>
+    <height>1067</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>KTM</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>226</xmin>
+      <ymin>898</ymin>
+      <xmax>333</xmax>
+      <ymax>1014</ymax>
+    </bndbox>
+  </object>
+</annotation>

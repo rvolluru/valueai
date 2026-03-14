@@ -1,0 +1,26 @@
+<annotation>
+  <folder>UPS</folder>
+  <filename>img000093</filename>
+  <path>LogoDataset\UPS\img000093.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>474</width>
+    <height>294</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>ups</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>257</xmin>
+      <ymin>79</ymin>
+      <xmax>289</xmax>
+      <ymax>130</ymax>
+    </bndbox>
+  </object>
+</annotation>

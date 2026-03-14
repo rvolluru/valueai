@@ -1,0 +1,26 @@
+<annotation>
+  <folder>nescafe</folder>
+  <filename>img000011</filename>
+  <path>LogoDataset\nescafe\img000011.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>800</width>
+    <height>615</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>nescafe-teilsichtbar</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>361</xmin>
+      <ymin>341</ymin>
+      <xmax>532</xmax>
+      <ymax>613</ymax>
+    </bndbox>
+  </object>
+</annotation>

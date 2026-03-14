@@ -1,0 +1,62 @@
+<annotation>
+  <folder>louis vuitton</folder>
+  <filename>img000104</filename>
+  <path>LogoDataset\louis vuitton\img000104.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>2000</width>
+    <height>2000</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>louis vuitton</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>696</xmin>
+      <ymin>1188</ymin>
+      <xmax>1301</xmax>
+      <ymax>1252</ymax>
+    </bndbox>
+  </object>
+  <object>
+    <name>louis vuitton</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>941</xmin>
+      <ymin>1043</ymin>
+      <xmax>1062</xmax>
+      <ymax>1062</ymax>
+    </bndbox>
+  </object>
+  <object>
+    <name>VL-logo</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>713</xmin>
+      <ymin>1284</ymin>
+      <xmax>773</xmax>
+      <ymax>1339</ymax>
+    </bndbox>
+  </object>
+  <object>
+    <name>VL-logo</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>1228</xmin>
+      <ymin>1279</ymin>
+      <xmax>1292</xmax>
+      <ymax>1337</ymax>
+    </bndbox>
+  </object>
+</annotation>

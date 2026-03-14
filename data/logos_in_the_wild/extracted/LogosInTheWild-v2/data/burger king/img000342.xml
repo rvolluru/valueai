@@ -1,0 +1,38 @@
+<annotation>
+  <folder>burger king</folder>
+  <filename>img000342</filename>
+  <path>LogoDataset\burger king\img000342.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>857</width>
+    <height>536</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>burgerking-schriftzug</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>109</xmin>
+      <ymin>5</ymin>
+      <xmax>750</xmax>
+      <ymax>79</ymax>
+    </bndbox>
+  </object>
+  <object>
+    <name>Coca-Cola-teilsichtbar</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>127</xmin>
+      <ymin>292</ymin>
+      <xmax>145</xmax>
+      <ymax>327</ymax>
+    </bndbox>
+  </object>
+</annotation>

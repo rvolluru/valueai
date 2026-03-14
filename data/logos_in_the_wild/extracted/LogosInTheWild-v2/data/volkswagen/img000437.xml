@@ -1,0 +1,26 @@
+<annotation>
+  <folder>volkswagen</folder>
+  <filename>img000437</filename>
+  <path>LogoDataset\volkswagen\img000437.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>1260</width>
+    <height>709</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>VW</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>472</xmin>
+      <ymin>377</ymin>
+      <xmax>511</xmax>
+      <ymax>417</ymax>
+    </bndbox>
+  </object>
+</annotation>

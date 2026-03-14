@@ -1,0 +1,26 @@
+<annotation>
+  <folder>toyota</folder>
+  <filename>img000321</filename>
+  <path>LogoDataset\toyota\img000321.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>1280</width>
+    <height>854</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>toyota-teilsichtbar</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>342</xmin>
+      <ymin>493</ymin>
+      <xmax>372</xmax>
+      <ymax>518</ymax>
+    </bndbox>
+  </object>
+</annotation>

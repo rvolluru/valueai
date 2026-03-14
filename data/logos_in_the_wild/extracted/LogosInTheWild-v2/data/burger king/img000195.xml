@@ -1,0 +1,38 @@
+<annotation>
+  <folder>burger king</folder>
+  <filename>img000195</filename>
+  <path>LogoDataset\burger king\img000195.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>615</width>
+    <height>620</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>Coca-Cola</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>350</xmin>
+      <ymin>141</ymin>
+      <xmax>443</xmax>
+      <ymax>182</ymax>
+    </bndbox>
+  </object>
+  <object>
+    <name>Carlsberg</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>481</xmin>
+      <ymin>130</ymin>
+      <xmax>579</xmax>
+      <ymax>171</ymax>
+    </bndbox>
+  </object>
+</annotation>

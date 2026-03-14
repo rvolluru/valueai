@@ -1,0 +1,50 @@
+<annotation>
+  <folder>mercedes benz</folder>
+  <filename>img000112</filename>
+  <path>LogoDataset\mercedes benz\img000112.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>615</width>
+    <height>375</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>mercedesbenz-logo</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>240</xmin>
+      <ymin>225</ymin>
+      <xmax>268</xmax>
+      <ymax>257</ymax>
+    </bndbox>
+  </object>
+  <object>
+    <name>koluman</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>356</xmin>
+      <ymin>226</ymin>
+      <xmax>467</xmax>
+      <ymax>257</ymax>
+    </bndbox>
+  </object>
+  <object>
+    <name>mercedesbenz-logo-teilsichtbar</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>253</xmin>
+      <ymin>2</ymin>
+      <xmax>274</xmax>
+      <ymax>20</ymax>
+    </bndbox>
+  </object>
+</annotation>

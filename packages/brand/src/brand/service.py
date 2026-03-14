@@ -25,6 +25,9 @@ class BrandAnalyzer:
         self.logo_classifier = LogoClassifier(
             enabled=self.config.enable_logo_classifier,
             weights_path=self.config.logo_classifier_weights_path,
+            model_type=self.config.logo_model_type,
+            yolo_weights_path=self.config.logo_yolo_weights_path,
+            yolo_confidence=self.config.logo_yolo_confidence,
         )
         self.gpt_vision = GptVisionBrandClassifier(
             enabled=self.config.enable_gpt_vision,
@@ -36,6 +39,7 @@ class BrandAnalyzer:
     def analyze(self, images: list[ImageInput], debug: bool = False) -> dict[str, Any]:
         boxes = self.detector.detect_brand_evidence(images)
         ocr_results = self.ocr.run(images, boxes)
+        use_logo_only = self.config.force_logo_classifier and self.config.enable_logo_classifier
 
         grouped: dict[str, list[BrandCandidate]] = defaultdict(list)
         evidence_lines: list[dict[str, Any]] = []
@@ -64,31 +68,32 @@ class BrandAnalyzer:
                 top = filtered_matches[0]
                 agreement_count[top.candidate] += 1
 
-        for ocr_result in ocr_results:
-            for line in ocr_result.lines:
-                matches = self.matcher.match_text(line.text)
-                filtered_matches = self._filter_matches_for_line(line.text, line.confidence, matches)
-                for m in filtered_matches[:3]:
-                    conf01 = score_ocr_candidate(
-                        match_score=m.score,
-                        ocr_conf=line.confidence,
-                        evidence_kind=ocr_result.evidence_kind,
-                        agreement_count=agreement_count[m.candidate],
-                    )
-                    grouped[m.candidate].append(
-                        BrandCandidate(
-                            name=m.candidate,
-                            score=round(conf01 * 100.0, 2),
-                            evidence=self._evidence_label(ocr_result.evidence_kind),
-                            metadata={
-                                "confidence_01": round(conf01, 3),
-                                "ocr_confidence": round(line.confidence, 3),
-                                "match_score": round(m.score, 2),
-                                "source_text": line.text,
-                                "evidence_kind": ocr_result.evidence_kind,
-                            },
+        if not use_logo_only:
+            for ocr_result in ocr_results:
+                for line in ocr_result.lines:
+                    matches = self.matcher.match_text(line.text)
+                    filtered_matches = self._filter_matches_for_line(line.text, line.confidence, matches)
+                    for m in filtered_matches[:3]:
+                        conf01 = score_ocr_candidate(
+                            match_score=m.score,
+                            ocr_conf=line.confidence,
+                            evidence_kind=ocr_result.evidence_kind,
+                            agreement_count=agreement_count[m.candidate],
                         )
-                    )
+                        grouped[m.candidate].append(
+                            BrandCandidate(
+                                name=m.candidate,
+                                score=round(conf01 * 100.0, 2),
+                                evidence=self._evidence_label(ocr_result.evidence_kind),
+                                metadata={
+                                    "confidence_01": round(conf01, 3),
+                                    "ocr_confidence": round(line.confidence, 3),
+                                    "match_score": round(m.score, 2),
+                                    "source_text": line.text,
+                                    "evidence_kind": ocr_result.evidence_kind,
+                                },
+                            )
+                        )
 
         logo_out = self.logo_classifier.predict(images)
         for cand in logo_out.candidates:
@@ -147,6 +152,8 @@ class BrandAnalyzer:
             "brand_rationale": decision.rationale,
             "ocr_backend": self.ocr.backend,
             "logo_classifier_enabled": self.config.enable_logo_classifier,
+            "logo_classifier_model_type": self.config.logo_model_type,
+            "force_logo_classifier": use_logo_only,
             "logo_classifier_model_available": logo_out.model_available,
             "gpt_vision": (
                 {

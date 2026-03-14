@@ -1,0 +1,26 @@
+<annotation>
+  <folder>BMW</folder>
+  <filename>img000484</filename>
+  <path>LogoDataset\BMW\img000484.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>818</width>
+    <height>1144</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>BMW</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>380</xmin>
+      <ymin>1017</ymin>
+      <xmax>450</xmax>
+      <ymax>1087</ymax>
+    </bndbox>
+  </object>
+</annotation>

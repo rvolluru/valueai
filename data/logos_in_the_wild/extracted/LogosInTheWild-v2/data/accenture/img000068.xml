@@ -1,0 +1,26 @@
+<annotation>
+  <folder>accenture</folder>
+  <filename>img000068</filename>
+  <path>H:\imagedataset1\accenture\img000068.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>650</width>
+    <height>366</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>accenture</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>376</xmin>
+      <ymin>298</ymin>
+      <xmax>480</xmax>
+      <ymax>330</ymax>
+    </bndbox>
+  </object>
+</annotation>

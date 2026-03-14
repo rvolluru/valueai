@@ -1,0 +1,26 @@
+<annotation>
+  <folder>airhawk</folder>
+  <filename>img000030</filename>
+  <path>LogoDataset\airhawk\img000030.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>600</width>
+    <height>471</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>Boulevard</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>210</xmin>
+      <ymin>378</ymin>
+      <xmax>371</xmax>
+      <ymax>425</ymax>
+    </bndbox>
+  </object>
+</annotation>

@@ -1,0 +1,26 @@
+<annotation>
+  <folder>armitron</folder>
+  <filename>img000175</filename>
+  <path>LogoDataset\armitron\img000175.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>736</width>
+    <height>736</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>armitron</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>317</xmin>
+      <ymin>349</ymin>
+      <xmax>381</xmax>
+      <ymax>364</ymax>
+    </bndbox>
+  </object>
+</annotation>

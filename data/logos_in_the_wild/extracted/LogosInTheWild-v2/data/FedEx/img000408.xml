@@ -1,0 +1,26 @@
+<annotation>
+  <folder>FedEx</folder>
+  <filename>img000408</filename>
+  <path>LogoDataset\FedEx\img000408.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>3709</width>
+    <height>2704</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>federalexpress</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>947</xmin>
+      <ymin>1077</ymin>
+      <xmax>1367</xmax>
+      <ymax>1204</ymax>
+    </bndbox>
+  </object>
+</annotation>

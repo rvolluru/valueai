@@ -1,0 +1,26 @@
+<annotation>
+  <folder>honda</folder>
+  <filename>img000233</filename>
+  <path>LogoDataset\honda\img000233.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>560</width>
+    <height>348</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>honda-logo</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>438</xmin>
+      <ymin>169</ymin>
+      <xmax>455</xmax>
+      <ymax>185</ymax>
+    </bndbox>
+  </object>
+</annotation>

@@ -1,0 +1,38 @@
+<annotation>
+  <folder>wells fargo</folder>
+  <filename>img000153</filename>
+  <path>LogoDataset\wells fargo\img000153.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>573</width>
+    <height>300</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>WellsFargo</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>101</xmin>
+      <ymin>2</ymin>
+      <xmax>152</xmax>
+      <ymax>55</ymax>
+    </bndbox>
+  </object>
+  <object>
+    <name>WellsFargo</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>451</xmin>
+      <ymin>106</ymin>
+      <xmax>503</xmax>
+      <ymax>135</ymax>
+    </bndbox>
+  </object>
+</annotation>

@@ -1,0 +1,26 @@
+<annotation>
+  <folder>benrus</folder>
+  <filename>img000049</filename>
+  <path>LogoDataset\benrus\img000049.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>600</width>
+    <height>450</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>benrus-teilsichtbar</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>278</xmin>
+      <ymin>175</ymin>
+      <xmax>318</xmax>
+      <ymax>184</ymax>
+    </bndbox>
+  </object>
+</annotation>

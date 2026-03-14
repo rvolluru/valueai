@@ -1,0 +1,26 @@
+<annotation>
+  <folder>amazon</folder>
+  <filename>img000093</filename>
+  <path>LogoDataset\amazon\img000093.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>590</width>
+    <height>350</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>amazon</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>386</xmin>
+      <ymin>143</ymin>
+      <xmax>526</xmax>
+      <ymax>191</ymax>
+    </bndbox>
+  </object>
+</annotation>

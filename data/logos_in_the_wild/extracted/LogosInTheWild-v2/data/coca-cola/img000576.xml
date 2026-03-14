@@ -1,0 +1,26 @@
+<annotation>
+  <folder>coca-cola</folder>
+  <filename>img000576</filename>
+  <path>LogoDataset\coca-cola\img000576.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>306</width>
+    <height>545</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>coca-cola</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>96</xmin>
+      <ymin>70</ymin>
+      <xmax>221</xmax>
+      <ymax>480</ymax>
+    </bndbox>
+  </object>
+</annotation>

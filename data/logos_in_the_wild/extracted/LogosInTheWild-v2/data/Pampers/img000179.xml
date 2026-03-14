@@ -1,0 +1,26 @@
+<annotation>
+  <folder>Pampers</folder>
+  <filename>img000179</filename>
+  <path>LogoDataset\Pampers\img000179.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>438</width>
+    <height>531</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>pampers</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>91</xmin>
+      <ymin>40</ymin>
+      <xmax>242</xmax>
+      <ymax>141</ymax>
+    </bndbox>
+  </object>
+</annotation>

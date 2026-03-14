@@ -35,17 +35,6 @@ resource "aws_subnet" "private" {
   tags = { Name = "${var.project_name}-private-${count.index + 1}" }
 }
 
-resource "aws_eip" "nat" {
-  domain = "vpc"
-}
-
-resource "aws_nat_gateway" "this" {
-  allocation_id = aws_eip.nat.id
-  subnet_id     = aws_subnet.public[0].id
-  tags = { Name = "${var.project_name}-nat" }
-  depends_on = [aws_internet_gateway.this]
-}
-
 resource "aws_route_table" "public" {
   vpc_id = aws_vpc.this.id
   route {
@@ -58,20 +47,6 @@ resource "aws_route_table_association" "public" {
   count          = 2
   subnet_id      = aws_subnet.public[count.index].id
   route_table_id = aws_route_table.public.id
-}
-
-resource "aws_route_table" "private" {
-  vpc_id = aws_vpc.this.id
-  route {
-    cidr_block     = "0.0.0.0/0"
-    nat_gateway_id = aws_nat_gateway.this.id
-  }
-}
-
-resource "aws_route_table_association" "private" {
-  count          = 2
-  subnet_id      = aws_subnet.private[count.index].id
-  route_table_id = aws_route_table.private.id
 }
 
 resource "aws_s3_bucket" "uploads" {
@@ -263,6 +238,10 @@ resource "aws_ecs_task_definition" "api" {
   memory                   = 2048
   execution_role_arn       = aws_iam_role.ecs_task_execution.arn
   task_role_arn            = aws_iam_role.ecs_task.arn
+  runtime_platform {
+    cpu_architecture        = "ARM64"
+    operating_system_family = "LINUX"
+  }
 
   container_definitions = jsonencode([
     {
@@ -278,6 +257,23 @@ resource "aws_ecs_task_definition" "api" {
         { name = "S3_BUCKET", value = aws_s3_bucket.uploads.bucket },
         { name = "S3_REGION", value = var.aws_region },
         { name = "DATABASE_URL", value = "postgresql://${var.db_username}:${var.db_password}@${aws_db_instance.postgres.address}:5432/${var.db_name}" },
+        { name = "OPENAI_API_KEY", value = var.openai_api_key },
+        { name = "CLERK_ENABLED", value = tostring(var.clerk_enabled) },
+        { name = "CLERK_ISSUER", value = var.clerk_issuer },
+        { name = "CLERK_JWKS_URL", value = var.clerk_jwks_url },
+        { name = "CLERK_AUDIENCE", value = var.clerk_audience },
+        { name = "CLERK_AUTHORIZED_PARTIES", value = var.clerk_authorized_parties },
+        { name = "BRAND_ENABLE_GPT_VISION", value = tostring(var.brand_enable_gpt_vision) },
+        { name = "FIRECRAWL_API_KEY", value = var.firecrawl_api_key },
+        { name = "VALUATION_USE_FIRECRAWL", value = tostring(var.valuation_use_firecrawl) },
+        { name = "VALUATION_ENABLED", value = tostring(var.valuation_enabled) },
+        { name = "VALUATION_PROVIDERS", value = var.valuation_providers },
+        { name = "VALUATION_MIN_COMPS", value = tostring(var.valuation_min_comps) },
+        { name = "VALUATION_MAX_COMPS", value = tostring(var.valuation_max_comps) },
+        { name = "VALUATION_CURRENCY", value = var.valuation_currency },
+        { name = "VALUATION_PROVIDER_TIMEOUT_S", value = tostring(var.valuation_provider_timeout_s) },
+        { name = "VALUATION_PROVIDER_USER_AGENT", value = var.valuation_provider_user_agent },
+        { name = "EBAY_APP_ID", value = var.ebay_app_id },
         { name = "BRAND_ACCEPT_SCORE", value = tostring(var.brand_accept_score) },
         { name = "BRAND_ACCEPT_SCORE_LOW", value = tostring(var.brand_accept_score_low) },
         { name = "BRAND_GAP_MIN", value = tostring(var.brand_gap_min) }
@@ -302,9 +298,11 @@ resource "aws_ecs_service" "api" {
   launch_type     = "FARGATE"
 
   network_configuration {
-    subnets          = aws_subnet.private[*].id
+    # Cheaper MVP option: run Fargate tasks in public subnets (ALB still fronts traffic).
+    # This avoids NAT Gateway hourly cost while preserving private RDS subnets.
+    subnets          = aws_subnet.public[*].id
     security_groups  = [aws_security_group.ecs.id]
-    assign_public_ip = false
+    assign_public_ip = true
   }
 
   load_balancer {

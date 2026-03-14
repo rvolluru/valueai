@@ -1,0 +1,26 @@
+<annotation>
+  <folder>IKEA</folder>
+  <filename>img000027</filename>
+  <path>LogoDataset\IKEA\img000027.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>1200</width>
+    <height>857</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>IKEA</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>377</xmin>
+      <ymin>230</ymin>
+      <xmax>901</xmax>
+      <ymax>393</ymax>
+    </bndbox>
+  </object>
+</annotation>

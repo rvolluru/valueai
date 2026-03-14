@@ -1,0 +1,38 @@
+<annotation>
+  <folder>mastercard</folder>
+  <filename>img000020</filename>
+  <path>LogoDataset\mastercard\img000020.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>635</width>
+    <height>423</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>pay pal</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>177</xmin>
+      <ymin>241</ymin>
+      <xmax>426</xmax>
+      <ymax>310</ymax>
+    </bndbox>
+  </object>
+  <object>
+    <name>pay pal-logo</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>242</xmin>
+      <ymin>81</ymin>
+      <xmax>375</xmax>
+      <ymax>232</ymax>
+    </bndbox>
+  </object>
+</annotation>

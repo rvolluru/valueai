@@ -1,0 +1,26 @@
+<annotation>
+  <folder>costco</folder>
+  <filename>img000046</filename>
+  <path>LogoDataset\costco\img000046.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>1100</width>
+    <height>499</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>thehomedepot</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>223</xmin>
+      <ymin>156</ymin>
+      <xmax>979</xmax>
+      <ymax>245</ymax>
+    </bndbox>
+  </object>
+</annotation>

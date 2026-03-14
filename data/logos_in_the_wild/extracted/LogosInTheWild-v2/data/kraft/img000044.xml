@@ -1,0 +1,26 @@
+<annotation>
+  <folder>kraft</folder>
+  <filename>img000044</filename>
+  <path>LogoDataset\kraft\img000044.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>2704</width>
+    <height>2194</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>koolaid</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>1695</xmin>
+      <ymin>1265</ymin>
+      <xmax>2069</xmax>
+      <ymax>1436</ymax>
+    </bndbox>
+  </object>
+</annotation>

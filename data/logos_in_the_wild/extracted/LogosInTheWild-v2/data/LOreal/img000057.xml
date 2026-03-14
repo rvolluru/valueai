@@ -1,0 +1,26 @@
+<annotation>
+  <folder>LOreal</folder>
+  <filename>img000057</filename>
+  <path>LogoDataset\LOreal\img000057.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>2448</width>
+    <height>3264</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>loreal</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>869</xmin>
+      <ymin>1</ymin>
+      <xmax>1681</xmax>
+      <ymax>244</ymax>
+    </bndbox>
+  </object>
+</annotation>

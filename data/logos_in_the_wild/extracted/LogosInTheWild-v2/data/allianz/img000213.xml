@@ -1,0 +1,26 @@
+<annotation>
+  <folder>allianz</folder>
+  <filename>img000213</filename>
+  <path>LogoDataset\allianz\img000213.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>759</width>
+    <height>500</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>mercedes</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>361</xmin>
+      <ymin>44</ymin>
+      <xmax>407</xmax>
+      <ymax>75</ymax>
+    </bndbox>
+  </object>
+</annotation>

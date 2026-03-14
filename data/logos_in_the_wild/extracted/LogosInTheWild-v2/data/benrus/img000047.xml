@@ -1,0 +1,26 @@
+<annotation>
+  <folder>benrus</folder>
+  <filename>img000047</filename>
+  <path>LogoDataset\benrus\img000047.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>800</width>
+    <height>800</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>benrus</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>327</xmin>
+      <ymin>223</ymin>
+      <xmax>466</xmax>
+      <ymax>243</ymax>
+    </bndbox>
+  </object>
+</annotation>

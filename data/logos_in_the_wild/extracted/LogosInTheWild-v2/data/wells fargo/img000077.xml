@@ -1,0 +1,38 @@
+<annotation>
+  <folder>wells fargo</folder>
+  <filename>img000077</filename>
+  <path>LogoDataset\wells fargo\img000077.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>255</width>
+    <height>169</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>WellsFargo</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>190</xmin>
+      <ymin>21</ymin>
+      <xmax>230</xmax>
+      <ymax>43</ymax>
+    </bndbox>
+  </object>
+  <object>
+    <name>VISA</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>185</xmin>
+      <ymin>128</ymin>
+      <xmax>235</xmax>
+      <ymax>146</ymax>
+    </bndbox>
+  </object>
+</annotation>

@@ -1,0 +1,38 @@
+<annotation>
+  <folder>kraft</folder>
+  <filename>img000092</filename>
+  <path>LogoDataset\kraft\img000092.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>600</width>
+    <height>600</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>kraft</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>178</xmin>
+      <ymin>252</ymin>
+      <xmax>253</xmax>
+      <ymax>284</ymax>
+    </bndbox>
+  </object>
+  <object>
+    <name>cool whip</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>155</xmin>
+      <ymin>237</ymin>
+      <xmax>471</xmax>
+      <ymax>384</ymax>
+    </bndbox>
+  </object>
+</annotation>

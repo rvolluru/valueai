@@ -126,8 +126,41 @@ def http_get_json(
 
 
 def build_search_query(*parts: str | None) -> str:
-    tokens = [p.strip() for p in parts if p and p.strip()]
-    return " ".join(tokens)
+    cleaned_parts = [p.strip() for p in parts if p and p.strip()]
+    deduped: list[str] = []
+
+    def normalize(text: str) -> str:
+        return re.sub(r"[^a-z0-9]+", " ", text.casefold()).strip()
+
+    for part in cleaned_parts:
+        normalized_part = normalize(part)
+        if not normalized_part:
+            continue
+        skip = False
+        replace_index: int | None = None
+        for idx, existing in enumerate(deduped):
+            normalized_existing = normalize(existing)
+            if normalized_part == normalized_existing:
+                skip = True
+                break
+            if normalized_part in normalized_existing:
+                skip = True
+                break
+            if normalized_existing in normalized_part:
+                if normalized_part.startswith(f"{normalized_existing} "):
+                    replace_index = idx
+                    break
+                if len(normalized_existing.split()) >= 3:
+                    replace_index = idx
+                    break
+        if skip:
+            continue
+        if replace_index is not None:
+            deduped[replace_index] = part
+        else:
+            deduped.append(part)
+
+    return " ".join(deduped)
 
 
 def extract_json_ld_objects(html: str) -> list[dict[str, Any]]:
@@ -259,5 +292,12 @@ def best_url(obj: dict[str, Any], site_origin: str) -> str | None:
     return None
 
 
-def query_for_request(brand: str, category: str, model_hint: str | None, title_hint: str | None) -> str:
-    return build_search_query(brand, model_hint, title_hint, category)
+def query_for_request(
+    brand: str,
+    category: str,
+    model_hint: str | None,
+    title_hint: str | None,
+    item_description: str | None = None,
+    size: str | None = None,
+) -> str:
+    return build_search_query(brand, item_description, model_hint, title_hint, size, category)

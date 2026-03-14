@@ -1,0 +1,26 @@
+<annotation>
+  <folder>philips</folder>
+  <filename>img000053</filename>
+  <path>LogoDataset\philips\img000053.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>497</width>
+    <height>448</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>philips</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>172</xmin>
+      <ymin>29</ymin>
+      <xmax>225</xmax>
+      <ymax>49</ymax>
+    </bndbox>
+  </object>
+</annotation>

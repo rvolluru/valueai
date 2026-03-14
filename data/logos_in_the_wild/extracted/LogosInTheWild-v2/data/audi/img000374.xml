@@ -1,0 +1,26 @@
+<annotation>
+  <folder>audi</folder>
+  <filename>img000374</filename>
+  <path>LogoDataset\audi\img000374.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>304</width>
+    <height>202</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>audi-logo</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>208</xmin>
+      <ymin>111</ymin>
+      <xmax>234</xmax>
+      <ymax>122</ymax>
+    </bndbox>
+  </object>
+</annotation>

@@ -1,0 +1,38 @@
+<annotation>
+  <folder>Pampers</folder>
+  <filename>img000073</filename>
+  <path>LogoDataset\Pampers\img000073.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>360</width>
+    <height>360</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>pampers</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>139</xmin>
+      <ymin>37</ymin>
+      <xmax>246</xmax>
+      <ymax>107</ymax>
+    </bndbox>
+  </object>
+  <object>
+    <name>sesame street-teilsichtbar</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>168</xmin>
+      <ymin>316</ymin>
+      <xmax>186</xmax>
+      <ymax>330</ymax>
+    </bndbox>
+  </object>
+</annotation>

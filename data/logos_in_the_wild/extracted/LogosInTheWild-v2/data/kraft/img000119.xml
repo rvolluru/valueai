@@ -1,0 +1,26 @@
+<annotation>
+  <folder>kraft</folder>
+  <filename>img000119</filename>
+  <path>LogoDataset\kraft\img000119.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>210</width>
+    <height>210</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>kraft-teilsichtbar</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>45</xmin>
+      <ymin>50</ymin>
+      <xmax>62</xmax>
+      <ymax>57</ymax>
+    </bndbox>
+  </object>
+</annotation>

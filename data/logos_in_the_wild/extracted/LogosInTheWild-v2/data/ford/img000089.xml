@@ -1,0 +1,26 @@
+<annotation>
+  <folder>ford</folder>
+  <filename>img000089</filename>
+  <path>LogoDataset\ford\img000089.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>3200</width>
+    <height>4800</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>ford</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>1367</xmin>
+      <ymin>920</ymin>
+      <xmax>1587</xmax>
+      <ymax>1020</ymax>
+    </bndbox>
+  </object>
+</annotation>

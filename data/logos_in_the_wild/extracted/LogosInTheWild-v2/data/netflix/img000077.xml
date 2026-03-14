@@ -1,0 +1,26 @@
+<annotation>
+  <folder>netflix</folder>
+  <filename>img000077</filename>
+  <path>LogoDataset\netflix\img000077.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>900</width>
+    <height>431</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>netflix</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>582</xmin>
+      <ymin>67</ymin>
+      <xmax>625</xmax>
+      <ymax>80</ymax>
+    </bndbox>
+  </object>
+</annotation>

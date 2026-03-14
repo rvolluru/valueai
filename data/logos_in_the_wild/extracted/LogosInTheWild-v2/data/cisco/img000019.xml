@@ -1,0 +1,26 @@
+<annotation>
+  <folder>cisco</folder>
+  <filename>img000019</filename>
+  <path>LogoDataset\cisco\img000019.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>640</width>
+    <height>447</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>cisco</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>254</xmin>
+      <ymin>203</ymin>
+      <xmax>510</xmax>
+      <ymax>343</ymax>
+    </bndbox>
+  </object>
+</annotation>

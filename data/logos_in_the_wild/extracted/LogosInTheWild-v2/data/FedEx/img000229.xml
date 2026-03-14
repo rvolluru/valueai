@@ -1,0 +1,26 @@
+<annotation>
+  <folder>FedEx</folder>
+  <filename>img000229</filename>
+  <path>LogoDataset\FedEx\img000229.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>570</width>
+    <height>309</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>FedEx-teilsichtbar</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>57</xmin>
+      <ymin>186</ymin>
+      <xmax>164</xmax>
+      <ymax>208</ymax>
+    </bndbox>
+  </object>
+</annotation>

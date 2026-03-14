@@ -12,6 +12,15 @@ const brandDebugEl = document.getElementById("brandDebug");
 const conditionDebugEl = document.getElementById("conditionDebug");
 const valuationDebugEl = document.getElementById("valuationDebug");
 const rawJsonEl = document.getElementById("rawJson");
+const categoryInput = document.getElementById("category");
+const itemSizeInput = document.getElementById("itemSize");
+const itemSizeLabel = document.getElementById("itemSizeLabel");
+
+const SIZE_FIELD_META = {
+  clothes: { label: "Apparel size", placeholder: "e.g. S, M, L, 8, 10" },
+  shoes: { label: "Shoe size (US)", placeholder: "e.g. 7.5, 9, 10.5" },
+  handbag: { label: "Bag size", placeholder: "e.g. Mini, Small, Medium, Large" },
+};
 
 function setStatus(text, kind = "") {
   statusEl.textContent = text;
@@ -43,6 +52,20 @@ function renderPreviews(files) {
     };
     reader.readAsDataURL(file);
   });
+}
+
+function updateSizeInputState() {
+  const meta = SIZE_FIELD_META[categoryInput.value];
+  if (!meta) {
+    itemSizeLabel.textContent = "Item size (select category)";
+    itemSizeInput.placeholder = "Select category first";
+    itemSizeInput.value = "";
+    itemSizeInput.disabled = true;
+    return;
+  }
+  itemSizeLabel.textContent = meta.label;
+  itemSizeInput.placeholder = meta.placeholder;
+  itemSizeInput.disabled = false;
 }
 
 function renderSummaryCard(title, main, meta, pills = []) {
@@ -151,6 +174,8 @@ async function postAnalyze(formData, apiKey) {
 }
 
 imagesInput.addEventListener("change", () => renderPreviews(imagesInput.files || []));
+categoryInput.addEventListener("change", updateSizeInputState);
+updateSizeInputState();
 
 healthBtn.addEventListener("click", async () => {
   setStatus("Checking API health...");
@@ -185,18 +210,20 @@ form.addEventListener("submit", async (e) => {
 
   const apiKey = document.getElementById("apiKey").value.trim();
   const itemId = document.getElementById("itemId").value.trim();
-  if (!apiKey || !itemId) {
-    setStatus("API Key and Item ID are required.", "error");
+  if (!apiKey) {
+    setStatus("API Key is required.", "error");
     return;
   }
 
   const fd = new FormData();
-  fd.append("item_id", itemId);
+  if (itemId) fd.append("item_id", itemId);
   const category = document.getElementById("category").value;
+  const itemSize = document.getElementById("itemSize").value.trim();
   const itemDescription = document.getElementById("itemDescription").value.trim();
   const purchaseYear = document.getElementById("purchaseYear").value.trim();
   const debug = document.getElementById("debug").checked;
   if (category) fd.append("category", category);
+  if (itemSize) fd.append("item_size", itemSize);
   if (itemDescription) fd.append("item_description", itemDescription);
   if (purchaseYear) fd.append("purchase_year", purchaseYear);
   fd.append("debug", String(debug));

@@ -1,0 +1,26 @@
+<annotation>
+  <folder>esso</folder>
+  <filename>img000284</filename>
+  <path>LogoDataset\esso\img000284.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>720</width>
+    <height>477</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>esso-schriftzug</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>127</xmin>
+      <ymin>102</ymin>
+      <xmax>176</xmax>
+      <ymax>139</ymax>
+    </bndbox>
+  </object>
+</annotation>

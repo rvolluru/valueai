@@ -1,0 +1,26 @@
+<annotation>
+  <folder>Samsung</folder>
+  <filename>img000000</filename>
+  <path>LogoDataset\Samsung\img000000.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>840</width>
+    <height>630</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>samsung</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>667</xmin>
+      <ymin>145</ymin>
+      <xmax>804</xmax>
+      <ymax>196</ymax>
+    </bndbox>
+  </object>
+</annotation>

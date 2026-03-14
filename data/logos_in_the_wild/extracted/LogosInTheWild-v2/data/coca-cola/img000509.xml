@@ -1,0 +1,26 @@
+<annotation>
+  <folder>coca-cola</folder>
+  <filename>img000509</filename>
+  <path>LogoDataset\coca-cola\img000509.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>610</width>
+    <height>540</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>coca-cola-teilsichtbar</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>203</xmin>
+      <ymin>199</ymin>
+      <xmax>304</xmax>
+      <ymax>255</ymax>
+    </bndbox>
+  </object>
+</annotation>

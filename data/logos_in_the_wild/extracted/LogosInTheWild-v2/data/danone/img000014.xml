@@ -1,0 +1,26 @@
+<annotation>
+  <folder>danone</folder>
+  <filename>img000014</filename>
+  <path>LogoDataset\danone\img000014.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>468</width>
+    <height>329</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>danone</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>247</xmin>
+      <ymin>35</ymin>
+      <xmax>341</xmax>
+      <ymax>62</ymax>
+    </bndbox>
+  </object>
+</annotation>

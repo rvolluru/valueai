@@ -1,6 +1,6 @@
 PYTHON ?= python3
 
-.PHONY: run test lint
+.PHONY: run test lint train-logo-yolo-litw
 
 run:
 	PYTHONPATH=apps/api:packages/brand/src:packages/condition/src:packages/valuation/src $(PYTHON) -m uvicorn app.main:app --app-dir apps/api --reload --host 0.0.0.0 --port 8000
@@ -10,3 +10,6 @@ test:
 
 lint:
 	$(PYTHON) -m ruff check .
+
+train-logo-yolo-litw:
+	PYTHONPATH=apps/api:packages/brand/src:packages/condition/src:packages/valuation/src $(PYTHON) scripts/train_logo_yolo_litw.py

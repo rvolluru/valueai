@@ -1,0 +1,26 @@
+<annotation>
+  <folder>chevrolet</folder>
+  <filename>img000001</filename>
+  <path>LogoDataset\chevrolet\img000001.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>399</width>
+    <height>200</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>chevrolet-logo</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>216</xmin>
+      <ymin>116</ymin>
+      <xmax>233</xmax>
+      <ymax>128</ymax>
+    </bndbox>
+  </object>
+</annotation>

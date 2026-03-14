@@ -1,0 +1,26 @@
+<annotation>
+  <folder>kraft</folder>
+  <filename>img000083</filename>
+  <path>LogoDataset\kraft\img000083.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>640</width>
+    <height>360</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>stove top</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>56</xmin>
+      <ymin>289</ymin>
+      <xmax>96</xmax>
+      <ymax>318</ymax>
+    </bndbox>
+  </object>
+</annotation>

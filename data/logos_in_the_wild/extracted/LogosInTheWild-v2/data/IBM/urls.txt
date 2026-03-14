@@ -1,0 +1,16 @@
+000002	http://cdn3.spiegel.de/images/image-725546-galleryV9-rqxe-725546.jpg
+000003	http://www.zdnet.de/wp-content/uploads/2016/07/Cisco-IBM-Kollaboration-Kooperation-800.jpg
+000004	http://assets.wallstreet-online.de/_media/8276/2017/03/22/size_645/4b1dfc9a01b01152d0f4eecaa1695c2e-0.jpg
+000008	http://www.handelsblatt.com/images/-ibms-supercomputer-watson/14638612/2-format2010.jpg
+000010	http://www.handelsblatt.com/images/ibm/19279346/4-format2010.jpg
+000011	http://images.computerwoche.de/images/computerwoche/bdb/2603276/400x225.jpg
+000013	http://www.silicon.de/wp-content/uploads/2015/01/ibm-800.jpg
+000018	http://media1.faz.net/ppmedia/2732892764/1.4912509/article_multimedia_overview/quantencomputer-fuer-die-masse.jpg
+000021	http://bilder4.n-tv.de/img/incoming/origs17500091/9592531193-w1280-h960/67586054.jpg
+000023	http://bilder.augsburger-allgemeine.de/img/wirtschaft/origs37675912/0367701656-w572-h960/IBM-kaempft-seit-Jahren-mit-einem-Umsatzrueckgang-und-befindet-sich-in-einem-Dauer-Umbau.jpg
+000032	http://assets.wallstreet-online.de/_media/8276/2017/03/22/4b1dfc9a01b01152d0f4eecaa1695c2e-2.jpg
+000042	http://icdn3.digitaltrends.com/image/ibm-thinkpad-770e-afj-keyboard-1500x1000.jpg
+000044	http://cdn3.spiegel.de/images/image-725546-breitwandaufmacher-rqxe-725546.jpg
+000052	http://www.kassenhaus24.de/item/images/746/1000x1000/surepos300-32h.jpg
+000053	http://media0.faz.net/ppmedia/aktuell/finanzen/116334099/1.3865864/article_aufmacher_gross/ibm.jpg
+000054	http://trustpromotion.de/wp-content/uploads/2016/05/IBM-Rioadshow.jpg

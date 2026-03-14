@@ -1,0 +1,38 @@
+<annotation>
+  <folder>American Express</folder>
+  <filename>img000186</filename>
+  <path>LogoDataset\American Express\img000186.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>864</width>
+    <height>479</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>american express</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>56</xmin>
+      <ymin>158</ymin>
+      <xmax>233</xmax>
+      <ymax>288</ymax>
+    </bndbox>
+  </object>
+  <object>
+    <name>american express</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>802</xmin>
+      <ymin>35</ymin>
+      <xmax>835</xmax>
+      <ymax>51</ymax>
+    </bndbox>
+  </object>
+</annotation>

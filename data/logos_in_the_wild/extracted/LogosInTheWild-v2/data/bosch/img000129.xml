@@ -1,0 +1,26 @@
+<annotation>
+  <folder>bosch</folder>
+  <filename>img000129</filename>
+  <path>LogoDataset\bosch\img000129.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>590</width>
+    <height>354</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>bosch-schriftzug</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>236</xmin>
+      <ymin>33</ymin>
+      <xmax>365</xmax>
+      <ymax>75</ymax>
+    </bndbox>
+  </object>
+</annotation>

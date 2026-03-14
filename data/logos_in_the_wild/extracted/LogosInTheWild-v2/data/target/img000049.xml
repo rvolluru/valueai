@@ -1,0 +1,26 @@
+<annotation>
+  <folder>target</folder>
+  <filename>img000049</filename>
+  <path>LogoDataset\target\img000049.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>652</width>
+    <height>367</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>target-logo</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>250</xmin>
+      <ymin>104</ymin>
+      <xmax>280</xmax>
+      <ymax>140</ymax>
+    </bndbox>
+  </object>
+</annotation>

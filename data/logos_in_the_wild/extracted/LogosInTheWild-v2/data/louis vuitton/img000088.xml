@@ -1,0 +1,50 @@
+<annotation>
+  <folder>louis vuitton</folder>
+  <filename>img000088</filename>
+  <path>LogoDataset\louis vuitton\img000088.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>2000</width>
+    <height>2000</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>VL-logo</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>932</xmin>
+      <ymin>1324</ymin>
+      <xmax>1139</xmax>
+      <ymax>1524</ymax>
+    </bndbox>
+  </object>
+  <object>
+    <name>VL-logo</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>1035</xmin>
+      <ymin>1141</ymin>
+      <xmax>1116</xmax>
+      <ymax>1207</ymax>
+    </bndbox>
+  </object>
+  <object>
+    <name>VL-logo</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>654</xmin>
+      <ymin>1465</ymin>
+      <xmax>682</xmax>
+      <ymax>1553</ymax>
+    </bndbox>
+  </object>
+</annotation>

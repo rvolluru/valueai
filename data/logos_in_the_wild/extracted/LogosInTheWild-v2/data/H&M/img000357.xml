@@ -1,0 +1,26 @@
+<annotation>
+  <folder>H&amp;M</folder>
+  <filename>img000357</filename>
+  <path>LogoDataset\H&amp;M\img000357.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>350</width>
+    <height>231</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>h&amp;m</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>158</xmin>
+      <ymin>2</ymin>
+      <xmax>207</xmax>
+      <ymax>35</ymax>
+    </bndbox>
+  </object>
+</annotation>

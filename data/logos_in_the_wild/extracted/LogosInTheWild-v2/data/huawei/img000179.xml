@@ -1,0 +1,26 @@
+<annotation>
+  <folder>huawei</folder>
+  <filename>img000179</filename>
+  <path>LogoDataset\huawei\img000179.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>645</width>
+    <height>362</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>facebook</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>265</xmin>
+      <ymin>130</ymin>
+      <xmax>285</xmax>
+      <ymax>154</ymax>
+    </bndbox>
+  </object>
+</annotation>

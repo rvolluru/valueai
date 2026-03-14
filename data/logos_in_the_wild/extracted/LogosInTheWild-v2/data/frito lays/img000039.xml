@@ -1,0 +1,26 @@
+<annotation>
+  <folder>frito lays</folder>
+  <filename>img000039</filename>
+  <path>LogoDataset\frito lays\img000039.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>215</width>
+    <height>278</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>Lays</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>73</xmin>
+      <ymin>37</ymin>
+      <xmax>137</xmax>
+      <ymax>93</ymax>
+    </bndbox>
+  </object>
+</annotation>

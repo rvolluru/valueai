@@ -34,6 +34,25 @@ Then open the built-in UI at:
 make test
 ```
 
+## Train YOLO Logo Model (Logos in the Wild v2)
+
+```bash
+python3 -m pip install -e '.[ml]'
+make train-logo-yolo-litw
+```
+
+This downloads `LogosInTheWild-v2.zip`, prepares YOLO labels under
+`data/logo_yolo_litw`, and trains a YOLO model.
+
+After training, set in `.env`:
+
+```bash
+BRAND_LOGO_MODEL_TYPE=yolo
+BRAND_ENABLE_LOGO_CLASSIFIER=true
+BRAND_FORCE_LOGO_CLASSIFIER=true
+BRAND_LOGO_YOLO_WEIGHTS_PATH=<path-to-best.pt>
+```
+
 ## Docker Compose (API + Postgres + MinIO)
 
 ```bash

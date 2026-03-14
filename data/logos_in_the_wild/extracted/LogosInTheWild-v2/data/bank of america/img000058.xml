@@ -1,0 +1,26 @@
+<annotation>
+  <folder>bank of america</folder>
+  <filename>img000058</filename>
+  <path>LogoDataset\bank of america\img000058.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>1704</width>
+    <height>2272</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>at&amp;t</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>331</xmin>
+      <ymin>890</ymin>
+      <xmax>457</xmax>
+      <ymax>945</ymax>
+    </bndbox>
+  </object>
+</annotation>

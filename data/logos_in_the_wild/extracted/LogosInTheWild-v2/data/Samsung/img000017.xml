@@ -1,0 +1,26 @@
+<annotation>
+  <folder>Samsung</folder>
+  <filename>img000017</filename>
+  <path>LogoDataset\Samsung\img000017.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>550</width>
+    <height>309</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>samsung-teilsichtbar</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>227</xmin>
+      <ymin>212</ymin>
+      <xmax>284</xmax>
+      <ymax>270</ymax>
+    </bndbox>
+  </object>
+</annotation>

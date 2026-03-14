@@ -1,0 +1,26 @@
+<annotation>
+  <folder>athalon</folder>
+  <filename>img000024</filename>
+  <path>LogoDataset\athalon\img000024.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>750</width>
+    <height>750</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>athalon-logo</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>352</xmin>
+      <ymin>334</ymin>
+      <xmax>383</xmax>
+      <ymax>375</ymax>
+    </bndbox>
+  </object>
+</annotation>

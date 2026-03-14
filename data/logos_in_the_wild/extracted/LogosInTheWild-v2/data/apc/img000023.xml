@@ -1,0 +1,26 @@
+<annotation>
+  <folder>apc</folder>
+  <filename>img000023</filename>
+  <path>LogoDataset\apc\img000023.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>620</width>
+    <height>726</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>APC</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>251</xmin>
+      <ymin>457</ymin>
+      <xmax>343</xmax>
+      <ymax>487</ymax>
+    </bndbox>
+  </object>
+</annotation>

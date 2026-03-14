@@ -1,0 +1,26 @@
+<annotation>
+  <folder>costco</folder>
+  <filename>img000091</filename>
+  <path>LogoDataset\costco\img000091.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>538</width>
+    <height>360</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>costco-schriftzug</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>202</xmin>
+      <ymin>112</ymin>
+      <xmax>325</xmax>
+      <ymax>138</ymax>
+    </bndbox>
+  </object>
+</annotation>

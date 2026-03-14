@@ -1,0 +1,26 @@
+<annotation>
+  <folder>kia</folder>
+  <filename>img000283</filename>
+  <path>LogoDataset\kia\img000283.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>3888</width>
+    <height>2592</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>toronto</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>2193</xmin>
+      <ymin>1443</ymin>
+      <xmax>2380</xmax>
+      <ymax>1637</ymax>
+    </bndbox>
+  </object>
+</annotation>

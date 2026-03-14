@@ -1,0 +1,26 @@
+<annotation>
+  <folder>bellabeat</folder>
+  <filename>img000009</filename>
+  <path>LogoDataset\bellabeat\img000009.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>1600</width>
+    <height>1387</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>bellabeat</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>807</xmin>
+      <ymin>1080</ymin>
+      <xmax>1032</xmax>
+      <ymax>1129</ymax>
+    </bndbox>
+  </object>
+</annotation>

@@ -1,0 +1,26 @@
+<annotation>
+  <folder>nissan</folder>
+  <filename>img000156</filename>
+  <path>LogoDataset\nissan\img000156.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>1720</width>
+    <height>660</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>nissan-logo-teilsichtbar</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>881</xmin>
+      <ymin>418</ymin>
+      <xmax>914</xmax>
+      <ymax>450</ymax>
+    </bndbox>
+  </object>
+</annotation>

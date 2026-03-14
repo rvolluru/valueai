@@ -1,0 +1,50 @@
+<annotation>
+  <folder>red bull</folder>
+  <filename>img000611</filename>
+  <path>LogoDataset\red bull\img000611.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>2560</width>
+    <height>1600</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>RedBull-logo</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>612</xmin>
+      <ymin>772</ymin>
+      <xmax>969</xmax>
+      <ymax>1107</ymax>
+    </bndbox>
+  </object>
+  <object>
+    <name>RedBull</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>590</xmin>
+      <ymin>1068</ymin>
+      <xmax>884</xmax>
+      <ymax>1242</ymax>
+    </bndbox>
+  </object>
+  <object>
+    <name>Castrol</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>432</xmin>
+      <ymin>899</ymin>
+      <xmax>590</xmax>
+      <ymax>1003</ymax>
+    </bndbox>
+  </object>
+</annotation>

@@ -1,4 +1,5 @@
 from __future__ import annotations
+import json
 import re
 
 from valuation.types import MarketComp, ValuationRequest
@@ -27,7 +28,14 @@ class RebagProvider(CompsProvider):
         self.last_debug = {}
 
     def fetch_comps(self, request: ValuationRequest) -> list[MarketComp]:
-        query = query_for_request(request.brand, request.category, request.model_hint, request.title_hint)
+        query = query_for_request(
+            request.brand,
+            request.category,
+            request.model_hint,
+            request.title_hint,
+            request.item_description,
+            request.size,
+        )
         html = None
         fetched_from = None
         request_url = None
@@ -137,7 +145,110 @@ class RebagProvider(CompsProvider):
                 )
                 if len(out) >= 25:
                     break
-        return out[:25], {"json_ld_count": json_ld_count, "next_data_found": bool(next_data)}
+
+        shopify_products = self._extract_shopify_products(html)
+        if shopify_products and len(out) < 25:
+            for product in shopify_products:
+                if not isinstance(product, dict):
+                    continue
+                title = self._shopify_product_title(product)
+                if not title:
+                    continue
+                handle = str(product.get("handle") or "").strip()
+                url = (
+                    f"https://shop.rebag.com/products/{handle}"
+                    if handle
+                    else None
+                )
+                variants = product.get("variants") if isinstance(product.get("variants"), list) else []
+                variant = variants[0] if variants and isinstance(variants[0], dict) else {}
+                raw_price = variant.get("price")
+                if isinstance(raw_price, str) and raw_price.isdigit():
+                    price = float(raw_price) / 100.0
+                elif isinstance(raw_price, (int, float)):
+                    price = float(raw_price) / 100.0 if float(raw_price) > 10000 else float(raw_price)
+                else:
+                    price = None
+                if price is None or price <= 0:
+                    continue
+                key = (title, float(price))
+                if key in seen:
+                    continue
+                seen.add(key)
+                out.append(
+                    MarketComp(
+                        source="rebag",
+                        title=title,
+                        price=float(price),
+                        currency="USD",
+                        is_sold=False,
+                        url=url,
+                        metadata={"parsed_from": "shopify_meta_products"},
+                    )
+                )
+                if len(out) >= 25:
+                    break
+
+        return out[:25], {
+            "json_ld_count": json_ld_count,
+            "next_data_found": bool(next_data),
+            "shopify_products_count": len(shopify_products),
+        }
+
+    def _extract_shopify_products(self, html: str) -> list[dict]:
+        marker = "var meta ="
+        start = html.find(marker)
+        if start == -1:
+            return []
+        brace_start = html.find("{", start)
+        if brace_start == -1:
+            return []
+        depth = 0
+        in_string = False
+        escape = False
+        end = -1
+        for idx in range(brace_start, len(html)):
+            ch = html[idx]
+            if in_string:
+                if escape:
+                    escape = False
+                elif ch == "\\":
+                    escape = True
+                elif ch == '"':
+                    in_string = False
+                continue
+            if ch == '"':
+                in_string = True
+            elif ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    end = idx + 1
+                    break
+        if end == -1:
+            return []
+        try:
+            data = json.loads(html[brace_start:end])
+        except Exception:
+            return []
+        products = data.get("products")
+        return [p for p in products if isinstance(p, dict)] if isinstance(products, list) else []
+
+    def _shopify_product_title(self, product: dict) -> str | None:
+        vendor = str(product.get("vendor") or "").strip()
+        variants = product.get("variants") if isinstance(product.get("variants"), list) else []
+        variant = variants[0] if variants and isinstance(variants[0], dict) else {}
+        variant_name = str(variant.get("name") or product.get("title") or "").strip()
+        if " - " in variant_name:
+            variant_name = variant_name.split(" - ", 1)[0]
+        if not variant_name:
+            variant_name = str(product.get("title") or "").strip()
+        parts = [vendor, variant_name]
+        title = " ".join(part for part in parts if part)
+        title = re.sub(r"\s*\/\s*", " ", title)
+        title = " ".join(title.split())
+        return title or None
 
     def _parse_markdown(self, markdown: str) -> tuple[list[MarketComp], int]:
         out: list[MarketComp] = []

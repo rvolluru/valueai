@@ -1,0 +1,26 @@
+<annotation>
+  <folder>panasonic</folder>
+  <filename>img000065</filename>
+  <path>LogoDataset\panasonic\img000065.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>640</width>
+    <height>475</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>panasonic</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>39</xmin>
+      <ymin>256</ymin>
+      <xmax>121</xmax>
+      <ymax>272</ymax>
+    </bndbox>
+  </object>
+</annotation>

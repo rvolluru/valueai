@@ -1,0 +1,26 @@
+<annotation>
+  <folder>kia</folder>
+  <filename>img000245</filename>
+  <path>LogoDataset\kia\img000245.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>740</width>
+    <height>400</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>KIA-logo</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>574</xmin>
+      <ymin>240</ymin>
+      <xmax>628</xmax>
+      <ymax>272</ymax>
+    </bndbox>
+  </object>
+</annotation>

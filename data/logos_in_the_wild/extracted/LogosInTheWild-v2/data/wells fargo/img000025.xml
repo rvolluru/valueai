@@ -1,0 +1,26 @@
+<annotation>
+  <folder>wells fargo</folder>
+  <filename>img000025</filename>
+  <path>LogoDataset\wells fargo\img000025.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>750</width>
+    <height>421</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>WellsFargo-teilsichtbar</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>659</xmin>
+      <ymin>74</ymin>
+      <xmax>750</xmax>
+      <ymax>101</ymax>
+    </bndbox>
+  </object>
+</annotation>

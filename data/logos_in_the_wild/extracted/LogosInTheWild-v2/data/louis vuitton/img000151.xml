@@ -1,0 +1,62 @@
+<annotation>
+  <folder>louis vuitton</folder>
+  <filename>img000151</filename>
+  <path>LogoDataset\louis vuitton\img000151.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>2000</width>
+    <height>2000</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>louis vuitton</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>1259</xmin>
+      <ymin>1319</ymin>
+      <xmax>1303</xmax>
+      <ymax>1382</ymax>
+    </bndbox>
+  </object>
+  <object>
+    <name>louis vuitton</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>1134</xmin>
+      <ymin>681</ymin>
+      <xmax>1178</xmax>
+      <ymax>745</ymax>
+    </bndbox>
+  </object>
+  <object>
+    <name>louis vuitton-teilsichtbar</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>854</xmin>
+      <ymin>1253</ymin>
+      <xmax>893</xmax>
+      <ymax>1276</ymax>
+    </bndbox>
+  </object>
+  <object>
+    <name>louis vuitton-teilsichtbar</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>937</xmin>
+      <ymin>1395</ymin>
+      <xmax>971</xmax>
+      <ymax>1423</ymax>
+    </bndbox>
+  </object>
+</annotation>

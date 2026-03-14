@@ -1,0 +1,26 @@
+<annotation>
+  <folder>rolex</folder>
+  <filename>img000017</filename>
+  <path>LogoDataset\rolex\img000017.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>900</width>
+    <height>900</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>ROLEX</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>378</xmin>
+      <ymin>368</ymin>
+      <xmax>461</xmax>
+      <ymax>388</ymax>
+    </bndbox>
+  </object>
+</annotation>

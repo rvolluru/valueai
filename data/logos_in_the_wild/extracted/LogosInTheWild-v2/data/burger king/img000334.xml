@@ -1,0 +1,26 @@
+<annotation>
+  <folder>burger king</folder>
+  <filename>img000334</filename>
+  <path>LogoDataset\burger king\img000334.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>594</width>
+    <height>743</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>burgerking</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>227</xmin>
+      <ymin>138</ymin>
+      <xmax>360</xmax>
+      <ymax>263</ymax>
+    </bndbox>
+  </object>
+</annotation>

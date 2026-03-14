@@ -1,0 +1,38 @@
+<annotation>
+  <folder>Pampers</folder>
+  <filename>img000129</filename>
+  <path>LogoDataset\Pampers\img000129.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>313</width>
+    <height>533</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>pampers</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>63</xmin>
+      <ymin>38</ymin>
+      <xmax>247</xmax>
+      <ymax>154</ymax>
+    </bndbox>
+  </object>
+  <object>
+    <name>sesame street</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>274</xmin>
+      <ymin>319</ymin>
+      <xmax>302</xmax>
+      <ymax>349</ymax>
+    </bndbox>
+  </object>
+</annotation>

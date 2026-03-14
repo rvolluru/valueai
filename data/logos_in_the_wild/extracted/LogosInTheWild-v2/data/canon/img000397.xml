@@ -1,0 +1,26 @@
+<annotation>
+  <folder>canon</folder>
+  <filename>img000397</filename>
+  <path>LogoDataset\canon\img000397.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>355</width>
+    <height>347</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>canon</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>209</xmin>
+      <ymin>149</ymin>
+      <xmax>242</xmax>
+      <ymax>159</ymax>
+    </bndbox>
+  </object>
+</annotation>

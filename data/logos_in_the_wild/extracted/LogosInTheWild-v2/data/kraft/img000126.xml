@@ -1,0 +1,38 @@
+<annotation>
+  <folder>kraft</folder>
+  <filename>img000126</filename>
+  <path>LogoDataset\kraft\img000126.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>1000</width>
+    <height>1000</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>owens corning</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>320</xmin>
+      <ymin>288</ymin>
+      <xmax>376</xmax>
+      <ymax>348</ymax>
+    </bndbox>
+  </object>
+  <object>
+    <name>owens corning</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>337</xmin>
+      <ymin>560</ymin>
+      <xmax>392</xmax>
+      <ymax>627</ymax>
+    </bndbox>
+  </object>
+</annotation>

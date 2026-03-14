@@ -1,0 +1,26 @@
+<annotation>
+  <folder>CVS</folder>
+  <filename>img000003</filename>
+  <path>LogoDataset\CVS\img000003.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>825</width>
+    <height>1050</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>cvspharmacy</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>281</xmin>
+      <ymin>226</ymin>
+      <xmax>526</xmax>
+      <ymax>418</ymax>
+    </bndbox>
+  </object>
+</annotation>

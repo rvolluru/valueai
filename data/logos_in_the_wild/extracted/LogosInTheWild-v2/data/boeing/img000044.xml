@@ -1,0 +1,26 @@
+<annotation>
+  <folder>boeing</folder>
+  <filename>img000044</filename>
+  <path>LogoDataset\boeing\img000044.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>470</width>
+    <height>655</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>boeing-schriftzug</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>245</xmin>
+      <ymin>318</ymin>
+      <xmax>264</xmax>
+      <ymax>336</ymax>
+    </bndbox>
+  </object>
+</annotation>

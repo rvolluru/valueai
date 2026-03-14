@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from valuation.providers.base import CompsProvider
+from valuation.providers.brand_site import BrandSiteProvider
 from valuation.providers.ebay import EbaySoldProvider
+from valuation.providers.firecrawl_agent import FirecrawlAgentProvider
 from valuation.providers.poshmark import PoshmarkProvider
 from valuation.providers.rebag import RebagProvider
 from valuation.providers.stub import StubCompsProvider
@@ -10,7 +12,9 @@ from valuation.providers.the_realreal import TheRealRealProvider
 
 PROVIDER_MAP = {
     "stub": StubCompsProvider,
+    "brand_site": BrandSiteProvider,
     "ebay": EbaySoldProvider,
+    "firecrawl_agent": FirecrawlAgentProvider,
     "poshmark": PoshmarkProvider,
     "the_realreal": TheRealRealProvider,
     "rebag": RebagProvider,

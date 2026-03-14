@@ -1,0 +1,26 @@
+<annotation>
+  <folder>Zara</folder>
+  <filename>img000065</filename>
+  <path>LogoDataset\Zara\img000065.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>2400</width>
+    <height>1199</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>ZARA</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>746</xmin>
+      <ymin>116</ymin>
+      <xmax>1321</xmax>
+      <ymax>314</ymax>
+    </bndbox>
+  </object>
+</annotation>

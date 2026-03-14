@@ -1,0 +1,26 @@
+<annotation>
+  <folder>canon</folder>
+  <filename>img000420</filename>
+  <path>LogoDataset\canon\img000420.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>3000</width>
+    <height>3000</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>ikelite</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>1642</xmin>
+      <ymin>784</ymin>
+      <xmax>1948</xmax>
+      <ymax>865</ymax>
+    </bndbox>
+  </object>
+</annotation>

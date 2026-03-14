@@ -1,0 +1,26 @@
+<annotation>
+  <folder>home depot</folder>
+  <filename>img000091</filename>
+  <path>LogoDataset\home depot\img000091.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>350</width>
+    <height>525</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>the home depot</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>1</xmin>
+      <ymin>257</ymin>
+      <xmax>318</xmax>
+      <ymax>384</ymax>
+    </bndbox>
+  </object>
+</annotation>

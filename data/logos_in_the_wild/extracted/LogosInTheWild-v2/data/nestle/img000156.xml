@@ -1,0 +1,26 @@
+<annotation>
+  <folder>nestle</folder>
+  <filename>img000156</filename>
+  <path>LogoDataset\nestle\img000156.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>864</width>
+    <height>547</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>nestle</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>501</xmin>
+      <ymin>85</ymin>
+      <xmax>535</xmax>
+      <ymax>99</ymax>
+    </bndbox>
+  </object>
+</annotation>

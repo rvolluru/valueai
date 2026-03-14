@@ -1,0 +1,50 @@
+<annotation>
+  <folder>home depot</folder>
+  <filename>img000122</filename>
+  <path>LogoDataset\home depot\img000122.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>810</width>
+    <height>450</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>the home depot</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>77</xmin>
+      <ymin>64</ymin>
+      <xmax>283</xmax>
+      <ymax>201</ymax>
+    </bndbox>
+  </object>
+  <object>
+    <name>the home depot</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>367</xmin>
+      <ymin>142</ymin>
+      <xmax>716</xmax>
+      <ymax>190</ymax>
+    </bndbox>
+  </object>
+  <object>
+    <name>the home depot-logo</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>431</xmin>
+      <ymin>353</ymin>
+      <xmax>551</xmax>
+      <ymax>439</ymax>
+    </bndbox>
+  </object>
+</annotation>

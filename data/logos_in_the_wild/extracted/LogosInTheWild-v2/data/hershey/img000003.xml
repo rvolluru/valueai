@@ -1,0 +1,26 @@
+<annotation>
+  <folder>hershey</folder>
+  <filename>img000003</filename>
+  <path>LogoDataset\hershey\img000003.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>600</width>
+    <height>600</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>hersheys</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>93</xmin>
+      <ymin>170</ymin>
+      <xmax>551</xmax>
+      <ymax>299</ymax>
+    </bndbox>
+  </object>
+</annotation>

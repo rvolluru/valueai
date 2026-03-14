@@ -1,0 +1,26 @@
+<annotation>
+  <folder>porsche</folder>
+  <filename>img000062</filename>
+  <path>LogoDataset\porsche\img000062.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>960</width>
+    <height>475</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>porsche-schrift</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>510</xmin>
+      <ymin>179</ymin>
+      <xmax>643</xmax>
+      <ymax>196</ymax>
+    </bndbox>
+  </object>
+</annotation>

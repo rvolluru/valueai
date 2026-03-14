@@ -1,0 +1,26 @@
+<annotation>
+  <folder>huawei</folder>
+  <filename>img000135</filename>
+  <path>LogoDataset\huawei\img000135.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>2144</width>
+    <height>1424</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>huawei-logo</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>2066</xmin>
+      <ymin>870</ymin>
+      <xmax>2089</xmax>
+      <ymax>887</ymax>
+    </bndbox>
+  </object>
+</annotation>

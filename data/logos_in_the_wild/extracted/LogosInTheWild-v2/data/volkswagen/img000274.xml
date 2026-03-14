@@ -1,0 +1,26 @@
+<annotation>
+  <folder>volkswagen</folder>
+  <filename>img000274</filename>
+  <path>LogoDataset\volkswagen\img000274.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>420</width>
+    <height>279</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>VW-teilsichtbar</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>167</xmin>
+      <ymin>163</ymin>
+      <xmax>177</xmax>
+      <ymax>175</ymax>
+    </bndbox>
+  </object>
+</annotation>

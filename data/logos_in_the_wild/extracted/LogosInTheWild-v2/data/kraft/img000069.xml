@@ -1,0 +1,38 @@
+<annotation>
+  <folder>kraft</folder>
+  <filename>img000069</filename>
+  <path>LogoDataset\kraft\img000069.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>584</width>
+    <height>417</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>heinz</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>207</xmin>
+      <ymin>169</ymin>
+      <xmax>378</xmax>
+      <ymax>245</ymax>
+    </bndbox>
+  </object>
+  <object>
+    <name>Bagel Bites</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>26</xmin>
+      <ymin>338</ymin>
+      <xmax>125</xmax>
+      <ymax>394</ymax>
+    </bndbox>
+  </object>
+</annotation>

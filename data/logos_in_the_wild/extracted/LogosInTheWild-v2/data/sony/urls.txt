@@ -1,0 +1,14 @@
+000000	http://androidhackers.com/wp-content/uploads/2014/03/Sony-Xperia-Z-Ultra-vs-Sony-Xperia-Z1-vs-Sony-Xperia-Z1-compact-z1-mini-AA-4.jpg
+000001	http://www.icoolsoft.com/images/features/sony-devices.jpg
+000003	http://i-cdn.phonearena.com/images/article/68433-image/Sonys-Xperia-Z4-is-only-for-Japan-company-said-to-unveil-another-flagship-device-for-the-rest-of-the-world-at-the-end-of-May.jpg
+000006	http://futuristicnews.com/wp-content/uploads/2013/03/Sony-Smart-Watch-futuristic-gadget-Studio-Hansen-future-device-01.jpg
+000007	http://www.zdnet.de/wp-content/uploads/2015/09/sony-xperia-z5.jpg
+000008	http://i1-news.softpedia-static.com/images/news2/Sony-Vaio-F1-Concept-Device-Runs-Windows-Phone-9-424667-2.jpg
+000010	http://cdn.gsmarena.com/vv/newsimg/13/12/sony-wp-speculation/gsmarena_001.jpg
+000014	http://www.sonyinsider.com/wp-content/uploads/2009/11/PIA0001001343.jpg
+000016	http://cdn.gsmarena.com/pics/13/10/xperia-dualshock/gsmarena_001.jpg
+000017	http://i3.areamobile.de/img/00/01/24/39/95-sony-xperia-z-unboxing-01.jpg
+000020	http://static.giga.de/wp-content/gallery/sony-xperia-z3-compact_1/xperia-z3-compact-2-rcm1920x0.jpg
+000021	http://mobile-reviews.de/testberichte/wp-content/uploads/Sony_Xperia_Z5_Premium_03-300x450.jpg
+000030	http://www.leitax.com/images/Contax-Sony-banner.jpg
+000058	http://ww2.justanswer.com/uploads/SH/ShahidSony/2013-02-18_082403_rm-ed009-a.jpg

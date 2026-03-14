@@ -1,0 +1,26 @@
+<annotation>
+  <folder>heineken</folder>
+  <filename>img000577</filename>
+  <path>LogoDataset\heineken\img000577.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>840</width>
+    <height>594</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>Heineken</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>643</xmin>
+      <ymin>549</ymin>
+      <xmax>718</xmax>
+      <ymax>563</ymax>
+    </bndbox>
+  </object>
+</annotation>

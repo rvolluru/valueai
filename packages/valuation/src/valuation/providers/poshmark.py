@@ -23,12 +23,39 @@ from .http_utils import (
 class PoshmarkProvider(CompsProvider):
     name = "poshmark"
     last_debug: dict[str, object]
+    _MARKDOWN_UI_EXACT = {
+        "nwt",
+        "nwot",
+        "size: os",
+        "size os",
+        "boutique",
+        "all prices",
+        "price",
+        "color",
+        "brand",
+        "size",
+    }
+    _MARKDOWN_UI_PHRASES = (
+        "select a category for specific sizes",
+        "filter by",
+        "sort by",
+        "all categories",
+        "all brands",
+        "show all",
+    )
 
     def __init__(self) -> None:
         self.last_debug = {}
 
     def fetch_comps(self, request: ValuationRequest) -> list[MarketComp]:
-        query = query_for_request(request.brand, request.category, request.model_hint, request.title_hint)
+        query = query_for_request(
+            request.brand,
+            request.category,
+            request.model_hint,
+            request.title_hint,
+            request.item_description,
+            request.size,
+        )
         params = {"query": query}
         request_url = build_request_url("https://poshmark.com/search", params)
         try:
@@ -149,15 +176,10 @@ class PoshmarkProvider(CompsProvider):
                 continue
             candidate_lines += 1
             price = float(m.group(1).replace(",", ""))
-            # Use the same line or preceding line as a title guess.
-            title = line
-            if len(title) < 8 and i > 0:
-                title = lines[i - 1]
-            # Clean markdown link syntax.
-            title = re.sub(r"^\s*[-*#>\d.\)\(]+\s*", "", title).strip()
-            title = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", title)
-            title = price_re.sub("", title).strip(" -|:")
+            title, url = self._extract_markdown_listing_context(lines, i, price_re)
             if not title or len(title) < 4:
+                continue
+            if url is None and len(title.split()) < 3:
                 continue
             key = (title, price)
             if key in seen:
@@ -171,10 +193,59 @@ class PoshmarkProvider(CompsProvider):
                     currency="USD",
                     is_sold=False,
                     condition_text="Unknown",
-                    url=None,
+                    url=url,
                     metadata={"parsed_from": "firecrawl_markdown"},
                 )
             )
             if len(out) >= 25:
                 break
         return out, candidate_lines
+
+    def _extract_markdown_listing_context(
+        self, lines: list[str], price_index: int, price_re: re.Pattern[str]
+    ) -> tuple[str | None, str | None]:
+        max_scan = 8
+        for idx in range(price_index - 1, max(-1, price_index - max_scan - 1), -1):
+            line = lines[idx].strip()
+            if not line:
+                continue
+            title, url = self._parse_markdown_link_line(line)
+            if title:
+                return title, url
+            if "](" in line and "http" in line:
+                continue
+            cleaned = re.sub(r"^\s*[-*#>\d.\)\(]+\s*", "", line).strip()
+            cleaned = price_re.sub("", cleaned).strip(" -|:")
+            if self._looks_like_title_line(cleaned):
+                return cleaned, None
+        return None, None
+
+    def _parse_markdown_link_line(self, line: str) -> tuple[str | None, str | None]:
+        match = re.search(r"\[([^\]]+)\]\((https?://[^)]+)\)", line)
+        if not match:
+            return None, None
+        title = match.group(1).strip()
+        url = match.group(2).strip()
+        if "poshmark.com" in url and "/listing/" not in url:
+            return None, None
+        if not self._looks_like_title_line(title):
+            return None, None
+        return title, url
+
+    def _looks_like_title_line(self, line: str) -> bool:
+        if not line or len(line) < 4:
+            return False
+        lowered = line.lower()
+        if lowered in self._MARKDOWN_UI_EXACT:
+            return False
+        if any(phrase in lowered for phrase in self._MARKDOWN_UI_PHRASES):
+            return False
+        if lowered.startswith("size:"):
+            return False
+        if lowered.startswith("all ") and len(line.split()) <= 3:
+            return False
+        if len(line.split()) == 1 and line.lower() in {"under", "over"}:
+            return False
+        if not re.search(r"[A-Za-z]", line):
+            return False
+        return True

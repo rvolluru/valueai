@@ -1,0 +1,26 @@
+<annotation>
+  <folder>cisco</folder>
+  <filename>img000017</filename>
+  <path>LogoDataset\cisco\img000017.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>720</width>
+    <height>456</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>rbc</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>313</xmin>
+      <ymin>189</ymin>
+      <xmax>342</xmax>
+      <ymax>241</ymax>
+    </bndbox>
+  </object>
+</annotation>

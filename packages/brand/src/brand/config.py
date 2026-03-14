@@ -14,3 +14,7 @@ class BrandConfig:
     debug_default: bool = False
     detector_weights_path: str | None = None
     logo_classifier_weights_path: str | None = None
+    force_logo_classifier: bool = False
+    logo_model_type: str = "efficientnet"
+    logo_yolo_weights_path: str | None = None
+    logo_yolo_confidence: float = 0.35

@@ -1,0 +1,26 @@
+<annotation>
+  <folder>Walmart</folder>
+  <filename>img000077</filename>
+  <path>LogoDataset\Walmart\img000077.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>800</width>
+    <height>570</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>walmart</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>595</xmin>
+      <ymin>284</ymin>
+      <xmax>717</xmax>
+      <ymax>360</ymax>
+    </bndbox>
+  </object>
+</annotation>

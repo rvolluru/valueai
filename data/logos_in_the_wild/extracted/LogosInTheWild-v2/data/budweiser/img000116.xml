@@ -1,0 +1,38 @@
+<annotation>
+  <folder>budweiser</folder>
+  <filename>img000116</filename>
+  <path>LogoDataset\budweiser\img000116.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>361</width>
+    <height>600</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>stella artois</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>49</xmin>
+      <ymin>380</ymin>
+      <xmax>150</xmax>
+      <ymax>429</ymax>
+    </bndbox>
+  </object>
+  <object>
+    <name>stella artois</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>208</xmin>
+      <ymin>211</ymin>
+      <xmax>272</xmax>
+      <ymax>243</ymax>
+    </bndbox>
+  </object>
+</annotation>

@@ -1,0 +1,38 @@
+<annotation>
+  <folder>BMW</folder>
+  <filename>img000014</filename>
+  <path>LogoDataset\BMW\img000014.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>720</width>
+    <height>1029</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>BMW</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>374</xmin>
+      <ymin>519</ymin>
+      <xmax>394</xmax>
+      <ymax>531</ymax>
+    </bndbox>
+  </object>
+  <object>
+    <name>clarion builds</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>516</xmin>
+      <ymin>936</ymin>
+      <xmax>674</xmax>
+      <ymax>988</ymax>
+    </bndbox>
+  </object>
+</annotation>

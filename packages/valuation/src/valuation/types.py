@@ -43,4 +43,6 @@ class ValuationResult:
     confidence: float
     basis: str
     comps_summary: dict[str, Any]
+    resale_market_value: float | None = None
+    retail_reference_value: float | None = None
     debug: dict[str, Any] = field(default_factory=dict)

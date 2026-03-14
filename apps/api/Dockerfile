@@ -1,9 +1,22 @@
+FROM node:20-alpine AS web-build
+
+WORKDIR /web
+COPY apps/web/package.json apps/web/package-lock.json* ./
+RUN npm install
+COPY apps/web ./
+ARG VITE_CLERK_PUBLISHABLE_KEY=""
+ARG VITE_API_BASE_URL=""
+ENV VITE_CLERK_PUBLISHABLE_KEY=${VITE_CLERK_PUBLISHABLE_KEY}
+ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
+RUN npm run build
+
 FROM python:3.11-slim
 
 WORKDIR /app
 COPY pyproject.toml README.md ./
 COPY apps ./apps
 COPY packages ./packages
+COPY --from=web-build /web/dist ./apps/api/app/static
 
 RUN pip install --no-cache-dir .
 

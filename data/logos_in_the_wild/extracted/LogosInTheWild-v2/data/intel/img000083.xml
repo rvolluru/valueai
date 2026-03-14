@@ -1,0 +1,26 @@
+<annotation>
+  <folder>intel</folder>
+  <filename>img000083</filename>
+  <path>LogoDataset\intel\img000083.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>682</width>
+    <height>502</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>ThinkPad</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>400</xmin>
+      <ymin>271</ymin>
+      <xmax>437</xmax>
+      <ymax>305</ymax>
+    </bndbox>
+  </object>
+</annotation>

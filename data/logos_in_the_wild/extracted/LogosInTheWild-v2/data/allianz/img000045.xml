@@ -1,0 +1,26 @@
+<annotation>
+  <folder>allianz</folder>
+  <filename>img000045</filename>
+  <path>LogoDataset\allianz\img000045.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>530</width>
+    <height>344</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>allianz-teilsichtbar</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>181</xmin>
+      <ymin>100</ymin>
+      <xmax>279</xmax>
+      <ymax>135</ymax>
+    </bndbox>
+  </object>
+</annotation>

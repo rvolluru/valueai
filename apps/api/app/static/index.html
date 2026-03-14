@@ -29,8 +29,8 @@
               <input id="apiKey" name="apiKey" type="text" placeholder="local-dev-key" value="local-dev-key" />
             </label>
             <label>
-              <span>Item ID</span>
-              <input id="itemId" name="itemId" type="text" placeholder="item-001" required />
+              <span>Item ID (optional)</span>
+              <input id="itemId" name="itemId" type="text" placeholder="auto-generated if blank" />
             </label>
           </div>
 
@@ -49,6 +49,11 @@
               <input id="purchaseYear" name="purchaseYear" type="number" min="1980" max="2100" step="1" placeholder="2019" />
             </label>
           </div>
+
+          <label>
+            <span id="itemSizeLabel">Item size (select category)</span>
+            <input id="itemSize" name="itemSize" type="text" placeholder="Select category first" disabled />
+          </label>
 
           <label>
             <span>Item Description (helps valuation providers)</span>

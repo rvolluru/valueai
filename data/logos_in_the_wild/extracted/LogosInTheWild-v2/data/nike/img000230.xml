@@ -1,0 +1,26 @@
+<annotation>
+  <folder>nike</folder>
+  <filename>img000230</filename>
+  <path>LogoDataset\nike\img000230.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>600</width>
+    <height>600</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>nike</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>45</xmin>
+      <ymin>237</ymin>
+      <xmax>322</xmax>
+      <ymax>367</ymax>
+    </bndbox>
+  </object>
+</annotation>

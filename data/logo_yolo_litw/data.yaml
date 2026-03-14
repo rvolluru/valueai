@@ -1,0 +1,5 @@
+path: /Users/rvolluru/valueai/data/logo_yolo_litw
+train: images/train
+val: images/val
+nc: 48
+names: ["c-a", "santander", "telekom", "mcdonalds", "reno", "burgerking", "mccafe", "h-m", "iam", "starbuckscoffee", "starbucks", "six", "tschibo", "o", "vodafone", "coca-cola", "ikea", "aldi", "renault", "american-express", "visa", "mastercard", "basf", "neopor", "bmw", "zender", "mini", "mercedes", "bosch", "exon", "h-r", "playstation", "dunlop", "puma", "warsteiner", "pirelli", "volvo", "post", "hankook", "castrol", "exide", "sonax", "tesla", "schmitz", "scania", "cvspharmacy", "walgreens", "cvs"]

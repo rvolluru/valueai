@@ -21,7 +21,14 @@ class EbaySoldProvider(CompsProvider):
 
     def fetch_comps(self, request: ValuationRequest) -> list[MarketComp]:
         app_id = os.getenv("EBAY_APP_ID")
-        query = query_for_request(request.brand, request.category, request.model_hint, request.title_hint)
+        query = query_for_request(
+            request.brand,
+            request.category,
+            request.model_hint,
+            request.title_hint,
+            request.item_description,
+            request.size,
+        )
         request_url = build_request_url(EBAY_FINDING_URL, {})
         if not app_id:
             self.last_debug = {

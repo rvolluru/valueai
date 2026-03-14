@@ -10,6 +10,17 @@
 
 No AWS Textract/Rekognition or vector DB is used.
 
+Cost-focused default in this repo:
+
+- ECS service runs in public subnets with public IPs (behind ALB)
+- RDS remains in private subnets
+- NAT Gateway is omitted to reduce monthly cost
+
+Tradeoff:
+
+- Lower cost for MVP/demo environments
+- Less strict network posture than private-subnet ECS + NAT/VPC endpoints
+
 ## Local-first run
 
 1. Install deps:
@@ -103,7 +114,7 @@ Behavior:
 ## Production notes
 
 - Add ACM + HTTPS listener to ALB.
-- Put ECS service in private subnets and ALB in public subnets.
+- For production hardening, move ECS service to private subnets and add NAT Gateway or VPC endpoints.
 - Add WAF/rate limiting.
 - Move API key validation to proper auth later.
 - Bundle real detector/classifier weights and enable health checks for model load.

@@ -1,0 +1,26 @@
+<annotation>
+  <folder>sony</folder>
+  <filename>img000014</filename>
+  <path>LogoDataset\sony\img000014.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>1024</width>
+    <height>683</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>car</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>247</xmin>
+      <ymin>264</ymin>
+      <xmax>313</xmax>
+      <ymax>307</ymax>
+    </bndbox>
+  </object>
+</annotation>

@@ -1,0 +1,17 @@
+000002	http://www.sportsfeatures.com/PressPoint/images/img1_51186.jpg
+000005	http://images.financialexpress.com/2015/02/mastercard-l-re.jpg
+000010	http://cdn.triplepundit.com/uploads/2017/01/16517307247_b6bd46e945_z.jpg
+000012	http://images.techhive.com/images/article/2014/06/mastercard-100339529-primary.idge.jpg
+000017	http://www.tecfire-me.com/thumb-w750-h470-images/projects/src_ic7-copy_14829038491.jpg
+000019	http://newsroom.mastercard.com/wp-content/uploads/2014/10/MC_NYC_10_2014-9932.jpg
+000020	http://www.gq-magazin.de/var/gq/storage/images/media/images/artikelbilder/auto-technik/paypal-san-jose_paypal_quer/5961079-1-ger-DE/paypal-san-jose_paypal_quer_article_landscape.jpg
+000025	http://www.dewan-architects.com/work/commercial/images/commercial-mastercard.jpg
+000029	http://www.energis.de/cache/media/attachments/2016/04/x_y351_309a04_04.jpg
+000031	http://p5.focus.de/img/fotos/origs3993842/1108518564-w630-h472-o-q75-p5/urn-newsml-dpa-com-20090101-140715-99-06287-large-4-3.jpg
+000034	http://p5.focus.de/img/fotos/origs1232042/5300543800-w630-h422-o-q75-p5/ubs-mastercard.jpg
+000035	http://media0.faz.net/ppmedia/aktuell/wirtschaft/3352902617/1.4318368/article_aufmacher_gross/sie-sollen-womoeglich-noch.jpg
+000041	http://bilder3.n-tv.de/img/technik/origs2959706/4872532288-w1280-h960/Mastercard.jpg
+000059	http://www.ronald-wissler.de/wp-content/gallery/anzeigen_5_bw_bank/werbung_collage_bw_bank-1.jpg
+000073	http://www.internet-online-systeme.de/images/mastercard_de.jpg
+000085	http://cdn1.spiegel.de/images/image-1046300-galleryV9-imgt-1046300.jpg
+000089	http://static.giga.de/wp-content/uploads/facebook-instagram-werbung-rcm1200x627u.jpg

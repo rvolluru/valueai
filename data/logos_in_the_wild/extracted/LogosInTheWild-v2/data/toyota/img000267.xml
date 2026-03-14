@@ -1,0 +1,26 @@
+<annotation>
+  <folder>toyota</folder>
+  <filename>img000267</filename>
+  <path>LogoDataset\toyota\img000267.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>2473</width>
+    <height>1648</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>toyota</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>1666</xmin>
+      <ymin>839</ymin>
+      <xmax>1770</xmax>
+      <ymax>927</ymax>
+    </bndbox>
+  </object>
+</annotation>

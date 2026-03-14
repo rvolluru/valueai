@@ -1,0 +1,26 @@
+<annotation>
+  <folder>gillette</folder>
+  <filename>img000196</filename>
+  <path>LogoDataset\gillette\img000196.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>570</width>
+    <height>255</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>gillette</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>438</xmin>
+      <ymin>174</ymin>
+      <xmax>499</xmax>
+      <ymax>209</ymax>
+    </bndbox>
+  </object>
+</annotation>

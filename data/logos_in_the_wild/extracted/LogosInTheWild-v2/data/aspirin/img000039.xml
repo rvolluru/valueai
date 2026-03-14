@@ -1,0 +1,26 @@
+<annotation>
+  <folder>aspirin</folder>
+  <filename>img000039</filename>
+  <path>LogoDataset\aspirin\img000039.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>805</width>
+    <height>317</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>Bayer</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>241</xmin>
+      <ymin>103</ymin>
+      <xmax>326</xmax>
+      <ymax>259</ymax>
+    </bndbox>
+  </object>
+</annotation>

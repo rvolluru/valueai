@@ -1,0 +1,62 @@
+<annotation>
+  <folder>kraft</folder>
+  <filename>img000048</filename>
+  <path>LogoDataset\kraft\img000048.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>460</width>
+    <height>275</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>crystal light</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>60</xmin>
+      <ymin>95</ymin>
+      <xmax>110</xmax>
+      <ymax>131</ymax>
+    </bndbox>
+  </object>
+  <object>
+    <name>crystal light</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>153</xmin>
+      <ymin>90</ymin>
+      <xmax>207</xmax>
+      <ymax>123</ymax>
+    </bndbox>
+  </object>
+  <object>
+    <name>crystal light</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>243</xmin>
+      <ymin>94</ymin>
+      <xmax>292</xmax>
+      <ymax>126</ymax>
+    </bndbox>
+  </object>
+  <object>
+    <name>crystal light</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>334</xmin>
+      <ymin>105</ymin>
+      <xmax>387</xmax>
+      <ymax>136</ymax>
+    </bndbox>
+  </object>
+</annotation>

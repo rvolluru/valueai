@@ -1,0 +1,26 @@
+<annotation>
+  <folder>bella taylor</folder>
+  <filename>img000038</filename>
+  <path>LogoDataset\bella taylor\img000038.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>994</width>
+    <height>994</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>bella taylor</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>799</xmin>
+      <ymin>633</ymin>
+      <xmax>909</xmax>
+      <ymax>661</ymax>
+    </bndbox>
+  </object>
+</annotation>

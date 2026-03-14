@@ -1,0 +1,50 @@
+<annotation>
+  <folder>American Express</folder>
+  <filename>img000107</filename>
+  <path>LogoDataset\American Express\img000107.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>845</width>
+    <height>321</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>american express</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>578</xmin>
+      <ymin>79</ymin>
+      <xmax>686</xmax>
+      <ymax>252</ymax>
+    </bndbox>
+  </object>
+  <object>
+    <name>VISA</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>257</xmin>
+      <ymin>101</ymin>
+      <xmax>446</xmax>
+      <ymax>321</ymax>
+    </bndbox>
+  </object>
+  <object>
+    <name>MasterCard</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>47</xmin>
+      <ymin>120</ymin>
+      <xmax>198</xmax>
+      <ymax>319</ymax>
+    </bndbox>
+  </object>
+</annotation>

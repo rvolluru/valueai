@@ -1,0 +1,38 @@
+<annotation>
+  <folder>heineken</folder>
+  <filename>img000622</filename>
+  <path>LogoDataset\heineken\img000622.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>2953</width>
+    <height>1554</height>
+    <depth>3</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <name>Heineken</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>506</xmin>
+      <ymin>179</ymin>
+      <xmax>901</xmax>
+      <ymax>261</ymax>
+    </bndbox>
+  </object>
+  <object>
+    <name>champions league</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <bndbox>
+      <xmin>530</xmin>
+      <ymin>1050</ymin>
+      <xmax>890</xmax>
+      <ymax>1405</ymax>
+    </bndbox>
+  </object>
+</annotation>
