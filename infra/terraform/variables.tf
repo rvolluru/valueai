@@ -8,6 +8,18 @@ variable "aws_region" {
   default = "us-east-1"
 }
 
+variable "aws_profile" {
+  type        = string
+  default     = null
+  description = "Optional AWS CLI profile name for deploying to a specific account."
+}
+
+variable "aws_assume_role_arn" {
+  type        = string
+  default     = null
+  description = "Optional IAM role ARN to assume in the target account."
+}
+
 variable "api_key" {
   type      = string
   sensitive = true
@@ -35,6 +47,12 @@ variable "db_password" {
 }
 
 variable "openai_api_key" {
+  type      = string
+  default   = ""
+  sensitive = true
+}
+
+variable "gemini_api_key" {
   type      = string
   default   = ""
   sensitive = true
@@ -68,6 +86,46 @@ variable "clerk_authorized_parties" {
 variable "brand_enable_gpt_vision" {
   type    = bool
   default = true
+}
+
+variable "gpt_item_profile_enabled" {
+  type    = bool
+  default = true
+}
+
+variable "gpt_item_profile_provider_order" {
+  type    = string
+  default = "gemini,openai"
+}
+
+variable "gpt_item_profile_model" {
+  type    = string
+  default = "gpt-5"
+}
+
+variable "gpt_item_profile_gemini_model" {
+  type    = string
+  default = "gemini-2.5-flash"
+}
+
+variable "gpt_item_profile_timeout_s" {
+  type    = number
+  default = 25
+}
+
+variable "gpt_item_profile_max_images" {
+  type    = number
+  default = 2
+}
+
+variable "gpt_item_profile_image_detail" {
+  type    = string
+  default = "auto"
+}
+
+variable "gpt_item_profile_reasoning_effort" {
+  type    = string
+  default = "low"
 }
 
 variable "firecrawl_api_key" {
