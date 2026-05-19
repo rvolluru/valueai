@@ -13,12 +13,13 @@ jobs:
       AWS_REGION: us-east-1
       ECR_REPOSITORY: valueai-mvp-api
       TF_DIR: infra/terraform
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v5
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -46,7 +47,7 @@ jobs:
           echo "image_uri=${IMAGE_URI}" >> "$GITHUB_OUTPUT"
 
       - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
+        uses: hashicorp/setup-terraform@v4
 
       - name: Write production tfvars from secret
         working-directory: ${{ env.TF_DIR }}
@@ -63,4 +64,3 @@ jobs:
           set -euo pipefail
           terraform init -input=false
           terraform apply -auto-approve -input=false -var "container_image=${{ steps.image.outputs.image_uri }}"
-
