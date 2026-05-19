@@ -50,12 +50,23 @@ make test
 
 ## Terraform deploy
 
-1. Create an AWS credentials profile with permissions for VPC, ECS, ALB, IAM, S3, RDS, CloudWatch Logs.
+1. Create an AWS credentials profile with permissions for VPC, ECS, ALB, IAM, S3, RDS, CloudWatch Logs in the target account.
 2. Copy and edit vars:
 
 ```bash
 cd infra/terraform
 cp terraform.tfvars.example terraform.tfvars
+```
+
+Set one of these in `terraform.tfvars`:
+
+- `aws_profile = "your-target-profile"` if your local AWS CLI profile already points to the target account.
+- `aws_assume_role_arn = "arn:aws:iam::<target-account-id>:role/<role-name>"` if you need Terraform to assume a role into the target account.
+
+Verify account before apply:
+
+```bash
+AWS_PROFILE=your-target-profile aws sts get-caller-identity
 ```
 
 3. Apply:
@@ -65,8 +76,38 @@ terraform init
 terraform apply
 ```
 
-4. Build and push API image to ECR (Terraform outputs repo URL).
+4. Build and push API image to ECR (Terraform outputs repo URL). Ensure the `container_image` account ID matches the target account.
 5. Update ECS task definition image tag and re-apply (or wire CI/CD later).
+
+## CI/CD deploy (recommended)
+
+This repo includes a GitHub Actions workflow:
+
+- `.github/workflows/deploy-prod.yml`
+- Trigger: **Actions → Deploy Production → Run workflow**
+
+It automatically:
+
+1. Builds the API image
+2. Injects `VITE_CLERK_PUBLISHABLE_KEY` at build-time
+3. Pushes to ECR
+4. Runs `terraform apply` with the new `container_image`
+
+### Required GitHub repository secrets
+
+- `AWS_ACCESS_KEY_ID`
+- `AWS_SECRET_ACCESS_KEY`
+- `VITE_CLERK_PUBLISHABLE_KEY`
+- `TFVARS_PROD_B64` (base64 of your full `infra/terraform/terraform.tfvars`)
+
+Create `TFVARS_PROD_B64` locally with:
+
+```bash
+cd infra/terraform
+base64 terraform.tfvars | pbcopy
+```
+
+Then paste into GitHub Secrets as `TFVARS_PROD_B64`.
 
 ## Required environment variables (ECS task)
 
