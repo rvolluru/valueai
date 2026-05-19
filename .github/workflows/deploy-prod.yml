@@ -58,9 +58,18 @@ jobs:
           test -n "${TFVARS_PROD_B64}"
           echo "${TFVARS_PROD_B64}" | base64 --decode > terraform.tfvars
 
+      - name: Write terraform backend config from secret
+        working-directory: ${{ env.TF_DIR }}
+        env:
+          TF_BACKEND_CONFIG_B64: ${{ secrets.TF_BACKEND_CONFIG_B64 }}
+        run: |
+          set -euo pipefail
+          test -n "${TF_BACKEND_CONFIG_B64}"
+          echo "${TF_BACKEND_CONFIG_B64}" | base64 --decode > backend.hcl
+
       - name: Terraform apply (new image)
         working-directory: ${{ env.TF_DIR }}
         run: |
           set -euo pipefail
-          terraform init -input=false
+          terraform init -input=false -backend-config=backend.hcl
           terraform apply -auto-approve -input=false -var "container_image=${{ steps.image.outputs.image_uri }}"

@@ -99,6 +99,7 @@ It automatically:
 - `AWS_SECRET_ACCESS_KEY`
 - `VITE_CLERK_PUBLISHABLE_KEY`
 - `TFVARS_PROD_B64` (base64 of your full `infra/terraform/terraform.tfvars`)
+- `TF_BACKEND_CONFIG_B64` (base64 of Terraform S3 backend config)
 
 Create `TFVARS_PROD_B64` locally with:
 
@@ -108,6 +109,35 @@ base64 terraform.tfvars | pbcopy
 ```
 
 Then paste into GitHub Secrets as `TFVARS_PROD_B64`.
+
+Create `TF_BACKEND_CONFIG_B64` locally from a `backend.hcl` file like:
+
+```hcl
+bucket         = "valueai-terraform-state-537595754494"
+key            = "valueai/prod/terraform.tfstate"
+region         = "us-east-1"
+dynamodb_table = "valueai-terraform-locks"
+encrypt        = true
+```
+
+Encode and copy:
+
+```bash
+base64 backend.hcl | pbcopy
+```
+
+Paste into GitHub secret `TF_BACKEND_CONFIG_B64`.
+
+### One-time migration to remote state
+
+Run once locally after creating the S3 bucket + DynamoDB lock table:
+
+```bash
+cd infra/terraform
+terraform init -migrate-state -backend-config=backend.hcl
+```
+
+This moves existing local `terraform.tfstate` into remote S3 state so CI and local use the same state.
 
 ## Required environment variables (ECS task)
 
