@@ -42,8 +42,12 @@ jobs:
             pk_*) ;;
             *) echo "VITE_CLERK_PUBLISHABLE_KEY is missing/invalid (must start with pk_)" >&2; exit 1 ;;
           esac
+          echo "clerk_key_present=yes"
+          echo "clerk_key_len=${#VITE_CLERK_PUBLISHABLE_KEY}"
+          echo "clerk_key_prefix=${VITE_CLERK_PUBLISHABLE_KEY:0:3}"
           IMAGE_URI="${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
           docker build \
+            --no-cache \
             -f apps/api/Dockerfile \
             --build-arg VITE_CLERK_PUBLISHABLE_KEY="${VITE_CLERK_PUBLISHABLE_KEY}" \
             -t "${IMAGE_URI}" \
