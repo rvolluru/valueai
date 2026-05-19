@@ -37,6 +37,11 @@ jobs:
           VITE_CLERK_PUBLISHABLE_KEY: ${{ secrets.VITE_CLERK_PUBLISHABLE_KEY }}
         run: |
           set -euo pipefail
+          test -n "${VITE_CLERK_PUBLISHABLE_KEY}"
+          case "${VITE_CLERK_PUBLISHABLE_KEY}" in
+            pk_*) ;;
+            *) echo "VITE_CLERK_PUBLISHABLE_KEY is missing/invalid (must start with pk_)" >&2; exit 1 ;;
+          esac
           IMAGE_URI="${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
           docker build \
             -f apps/api/Dockerfile \
