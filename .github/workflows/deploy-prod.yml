@@ -57,6 +57,16 @@ jobs:
           set -euo pipefail
           test -n "${TFVARS_PROD_B64}"
           echo "${TFVARS_PROD_B64}" | base64 --decode > terraform.tfvars
+          # CI uses aws-actions credentials, not local AWS profiles.
+          # Force local-only vars to null to avoid provider profile lookup errors.
+          if grep -qE '^[[:space:]]*aws_profile[[:space:]]*=' terraform.tfvars; then
+            sed -i.bak -E 's#^[[:space:]]*aws_profile[[:space:]]*=.*#aws_profile                       = null#' terraform.tfvars
+          else
+            echo 'aws_profile                       = null' >> terraform.tfvars
+          fi
+          if grep -qE '^[[:space:]]*aws_assume_role_arn[[:space:]]*=' terraform.tfvars; then
+            sed -i.bak -E 's#^[[:space:]]*aws_assume_role_arn[[:space:]]*=.*#aws_assume_role_arn               = null#' terraform.tfvars
+          fi
 
       - name: Write terraform backend config from secret
         working-directory: ${{ env.TF_DIR }}
