@@ -26,6 +26,13 @@ class ConditionOut(BaseModel):
     issues: list[IssueOut] = Field(default_factory=list)
 
 
+class UploadedImageOut(BaseModel):
+    image_id: str
+    role_hint: str | None = None
+    storage_uri: str
+    image_url: str
+
+
 class AnalyzeResponse(BaseModel):
     item_id: str
     category: Literal["clothes", "shoes", "handbag"]
@@ -36,6 +43,7 @@ class AnalyzeResponse(BaseModel):
     item_profile: dict[str, Any] | None = None
     requested_photos: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+    uploaded_images: list[UploadedImageOut] = Field(default_factory=list)
     debug: dict[str, Any] | None = None
 
 
@@ -66,10 +74,12 @@ class ListingCreateRequest(BaseModel):
     estimated_value: float = Field(ge=0)
     city: str = "Your area"
     image: str | None = None
+    images: list[str] = Field(default_factory=list)
     wants: str = "Open to similar-value offers"
     tags: list[str] = Field(default_factory=list)
     source_item_id: str | None = None
     analysis: dict[str, Any] | None = None
+    status: Literal["Analyzing", "Review", "AnalysisFailed", "Active"] = "Review"
 
 
 class ListingResponse(ListingCreateRequest):
@@ -77,3 +87,33 @@ class ListingResponse(ListingCreateRequest):
     owner_subject: str
     owner_name: str | None = None
     created_at: str
+
+
+class OfferCreateRequest(BaseModel):
+    target_listing_id: str
+    offered_listing_id: str
+    message: str = ""
+
+
+class OfferResponse(BaseModel):
+    offer_id: str
+    target_listing_id: str
+    offered_listing_id: str
+    from_subject: str
+    to_subject: str
+    status: Literal["pending", "accepted", "declined", "countered", "cancelled"] = "pending"
+    message: str = ""
+    created_at: str
+    updated_at: str
+
+
+class OfferActionRequest(BaseModel):
+    status: Literal["accepted", "declined", "countered", "cancelled"]
+
+
+class InstagramShareResponse(BaseModel):
+    status: Literal["queued", "published"]
+    listing_id: str
+    creation_id: str | None = None
+    media_id: str | None = None
+    detail: str | None = None

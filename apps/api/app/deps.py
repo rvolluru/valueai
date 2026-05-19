@@ -82,7 +82,13 @@ def get_gpt_item_profiler() -> GptItemProfiler:
     s = get_settings()
     return GptItemProfiler(
         enabled=s.gpt_item_profile_enabled,
-        api_key=s.openai_api_key,
-        model=s.gpt_item_profile_model,
+        provider_order=s.gpt_item_profile_provider_order,
+        openai_api_key=s.openai_api_key,
+        openai_model=s.gpt_item_profile_model,
+        gemini_api_key=s.gemini_api_key,
+        gemini_model=s.gpt_item_profile_gemini_model,
         timeout_s=s.gpt_item_profile_timeout_s,
+        max_images=s.gpt_item_profile_max_images,
+        image_detail=s.gpt_item_profile_image_detail,
+        reasoning_effort=s.gpt_item_profile_reasoning_effort,
     )

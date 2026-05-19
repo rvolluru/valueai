@@ -45,17 +45,31 @@ class Settings(BaseSettings):
     brand_logo_model_type: str = "efficientnet"
     brand_logo_yolo_weights_path: str | None = None
     brand_logo_yolo_confidence: float = 0.35
-    gpt_item_profile_enabled: bool = False
+    gpt_item_profile_enabled: bool = True
+    gpt_item_profile_provider_order: str = "gemini,openai"
     gpt_item_profile_model: str = "gpt-5"
+    gpt_item_profile_gemini_model: str = "gemini-2.5-flash"
     gpt_item_profile_timeout_s: float = 25.0
+    gpt_item_profile_max_images: int = Field(default=2, ge=1, le=4)
+    gpt_item_profile_image_detail: str = "auto"
+    gpt_item_profile_reasoning_effort: str = "low"
 
     condition_rembg_enabled: bool = False
+    image_staging_enabled: bool = True
+    image_staging_gemini_enabled: bool = True
+    image_staging_gemini_model: str = "gemini-2.5-flash-image-preview"
+    image_staging_gemini_timeout_s: float = 30.0
+    image_staging_imagen_model: str = "imagen-3.0-capability-001"
+    image_staging_vertexai_enabled: bool = True
+    gcp_project_id: str | None = None
+    gcp_location: str = "us-central1"
     condition_category_weights_path: str | None = None
     condition_grade_weights_path: str | None = None
     condition_force_category_classifier: bool = False
     condition_force_efficientnet: bool = False
 
     max_images_per_request: int = Field(default=4, ge=1, le=8)
+    gemini_api_key: str | None = None
     openai_api_key: str | None = None
 
     clerk_enabled: bool = False
@@ -63,6 +77,7 @@ class Settings(BaseSettings):
     clerk_jwks_url: str | None = None
     clerk_audience: str | None = None
     clerk_authorized_parties: str | None = None
+    clerk_jwt_leeway_seconds: int = 60
     cors_allow_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
 
     valuation_enabled: bool = True
@@ -70,6 +85,10 @@ class Settings(BaseSettings):
     valuation_min_comps: int = 3
     valuation_max_comps: int = 25
     valuation_currency: str = "USD"
+
+    instagram_graph_api_version: str = "v20.0"
+    instagram_user_id: str | None = None
+    instagram_access_token: str | None = None
 
 
 @lru_cache(maxsize=1)

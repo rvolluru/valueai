@@ -105,16 +105,28 @@ class Database:
               estimated_value REAL NOT NULL,
               city TEXT NOT NULL,
               image TEXT,
+              images_json TEXT NOT NULL DEFAULT '[]',
               wants TEXT NOT NULL,
               tags_json TEXT NOT NULL,
               source_item_id TEXT,
               analysis_json TEXT,
+              status TEXT NOT NULL DEFAULT 'Review',
               created_at TEXT NOT NULL
             )
             """,
         ]
         for stmt in statements:
             self.execute(stmt)
+        for alter in (
+            "ALTER TABLE listings ADD COLUMN images_json TEXT NOT NULL DEFAULT '[]'",
+            "ALTER TABLE listings ADD COLUMN status TEXT NOT NULL DEFAULT 'Review'",
+        ):
+            try:
+                self.execute(alter)
+            except Exception:
+                if self._pg is not None:
+                    self._pg.rollback()
+                pass
         self.commit()
 
     def execute(self, sql: str, params: tuple = ()) -> None:
@@ -122,8 +134,13 @@ class Database:
             self._sqlite_conn.execute(sql, params)
             return
         cur = self._pg.cursor()
-        cur.execute(sql, params)
-        cur.close()
+        try:
+            cur.execute(sql, params)
+        except Exception:
+            self._pg.rollback()
+            raise
+        finally:
+            cur.close()
 
     def commit(self) -> None:
         if self._sqlite_conn is not None:
@@ -258,18 +275,20 @@ class Database:
         estimated_value: float,
         city: str,
         image: str | None,
+        images: list[str],
         wants: str,
         tags: list[str],
         source_item_id: str | None,
         analysis: dict | None,
+        status: str,
     ) -> str:
         created_at = utc_now_iso()
         self.execute(
             f"""INSERT INTO listings
             (listing_id, owner_subject, owner_name, title, mode, category, brand, condition,
-             estimated_value, city, image, wants, tags_json, source_item_id, analysis_json, created_at)
+             estimated_value, city, image, images_json, wants, tags_json, source_item_id, analysis_json, status, created_at)
             VALUES ({self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param},
-                    {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param})""",
+                    {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param})""",
             (
                 listing_id,
                 owner_subject,
@@ -282,10 +301,12 @@ class Database:
                 float(estimated_value),
                 city,
                 image,
+                json.dumps(images),
                 wants,
                 json.dumps(tags),
                 source_item_id,
                 json.dumps(analysis) if analysis is not None else None,
+                status,
                 created_at,
             ),
         )
@@ -295,7 +316,7 @@ class Database:
     def list_recent_listings(self, limit: int = 50) -> list[dict]:
         query = (
             f"SELECT listing_id, owner_subject, owner_name, title, mode, category, brand, condition, "
-            f"estimated_value, city, image, wants, tags_json, source_item_id, analysis_json, created_at "
+            f"estimated_value, city, image, images_json, wants, tags_json, source_item_id, analysis_json, status, created_at "
             f"FROM listings ORDER BY created_at DESC LIMIT {self.param}"
         )
         if self._sqlite_conn is not None:
@@ -306,6 +327,92 @@ class Database:
         rows = cur.fetchall()
         cur.close()
         return [self._listing_row_to_dict(row) for row in rows]
+
+    def list_owner_listings(self, owner_subject: str, limit: int = 50) -> list[dict]:
+        query = (
+            f"SELECT listing_id, owner_subject, owner_name, title, mode, category, brand, condition, "
+            f"estimated_value, city, image, images_json, wants, tags_json, source_item_id, analysis_json, status, created_at "
+            f"FROM listings WHERE owner_subject = {self.param} ORDER BY created_at DESC LIMIT {self.param}"
+        )
+        if self._sqlite_conn is not None:
+            rows = self._sqlite_conn.execute(query, (owner_subject, limit)).fetchall()
+            return [self._listing_row_to_dict(row) for row in rows]
+        cur = self._pg.cursor()
+        cur.execute(query, (owner_subject, limit))
+        rows = cur.fetchall()
+        cur.close()
+        return [self._listing_row_to_dict(row) for row in rows]
+
+    def update_listing(
+        self,
+        *,
+        listing_id: str,
+        owner_subject: str,
+        title: str,
+        mode: str,
+        category: str,
+        brand: str,
+        condition: str,
+        estimated_value: float,
+        city: str,
+        image: str | None,
+        images: list[str],
+        wants: str,
+        tags: list[str],
+        source_item_id: str | None,
+        analysis: dict | None,
+        status: str,
+    ) -> bool:
+        sql = f"""UPDATE listings
+            SET title = {self.param},
+                mode = {self.param},
+                category = {self.param},
+                brand = {self.param},
+                condition = {self.param},
+                estimated_value = {self.param},
+                city = {self.param},
+                image = {self.param},
+                images_json = {self.param},
+                wants = {self.param},
+                tags_json = {self.param},
+                source_item_id = {self.param},
+                analysis_json = {self.param},
+                status = {self.param}
+            WHERE listing_id = {self.param} AND owner_subject = {self.param}"""
+        params = (
+            title,
+            mode,
+            category,
+            brand,
+            condition,
+            float(estimated_value),
+            city,
+            image,
+            json.dumps(images),
+            wants,
+            json.dumps(tags),
+            source_item_id,
+            json.dumps(analysis) if analysis is not None else None,
+            status,
+            listing_id,
+            owner_subject,
+        )
+        if self._sqlite_conn is not None:
+            self._sqlite_conn.execute(sql, params)
+            changed_row = self._sqlite_conn.execute("SELECT changes() AS n").fetchone()
+            changed = int(changed_row["n"] if isinstance(changed_row, sqlite3.Row) else changed_row[0]) > 0
+        else:
+            cur = self._pg.cursor()
+            try:
+                cur.execute(sql, params)
+                changed = int(cur.rowcount or 0) > 0
+            except Exception:
+                self._pg.rollback()
+                raise
+            finally:
+                cur.close()
+        self.commit()
+        return changed
 
     def _analysis_row_to_dict(self, row) -> dict:
         analysis_id = row["analysis_id"] if isinstance(row, sqlite3.Row) else row[0]
@@ -336,10 +443,12 @@ class Database:
                 "estimated_value",
                 "city",
                 "image",
+                "images_json",
                 "wants",
                 "tags_json",
                 "source_item_id",
                 "analysis_json",
+                "status",
                 "created_at",
             ]
             data = {k: row[idx] for idx, k in enumerate(keys)}
@@ -355,9 +464,11 @@ class Database:
             "estimated_value": float(data["estimated_value"]),
             "city": data["city"],
             "image": data["image"],
+            "images": json.loads(data["images_json"]) if data.get("images_json") else [],
             "wants": data["wants"],
             "tags": json.loads(data["tags_json"]) if data["tags_json"] else [],
             "source_item_id": data["source_item_id"],
             "analysis": json.loads(data["analysis_json"]) if data["analysis_json"] else None,
+            "status": data.get("status") or "Review",
             "created_at": data["created_at"],
         }

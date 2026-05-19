@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 import uuid
+from io import BytesIO
 from pathlib import Path
 from typing import Annotated
 
@@ -11,17 +13,15 @@ from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from PIL import Image, ImageFilter, ImageOps
 
 from brand.types import ImageInput
-from condition.service import ConditionAnalyzer
 from valuation import ValuationConfig, ValuationService
 from valuation.types import ValuationRequest
 
 from .auth import AuthPrincipal, get_request_principal, require_clerk_user
 from .db import Database, PersistedImage
 from .deps import (
-    get_brand_analyzer,
-    get_condition_analyzer,
     get_db,
     get_gpt_item_profiler,
     get_settings,
@@ -38,6 +38,7 @@ from .schemas import (
     HealthResponse,
     ListingCreateRequest,
     ListingResponse,
+    UploadedImageOut,
     VersionResponse,
 )
 from .settings import Settings
@@ -60,10 +61,242 @@ if STATIC_DIR.exists():
 ASSETS_DIR = STATIC_DIR / "assets"
 if ASSETS_DIR.exists():
     app.mount("/assets", StaticFiles(directory=str(ASSETS_DIR)), name="assets")
+_settings = get_settings()
+if _settings.storage_backend == "local":
+    _uploads_dir = Path(_settings.local_storage_dir) / "uploads"
+    _uploads_dir.mkdir(parents=True, exist_ok=True)
+    app.mount("/uploads", StaticFiles(directory=str(_uploads_dir)), name="uploads")
 
 VALID_CATEGORIES = {"clothes", "shoes", "handbag"}
 VALID_CONDITION_GRADES = {"new": "New", "likenew": "LikeNew", "good": "Good", "fair": "Fair", "poor": "Poor"}
 CONDITION_SEVERITY_RANK = {"New": 5, "LikeNew": 4, "Good": 3, "Fair": 2, "Poor": 1}
+
+
+def _public_image_url_from_storage_uri(storage_uri: str, settings: Settings) -> str:
+    if storage_uri.startswith("http://") or storage_uri.startswith("https://"):
+        return storage_uri
+    if storage_uri.startswith("s3://"):
+        return storage_uri
+    if settings.storage_backend == "local":
+        marker = "/uploads/"
+        norm = storage_uri.replace("\\", "/")
+        idx = norm.find(marker)
+        if idx >= 0:
+            return f"/uploads/{norm[idx + len(marker):]}"
+    return storage_uri
+
+
+def _stage_item_image(raw: bytes, content_type: str, settings: Settings) -> tuple[bytes, str, dict[str, object]]:
+    if not settings.image_staging_enabled:
+        return raw, content_type, {"applied": False, "reason": "disabled"}
+    try:
+        with Image.open(BytesIO(raw)) as src:
+            src_rgba = src.convert("RGBA")
+    except Exception:
+        return raw, content_type, {"applied": False, "reason": "open_failed"}
+
+    # 1) Try Gemini image-edit first (white background), fallback to local rembg pipeline.
+    gemini_stage_debug: dict[str, object] = {
+        "attempted": bool(settings.image_staging_gemini_enabled and settings.gemini_api_key),
+        "status_code": None,
+        "reason": None,
+        "error": None,
+        "model": settings.image_staging_imagen_model,
+    }
+    if settings.image_staging_gemini_enabled and settings.gemini_api_key:
+        try:
+            from google import genai  # type: ignore
+            from google.genai import types  # type: ignore
+
+            model = settings.image_staging_imagen_model.strip() or "imagen-3.0-capability-001"
+            if settings.image_staging_vertexai_enabled:
+                if not settings.gcp_project_id:
+                    raise RuntimeError("gcp_project_id_missing_for_vertexai")
+                client = genai.Client(
+                    vertexai=True,
+                    project=settings.gcp_project_id,
+                    location=settings.gcp_location or "us-central1",
+                )
+            else:
+                client = genai.Client(api_key=settings.gemini_api_key)
+            base_img = Image.open(BytesIO(raw)).convert("RGB")
+            raw_ref = types.RawReferenceImage(
+                reference_id=1,
+                reference_image=base_img,
+            )
+            mask_ref = types.MaskReferenceImage(
+                reference_id=2,
+                reference_image=None,
+                config=types.MaskReferenceConfig(mask_mode="MASK_MODE_BACKGROUND"),
+            )
+            result = client.models.generate_images(
+                model=model,
+                prompt=(
+                    "Place the product on a clean, solid, pure white background (#FFFFFF). "
+                    "Keep original lighting and realistic shadows."
+                ),
+                config=types.GenerateImagesConfig(
+                    number_of_images=1,
+                    output_mime_type="image/jpeg",
+                    reference_images=[raw_ref, mask_ref],
+                    edit_config=types.EditImageConfig(edit_mode="EDIT_MODE_BGSWAP"),
+                ),
+            )
+            generated = getattr(result, "generated_images", None)
+            if isinstance(generated, list) and generated:
+                first = generated[0]
+                img_obj = getattr(first, "image", None)
+                if img_obj is not None:
+                    out = BytesIO()
+                    img_obj.save(out, format="JPEG", quality=92, optimize=True)
+                    return out.getvalue(), "image/jpeg", {
+                        "applied": True,
+                        "provider": "imagen_background_edit",
+                        "used_rembg": False,
+                        "rembg_effective": False,
+                        "forced_padding": False,
+                        "gemini_edit": {**gemini_stage_debug, "reason": "success"},
+                    }
+            gemini_stage_debug["reason"] = "no_generated_images"
+            gemini_stage_debug["status_code"] = 200
+        except Exception as exc:
+            gemini_stage_debug["reason"] = "exception"
+            gemini_stage_debug["error"] = str(exc)[:500]
+
+    fg = src_rgba
+    used_rembg = False
+    rembg_effective = False
+    if settings.condition_rembg_enabled:
+        try:
+            from rembg import remove  # type: ignore
+
+            removed = remove(
+                raw,
+                alpha_matting=True,
+                alpha_matting_foreground_threshold=245,
+                alpha_matting_background_threshold=10,
+                alpha_matting_erode_size=8,
+            )
+            with Image.open(BytesIO(removed)) as rembg_img:
+                fg = rembg_img.convert("RGBA")
+            alpha = fg.split()[-1]
+            coverage = sum(1 for px in alpha.getdata() if px > 20) / max(fg.size[0] * fg.size[1], 1)
+            rembg_effective = coverage < 0.95
+            if not rembg_effective:
+                # Fallback: ask rembg for a raw mask and apply aggressive thresholding.
+                mask_bytes = remove(raw, only_mask=True)
+                with Image.open(BytesIO(mask_bytes)) as m:
+                    mask = ImageOps.autocontrast(m.convert("L"))
+                mask = mask.point(lambda p: 255 if p >= 140 else 0)
+                mask = mask.filter(ImageFilter.MinFilter(3)).filter(ImageFilter.GaussianBlur(1.2))
+                candidate = src_rgba.copy()
+                candidate.putalpha(mask)
+                alpha2 = candidate.split()[-1]
+                coverage2 = sum(1 for px in alpha2.getdata() if px > 20) / max(candidate.size[0] * candidate.size[1], 1)
+                if coverage2 < coverage:
+                    fg = candidate
+                    rembg_effective = coverage2 < 0.95
+            used_rembg = True
+        except Exception:
+            fg = src_rgba
+
+    w, h = fg.size
+    grad = Image.linear_gradient("L").resize((w, h))
+    top = Image.new("RGBA", (w, h), (252, 252, 253, 255))
+    bottom = Image.new("RGBA", (w, h), (225, 227, 230, 255))
+    bg = Image.composite(bottom, top, grad)
+
+    alpha = fg.split()[-1]
+    bbox = alpha.getbbox()
+    if bbox:
+        item = fg.crop(bbox)
+        iw, ih = item.size
+        original_fill_ratio = (iw * ih) / max(w * h, 1)
+        # If item already fills almost entire frame, force more padding so staging is visible.
+        target_fill = 0.62 if original_fill_ratio > 0.78 else 0.78
+        max_w = int(w * target_fill)
+        max_h = int(h * target_fill)
+        scale = min(max_w / max(iw, 1), max_h / max(ih, 1), 1.35)
+        nw = max(1, int(iw * scale))
+        nh = max(1, int(ih * scale))
+        item = item.resize((nw, nh), Image.Resampling.LANCZOS)
+
+        shadow = Image.new("RGBA", (nw, max(8, int(nh * 0.1))), (0, 0, 0, 85))
+        shadow = shadow.filter(ImageFilter.GaussianBlur(radius=8))
+        sx = (w - nw) // 2
+        sy = min(h - shadow.height - 6, (h - nh) // 2 + nh - int(shadow.height * 0.4))
+        bg.alpha_composite(shadow, (sx, sy))
+
+        x = (w - nw) // 2
+        y = (h - nh) // 2
+        bg.alpha_composite(item, (x, y))
+    else:
+        bg.alpha_composite(fg, (0, 0))
+
+    out = BytesIO()
+    bg.convert("RGB").save(out, format="JPEG", quality=92, optimize=True)
+    return out.getvalue(), "image/jpeg", {
+        "applied": True,
+        "used_rembg": used_rembg,
+        "rembg_effective": rembg_effective,
+        "forced_padding": True,
+        "gemini_edit": gemini_stage_debug,
+    }
+
+
+def infer_category_from_item_profile(item_profile: dict[str, object] | None) -> str | None:
+    if not isinstance(item_profile, dict):
+        return None
+    explicit_category = item_profile.get("category")
+    if isinstance(explicit_category, str):
+        normalized = explicit_category.strip().casefold()
+        if normalized == "handbags":
+            normalized = "handbag"
+        if normalized in VALID_CATEGORIES:
+            return normalized
+    model_identification = item_profile.get("model_identification")
+    if not isinstance(model_identification, dict):
+        return None
+
+    text_parts: list[str] = []
+    name = model_identification.get("name")
+    if isinstance(name, str):
+        text_parts.append(name)
+    attributes = model_identification.get("attributes")
+    if isinstance(attributes, list):
+        text_parts.extend(attr for attr in attributes if isinstance(attr, str))
+    if not text_parts:
+        return None
+
+    text = " ".join(text_parts).casefold()
+    shoes_terms = ("shoe", "boot", "sandal", "sneaker", "heel", "pump", "loafer", "mule")
+    handbag_terms = ("handbag", "bag", "purse", "tote", "satchel", "crossbody", "clutch")
+    clothes_terms = ("dress", "jacket", "coat", "shirt", "top", "jeans", "pants", "skirt", "blouse", "sweater")
+
+    if any(term in text for term in shoes_terms):
+        return "shoes"
+    if any(term in text for term in handbag_terms):
+        return "handbag"
+    if any(term in text for term in clothes_terms):
+        return "clothes"
+    return None
+
+
+def infer_brand_from_item_profile(item_profile: dict[str, object] | None) -> tuple[str | None, float | None, str | None]:
+    if not isinstance(item_profile, dict):
+        return None, None, None
+    candidate_brand = item_profile.get("candidate_brand")
+    if not isinstance(candidate_brand, str):
+        return None, None, None
+    brand = candidate_brand.strip()
+    if not brand:
+        return None, None, None
+    confidence = item_profile.get("confidence")
+    try:
+        conf = max(0.0, min(float(confidence), 1.0))
+    except Exception:
+        conf = None
+    return brand, conf, "gpt_item_profile"
 
 
 def _coerce_positive_float(value: object) -> float | None:
@@ -79,41 +312,123 @@ def _coerce_positive_float(value: object) -> float | None:
     return None
 
 
+def _extract_prices_from_text(value: object) -> list[float]:
+    if not isinstance(value, str):
+        return []
+    nums = re.findall(r"\$?\s*(\d{1,6}(?:,\d{3})*(?:\.\d{1,2})?)", value)
+    out: list[float] = []
+    for n in nums:
+        try:
+            v = float(n.replace(",", ""))
+            if v > 0:
+                out.append(v)
+        except Exception:
+            continue
+    return out
+
+
+def _select_breakdown_row(
+    breakdown: object,
+    *,
+    condition_grade: str | None,
+) -> tuple[float | None, float | None, float | None, str]:
+    if not isinstance(breakdown, list):
+        return None, None, None, "default"
+
+    target = (condition_grade or "").strip().casefold()
+    rows = [r for r in breakdown if isinstance(r, dict)]
+    if not rows:
+        return None, None, None, "default"
+
+    def score(label: str) -> int:
+        lbl = label.casefold()
+        if target == "new":
+            if "original retail" in lbl:
+                return 100
+            if "high-end" in lbl or "excellent" in lbl or "new" in lbl or "pristine" in lbl:
+                return 90
+        if target == "likenew":
+            if "high-end" in lbl or "excellent" in lbl or "like" in lbl or "pristine" in lbl:
+                return 100
+            if "good" in lbl or "pre-owned" in lbl:
+                return 70
+        if target == "good":
+            if "good" in lbl or "pre-owned" in lbl:
+                return 100
+            if "excellent" in lbl or "high-end" in lbl:
+                return 70
+        if target in {"fair", "poor"}:
+            if "good" in lbl or "pre-owned" in lbl:
+                return 90
+            if "excellent" in lbl or "high-end" in lbl:
+                return 60
+        if "default" in lbl:
+            return 50
+        return 10
+
+    best = max(rows, key=lambda r: score(str(r.get("label") or "")))
+    label = str(best.get("label") or "default")
+    est = _coerce_positive_float(best.get("estimated_price"))
+    low = _coerce_positive_float(best.get("range_low"))
+    high = _coerce_positive_float(best.get("range_high"))
+    if est is None:
+        values = _extract_prices_from_text(best.get("rationale"))
+        if len(values) >= 2:
+            low = low or min(values[0], values[1])
+            high = high or max(values[0], values[1])
+            est = round((low + high) / 2.0, 2) if low and high else None
+        elif len(values) == 1:
+            est = values[0]
+    if est is None and low is not None and high is not None:
+        est = round((low + high) / 2.0, 2)
+    return est, low, high, label
+
+
 def valuation_from_gpt_item_profile(
     item_profile: dict[str, object] | None,
     *,
     default_currency: str,
+    condition_grade: str | None = None,
 ) -> dict[str, object] | None:
     if not isinstance(item_profile, dict):
         return None
 
     resale = item_profile.get("resale_price_estimate")
     retail = item_profile.get("retail_price_estimate")
-    if not isinstance(resale, dict):
-        return None
-
-    estimated_value = _coerce_positive_float(resale.get("estimated_price"))
+    resale_breakdown = item_profile.get("resale_price_breakdown")
+    estimated_value = None
+    range_low = None
+    range_high = None
+    pricing_row_label = "resale_price_estimate"
+    if isinstance(resale, dict):
+        estimated_value = _coerce_positive_float(resale.get("estimated_price"))
+    if estimated_value is None:
+        estimated_value, range_low, range_high, pricing_row_label = _select_breakdown_row(
+            resale_breakdown,
+            condition_grade=condition_grade,
+        )
     if estimated_value is None:
         return None
 
     retail_reference = _coerce_positive_float(retail.get("estimated_price")) if isinstance(retail, dict) else None
-    confidence = resale.get("confidence")
+    confidence = resale.get("confidence") if isinstance(resale, dict) else None
     try:
         confidence_01 = max(0.0, min(float(confidence), 1.0))
     except Exception:
         confidence_01 = 0.5
-    currency = resale.get("currency") if isinstance(resale.get("currency"), str) else default_currency
+    currency = resale.get("currency") if isinstance(resale, dict) and isinstance(resale.get("currency"), str) else default_currency
 
     return {
         "estimated_value": round(estimated_value, 2),
         "currency": currency,
-        "range_low": None,
-        "range_high": None,
+        "range_low": round(range_low, 2) if isinstance(range_low, (int, float)) else None,
+        "range_high": round(range_high, 2) if isinstance(range_high, (int, float)) else None,
         "confidence": round(confidence_01, 3),
-        "basis": "gpt_resale_estimate_primary",
+        "basis": "gpt_resale_estimate_primary" if pricing_row_label == "resale_price_estimate" else "gpt_resale_breakdown_condition_selected",
         "comps_summary": {"count": 1, "source_breakdown": {"gpt_item_profile": 1}},
         "resale_market_value": round(estimated_value, 2),
         "retail_reference_value": round(retail_reference, 2) if retail_reference is not None else None,
+        "selected_breakdown_label": pricing_row_label if pricing_row_label != "resale_price_estimate" else None,
     }
 
 
@@ -158,6 +473,61 @@ def build_condition_warnings(user_condition: ConditionGrade | None, model_condit
             f"User marked item as {user_condition}, but model assessment suggests {model_condition}. Review wear/damage before listing."
         ]
     return []
+
+
+def _has_receipt_like_upload(image_inputs: list[ImageInput]) -> bool:
+    keywords = ("receipt", "invoice", "authentic", "certificate", "proof", "order")
+    for img in image_inputs:
+        name = (img.filename or "").casefold()
+        hint = (img.role_hint or "").casefold()
+        if any(k in name for k in keywords):
+            return True
+        if any(k in hint for k in keywords):
+            return True
+    return False
+
+
+def build_auth_doc_warning(
+    item_profile: dict[str, object] | None,
+    image_inputs: list[ImageInput],
+    *,
+    brand_name: str,
+) -> str | None:
+    if not isinstance(item_profile, dict):
+        return None
+    expected = item_profile.get("expected_auth_docs")
+    usually = ""
+    docs_text = ""
+    if isinstance(expected, dict):
+        usually = str(expected.get("usually_provided") or "").strip().casefold()
+        docs = expected.get("typical_documents")
+        if isinstance(docs, list):
+            cleaned = [d for d in docs if isinstance(d, str) and d.strip()]
+            if cleaned:
+                docs_text = f" (e.g., {', '.join(cleaned[:3])})"
+    if not usually:
+        usually = "unknown"
+
+    if usually == "unknown":
+        luxury_brands = {
+            "louis vuitton", "chanel", "gucci", "prada", "hermes", "dior", "saint laurent",
+            "celine", "fendi", "balenciaga", "bottega veneta", "jimmy choo", "valentino",
+            "burberry", "loewe", "givenchy", "mcm",
+        }
+        if brand_name.strip().casefold() in luxury_brands:
+            usually = "mixed"
+
+    if usually not in {"yes", "mixed"}:
+        return None
+    receipt_present = str(item_profile.get("receipt_present") or "").strip().casefold()
+    if _has_receipt_like_upload(image_inputs):
+        return None
+    if receipt_present == "yes":
+        return None
+    return (
+        "For this brand/model, proof of purchase or authenticity documents are usually provided. "
+        f"Upload an authenticity receipt image{docs_text} to improve valuation confidence."
+    )
 
 
 def build_valuation_service(settings: Settings, providers: list[str]) -> ValuationService:
@@ -270,10 +640,12 @@ def create_listing(
         estimated_value=payload.estimated_value,
         city=payload.city,
         image=payload.image,
+        images=payload.images,
         wants=payload.wants,
         tags=payload.tags,
         source_item_id=payload.source_item_id,
         analysis=payload.analysis,
+        status=payload.status,
     )
     return ListingResponse(
         listing_id=listing_id,
@@ -287,16 +659,50 @@ def create_listing(
 @app.get("/v1/listings")
 def list_recent_listings(
     limit: int = 50,
+    mine: bool = False,
     principal: AuthPrincipal = Depends(get_request_principal),
     db: Database = Depends(get_db),
 ):
     safe_limit = max(1, min(limit, 100))
-    records = db.list_recent_listings(limit=safe_limit)
+    records = db.list_owner_listings(principal.subject, limit=safe_limit) if mine else db.list_recent_listings(limit=safe_limit)
     return {
         "count": len(records),
         "items": records,
         "actor": {"auth_type": principal.auth_type, "subject": principal.subject},
     }
+
+
+@app.put("/v1/listings/{listing_id}", response_model=ListingResponse)
+def update_listing(
+    listing_id: str,
+    payload: ListingCreateRequest,
+    principal: AuthPrincipal = Depends(get_request_principal),
+    db: Database = Depends(get_db),
+):
+    updated = db.update_listing(
+        listing_id=listing_id,
+        owner_subject=principal.subject,
+        title=payload.title,
+        mode=payload.mode,
+        category=payload.category,
+        brand=payload.brand,
+        condition=payload.condition,
+        estimated_value=payload.estimated_value,
+        city=payload.city,
+        image=payload.image,
+        images=payload.images,
+        wants=payload.wants,
+        tags=payload.tags,
+        source_item_id=payload.source_item_id,
+        analysis=payload.analysis,
+        status=payload.status,
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail="listing not found")
+    record = next((r for r in db.list_owner_listings(principal.subject, limit=500) if r["listing_id"] == listing_id), None)
+    if record is None:
+        raise HTTPException(status_code=404, detail="listing not found")
+    return ListingResponse(**record)
 
 
 @app.get("/v1/auth/me", response_model=AuthMeResponse)
@@ -335,8 +741,6 @@ async def analyze(
     principal: AuthPrincipal = Depends(get_request_principal),
     db: Database = Depends(get_db),
     storage: Storage = Depends(get_storage),
-    brand_analyzer=Depends(get_brand_analyzer),
-    condition_analyzer: ConditionAnalyzer = Depends(get_condition_analyzer),
     valuation_service: ValuationService = Depends(get_valuation_service),
     gpt_item_profiler=Depends(get_gpt_item_profiler),
 ) -> AnalyzeResponse:
@@ -356,18 +760,25 @@ async def analyze(
 
     image_inputs: list[ImageInput] = []
     uploaded_refs: list[dict] = []
+    uploaded_images_out: list[UploadedImageOut] = []
     for idx, file in enumerate(images):
         raw = await file.read()
         if not raw:
             continue
+        staged_raw, staged_content_type, stage_debug = _stage_item_image(raw, file.content_type or "image/jpeg", settings)
         image_uuid = str(uuid.uuid4())
-        ext = os.path.splitext(file.filename or "")[1] or ".jpg"
+        ext = ".jpg" if staged_content_type == "image/jpeg" else (os.path.splitext(file.filename or "")[1] or ".jpg")
         filename = f"{image_uuid}{ext}"
         role_hint = "full_item" if idx == 0 else "close_up"
         storage_uri = storage.save_upload(
             item_id=item_id,
             filename=filename,
-            content_type=file.content_type or "image/jpeg",
+            content_type=staged_content_type,
+            data=staged_raw,
+        )
+        storage.save_debug_artifact(
+            item_id=item_id,
+            filename=f"{image_uuid}_original.bin",
             data=raw,
         )
         db.insert_image(
@@ -383,39 +794,47 @@ async def analyze(
             ImageInput(
                 image_id=image_uuid,
                 filename=file.filename or filename,
-                content_type=file.content_type or "image/jpeg",
-                bytes_data=raw,
+                content_type=staged_content_type,
+                bytes_data=staged_raw,
                 role_hint=role_hint,
             )
         )
-        uploaded_refs.append({"image_id": image_uuid, "storage_uri": storage_uri, "role_hint": role_hint})
+        uploaded_refs.append(
+            {
+                "image_id": image_uuid,
+                "storage_uri": storage_uri,
+                "role_hint": role_hint,
+                "staging": stage_debug,
+            }
+        )
+        uploaded_images_out.append(
+            UploadedImageOut(
+                image_id=image_uuid,
+                role_hint=role_hint,
+                storage_uri=storage_uri,
+                image_url=_public_image_url_from_storage_uri(storage_uri, settings),
+            )
+        )
 
     if not image_inputs:
         raise HTTPException(status_code=400, detail="No readable images uploaded")
 
-    t_brand_0 = time.perf_counter()
-    brand_result = brand_analyzer.analyze(image_inputs, debug=debug)
-    t_brand = time.perf_counter() - t_brand_0
-
-    t_cond_0 = time.perf_counter()
-    condition_result = condition_analyzer.analyze(
-        primary_image=image_inputs[0].bytes_data,
-        category_hint=category,
-        debug=debug,
+    requested_photos: list[str] = []
+    brand_debug: dict[str, object] = {"source": "gemini_only"}
+    cond_debug: dict[str, object] = {"source": "gemini_only"}
+    category_out = category or "clothes"
+    condition_out = ConditionOut(
+        grade=user_condition_grade or "Good",
+        confidence=1.0 if user_condition_grade is not None else 0.35,
+        issues=[],
     )
-    t_cond = time.perf_counter() - t_cond_0
-
-    requested_photos = list(dict.fromkeys(brand_result.pop("_requested_photos", [])))
-    brand_debug = brand_result.pop("_debug", None)
-    brand_out = BrandOut(**{k: brand_result[k] for k in ("name", "confidence", "evidence")})
-
-    category_out = category or condition_result.category
-    cond_payload = ConditionAnalyzer.serialize(condition_result)
-    cond_debug = cond_payload.pop("_debug", None)
-    condition_out = ConditionOut(**cond_payload)
-    warnings = build_condition_warnings(user_condition_grade, condition_out.grade)
+    warnings = []
+    if user_condition_grade is None:
+        warnings.append("Condition set to Good by default. Select condition to improve pricing accuracy.")
     valuation_condition_grade = user_condition_grade or condition_out.grade
-    valuation_condition_confidence = 1.0 if user_condition_grade is not None else condition_out.confidence
+    valuation_condition_confidence = condition_out.confidence
+    t_brand = 0.0
+    t_cond = 0.0
 
     valuation_payload = None
     valuation_debug = None
@@ -433,10 +852,10 @@ async def analyze(
     if firecrawl_agent_enabled and sync_providers:
         sync_valuation_service = build_valuation_service(settings, sync_providers)
     t_profile_0 = time.perf_counter()
-    if settings.gpt_item_profile_enabled and brand_out.name != "unknown":
+    if settings.gpt_item_profile_enabled:
         profile_result = gpt_item_profiler.profile_item(
             images=image_inputs,
-            brand_name=brand_out.name,
+            brand_name="unknown",
             category=category_out,
             item_size=item_size,
             condition_grade=valuation_condition_grade,
@@ -449,12 +868,55 @@ async def analyze(
             "error": profile_result.error,
         }
         item_profile_payload = profile_result.profile
+        if isinstance(item_profile_payload, dict):
+            grounding_metadata = item_profile_payload.pop("_grounding_metadata", None)
+            if grounding_metadata is not None:
+                item_profile_debug["groundingMetadata"] = grounding_metadata
+            workflow_debug = item_profile_payload.pop("_workflow", None)
+            if workflow_debug is not None:
+                item_profile_debug["workflow"] = workflow_debug
+        inferred_profile_category = infer_category_from_item_profile(item_profile_payload)
+        if (
+            inferred_profile_category
+            and inferred_profile_category in VALID_CATEGORIES
+            and inferred_profile_category != category_out
+        ):
+            item_profile_debug["category_reconciled"] = {
+                "from": category_out,
+                "to": inferred_profile_category,
+                "source": "gpt_item_profile",
+            }
+            category_out = inferred_profile_category
+    else:
+        raise HTTPException(status_code=503, detail="Gemini item profiler is required and currently disabled")
     t_profile = time.perf_counter() - t_profile_0
+
+    inferred_profile_brand, inferred_profile_brand_conf, inferred_brand_source = infer_brand_from_item_profile(item_profile_payload)
+    if inferred_profile_brand:
+        brand_out = BrandOut(
+            name=inferred_profile_brand,
+            confidence=inferred_profile_brand_conf if inferred_profile_brand_conf is not None else 0.5,
+            evidence=inferred_brand_source or "gpt_item_profile",
+        )
+        item_profile_debug["brand_reconciled"] = {
+            "from": "unknown",
+            "to": brand_out.name,
+            "source": inferred_brand_source or "gpt_item_profile",
+        }
+    else:
+        brand_out = BrandOut(name="unknown", confidence=0.0, evidence="insufficient_evidence")
+
+    auth_doc_warning = build_auth_doc_warning(item_profile_payload, image_inputs, brand_name=brand_out.name)
+    if auth_doc_warning and auth_doc_warning not in warnings:
+        warnings.append(auth_doc_warning)
+        requested_photos.append("authenticity_receipt")
+        requested_photos = list(dict.fromkeys(requested_photos))
 
     if settings.valuation_enabled and brand_out.name != "unknown":
         valuation_payload = valuation_from_gpt_item_profile(
             item_profile_payload,
             default_currency=settings.valuation_currency,
+            condition_grade=valuation_condition_grade,
         )
         if debug and valuation_payload is not None:
             valuation_debug = {
@@ -527,6 +989,7 @@ async def analyze(
         item_profile=item_profile_payload,
         requested_photos=requested_photos,
         warnings=warnings,
+        uploaded_images=uploaded_images_out,
         debug=debug_payload,
     )
 

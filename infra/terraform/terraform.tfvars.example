@@ -1,10 +1,25 @@
 project_name            = "valueai-mvp"
 aws_region              = "us-east-1"
+# Set this to the AWS CLI profile for the target account, or leave commented
+# to use the default credential chain.
+aws_profile            = "rajesh_volluru"
+# Optional: assume a deploy role in the target account.
+aws_assume_role_arn    = "arn:aws:iam::537595754494:role/jouft_developer"
 api_key                 = "replace-me"
-container_image         = "123456789012.dkr.ecr.us-east-1.amazonaws.com/valueai-mvp-api:latest"
+container_image         = "537595754494.dkr.ecr.us-east-1.amazonaws.com/valueai-mvp-api:latest"
 db_name                 = "valueai"
 db_username             = "valueai"
 db_password             = "replace-me"
 brand_accept_score      = 78
 brand_accept_score_low  = 70
 brand_gap_min           = 8
+gpt_item_profile_enabled = true
+gpt_item_profile_provider_order = "gemini,openai"
+gpt_item_profile_model = "gpt-5"
+gpt_item_profile_gemini_model = "gemini-2.5-flash"
+gpt_item_profile_timeout_s = 25
+gpt_item_profile_max_images = 2
+gpt_item_profile_image_detail = "auto"
+gpt_item_profile_reasoning_effort = "low"
+openai_api_key          = "replace-me"
+gemini_api_key          = "replace-me"

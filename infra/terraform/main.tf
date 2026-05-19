@@ -10,7 +10,7 @@ resource "aws_vpc" "this" {
   cidr_block           = "10.40.0.0/16"
   enable_dns_hostnames = true
   enable_dns_support   = true
-  tags = { Name = "${var.project_name}-vpc" }
+  tags                 = { Name = "${var.project_name}-vpc" }
 }
 
 resource "aws_internet_gateway" "this" {
@@ -24,7 +24,7 @@ resource "aws_subnet" "public" {
   cidr_block              = cidrsubnet(aws_vpc.this.cidr_block, 8, count.index)
   availability_zone       = local.azs[count.index]
   map_public_ip_on_launch = true
-  tags = { Name = "${var.project_name}-public-${count.index + 1}" }
+  tags                    = { Name = "${var.project_name}-public-${count.index + 1}" }
 }
 
 resource "aws_subnet" "private" {
@@ -32,7 +32,7 @@ resource "aws_subnet" "private" {
   vpc_id            = aws_vpc.this.id
   cidr_block        = cidrsubnet(aws_vpc.this.cidr_block, 8, count.index + 10)
   availability_zone = local.azs[count.index]
-  tags = { Name = "${var.project_name}-private-${count.index + 1}" }
+  tags              = { Name = "${var.project_name}-private-${count.index + 1}" }
 }
 
 resource "aws_route_table" "public" {
@@ -154,8 +154,8 @@ resource "aws_iam_role" "ecs_task_execution" {
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
-      Action = "sts:AssumeRole"
-      Effect = "Allow"
+      Action    = "sts:AssumeRole"
+      Effect    = "Allow"
       Principal = { Service = "ecs-tasks.amazonaws.com" }
     }]
   })
@@ -171,8 +171,8 @@ resource "aws_iam_role" "ecs_task" {
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
-      Action = "sts:AssumeRole"
-      Effect = "Allow"
+      Action    = "sts:AssumeRole"
+      Effect    = "Allow"
       Principal = { Service = "ecs-tasks.amazonaws.com" }
     }]
   })
@@ -206,6 +206,7 @@ resource "aws_lb" "api" {
   load_balancer_type = "application"
   security_groups    = [aws_security_group.alb.id]
   subnets            = aws_subnet.public[*].id
+  idle_timeout       = 180
 }
 
 resource "aws_lb_target_group" "api" {
@@ -245,9 +246,9 @@ resource "aws_ecs_task_definition" "api" {
 
   container_definitions = jsonencode([
     {
-      name      = "api"
-      image     = var.container_image
-      essential = true
+      name         = "api"
+      image        = var.container_image
+      essential    = true
       portMappings = [{ containerPort = 8000, hostPort = 8000, protocol = "tcp" }]
       environment = [
         { name = "APP_ENV", value = "prod" },
@@ -258,12 +259,21 @@ resource "aws_ecs_task_definition" "api" {
         { name = "S3_REGION", value = var.aws_region },
         { name = "DATABASE_URL", value = "postgresql://${var.db_username}:${var.db_password}@${aws_db_instance.postgres.address}:5432/${var.db_name}" },
         { name = "OPENAI_API_KEY", value = var.openai_api_key },
+        { name = "GEMINI_API_KEY", value = var.gemini_api_key },
         { name = "CLERK_ENABLED", value = tostring(var.clerk_enabled) },
         { name = "CLERK_ISSUER", value = var.clerk_issuer },
         { name = "CLERK_JWKS_URL", value = var.clerk_jwks_url },
         { name = "CLERK_AUDIENCE", value = var.clerk_audience },
         { name = "CLERK_AUTHORIZED_PARTIES", value = var.clerk_authorized_parties },
         { name = "BRAND_ENABLE_GPT_VISION", value = tostring(var.brand_enable_gpt_vision) },
+        { name = "GPT_ITEM_PROFILE_ENABLED", value = tostring(var.gpt_item_profile_enabled) },
+        { name = "GPT_ITEM_PROFILE_PROVIDER_ORDER", value = var.gpt_item_profile_provider_order },
+        { name = "GPT_ITEM_PROFILE_MODEL", value = var.gpt_item_profile_model },
+        { name = "GPT_ITEM_PROFILE_GEMINI_MODEL", value = var.gpt_item_profile_gemini_model },
+        { name = "GPT_ITEM_PROFILE_TIMEOUT_S", value = tostring(var.gpt_item_profile_timeout_s) },
+        { name = "GPT_ITEM_PROFILE_MAX_IMAGES", value = tostring(var.gpt_item_profile_max_images) },
+        { name = "GPT_ITEM_PROFILE_IMAGE_DETAIL", value = var.gpt_item_profile_image_detail },
+        { name = "GPT_ITEM_PROFILE_REASONING_EFFORT", value = var.gpt_item_profile_reasoning_effort },
         { name = "FIRECRAWL_API_KEY", value = var.firecrawl_api_key },
         { name = "VALUATION_USE_FIRECRAWL", value = tostring(var.valuation_use_firecrawl) },
         { name = "VALUATION_ENABLED", value = tostring(var.valuation_enabled) },

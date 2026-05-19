@@ -10,9 +10,11 @@ from .settings import Settings, get_settings
 
 try:
     import jwt
+    from jwt.exceptions import ExpiredSignatureError
     from jwt import PyJWKClient
 except Exception:  # pragma: no cover - optional dependency at runtime
     jwt = None
+    ExpiredSignatureError = Exception
     PyJWKClient = None
 
 
@@ -65,7 +67,10 @@ def _verify_clerk_token(token: str, settings: Settings) -> dict[str, Any]:
             issuer=settings.clerk_issuer,
             audience=settings.clerk_audience or None,
             options={"verify_aud": bool(settings.clerk_audience)},
+            leeway=max(0, int(settings.clerk_jwt_leeway_seconds)),
         )
+    except ExpiredSignatureError as exc:
+        raise _unauthorized("Invalid Clerk token: session expired, please sign in again") from exc
     except Exception as exc:
         raise _unauthorized(f"Invalid Clerk token: {exc}") from exc
 
@@ -110,4 +115,3 @@ def require_clerk_user(
     if not sub:
         raise _unauthorized("Token missing subject")
     return AuthPrincipal(auth_type="clerk", subject=sub, claims=claims)
-
