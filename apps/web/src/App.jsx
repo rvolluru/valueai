@@ -145,7 +145,7 @@ async function fetchMyListings({ apiBaseUrl, apiKey, bearerToken, limit = 100 })
   return payload?.items || []
 }
 
-async function fetchMarketplaceListings({ apiBaseUrl, apiKey, bearerToken, limit = 200 }) {
+async function fetchMarketplaceListings({ apiBaseUrl, apiKey, bearerToken, limit = 50 }) {
   const headers = {}
   if (bearerToken) headers.Authorization = `Bearer ${bearerToken}`
   else if (apiKey) headers['x-api-key'] = apiKey
@@ -479,7 +479,7 @@ function MarketplaceWorkspace({ session, onLogout, clerkEnabled = false, getBear
           apiBaseUrl,
           apiKey: clerkEnabled ? '' : apiKey.trim(),
           bearerToken,
-          limit: 200,
+          limit: 50,
         })
         if (!cancelled) setMarketListings(items.map(fromRemoteListing).filter(Boolean))
       } catch {

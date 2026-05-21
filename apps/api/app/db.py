@@ -313,10 +313,11 @@ class Database:
         self.commit()
         return created_at
 
-    def list_recent_listings(self, limit: int = 50) -> list[dict]:
+    def list_recent_listings(self, limit: int = 50, include_analysis: bool = True) -> list[dict]:
+        analysis_select = "analysis_json" if include_analysis else "NULL AS analysis_json"
         query = (
             f"SELECT listing_id, owner_subject, owner_name, title, mode, category, brand, condition, "
-            f"estimated_value, city, image, images_json, wants, tags_json, source_item_id, analysis_json, status, created_at "
+            f"estimated_value, city, image, images_json, wants, tags_json, source_item_id, {analysis_select}, status, created_at "
             f"FROM listings ORDER BY created_at DESC LIMIT {self.param}"
         )
         if self._sqlite_conn is not None:

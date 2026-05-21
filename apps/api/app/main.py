@@ -664,7 +664,11 @@ def list_recent_listings(
     db: Database = Depends(get_db),
 ):
     safe_limit = max(1, min(limit, 100))
-    records = db.list_owner_listings(principal.subject, limit=safe_limit) if mine else db.list_recent_listings(limit=safe_limit)
+    records = (
+        db.list_owner_listings(principal.subject, limit=safe_limit)
+        if mine
+        else db.list_recent_listings(limit=safe_limit, include_analysis=False)
+    )
     return {
         "count": len(records),
         "items": records,
