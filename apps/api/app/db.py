@@ -460,6 +460,20 @@ class Database:
                 "created_at",
             ]
             data = {k: row[idx] for idx, k in enumerate(keys)}
+        image_raw = data["image"]
+        image = image_raw if isinstance(image_raw, str) else None
+        if image and (image.startswith("data:") or image.startswith("blob:")):
+            image = None
+
+        images = json.loads(data["images_json"]) if data.get("images_json") else []
+        safe_images = []
+        for value in images:
+            if not isinstance(value, str):
+                continue
+            if value.startswith("data:") or value.startswith("blob:"):
+                continue
+            safe_images.append(value)
+
         return {
             "listing_id": data["listing_id"],
             "owner_subject": data["owner_subject"],
@@ -471,8 +485,8 @@ class Database:
             "condition": data["condition"],
             "estimated_value": float(data["estimated_value"]),
             "city": data["city"],
-            "image": data["image"],
-            "images": json.loads(data["images_json"]) if data.get("images_json") else [],
+            "image": image,
+            "images": safe_images,
             "wants": data["wants"],
             "tags": json.loads(data["tags_json"]) if data["tags_json"] else [],
             "source_item_id": data["source_item_id"],

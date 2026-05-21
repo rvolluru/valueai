@@ -667,7 +667,7 @@ def list_recent_listings(
     records = (
         db.list_owner_listings(principal.subject, limit=safe_limit)
         if mine
-        else db.list_recent_listings(limit=safe_limit, include_analysis=False, include_media=False)
+        else db.list_recent_listings(limit=safe_limit, include_analysis=False, include_media=True)
     )
     return {
         "count": len(records),
