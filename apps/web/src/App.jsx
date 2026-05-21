@@ -145,6 +145,23 @@ async function fetchMyListings({ apiBaseUrl, apiKey, bearerToken, limit = 100 })
   return payload?.items || []
 }
 
+async function fetchMarketplaceListings({ apiBaseUrl, apiKey, bearerToken, limit = 200 }) {
+  const headers = {}
+  if (bearerToken) headers.Authorization = `Bearer ${bearerToken}`
+  else if (apiKey) headers['x-api-key'] = apiKey
+  const resp = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/v1/listings?limit=${limit}`, {
+    method: 'GET',
+    headers,
+  })
+  let payload = null
+  try { payload = await resp.json() } catch {}
+  if (!resp.ok) {
+    const detail = Array.isArray(payload?.detail) ? payload.detail[0]?.msg : payload?.detail
+    throw new Error(detail || `API error (${resp.status})`)
+  }
+  return payload?.items || []
+}
+
 async function createListingRemote({ apiBaseUrl, apiKey, bearerToken, payload }) {
   const headers = { 'Content-Type': 'application/json' }
   if (bearerToken) headers.Authorization = `Bearer ${bearerToken}`
@@ -325,6 +342,7 @@ function MarketplaceWorkspace({ session, onLogout, clerkEnabled = false, getBear
   const [apiBaseUrl] = useState(API_DEFAULT)
   const [apiKey, setApiKey] = useState('local-dev-key')
   const [myListings, setMyListings] = useState([])
+  const [marketListings, setMarketListings] = useState([])
   const [activeTab, setActiveTab] = useState('upload')
   const [marketSearch, setMarketSearch] = useState('')
   const [tradeOnly, setTradeOnly] = useState(false)
@@ -455,6 +473,27 @@ function MarketplaceWorkspace({ session, onLogout, clerkEnabled = false, getBear
   useEffect(() => {
     let cancelled = false
     ;(async () => {
+      try {
+        const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
+        const items = await fetchMarketplaceListings({
+          apiBaseUrl,
+          apiKey: clerkEnabled ? '' : apiKey.trim(),
+          bearerToken,
+          limit: 200,
+        })
+        if (!cancelled) setMarketListings(items.map(fromRemoteListing).filter(Boolean))
+      } catch {
+        // Keep local state fallback if API fetch fails.
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [apiBaseUrl, apiKey, clerkEnabled, getBearerToken])
+
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
       if (!images.length) {
         setPreviewUrls([])
         return
@@ -490,12 +529,14 @@ function MarketplaceWorkspace({ session, onLogout, clerkEnabled = false, getBear
     return expectsReceipt && receiptPresent !== 'yes'
   }
 
-  const allListings = [...myListings, ...seedListings]
+  const allListings = marketListings.length > 0 ? marketListings : [...myListings, ...seedListings]
   const deferredMarketSearch = useDeferredValue(marketSearch)
 
   const filteredListings = useMemo(() => {
     const q = deferredMarketSearch.trim().toLowerCase()
     return allListings.filter((item) => {
+      const status = typeof item.status === 'string' ? item.status.toLowerCase() : ''
+      if (status !== 'active') return false
       if (tradeOnly && item.mode === 'sell') return false
       if (!q) return true
       return `${item.title} ${item.brand} ${item.category} ${item.city} ${item.wants}`.toLowerCase().includes(q)
@@ -1044,9 +1085,6 @@ function MarketplaceWorkspace({ session, onLogout, clerkEnabled = false, getBear
                           <option value="">Select condition</option>
                           <option value="New">New</option>
                           <option value="LikeNew">Like New</option>
-                          <option value="Good">Good</option>
-                          <option value="Fair">Fair</option>
-                          <option value="Poor">Poor</option>
                         </select>
                       </label>
                       {receiptPromptPending && (
@@ -1379,9 +1417,6 @@ function MarketplaceWorkspace({ session, onLogout, clerkEnabled = false, getBear
                 <option value="">Select condition</option>
                 <option value="New">New</option>
                 <option value="LikeNew">Like New</option>
-                <option value="Good">Good</option>
-                <option value="Fair">Fair</option>
-                <option value="Poor">Poor</option>
               </select>
             </label>
             {listingModalMode === 'edit' && (
