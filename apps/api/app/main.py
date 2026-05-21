@@ -8,10 +8,13 @@ import uuid
 from io import BytesIO
 from pathlib import Path
 from typing import Annotated
+from urllib.parse import urlparse
 
+import boto3
 from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image, ImageFilter, ImageOps
 
@@ -84,6 +87,29 @@ def _public_image_url_from_storage_uri(storage_uri: str, settings: Settings) -> 
         if idx >= 0:
             return f"/uploads/{norm[idx + len(marker):]}"
     return storage_uri
+
+
+def _presign_s3_uri(storage_uri: str, settings: Settings) -> str | None:
+    if not storage_uri.startswith("s3://"):
+        return None
+    parsed = urlparse(storage_uri)
+    bucket = parsed.netloc
+    key = parsed.path.lstrip("/")
+    if not bucket or not key:
+        return None
+    session = boto3.session.Session()
+    client = session.client(
+        "s3",
+        region_name=settings.s3_region,
+        endpoint_url=settings.s3_endpoint_url,
+        aws_access_key_id=settings.s3_access_key_id,
+        aws_secret_access_key=settings.s3_secret_access_key,
+    )
+    return client.generate_presigned_url(
+        "get_object",
+        Params={"Bucket": bucket, "Key": key},
+        ExpiresIn=900,
+    )
 
 
 def _stage_item_image(raw: bytes, content_type: str, settings: Settings) -> tuple[bytes, str, dict[str, object]]:
@@ -599,6 +625,31 @@ def version(settings: Settings = Depends(get_settings)) -> VersionResponse:
     return VersionResponse(version=settings.version)
 
 
+@app.get("/v1/images/{image_id}")
+def get_uploaded_image(
+    image_id: str,
+    principal: AuthPrincipal = Depends(get_request_principal),
+    db: Database = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+):
+    _ = principal
+    storage_uri = db.get_image_storage_uri(image_id)
+    if not storage_uri:
+        raise HTTPException(status_code=404, detail="image not found")
+
+    if storage_uri.startswith("http://") or storage_uri.startswith("https://"):
+        return RedirectResponse(storage_uri, status_code=307)
+
+    signed = _presign_s3_uri(storage_uri, settings)
+    if signed:
+        return RedirectResponse(signed, status_code=307)
+
+    path = Path(storage_uri)
+    if path.exists():
+        return FileResponse(path)
+    raise HTTPException(status_code=404, detail="image not found")
+
+
 @app.get("/v1/admin/analyses")
 def admin_recent_analyses(
     limit: int = 25,
@@ -637,6 +688,7 @@ def create_listing(
         category=payload.category,
         brand=payload.brand,
         condition=payload.condition,
+        size=payload.size,
         estimated_value=payload.estimated_value,
         city=payload.city,
         image=payload.image,
@@ -669,6 +721,22 @@ def list_recent_listings(
         if mine
         else db.list_recent_listings(limit=safe_limit, include_analysis=False, include_media=True)
     )
+    if not mine:
+        for record in records:
+            image = record.get("image")
+            images = record.get("images") or []
+            has_valid_image = isinstance(image, str) and len(image.strip()) > 0
+            has_valid_gallery = isinstance(images, list) and len(images) > 0
+            if has_valid_image or has_valid_gallery:
+                continue
+            source_item_id = record.get("source_item_id")
+            if not source_item_id:
+                continue
+            fallback_image_id = db.get_first_image_id_for_item(source_item_id)
+            if fallback_image_id:
+                fallback_url = f"/v1/images/{fallback_image_id}"
+                record["image"] = fallback_url
+                record["images"] = [fallback_url]
     return {
         "count": len(records),
         "items": records,
@@ -691,6 +759,7 @@ def update_listing(
         category=payload.category,
         brand=payload.brand,
         condition=payload.condition,
+        size=payload.size,
         estimated_value=payload.estimated_value,
         city=payload.city,
         image=payload.image,

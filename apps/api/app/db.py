@@ -102,6 +102,7 @@ class Database:
               category TEXT NOT NULL,
               brand TEXT NOT NULL,
               condition TEXT NOT NULL,
+              size TEXT,
               estimated_value REAL NOT NULL,
               city TEXT NOT NULL,
               image TEXT,
@@ -120,6 +121,7 @@ class Database:
         for alter in (
             "ALTER TABLE listings ADD COLUMN images_json TEXT NOT NULL DEFAULT '[]'",
             "ALTER TABLE listings ADD COLUMN status TEXT NOT NULL DEFAULT 'Review'",
+            "ALTER TABLE listings ADD COLUMN size TEXT",
         ):
             try:
                 self.execute(alter)
@@ -261,6 +263,39 @@ class Database:
         cur.close()
         return [self._analysis_row_to_dict(row) for row in rows]
 
+    def get_image_storage_uri(self, image_id: str) -> str | None:
+        query = f"SELECT storage_uri FROM images WHERE image_id = {self.param} LIMIT 1"
+        if self._sqlite_conn is not None:
+            row = self._sqlite_conn.execute(query, (image_id,)).fetchone()
+            if not row:
+                return None
+            return row["storage_uri"] if isinstance(row, sqlite3.Row) else row[0]
+        cur = self._pg.cursor()
+        cur.execute(query, (image_id,))
+        row = cur.fetchone()
+        cur.close()
+        if not row:
+            return None
+        return row[0]
+
+    def get_first_image_id_for_item(self, item_id: str) -> str | None:
+        query = (
+            f"SELECT image_id FROM images WHERE item_id = {self.param} "
+            f"ORDER BY created_at ASC LIMIT 1"
+        )
+        if self._sqlite_conn is not None:
+            row = self._sqlite_conn.execute(query, (item_id,)).fetchone()
+            if not row:
+                return None
+            return row["image_id"] if isinstance(row, sqlite3.Row) else row[0]
+        cur = self._pg.cursor()
+        cur.execute(query, (item_id,))
+        row = cur.fetchone()
+        cur.close()
+        if not row:
+            return None
+        return row[0]
+
     def insert_listing(
         self,
         *,
@@ -272,6 +307,7 @@ class Database:
         category: str,
         brand: str,
         condition: str,
+        size: str | None,
         estimated_value: float,
         city: str,
         image: str | None,
@@ -285,9 +321,9 @@ class Database:
         created_at = utc_now_iso()
         self.execute(
             f"""INSERT INTO listings
-            (listing_id, owner_subject, owner_name, title, mode, category, brand, condition,
+            (listing_id, owner_subject, owner_name, title, mode, category, brand, condition, size,
              estimated_value, city, image, images_json, wants, tags_json, source_item_id, analysis_json, status, created_at)
-            VALUES ({self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param},
+            VALUES ({self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param},
                     {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param})""",
             (
                 listing_id,
@@ -298,6 +334,7 @@ class Database:
                 category,
                 brand,
                 condition,
+                size,
                 float(estimated_value),
                 city,
                 image,
@@ -324,7 +361,7 @@ class Database:
         images_select = "images_json" if include_media else "'[]' AS images_json"
         query = (
             f"SELECT listing_id, owner_subject, owner_name, title, mode, category, brand, condition, "
-            f"estimated_value, city, {image_select}, {images_select}, wants, tags_json, source_item_id, {analysis_select}, status, created_at "
+            f"size, estimated_value, city, {image_select}, {images_select}, wants, tags_json, source_item_id, {analysis_select}, status, created_at "
             f"FROM listings ORDER BY created_at DESC LIMIT {self.param}"
         )
         if self._sqlite_conn is not None:
@@ -339,7 +376,7 @@ class Database:
     def list_owner_listings(self, owner_subject: str, limit: int = 50) -> list[dict]:
         query = (
             f"SELECT listing_id, owner_subject, owner_name, title, mode, category, brand, condition, "
-            f"estimated_value, city, image, images_json, wants, tags_json, source_item_id, analysis_json, status, created_at "
+            f"size, estimated_value, city, image, images_json, wants, tags_json, source_item_id, analysis_json, status, created_at "
             f"FROM listings WHERE owner_subject = {self.param} ORDER BY created_at DESC LIMIT {self.param}"
         )
         if self._sqlite_conn is not None:
@@ -361,6 +398,7 @@ class Database:
         category: str,
         brand: str,
         condition: str,
+        size: str | None,
         estimated_value: float,
         city: str,
         image: str | None,
@@ -377,6 +415,7 @@ class Database:
                 category = {self.param},
                 brand = {self.param},
                 condition = {self.param},
+                size = {self.param},
                 estimated_value = {self.param},
                 city = {self.param},
                 image = {self.param},
@@ -393,6 +432,7 @@ class Database:
             category,
             brand,
             condition,
+            size,
             float(estimated_value),
             city,
             image,
@@ -448,6 +488,7 @@ class Database:
                 "category",
                 "brand",
                 "condition",
+                "size",
                 "estimated_value",
                 "city",
                 "image",
@@ -483,6 +524,7 @@ class Database:
             "category": data["category"],
             "brand": data["brand"],
             "condition": data["condition"],
+            "size": data.get("size"),
             "estimated_value": float(data["estimated_value"]),
             "city": data["city"],
             "image": image,
