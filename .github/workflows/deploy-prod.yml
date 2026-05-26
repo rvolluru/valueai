@@ -2,6 +2,12 @@ name: Deploy Production
 
 on:
   workflow_dispatch:
+    inputs:
+      full_terraform:
+        description: "Run full Terraform apply (required for infra changes)"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -17,6 +23,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          fetch-depth: 2
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v5
@@ -60,29 +68,94 @@ jobs:
             .
           echo "image_uri=${IMAGE_URI}" >> "$GITHUB_OUTPUT"
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v4
-
       - name: Write production tfvars from secret
-        working-directory: ${{ env.TF_DIR }}
         env:
           TFVARS_PROD_B64: ${{ secrets.TFVARS_PROD_B64 }}
         run: |
           set -euo pipefail
           test -n "${TFVARS_PROD_B64}"
-          echo "${TFVARS_PROD_B64}" | base64 --decode > terraform.tfvars
+          mkdir -p "${TF_DIR}"
+          echo "${TFVARS_PROD_B64}" | base64 --decode > "${TF_DIR}/terraform.tfvars"
           # CI uses aws-actions credentials, not local AWS profiles.
           # Force local-only vars to null to avoid provider profile lookup errors.
-          if grep -qE '^[[:space:]]*aws_profile[[:space:]]*=' terraform.tfvars; then
-            sed -i.bak -E 's#^[[:space:]]*aws_profile[[:space:]]*=.*#aws_profile                       = null#' terraform.tfvars
+          if grep -qE '^[[:space:]]*aws_profile[[:space:]]*=' "${TF_DIR}/terraform.tfvars"; then
+            sed -i.bak -E 's#^[[:space:]]*aws_profile[[:space:]]*=.*#aws_profile                       = null#' "${TF_DIR}/terraform.tfvars"
           else
-            echo 'aws_profile                       = null' >> terraform.tfvars
+            echo 'aws_profile                       = null' >> "${TF_DIR}/terraform.tfvars"
           fi
-          if grep -qE '^[[:space:]]*aws_assume_role_arn[[:space:]]*=' terraform.tfvars; then
-            sed -i.bak -E 's#^[[:space:]]*aws_assume_role_arn[[:space:]]*=.*#aws_assume_role_arn               = null#' terraform.tfvars
+          if grep -qE '^[[:space:]]*aws_assume_role_arn[[:space:]]*=' "${TF_DIR}/terraform.tfvars"; then
+            sed -i.bak -E 's#^[[:space:]]*aws_assume_role_arn[[:space:]]*=.*#aws_assume_role_arn               = null#' "${TF_DIR}/terraform.tfvars"
           fi
 
+      - name: Decide deploy mode (fast ECS vs full Terraform)
+        id: mode
+        run: |
+          set -euo pipefail
+          infra_changed=false
+          if git rev-parse --verify HEAD^ >/dev/null 2>&1; then
+            if git diff --name-only HEAD^ HEAD | grep -q '^infra/terraform/'; then
+              infra_changed=true
+            fi
+          fi
+          if [[ "${{ github.event.inputs.full_terraform || 'false' }}" == "true" || "${infra_changed}" == "true" ]]; then
+            echo "use_terraform=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "use_terraform=false" >> "$GITHUB_OUTPUT"
+          fi
+          project_name=$(grep -E '^[[:space:]]*project_name[[:space:]]*=' "${TF_DIR}/terraform.tfvars" | head -1 | sed -E 's/.*=[[:space:]]*"([^"]+)".*/\1/')
+          if [ -z "${project_name}" ]; then
+            project_name="valueai-mvp"
+          fi
+          echo "project_name=${project_name}" >> "$GITHUB_OUTPUT"
+          echo "infra_changed=${infra_changed}" >> "$GITHUB_OUTPUT"
+
+      - name: Fast deploy API image via ECS (skip Terraform)
+        if: steps.mode.outputs.use_terraform == 'false'
+        env:
+          IMAGE_URI: ${{ steps.image.outputs.image_uri }}
+          PROJECT_NAME: ${{ steps.mode.outputs.project_name }}
+        run: |
+          set -euo pipefail
+          CLUSTER="${PROJECT_NAME}-cluster"
+          SERVICE="${PROJECT_NAME}-api"
+          CURRENT_TASK_DEF_ARN=$(aws ecs describe-services \
+            --cluster "${CLUSTER}" \
+            --services "${SERVICE}" \
+            --query 'services[0].taskDefinition' \
+            --output text)
+          aws ecs describe-task-definition --task-definition "${CURRENT_TASK_DEF_ARN}" > /tmp/current-td.json
+          jq --arg IMAGE "${IMAGE_URI}" '
+            .taskDefinition
+            | del(
+                .taskDefinitionArn,
+                .revision,
+                .status,
+                .requiresAttributes,
+                .compatibilities,
+                .registeredAt,
+                .registeredBy
+              )
+            | .containerDefinitions |= map(
+                if .name == "api" then .image = $IMAGE else . end
+              )
+          ' /tmp/current-td.json > /tmp/new-td.json
+          NEW_TASK_DEF_ARN=$(aws ecs register-task-definition \
+            --cli-input-json file:///tmp/new-td.json \
+            --query 'taskDefinition.taskDefinitionArn' \
+            --output text)
+          aws ecs update-service \
+            --cluster "${CLUSTER}" \
+            --service "${SERVICE}" \
+            --task-definition "${NEW_TASK_DEF_ARN}" \
+            --force-new-deployment >/dev/null
+          echo "Fast ECS deploy started on ${SERVICE} with ${IMAGE_URI}"
+
+      - name: Setup Terraform
+        if: steps.mode.outputs.use_terraform == 'true'
+        uses: hashicorp/setup-terraform@v4
+
       - name: Write terraform backend config from secret
+        if: steps.mode.outputs.use_terraform == 'true'
         working-directory: ${{ env.TF_DIR }}
         env:
           TF_BACKEND_CONFIG_B64: ${{ secrets.TF_BACKEND_CONFIG_B64 }}
@@ -92,6 +165,7 @@ jobs:
           echo "${TF_BACKEND_CONFIG_B64}" | base64 --decode > backend.hcl
 
       - name: Terraform apply (new image)
+        if: steps.mode.outputs.use_terraform == 'true'
         working-directory: ${{ env.TF_DIR }}
         run: |
           set -euo pipefail
