@@ -715,6 +715,22 @@ def list_recent_listings(
     principal: AuthPrincipal = Depends(get_request_principal),
     db: Database = Depends(get_db),
 ):
+    def _is_resolvable_listing_image(value: object) -> bool:
+        if not isinstance(value, str):
+            return False
+        s = value.strip()
+        if not s:
+            return False
+        if s.startswith("blob:"):
+            return False
+        if s.startswith("http://") or s.startswith("https://"):
+            return True
+        if s.startswith("/"):
+            return True
+        if s.startswith("s3://"):
+            return True
+        return False
+
     safe_limit = max(1, min(limit, 100))
     records = (
         db.list_owner_listings(principal.subject, limit=safe_limit)
@@ -725,8 +741,13 @@ def list_recent_listings(
         for record in records:
             image = record.get("image")
             images = record.get("images") or []
-            has_valid_image = isinstance(image, str) and len(image.strip()) > 0
-            has_valid_gallery = isinstance(images, list) and len(images) > 0
+            has_valid_image = _is_resolvable_listing_image(image)
+            has_valid_gallery = (
+                isinstance(images, list)
+                and any(_is_resolvable_listing_image(img) for img in images)
+            )
+            if isinstance(images, list):
+                record["images"] = [img for img in images if _is_resolvable_listing_image(img)]
             if has_valid_image or has_valid_gallery:
                 continue
             source_item_id = record.get("source_item_id")
