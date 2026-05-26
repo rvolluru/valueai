@@ -773,7 +773,11 @@ def list_recent_listings(
         if s.startswith("http://") or s.startswith("https://") or s.startswith("/"):
             return s
         if s.startswith("s3://"):
-            return _presign_s3_uri(s, settings)
+            try:
+                signed = _presign_s3_uri(s, settings)
+            except Exception:
+                signed = None
+            return signed
         return None
 
     def _is_resolvable_listing_image(value: object) -> bool:
