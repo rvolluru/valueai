@@ -278,6 +278,21 @@ class Database:
             return None
         return row[0]
 
+    def get_image_id_by_storage_uri(self, storage_uri: str) -> str | None:
+        query = f"SELECT image_id FROM images WHERE storage_uri = {self.param} ORDER BY created_at ASC LIMIT 1"
+        if self._sqlite_conn is not None:
+            row = self._sqlite_conn.execute(query, (storage_uri,)).fetchone()
+            if not row:
+                return None
+            return row["image_id"] if isinstance(row, sqlite3.Row) else row[0]
+        cur = self._pg.cursor()
+        cur.execute(query, (storage_uri,))
+        row = cur.fetchone()
+        cur.close()
+        if not row:
+            return None
+        return row[0]
+
     def get_first_image_id_for_item(self, item_id: str) -> str | None:
         query = (
             f"SELECT image_id FROM images WHERE item_id = {self.param} "
@@ -485,6 +500,77 @@ class Database:
             finally:
                 cur.close()
         self.commit()
+        return changed
+
+    def migrate_listing_media_urls_to_http(self) -> int:
+        if self._sqlite_conn is not None:
+            rows = self._sqlite_conn.execute(
+                "SELECT listing_id, image, images_json, source_item_id FROM listings"
+            ).fetchall()
+        else:
+            cur = self._pg.cursor()
+            cur.execute("SELECT listing_id, image, images_json, source_item_id FROM listings")
+            rows = cur.fetchall()
+            cur.close()
+
+        def resolve(url: object, source_item_id: str | None) -> str | None:
+            if not isinstance(url, str):
+                return None
+            s = url.strip()
+            if not s or s.startswith("blob:") or s.startswith("data:"):
+                return None
+            if s.startswith("http://") or s.startswith("https://") or s.startswith("/"):
+                return s
+            if s.startswith("s3://"):
+                image_id = self.get_image_id_by_storage_uri(s)
+                if isinstance(image_id, str) and image_id.strip():
+                    return f"/v1/images/{image_id}"
+                if source_item_id:
+                    first = self.get_first_image_id_for_item(source_item_id)
+                    if isinstance(first, str) and first.strip():
+                        return f"/v1/images/{first}"
+            return None
+
+        changed = 0
+        for row in rows:
+            if isinstance(row, sqlite3.Row):
+                listing_id = row["listing_id"]
+                image = row["image"]
+                images_json = row["images_json"]
+                source_item_id = row["source_item_id"]
+            else:
+                listing_id, image, images_json, source_item_id = row[0], row[1], row[2], row[3]
+
+            try:
+                images = json.loads(images_json) if images_json else []
+            except Exception:
+                images = []
+            if not isinstance(images, list):
+                images = []
+
+            normalized_images: list[str] = []
+            for url in images:
+                resolved = resolve(url, source_item_id)
+                if resolved:
+                    normalized_images.append(resolved)
+            normalized_image = resolve(image, source_item_id)
+            if not normalized_images and normalized_image:
+                normalized_images = [normalized_image]
+            if not normalized_image and normalized_images:
+                normalized_image = normalized_images[0]
+
+            old_images = images if isinstance(images, list) else []
+            if (image or None) == normalized_image and old_images == normalized_images:
+                continue
+
+            self.execute(
+                f"UPDATE listings SET image = {self.param}, images_json = {self.param} WHERE listing_id = {self.param}",
+                (normalized_image, json.dumps(normalized_images), listing_id),
+            )
+            changed += 1
+
+        if changed:
+            self.commit()
         return changed
 
     def _analysis_row_to_dict(self, row) -> dict:

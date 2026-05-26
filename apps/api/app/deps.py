@@ -16,6 +16,11 @@ from .storage import Storage, build_storage
 def get_db() -> Database:
     db = Database(get_settings().database_url)
     db.initialize()
+    try:
+        db.migrate_listing_media_urls_to_http()
+    except Exception:
+        # Non-fatal: API should still start even if migration encounters a bad row.
+        pass
     return db
 
 

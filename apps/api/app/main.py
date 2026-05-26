@@ -89,6 +89,50 @@ def _public_image_url_from_storage_uri(storage_uri: str, settings: Settings) -> 
     return storage_uri
 
 
+def _normalize_listing_media_for_storage(
+    *,
+    db: Database,
+    image: str | None,
+    images: list[str] | None,
+    source_item_id: str | None,
+) -> tuple[str | None, list[str]]:
+    def resolve(value: object) -> str | None:
+        if not isinstance(value, str):
+            return None
+        s = value.strip()
+        if not s or s.startswith("blob:") or s.startswith("data:"):
+            return None
+        if s.startswith("http://") or s.startswith("https://") or s.startswith("/"):
+            return s
+        if s.startswith("s3://"):
+            image_id = db.get_image_id_by_storage_uri(s)
+            if image_id:
+                return f"/v1/images/{image_id}"
+            return None
+        return None
+
+    normalized_images: list[str] = []
+    if isinstance(images, list):
+        for entry in images:
+            url = resolve(entry)
+            if url:
+                normalized_images.append(url)
+
+    normalized_image = resolve(image)
+    if normalized_image and normalized_image not in normalized_images:
+        normalized_images.insert(0, normalized_image)
+
+    if not normalized_images and source_item_id:
+        fallback_ids = db.list_image_ids_for_item(source_item_id, limit=8)
+        if fallback_ids:
+            normalized_images = [f"/v1/images/{img_id}" for img_id in fallback_ids]
+
+    if not normalized_image and normalized_images:
+        normalized_image = normalized_images[0]
+
+    return normalized_image, normalized_images
+
+
 def _presign_s3_uri(storage_uri: str, settings: Settings) -> str | None:
     if not storage_uri.startswith("s3://"):
         return None
@@ -669,6 +713,12 @@ def create_listing(
     principal: AuthPrincipal = Depends(get_request_principal),
     db: Database = Depends(get_db),
 ):
+    normalized_image, normalized_images = _normalize_listing_media_for_storage(
+        db=db,
+        image=payload.image,
+        images=payload.images,
+        source_item_id=payload.source_item_id,
+    )
     listing_id = str(uuid.uuid4())
     owner_name = None
     if principal.auth_type == "clerk":
@@ -689,8 +739,8 @@ def create_listing(
         size=payload.size,
         estimated_value=payload.estimated_value,
         city=payload.city,
-        image=payload.image,
-        images=payload.images,
+        image=normalized_image,
+        images=normalized_images,
         wants=payload.wants,
         tags=payload.tags,
         source_item_id=payload.source_item_id,
@@ -712,22 +762,22 @@ def list_recent_listings(
     mine: bool = False,
     principal: AuthPrincipal = Depends(get_request_principal),
     db: Database = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ):
-    def _is_resolvable_listing_image(value: object) -> bool:
+    def _to_http_image_url(value: object) -> str | None:
         if not isinstance(value, str):
-            return False
+            return None
         s = value.strip()
-        if not s:
-            return False
-        if s.startswith("blob:"):
-            return False
-        if s.startswith("http://") or s.startswith("https://"):
-            return True
-        if s.startswith("/"):
-            return True
+        if not s or s.startswith("blob:"):
+            return None
+        if s.startswith("http://") or s.startswith("https://") or s.startswith("/"):
+            return s
         if s.startswith("s3://"):
-            return True
-        return False
+            return _presign_s3_uri(s, settings)
+        return None
+
+    def _is_resolvable_listing_image(value: object) -> bool:
+        return _to_http_image_url(value) is not None
 
     safe_limit = max(1, min(limit, 100))
     records = (
@@ -735,27 +785,35 @@ def list_recent_listings(
         if mine
         else db.list_recent_listings(limit=safe_limit, include_analysis=False, include_media=True)
     )
-    if not mine:
-        for record in records:
-            image = record.get("image")
-            images = record.get("images") or []
-            has_valid_image = _is_resolvable_listing_image(image)
-            has_valid_gallery = (
-                isinstance(images, list)
-                and any(_is_resolvable_listing_image(img) for img in images)
-            )
-            if isinstance(images, list):
-                record["images"] = [img for img in images if _is_resolvable_listing_image(img)]
-            if has_valid_image or has_valid_gallery:
-                continue
-            source_item_id = record.get("source_item_id")
-            if not source_item_id:
-                continue
-            fallback_image_ids = db.list_image_ids_for_item(source_item_id, limit=8)
-            if fallback_image_ids:
-                fallback_urls = [f"/v1/images/{img_id}" for img_id in fallback_image_ids]
-                record["image"] = fallback_urls[0]
-                record["images"] = fallback_urls
+    for record in records:
+        image = record.get("image")
+        images = record.get("images") or []
+        normalized_image = _to_http_image_url(image)
+        normalized_gallery: list[str] = []
+        if isinstance(images, list):
+            for img in images:
+                resolved = _to_http_image_url(img)
+                if resolved:
+                    normalized_gallery.append(resolved)
+        if normalized_image:
+            record["image"] = normalized_image
+        if normalized_gallery:
+            record["images"] = normalized_gallery
+        has_valid_image = _is_resolvable_listing_image(record.get("image"))
+        has_valid_gallery = (
+            isinstance(record.get("images"), list)
+            and any(_is_resolvable_listing_image(img) for img in (record.get("images") or []))
+        )
+        if has_valid_image or has_valid_gallery:
+            continue
+        source_item_id = record.get("source_item_id")
+        if not source_item_id:
+            continue
+        fallback_image_ids = db.list_image_ids_for_item(source_item_id, limit=8)
+        if fallback_image_ids:
+            fallback_urls = [f"/v1/images/{img_id}" for img_id in fallback_image_ids]
+            record["image"] = fallback_urls[0]
+            record["images"] = fallback_urls
     return {
         "count": len(records),
         "items": records,
@@ -770,6 +828,12 @@ def update_listing(
     principal: AuthPrincipal = Depends(get_request_principal),
     db: Database = Depends(get_db),
 ):
+    normalized_image, normalized_images = _normalize_listing_media_for_storage(
+        db=db,
+        image=payload.image,
+        images=payload.images,
+        source_item_id=payload.source_item_id,
+    )
     updated = db.update_listing(
         listing_id=listing_id,
         owner_subject=principal.subject,
@@ -781,8 +845,8 @@ def update_listing(
         size=payload.size,
         estimated_value=payload.estimated_value,
         city=payload.city,
-        image=payload.image,
-        images=payload.images,
+        image=normalized_image,
+        images=normalized_images,
         wants=payload.wants,
         tags=payload.tags,
         source_item_id=payload.source_item_id,
@@ -904,7 +968,7 @@ async def analyze(
                 image_id=image_uuid,
                 role_hint=role_hint,
                 storage_uri=storage_uri,
-                image_url=_public_image_url_from_storage_uri(storage_uri, settings),
+                image_url=f"/v1/images/{image_uuid}",
             )
         )
 
