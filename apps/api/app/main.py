@@ -753,11 +753,11 @@ def list_recent_listings(
             source_item_id = record.get("source_item_id")
             if not source_item_id:
                 continue
-            fallback_image_id = db.get_first_image_id_for_item(source_item_id)
-            if fallback_image_id:
-                fallback_url = f"/v1/images/{fallback_image_id}"
-                record["image"] = fallback_url
-                record["images"] = [fallback_url]
+            fallback_image_ids = db.list_image_ids_for_item(source_item_id, limit=8)
+            if fallback_image_ids:
+                fallback_urls = [f"/v1/images/{img_id}" for img_id in fallback_image_ids]
+                record["image"] = fallback_urls[0]
+                record["images"] = fallback_urls
     return {
         "count": len(records),
         "items": records,

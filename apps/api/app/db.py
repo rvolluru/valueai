@@ -296,6 +296,31 @@ class Database:
             return None
         return row[0]
 
+    def list_image_ids_for_item(self, item_id: str, limit: int = 8) -> list[str]:
+        safe_limit = max(1, min(int(limit), 20))
+        query = (
+            f"SELECT image_id FROM images WHERE item_id = {self.param} "
+            f"ORDER BY created_at ASC LIMIT {self.param}"
+        )
+        if self._sqlite_conn is not None:
+            rows = self._sqlite_conn.execute(query, (item_id, safe_limit)).fetchall()
+            result: list[str] = []
+            for row in rows:
+                image_id = row["image_id"] if isinstance(row, sqlite3.Row) else row[0]
+                if isinstance(image_id, str) and image_id.strip():
+                    result.append(image_id)
+            return result
+        cur = self._pg.cursor()
+        cur.execute(query, (item_id, safe_limit))
+        rows = cur.fetchall()
+        cur.close()
+        result: list[str] = []
+        for row in rows:
+            image_id = row[0]
+            if isinstance(image_id, str) and image_id.strip():
+                result.append(image_id)
+        return result
+
     def insert_listing(
         self,
         *,
