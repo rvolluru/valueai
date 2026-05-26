@@ -628,11 +628,9 @@ def version(settings: Settings = Depends(get_settings)) -> VersionResponse:
 @app.get("/v1/images/{image_id}")
 def get_uploaded_image(
     image_id: str,
-    principal: AuthPrincipal = Depends(get_request_principal),
     db: Database = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ):
-    _ = principal
     storage_uri = db.get_image_storage_uri(image_id)
     if not storage_uri:
         raise HTTPException(status_code=404, detail="image not found")
