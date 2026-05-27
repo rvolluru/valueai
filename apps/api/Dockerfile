@@ -1,8 +1,10 @@
+# syntax=docker/dockerfile:1.7
+
 FROM node:20-alpine AS web-build
 
 WORKDIR /web
 COPY apps/web/package.json apps/web/package-lock.json* ./
-RUN npm install
+RUN --mount=type=cache,target=/root/.npm npm ci
 COPY apps/web ./
 ARG VITE_CLERK_PUBLISHABLE_KEY=""
 ARG VITE_API_BASE_URL=""
@@ -21,7 +23,7 @@ COPY apps ./apps
 COPY packages ./packages
 COPY --from=web-build /web/dist ./apps/api/app/static
 
-RUN pip install --no-cache-dir .
+RUN --mount=type=cache,target=/root/.cache/pip pip install .
 
 EXPOSE 8000
 CMD ["python", "-m", "uvicorn", "app.main:app", "--app-dir", "apps/api", "--host", "0.0.0.0", "--port", "8000"]
