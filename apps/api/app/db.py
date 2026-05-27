@@ -512,11 +512,11 @@ class Database:
     def migrate_listing_media_urls_to_http(self) -> int:
         if self._sqlite_conn is not None:
             rows = self._sqlite_conn.execute(
-                "SELECT listing_id, image, images_json, source_item_id, analysis_json, description FROM listings"
+                "SELECT listing_id, image, images_json, source_item_id, analysis_json, description, wants FROM listings"
             ).fetchall()
         else:
             cur = self._pg.cursor()
-            cur.execute("SELECT listing_id, image, images_json, source_item_id, analysis_json, description FROM listings")
+            cur.execute("SELECT listing_id, image, images_json, source_item_id, analysis_json, description, wants FROM listings")
             rows = cur.fetchall()
             cur.close()
 
@@ -543,8 +543,9 @@ class Database:
                 source_item_id = row["source_item_id"]
                 analysis_json = row["analysis_json"]
                 description = row["description"]
+                wants = row["wants"]
             else:
-                listing_id, image, images_json, source_item_id, analysis_json, description = row[0], row[1], row[2], row[3], row[4], row[5]
+                listing_id, image, images_json, source_item_id, analysis_json, description, wants = row[0], row[1], row[2], row[3], row[4], row[5], row[6]
 
             try:
                 images = json.loads(images_json) if images_json else []
@@ -586,6 +587,9 @@ class Database:
                                     parts.append(f"Key details: {', '.join(clean_attrs[:6])}.")
                             if parts:
                                 normalized_description = ". ".join(parts).replace("..", ".")
+            wants_text = wants.strip() if isinstance(wants, str) else ""
+            if not normalized_description and wants_text and wants_text != "No description provided.":
+                normalized_description = wants_text
 
             old_images = images if isinstance(images, list) else []
             old_desc = description if isinstance(description, str) else ""
@@ -656,6 +660,13 @@ class Database:
                 continue
             safe_images.append(value)
 
+        description = (data.get("description") or "").strip() if isinstance(data.get("description"), str) else ""
+        wants = data["wants"]
+        if not description and isinstance(wants, str):
+            wants_text = wants.strip()
+            if wants_text and wants_text != "No description provided.":
+                description = wants_text
+
         return {
             "listing_id": data["listing_id"],
             "owner_subject": data["owner_subject"],
@@ -670,8 +681,8 @@ class Database:
             "city": data["city"],
             "image": image,
             "images": safe_images,
-            "description": data.get("description") or "",
-            "wants": data["wants"],
+            "description": description,
+            "wants": wants,
             "tags": json.loads(data["tags_json"]) if data["tags_json"] else [],
             "source_item_id": data["source_item_id"],
             "analysis": json.loads(data["analysis_json"]) if data["analysis_json"] else None,
