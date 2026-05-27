@@ -15,15 +15,22 @@ RUN printf 'VITE_CLERK_PUBLISHABLE_KEY=%s\n' "$VITE_CLERK_PUBLISHABLE_KEY" > .en
 RUN if [ -n "$VITE_API_BASE_URL" ]; then printf 'VITE_API_BASE_URL=%s\n' "$VITE_API_BASE_URL" >> .env.production.local; fi
 RUN npm run build
 
+FROM python:3.11-slim AS py-deps
+
+WORKDIR /deps
+COPY apps/api/requirements.base.txt ./requirements.base.txt
+RUN --mount=type=cache,target=/root/.cache/pip pip install -r requirements.base.txt
+
 FROM python:3.11-slim
 
 WORKDIR /app
+COPY --from=py-deps /usr/local /usr/local
 COPY pyproject.toml README.md ./
 COPY apps ./apps
 COPY packages ./packages
 COPY --from=web-build /web/dist ./apps/api/app/static
 
-RUN --mount=type=cache,target=/root/.cache/pip pip install .
+RUN --mount=type=cache,target=/root/.cache/pip pip install --no-deps .
 
 EXPOSE 8000
 CMD ["python", "-m", "uvicorn", "app.main:app", "--app-dir", "apps/api", "--host", "0.0.0.0", "--port", "8000"]
