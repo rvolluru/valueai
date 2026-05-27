@@ -122,11 +122,6 @@ def _normalize_listing_media_for_storage(
     if normalized_image and normalized_image not in normalized_images:
         normalized_images.insert(0, normalized_image)
 
-    if not normalized_images and source_item_id:
-        fallback_ids = db.list_image_ids_for_item(source_item_id, limit=8)
-        if fallback_ids:
-            normalized_images = [f"/v1/images/{img_id}" for img_id in fallback_ids]
-
     if not normalized_image and normalized_images:
         normalized_image = normalized_images[0]
 
@@ -810,14 +805,8 @@ def list_recent_listings(
         )
         if has_valid_image or has_valid_gallery:
             continue
-        source_item_id = record.get("source_item_id")
-        if not source_item_id:
-            continue
-        fallback_image_ids = db.list_image_ids_for_item(source_item_id, limit=8)
-        if fallback_image_ids:
-            fallback_urls = [f"/v1/images/{img_id}" for img_id in fallback_image_ids]
-            record["image"] = fallback_urls[0]
-            record["images"] = fallback_urls
+        record["image"] = None
+        record["images"] = []
     return {
         "count": len(records),
         "items": records,

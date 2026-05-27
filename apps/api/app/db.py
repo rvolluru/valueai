@@ -525,10 +525,6 @@ class Database:
                 image_id = self.get_image_id_by_storage_uri(s)
                 if isinstance(image_id, str) and image_id.strip():
                     return f"/v1/images/{image_id}"
-                if source_item_id:
-                    first = self.get_first_image_id_for_item(source_item_id)
-                    if isinstance(first, str) and first.strip():
-                        return f"/v1/images/{first}"
             return None
 
         changed = 0
