@@ -107,6 +107,7 @@ class Database:
               city TEXT NOT NULL,
               image TEXT,
               images_json TEXT NOT NULL DEFAULT '[]',
+              description TEXT NOT NULL DEFAULT '',
               wants TEXT NOT NULL,
               tags_json TEXT NOT NULL,
               source_item_id TEXT,
@@ -122,6 +123,7 @@ class Database:
             "ALTER TABLE listings ADD COLUMN images_json TEXT NOT NULL DEFAULT '[]'",
             "ALTER TABLE listings ADD COLUMN status TEXT NOT NULL DEFAULT 'Review'",
             "ALTER TABLE listings ADD COLUMN size TEXT",
+            "ALTER TABLE listings ADD COLUMN description TEXT NOT NULL DEFAULT ''",
         ):
             try:
                 self.execute(alter)
@@ -352,6 +354,7 @@ class Database:
         city: str,
         image: str | None,
         images: list[str],
+        description: str,
         wants: str,
         tags: list[str],
         source_item_id: str | None,
@@ -362,9 +365,9 @@ class Database:
         self.execute(
             f"""INSERT INTO listings
             (listing_id, owner_subject, owner_name, title, mode, category, brand, condition, size,
-             estimated_value, city, image, images_json, wants, tags_json, source_item_id, analysis_json, status, created_at)
+             estimated_value, city, image, images_json, description, wants, tags_json, source_item_id, analysis_json, status, created_at)
             VALUES ({self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param},
-                    {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param})""",
+                    {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param})""",
             (
                 listing_id,
                 owner_subject,
@@ -379,6 +382,7 @@ class Database:
                 city,
                 image,
                 json.dumps(images),
+                description or "",
                 wants,
                 json.dumps(tags),
                 source_item_id,
@@ -401,7 +405,7 @@ class Database:
         images_select = "images_json" if include_media else "'[]' AS images_json"
         query = (
             f"SELECT listing_id, owner_subject, owner_name, title, mode, category, brand, condition, "
-            f"size, estimated_value, city, {image_select}, {images_select}, wants, tags_json, source_item_id, {analysis_select}, status, created_at "
+            f"size, estimated_value, city, {image_select}, {images_select}, description, wants, tags_json, source_item_id, {analysis_select}, status, created_at "
             f"FROM listings ORDER BY created_at DESC LIMIT {self.param}"
         )
         if self._sqlite_conn is not None:
@@ -416,7 +420,7 @@ class Database:
     def list_owner_listings(self, owner_subject: str, limit: int = 50) -> list[dict]:
         query = (
             f"SELECT listing_id, owner_subject, owner_name, title, mode, category, brand, condition, "
-            f"size, estimated_value, city, image, images_json, wants, tags_json, source_item_id, analysis_json, status, created_at "
+            f"size, estimated_value, city, image, images_json, description, wants, tags_json, source_item_id, analysis_json, status, created_at "
             f"FROM listings WHERE owner_subject = {self.param} ORDER BY created_at DESC LIMIT {self.param}"
         )
         if self._sqlite_conn is not None:
@@ -443,6 +447,7 @@ class Database:
         city: str,
         image: str | None,
         images: list[str],
+        description: str,
         wants: str,
         tags: list[str],
         source_item_id: str | None,
@@ -460,6 +465,7 @@ class Database:
                 city = {self.param},
                 image = {self.param},
                 images_json = {self.param},
+                description = {self.param},
                 wants = {self.param},
                 tags_json = {self.param},
                 source_item_id = {self.param},
@@ -477,6 +483,7 @@ class Database:
             city,
             image,
             json.dumps(images),
+            description or "",
             wants,
             json.dumps(tags),
             source_item_id,
@@ -505,11 +512,11 @@ class Database:
     def migrate_listing_media_urls_to_http(self) -> int:
         if self._sqlite_conn is not None:
             rows = self._sqlite_conn.execute(
-                "SELECT listing_id, image, images_json, source_item_id FROM listings"
+                "SELECT listing_id, image, images_json, source_item_id, analysis_json, description FROM listings"
             ).fetchall()
         else:
             cur = self._pg.cursor()
-            cur.execute("SELECT listing_id, image, images_json, source_item_id FROM listings")
+            cur.execute("SELECT listing_id, image, images_json, source_item_id, analysis_json, description FROM listings")
             rows = cur.fetchall()
             cur.close()
 
@@ -534,8 +541,10 @@ class Database:
                 image = row["image"]
                 images_json = row["images_json"]
                 source_item_id = row["source_item_id"]
+                analysis_json = row["analysis_json"]
+                description = row["description"]
             else:
-                listing_id, image, images_json, source_item_id = row[0], row[1], row[2], row[3]
+                listing_id, image, images_json, source_item_id, analysis_json, description = row[0], row[1], row[2], row[3], row[4], row[5]
 
             try:
                 images = json.loads(images_json) if images_json else []
@@ -555,13 +564,37 @@ class Database:
             if not normalized_image and normalized_images:
                 normalized_image = normalized_images[0]
 
+            normalized_description = (description or "").strip() if isinstance(description, str) else ""
+            if not normalized_description and analysis_json:
+                try:
+                    analysis = json.loads(analysis_json)
+                except Exception:
+                    analysis = None
+                if isinstance(analysis, dict):
+                    profile = analysis.get("item_profile")
+                    if isinstance(profile, dict):
+                        mid = profile.get("model_identification")
+                        if isinstance(mid, dict):
+                            name = mid.get("name")
+                            attrs = mid.get("attributes")
+                            parts = []
+                            if isinstance(name, str) and name.strip():
+                                parts.append(name.strip())
+                            if isinstance(attrs, list):
+                                clean_attrs = [a.strip() for a in attrs if isinstance(a, str) and a.strip()]
+                                if clean_attrs:
+                                    parts.append(f"Key details: {', '.join(clean_attrs[:6])}.")
+                            if parts:
+                                normalized_description = ". ".join(parts).replace("..", ".")
+
             old_images = images if isinstance(images, list) else []
-            if (image or None) == normalized_image and old_images == normalized_images:
+            old_desc = description if isinstance(description, str) else ""
+            if (image or None) == normalized_image and old_images == normalized_images and old_desc == normalized_description:
                 continue
 
             self.execute(
-                f"UPDATE listings SET image = {self.param}, images_json = {self.param} WHERE listing_id = {self.param}",
-                (normalized_image, json.dumps(normalized_images), listing_id),
+                f"UPDATE listings SET image = {self.param}, images_json = {self.param}, description = {self.param} WHERE listing_id = {self.param}",
+                (normalized_image, json.dumps(normalized_images), normalized_description, listing_id),
             )
             changed += 1
 
@@ -600,6 +633,7 @@ class Database:
                 "city",
                 "image",
                 "images_json",
+                "description",
                 "wants",
                 "tags_json",
                 "source_item_id",
@@ -636,6 +670,7 @@ class Database:
             "city": data["city"],
             "image": image,
             "images": safe_images,
+            "description": data.get("description") or "",
             "wants": data["wants"],
             "tags": json.loads(data["tags_json"]) if data["tags_json"] else [],
             "source_item_id": data["source_item_id"],

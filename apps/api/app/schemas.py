@@ -71,10 +71,12 @@ class ListingCreateRequest(BaseModel):
     category: Literal["clothes", "shoes", "handbag"]
     brand: str
     condition: ConditionGrade
+    size: str | None = None
     estimated_value: float = Field(ge=0)
     city: str = "Your area"
     image: str | None = None
     images: list[str] = Field(default_factory=list)
+    description: str = ""
     wants: str = "Open to similar-value offers"
     tags: list[str] = Field(default_factory=list)
     source_item_id: str | None = None
