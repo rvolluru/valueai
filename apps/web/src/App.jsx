@@ -73,6 +73,43 @@ function getListingDescription(item) {
   return ''
 }
 
+function sizeOptionsForCategory(category) {
+  if (category === 'shoes') return ['US 5', 'US 5.5', 'US 6', 'US 6.5', 'US 7', 'US 7.5', 'US 8', 'US 8.5', 'US 9', 'US 9.5', 'US 10', 'US 10.5', 'US 11', 'US 12']
+  if (category === 'clothes') return ['XXS', 'XS', 'S', 'M', 'L', 'XL', 'XXL']
+  if (category === 'handbag') return ['Mini', 'Small', 'Medium', 'Large']
+  return []
+}
+
+function brandSizeChartUrl(brand, category) {
+  const name = String(brand || '').trim().toLowerCase()
+  if (!name || name === 'unknown') return null
+  const key = `${name}:${category || ''}`
+  const byCategory = {
+    'gucci:shoes': 'https://www.gucci.com/us/en/st/stories/article/women-shoes-size-guide',
+    'gucci:clothes': 'https://www.gucci.com/us/en/st/stories/article/women-ready-to-wear-size-guide',
+    'burberry:shoes': 'https://us.burberry.com/customer-service/size-guide/',
+    'burberry:clothes': 'https://us.burberry.com/customer-service/size-guide/',
+    'jimmy choo:shoes': 'https://us.jimmychoo.com/en/customer-services/size-guide/',
+    'balenciaga:shoes': 'https://www.balenciaga.com/en-us/size-guide',
+    'chanel:shoes': 'https://www.chanel.com/us/fashion/size-guide/',
+    'coach:shoes': 'https://www.coach.com/customer-service-size-guide',
+    'louis vuitton:shoes': 'https://us.louisvuitton.com/eng-us/faq/size-guide',
+    'prada:shoes': 'https://www.prada.com/us/en/customer-service/size-guide.html',
+  }
+  if (byCategory[key]) return byCategory[key]
+  const generic = {
+    gucci: 'https://www.gucci.com/us/en/st/stories/article/size-guide',
+    burberry: 'https://us.burberry.com/customer-service/size-guide/',
+    'jimmy choo': 'https://us.jimmychoo.com/en/customer-services/size-guide/',
+    balenciaga: 'https://www.balenciaga.com/en-us/size-guide',
+    chanel: 'https://www.chanel.com/us/fashion/size-guide/',
+    coach: 'https://www.coach.com/customer-service-size-guide',
+    'louis vuitton': 'https://us.louisvuitton.com/eng-us/faq/size-guide',
+    prada: 'https://www.prada.com/us/en/customer-service/size-guide.html',
+  }
+  return generic[name] || null
+}
+
 function fileToDataUrl(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
@@ -351,6 +388,7 @@ function MarketplaceWorkspace({ session, onLogout, clerkEnabled = false, getBear
   const [category, setCategory] = useState('')
   const [userCondition, setUserCondition] = useState('')
   const [itemDescription, setItemDescription] = useState('')
+  const [itemSize, setItemSize] = useState('')
   const [askingValue, setAskingValue] = useState('')
   const [tradeNotes, setTradeNotes] = useState('')
   const [images, setImages] = useState([])
@@ -407,9 +445,10 @@ function MarketplaceWorkspace({ session, onLogout, clerkEnabled = false, getBear
       category: item.category || 'unknown',
       brand: item.brand || 'unknown',
       condition: item.condition || 'n/a',
+      size: typeof item.size === 'string' ? item.size : '',
       estimatedValue: Number(item.estimated_value ?? item.estimatedValue ?? 0),
       city: item.city || 'Your area',
-      image: normalizedImages[0] || 'https://images.unsplash.com/photo-1483985988355-763728e1935b?auto=format&fit=crop&w=800&q=80',
+      image: normalizedImages[0] || null,
       images: normalizedImages,
       description: typeof item.description === 'string' ? item.description : '',
       wants: item.wants || 'Open to similar-value offers',
@@ -436,6 +475,7 @@ function MarketplaceWorkspace({ session, onLogout, clerkEnabled = false, getBear
       category: normalizedCategory,
       brand: listing.brand || 'unknown',
       condition: normalizedCondition,
+      size: listing.size || null,
       estimated_value: Number(listing.estimatedValue || 0),
       city: listing.city || 'Your area',
       image: listing.image || null,
@@ -667,6 +707,7 @@ function MarketplaceWorkspace({ session, onLogout, clerkEnabled = false, getBear
       category: analysisResult.category,
       brand: analysisResult.brand.name,
       condition: analysisResult.user_condition || analysisResult.condition.grade,
+      size: itemSize || null,
       estimatedValue: value || 0,
       city: 'Your area',
       image: previewUrls[0] || 'https://images.unsplash.com/photo-1483985988355-763728e1935b?auto=format&fit=crop&w=800&q=80',
@@ -714,6 +755,7 @@ function MarketplaceWorkspace({ session, onLogout, clerkEnabled = false, getBear
     setItemTitle(listing.title || '')
     setCategory(listing.category && listing.category !== 'unknown' ? listing.category : '')
     setUserCondition(listing.condition && listing.condition !== 'n/a' ? listing.condition : '')
+    setItemSize(typeof listing.size === 'string' ? listing.size : '')
     setAskingValue(Number.isFinite(Number(listing.estimatedValue)) ? String(Math.round(Number(listing.estimatedValue))) : '')
     setTradeNotes(listing.wants || '')
     setItemDescription(listing.analysis?.item_profile ? buildSuggestedDescriptionFromProfile(listing.analysis.item_profile) : '')
@@ -736,6 +778,7 @@ function MarketplaceWorkspace({ session, onLogout, clerkEnabled = false, getBear
     setCategory('')
     setUserCondition('')
     setItemDescription('')
+    setItemSize('')
     setAskingValue('')
     setTradeNotes('')
     setImages([])
@@ -758,6 +801,7 @@ function MarketplaceWorkspace({ session, onLogout, clerkEnabled = false, getBear
       category: category || 'unknown',
       brand: 'Analyzing...',
       condition: userCondition || 'n/a',
+      size: itemSize || null,
       estimatedValue: 0,
       city: 'Your area',
       image: previewUrls[0] || 'https://images.unsplash.com/photo-1483985988355-763728e1935b?auto=format&fit=crop&w=800&q=80',
@@ -809,6 +853,7 @@ function MarketplaceWorkspace({ session, onLogout, clerkEnabled = false, getBear
       try {
         const current = (myListings.find((x) => x.id === listingId) || fromRemoteListing(persistedListing) || draftListing)
         const resolved = payload || current.analysis
+        const profileDescription = buildSuggestedDescriptionFromProfile(resolved?.item_profile)
         const resolvedCondition = resolved?.user_condition || resolved?.condition?.grade || current.condition
         const resolvedBrand = resolved?.brand?.name || current.brand
         const resolvedCategory = resolved?.category || current.category
@@ -816,7 +861,7 @@ function MarketplaceWorkspace({ session, onLogout, clerkEnabled = false, getBear
         const updatedPayload = {
           ...current,
           title: itemTitle.trim() || itemDescription.trim() || resolved?.item_profile?.model_identification?.name || current.title,
-          description: (itemDescription || '').trim() || current.description || '',
+          description: (itemDescription || '').trim() || current.description || profileDescription || '',
           brand: resolvedBrand,
           category: resolvedCategory,
           condition: resolvedCondition,
@@ -855,6 +900,7 @@ function MarketplaceWorkspace({ session, onLogout, clerkEnabled = false, getBear
       image: coverImage,
       images: chosenImages.length > 0 ? chosenImages : [coverImage],
       condition: userCondition || listing.condition || 'n/a',
+      size: itemSize || listing.size || null,
       category: category || listing.category || 'unknown',
       description: (itemDescription || '').trim() || listing.description || '',
       status: 'Analyzing',
@@ -897,6 +943,7 @@ function MarketplaceWorkspace({ session, onLogout, clerkEnabled = false, getBear
       try {
         const current = myListings.find((x) => x.id === listing.id) || pending
         const resolved = payload || current.analysis
+        const profileDescription = buildSuggestedDescriptionFromProfile(resolved?.item_profile)
         const resolvedCondition = resolved?.user_condition || resolved?.condition?.grade || userCondition || current.condition
         const resolvedBrand = resolved?.brand?.name || current.brand
         const resolvedCategory = resolved?.category || category || current.category
@@ -904,10 +951,11 @@ function MarketplaceWorkspace({ session, onLogout, clerkEnabled = false, getBear
         const updatedPayload = {
           ...current,
           title: (itemTitle || '').trim() || (itemDescription || '').trim() || resolved?.item_profile?.model_identification?.name || current.title,
-          description: (itemDescription || '').trim() || current.description || '',
+          description: (itemDescription || '').trim() || current.description || profileDescription || '',
           brand: resolvedBrand,
           category: resolvedCategory,
           condition: resolvedCondition,
+          size: itemSize || current.size || null,
           estimatedValue: resolvedValue,
           sourceItemId: resolved?.item_id || current.sourceItemId,
           analysis: resolved || current.analysis,
@@ -934,6 +982,7 @@ function MarketplaceWorkspace({ session, onLogout, clerkEnabled = false, getBear
       description: (itemDescription || '').trim() || listing.description || '',
       category: category || listing.category || 'unknown',
       condition: userCondition || listing.condition || 'n/a',
+      size: itemSize || listing.size || null,
       status: 'Active',
       tags: [
         userCondition || listing.condition || 'n/a',
@@ -975,6 +1024,7 @@ function MarketplaceWorkspace({ session, onLogout, clerkEnabled = false, getBear
     setItemTitle(listing.title || '')
     setCategory(listing.category && listing.category !== 'unknown' ? listing.category : '')
     setUserCondition(listing.condition && listing.condition !== 'n/a' ? listing.condition : '')
+    setItemSize(typeof listing.size === 'string' ? listing.size : '')
     setAskingValue(Number.isFinite(Number(listing.estimatedValue)) ? String(Math.round(Number(listing.estimatedValue))) : '')
     setTradeNotes(listing.wants || '')
     setItemDescription(listing.analysis?.item_profile ? buildSuggestedDescriptionFromProfile(listing.analysis.item_profile) : '')
@@ -1110,6 +1160,45 @@ function MarketplaceWorkspace({ session, onLogout, clerkEnabled = false, getBear
                   {wizardStep === 2 && (
                     <div className="wizard-pane">
                       <p className="wizard-title">Step 2: Item details + review</p>
+                      {(() => {
+                        const categoryForSize = category || analysisResult?.category || ''
+                        const brandForSize = analysisResult?.brand?.name || ''
+                        const sizeChartUrl = brandSizeChartUrl(brandForSize, categoryForSize)
+                        if (!brandForSize || brandForSize === 'unknown') return null
+                        return (
+                          <div className="request-list">
+                            <span>Brand size chart:</span>
+                            {sizeChartUrl ? (
+                              <a href={sizeChartUrl} target="_blank" rel="noreferrer">
+                                {brandForSize} size chart
+                              </a>
+                            ) : (
+                              <code>No chart available for this brand</code>
+                            )}
+                          </div>
+                        )
+                      })()}
+                      <label>
+                        <span>Size</span>
+                        <select
+                          value={itemSize}
+                          onChange={(e) => setItemSize(e.target.value)}
+                          required
+                        >
+                          {(() => {
+                            const categoryForSize = category || analysisResult?.category || ''
+                            const options = sizeOptionsForCategory(categoryForSize)
+                            return (
+                              <>
+                                <option value="">{options.length ? 'Select size' : 'Select category first'}</option>
+                                {options.map((opt) => (
+                                  <option key={opt} value={opt}>{opt}</option>
+                                ))}
+                              </>
+                            )
+                          })()}
+                        </select>
+                      </label>
                       <div className="field-grid">
                         <label>
                           <span>Category (optional)</span>
@@ -1152,6 +1241,7 @@ function MarketplaceWorkspace({ session, onLogout, clerkEnabled = false, getBear
                         <span><strong>Images:</strong> {images.length || editImageCount}</span>
                         <span><strong>Category:</strong> {category || 'Auto detect'}</span>
                         <span><strong>Condition:</strong> {userCondition || 'n/a'}</span>
+                        <span><strong>Size:</strong> {itemSize || 'n/a'}</span>
                       </div>
                     </div>
                   )}
@@ -1167,7 +1257,19 @@ function MarketplaceWorkspace({ session, onLogout, clerkEnabled = false, getBear
                     )}
                     {wizardStep === 2 && (
                       <>
-                        <button className="primary" type="button" onClick={saveListingDraft}>{editingListingId ? 'Update Listing' : 'Publish Listing'}</button>
+                        <button
+                          className="primary"
+                          type="button"
+                          onClick={() => {
+                            if (!itemSize) {
+                              setAnalysisError('Select item size before publishing.')
+                              return
+                            }
+                            saveListingDraft()
+                          }}
+                        >
+                          {editingListingId ? 'Update Listing' : 'Publish Listing'}
+                        </button>
                       </>
                     )}
                   </div>
@@ -1420,6 +1522,23 @@ function MarketplaceWorkspace({ session, onLogout, clerkEnabled = false, getBear
               </select>
             </label>
             {listingModalMode === 'edit' && (
+              <label>
+                <span>Size</span>
+                <select value={itemSize} onChange={(e) => setItemSize(e.target.value)}>
+                  {(() => {
+                    const categoryForSize = category || modalEditingListing?.analysis?.category || modalEditingListing?.category || ''
+                    const options = sizeOptionsForCategory(categoryForSize)
+                    return (
+                      <>
+                        <option value="">{options.length ? 'Select size' : 'Select category first'}</option>
+                        {options.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
+                      </>
+                    )
+                  })()}
+                </select>
+              </label>
+            )}
+            {listingModalMode === 'edit' && (
               <div className="warning-list" style={{ marginTop: 10 }}>
                 <p>
                   This brand/model is often sold with authenticity receipt or proof of purchase.
@@ -1554,7 +1673,7 @@ function ListingCard({ item, own = false, onEditDraft = null, similarItems = [],
     : [item.image].filter(Boolean)
   const [activeImageIdx, setActiveImageIdx] = useState(0)
   const safeIndex = Math.min(activeImageIdx, Math.max(gallery.length - 1, 0))
-  const imageSrc = gallery[safeIndex] || 'https://images.unsplash.com/photo-1483985988355-763728e1935b?auto=format&fit=crop&w=800&q=80'
+  const imageSrc = gallery[safeIndex] || null
 
   function showPrev() {
     if (gallery.length <= 1) return
@@ -1587,7 +1706,13 @@ function ListingCard({ item, own = false, onEditDraft = null, similarItems = [],
     <>
       <article className="listing-card">
         <div className="image-wrap">
-        <img src={imageSrc} alt={item.title} />
+        {imageSrc ? (
+          <img src={imageSrc} alt={item.title} />
+        ) : (
+          <div style={{ width: '100%', height: '100%', display: 'grid', placeItems: 'center', color: '#666', background: '#f2f2f2', fontSize: 13 }}>
+            No image
+          </div>
+        )}
         <span className={`mode-badge ${badgeClass}`}>{badgeLabel}</span>
         {gallery.length > 1 && (
           <div style={{ position: 'absolute', left: 8, right: 8, bottom: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -1618,10 +1743,16 @@ function ListingCard({ item, own = false, onEditDraft = null, similarItems = [],
                   onClick={() => setSelectedMatch(sim)}
                   title={`${sim.title} • ${money(sim.estimatedValue)}`}
                 >
-                  <img
-                    src={(Array.isArray(sim.images) && sim.images.length > 0 ? sim.images[0] : sim.image) || 'https://images.unsplash.com/photo-1483985988355-763728e1935b?auto=format&fit=crop&w=800&q=80'}
-                    alt={sim.title}
-                  />
+                  {(Array.isArray(sim.images) && sim.images.length > 0 ? sim.images[0] : sim.image) ? (
+                    <img
+                      src={(Array.isArray(sim.images) && sim.images.length > 0 ? sim.images[0] : sim.image)}
+                      alt={sim.title}
+                    />
+                  ) : (
+                    <div style={{ width: '100%', aspectRatio: '1 / 1', display: 'grid', placeItems: 'center', color: '#666', background: '#f2f2f2', fontSize: 11 }}>
+                      No image
+                    </div>
+                  )}
                   <div className="similar-card-body">
                     <span className="similar-score">{matchLabel(sim)}</span>
                     <strong>{money(sim.estimatedValue)}</strong>
