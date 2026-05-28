@@ -651,7 +651,10 @@ class Database:
         if image and (image.startswith("data:") or image.startswith("blob:")):
             image = None
 
-        images = json.loads(data["images_json"]) if data.get("images_json") else []
+        try:
+            images = json.loads(data.get("images_json") or "[]")
+        except Exception:
+            images = []
         safe_images = []
         for value in images:
             if not isinstance(value, str):
@@ -667,6 +670,21 @@ class Database:
             if wants_text and wants_text != "No description provided.":
                 description = wants_text
 
+        try:
+            estimated_value = float(data["estimated_value"])
+        except Exception:
+            estimated_value = 0.0
+        try:
+            tags = json.loads(data.get("tags_json") or "[]")
+            if not isinstance(tags, list):
+                tags = []
+        except Exception:
+            tags = []
+        try:
+            analysis = json.loads(data["analysis_json"]) if data.get("analysis_json") else None
+        except Exception:
+            analysis = None
+
         return {
             "listing_id": data["listing_id"],
             "owner_subject": data["owner_subject"],
@@ -677,15 +695,15 @@ class Database:
             "brand": data["brand"],
             "condition": data["condition"],
             "size": data.get("size"),
-            "estimated_value": float(data["estimated_value"]),
+            "estimated_value": estimated_value,
             "city": data["city"],
             "image": image,
             "images": safe_images,
             "description": description,
             "wants": wants,
-            "tags": json.loads(data["tags_json"]) if data["tags_json"] else [],
+            "tags": tags,
             "source_item_id": data["source_item_id"],
-            "analysis": json.loads(data["analysis_json"]) if data["analysis_json"] else None,
+            "analysis": analysis,
             "status": data.get("status") or "Review",
             "created_at": data["created_at"],
         }
