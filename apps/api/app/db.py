@@ -216,6 +216,10 @@ class Database:
         ]
         for stmt in statements:
             self.execute(stmt)
+        # PostgreSQL runs DDL inside transactions by default.
+        # Commit base CREATE TABLE statements first so a later optional ALTER
+        # failure cannot roll back newly created tables.
+        self.commit()
         for alter in (
             "ALTER TABLE listings ADD COLUMN images_json TEXT NOT NULL DEFAULT '[]'",
             "ALTER TABLE listings ADD COLUMN status TEXT NOT NULL DEFAULT 'Review'",
@@ -240,6 +244,7 @@ class Database:
         ):
             try:
                 self.execute(alter)
+                self.commit()
             except Exception:
                 if self._pg is not None:
                     self._pg.rollback()
