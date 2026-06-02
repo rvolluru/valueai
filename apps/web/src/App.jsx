@@ -1059,6 +1059,10 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
       return `${item.title} ${item.brand} ${item.category} ${item.city} ${item.wants}`.toLowerCase().includes(q)
     })
   }, [allListings, deferredMarketSearch, tradeOnly])
+  const marketplaceNavCount = useMemo(
+    () => allListings.filter((item) => String(item?.status || '').toLowerCase() === 'active').length,
+    [allListings],
+  )
   const marketMatchesTarget = useMemo(
     () => allListings.find((x) => x.id === marketMatchesTargetId) || null,
     [allListings, marketMatchesTargetId]
@@ -2144,7 +2148,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
           <p className="sidebar-section-title">Workspace</p>
           <button className={activeTab === 'portfolio' ? 'nav-item active' : 'nav-item'} onClick={() => setActiveTab('portfolio')}>My Closet ({myListings.length})</button>
           <button className={activeTab === 'inbox' ? 'nav-item active' : 'nav-item'} onClick={() => setActiveTab('inbox')}>Trade Inbox ({incomingOffers.length})</button>
-          <button className={activeTab === 'market' ? 'nav-item active' : 'nav-item'} onClick={() => setActiveTab('market')}>Marketplace ({allListings.length})</button>
+          <button className={activeTab === 'market' ? 'nav-item active' : 'nav-item'} onClick={() => setActiveTab('market')}>Marketplace ({marketplaceNavCount})</button>
           <button className={activeTab === 'admin' ? 'nav-item active' : 'nav-item'} onClick={() => setActiveTab('admin')}>Admin</button>
           <div className="sidebar-card"><h3>Trade Targeting</h3><p>Use the AI valuation as your anchor, then tune your target value to discover comparable listings.</p></div>
           <div className="sidebar-card sidebar-card-dark">
