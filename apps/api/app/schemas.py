@@ -54,6 +54,91 @@ class HealthResponse(BaseModel):
 class VersionResponse(BaseModel):
     version: str
 
+class UserProfileQuizUpdateRequest(BaseModel):
+    gender: Literal["female", "male", "other"] | None = None
+    tops_size: str | None = None
+    dresses_size: str | None = None
+    bottoms_size: str | None = None
+    shoes_size: str | None = None
+    category_preferences: list[str] = Field(default_factory=list)
+    shipping_full_name: str | None = None
+    shipping_address_line1: str | None = None
+    shipping_address_line2: str | None = None
+    shipping_city: str | None = None
+    shipping_state: str | None = None
+    shipping_postal_code: str | None = None
+    shipping_country: str | None = None
+    subscription_plan: str | None = None
+    subscription_status: str | None = None
+    subscription_renewal_date: str | None = None
+    payment_methods: list[str] = Field(default_factory=list)
+
+
+class UserProfileQuizResponse(UserProfileQuizUpdateRequest):
+    owner_subject: str
+    created_at: str
+    updated_at: str
+
+
+class PaymentMethodCreateRequest(BaseModel):
+    method_type: Literal["card", "apple_pay", "paypal"]
+    provider: Literal["stripe", "paypal"] = "stripe"
+    label: str | None = None
+    last4: str | None = None
+    brand: str | None = None
+    exp_month: int | None = None
+    exp_year: int | None = None
+    email: str | None = None
+    provider_token: str | None = None
+    is_default: bool = False
+
+
+class StripeAttachPaymentMethodRequest(BaseModel):
+    payment_method_id: str
+    is_default: bool = False
+
+
+class PaymentMethodResponse(BaseModel):
+    payment_method_id: str
+    owner_subject: str
+    provider: str
+    method_type: Literal["card", "apple_pay", "paypal"]
+    label: str | None = None
+    last4: str | None = None
+    brand: str | None = None
+    exp_month: int | None = None
+    exp_year: int | None = None
+    email: str | None = None
+    is_default: bool = False
+    created_at: str
+    updated_at: str
+
+
+class PaymentMethodListResponse(BaseModel):
+    items: list[PaymentMethodResponse] = Field(default_factory=list)
+
+
+class StripeSetupIntentResponse(BaseModel):
+    provider: str = "stripe"
+    client_secret: str | None = None
+    customer_id: str | None = None
+    publishable_key: str | None = None
+    status: str
+    message: str | None = None
+
+
+class StripeSetupCheckoutRequest(BaseModel):
+    success_url: str
+    cancel_url: str
+
+
+class StripeSetupCheckoutResponse(BaseModel):
+    provider: str = "stripe"
+    checkout_url: str | None = None
+    session_id: str | None = None
+    status: str
+    message: str | None = None
+
 
 class AuthMeResponse(BaseModel):
     provider: str = "clerk"
@@ -81,7 +166,7 @@ class ListingCreateRequest(BaseModel):
     tags: list[str] = Field(default_factory=list)
     source_item_id: str | None = None
     analysis: dict[str, Any] | None = None
-    status: Literal["Analyzing", "Review", "AnalysisFailed", "Active"] = "Review"
+    status: Literal["Analyzing", "Review", "AnalysisFailed", "Active", "Traded"] = "Review"
 
 
 class ListingResponse(ListingCreateRequest):
@@ -93,7 +178,8 @@ class ListingResponse(ListingCreateRequest):
 
 class OfferCreateRequest(BaseModel):
     target_listing_id: str
-    offered_listing_id: str
+    offered_listing_id: str | None = None
+    offered_listing_ids: list[str] = Field(default_factory=list)
     message: str = ""
 
 
@@ -101,12 +187,19 @@ class OfferResponse(BaseModel):
     offer_id: str
     target_listing_id: str
     offered_listing_id: str
+    offered_listing_ids: list[str] = Field(default_factory=list)
     from_subject: str
     to_subject: str
     status: Literal["pending", "accepted", "declined", "countered", "cancelled"] = "pending"
     message: str = ""
     created_at: str
     updated_at: str
+
+
+class OfferWithListingsResponse(OfferResponse):
+    target_listing: ListingResponse
+    offered_listing: ListingResponse
+    offered_listings: list[ListingResponse] = Field(default_factory=list)
 
 
 class OfferActionRequest(BaseModel):

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import re
 from io import BytesIO
@@ -56,6 +57,7 @@ class GptItemProfiler:
         self.max_images = max(1, min(max_images, 4))
         self.image_detail = image_detail if image_detail in {"low", "high", "auto"} else "auto"
         self.reasoning_effort = reasoning_effort.strip().lower() if reasoning_effort else ""
+        self._profile_cache: dict[str, dict[str, Any]] = {}
 
     def profile_item(
         self,
@@ -70,6 +72,18 @@ class GptItemProfiler:
     ) -> GptItemProfileResult:
         if not self.enabled:
             return GptItemProfileResult(profile=None, enabled=False, called=False)
+        cache_key = self._cache_key(
+            images=images,
+            brand_name=brand_name,
+            category=category,
+            item_size=item_size,
+            condition_grade=condition_grade,
+            condition_source=condition_source,
+            item_description=item_description,
+        )
+        cached = self._profile_cache.get(cache_key)
+        if isinstance(cached, dict):
+            return GptItemProfileResult(profile=dict(cached), enabled=True, called=True)
         schema = self._build_schema()
         provider_errors: list[str] = []
         called = False
@@ -99,8 +113,14 @@ class GptItemProfiler:
                             best_partial_provider = "gemini"
                             provider_errors.append("gemini: profile_data_missing_trying_openai")
                             continue
-                        if self._has_usable_pricing(parsed):
+                        if self._has_usable_pricing(parsed) and self._has_strong_pricing_evidence(parsed):
+                            self._profile_cache[cache_key] = dict(parsed)
                             return GptItemProfileResult(profile=parsed, enabled=True, called=True)
+                        if self._has_usable_pricing(parsed):
+                            best_partial_profile = parsed
+                            best_partial_provider = "gemini"
+                            provider_errors.append("gemini: weak_pricing_evidence_trying_openai")
+                            continue
                         best_partial_profile = parsed
                         best_partial_provider = "gemini"
                         provider_errors.append("gemini: pricing_missing_trying_openai")
@@ -131,6 +151,7 @@ class GptItemProfiler:
                     if parsed is not None:
                         parsed.setdefault("_provider", "openai")
                         if self._has_usable_pricing(parsed):
+                            self._profile_cache[cache_key] = dict(parsed)
                             return GptItemProfileResult(profile=parsed, enabled=True, called=True)
                         if best_partial_profile is None:
                             best_partial_profile = parsed
@@ -189,6 +210,81 @@ class GptItemProfiler:
         if isinstance(visual_signatures, list) and any(isinstance(v, str) and v.strip() for v in visual_signatures):
             return True
         return GptItemProfiler._has_usable_pricing(profile)
+
+    @staticmethod
+    def _has_strong_pricing_evidence(profile: dict[str, Any]) -> bool:
+        resale = profile.get("resale_price_estimate")
+        breakdown = profile.get("resale_price_breakdown")
+        if not isinstance(resale, dict):
+            return False
+
+        est = resale.get("estimated_price")
+        if not isinstance(est, (int, float)) or float(est) <= 0:
+            return False
+
+        refs = resale.get("references")
+        trusted_refs = 0
+        if isinstance(refs, list):
+            for ref in refs:
+                if not isinstance(ref, dict):
+                    continue
+                src = str(ref.get("source") or "").casefold()
+                url = str(ref.get("url") or "").casefold()
+                if any(
+                    d in src or d in url
+                    for d in GptItemProfiler.TRUSTED_PRICING_DOMAINS
+                ):
+                    trusted_refs += 1
+
+        priced_rows = []
+        rows_with_range = 0
+        if isinstance(breakdown, list):
+            for row in breakdown:
+                if not isinstance(row, dict):
+                    continue
+                row_est = row.get("estimated_price")
+                low = row.get("range_low")
+                high = row.get("range_high")
+                if isinstance(row_est, (int, float)) and float(row_est) > 0:
+                    priced_rows.append(row)
+                if isinstance(low, (int, float)) and isinstance(high, (int, float)) and float(high) >= float(low):
+                    rows_with_range += 1
+
+        # Strong enough evidence if we have multiple condition rows or explicit ranges,
+        # or at least two trusted references for a single-price estimate.
+        if len(priced_rows) >= 2 or rows_with_range >= 1:
+            return True
+        return trusted_refs >= 2
+
+    def _cache_key(
+        self,
+        *,
+        images: list[ImageInput],
+        brand_name: str,
+        category: str,
+        item_size: str | None,
+        condition_grade: str,
+        condition_source: str,
+        item_description: str | None,
+    ) -> str:
+        h = hashlib.sha256()
+        h.update((brand_name or "").strip().casefold().encode("utf-8"))
+        h.update(b"|")
+        h.update((category or "").strip().casefold().encode("utf-8"))
+        h.update(b"|")
+        h.update((item_size or "").strip().casefold().encode("utf-8"))
+        h.update(b"|")
+        h.update((condition_grade or "").strip().casefold().encode("utf-8"))
+        h.update(b"|")
+        h.update((condition_source or "").strip().casefold().encode("utf-8"))
+        h.update(b"|")
+        h.update((item_description or "").strip().casefold().encode("utf-8"))
+        for img in images[: self.max_images]:
+            h.update(b"|img|")
+            h.update((img.content_type or "").encode("utf-8"))
+            h.update(b"|")
+            h.update(img.bytes_data)
+        return h.hexdigest()
 
     def _build_content(
         self,
@@ -551,7 +647,7 @@ class GptItemProfiler:
         return {
             "contents": [{"role": "user", "parts": gemini_parts}],
             "tools": [{"google_search": {}}],
-            "generationConfig": {"temperature": 0.3},
+            "generationConfig": {"temperature": 0.1},
         }
 
     def _build_gemini_formatter_payload(self, *, content: list[dict[str, Any]], grounded_text: str) -> dict[str, Any]:
@@ -574,7 +670,7 @@ class GptItemProfiler:
             "contents": [{"role": "user", "parts": gemini_parts}],
             "generationConfig": {
                 "responseMimeType": "application/json",
-                "temperature": 0.0,
+                "temperature": 0.1,
             },
         }
 

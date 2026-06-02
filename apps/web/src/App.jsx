@@ -1,4 +1,4 @@
-import { useDeferredValue, useEffect, useMemo, useState } from 'react'
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import {
   SignIn,
   SignUp,
@@ -73,12 +73,25 @@ function getListingDescription(item) {
   return ''
 }
 
+function getUploadedImageUrlsFromAnalysis(analysis) {
+  if (!analysis || !Array.isArray(analysis.uploaded_images)) return []
+  return analysis.uploaded_images
+    .map((u) => (typeof u?.image_url === 'string' ? u.image_url.trim() : ''))
+    .filter((u) => Boolean(u) && !u.startsWith('data:') && !u.startsWith('blob:'))
+}
+
 function sizeOptionsForCategory(category) {
   if (category === 'shoes') return ['US 5', 'US 5.5', 'US 6', 'US 6.5', 'US 7', 'US 7.5', 'US 8', 'US 8.5', 'US 9', 'US 9.5', 'US 10', 'US 10.5', 'US 11', 'US 12']
   if (category === 'clothes') return ['XXS', 'XS', 'S', 'M', 'L', 'XL', 'XXL']
   if (category === 'handbag') return ['Mini', 'Small', 'Medium', 'Large']
   return []
 }
+
+const FEMALE_APPAREL_SIZE_OPTIONS = ['XXS', 'XS', 'S', 'M', 'L', 'XL', 'XXL']
+const MALE_APPAREL_SIZE_OPTIONS = ['XS', 'S', 'M', 'L', 'XL', 'XXL', 'XXXL']
+const FEMALE_SHOE_SIZE_OPTIONS = ['US 5', 'US 5.5', 'US 6', 'US 6.5', 'US 7', 'US 7.5', 'US 8', 'US 8.5', 'US 9', 'US 9.5', 'US 10', 'US 10.5', 'US 11', 'US 12']
+const MALE_SHOE_SIZE_OPTIONS = ['US 6', 'US 6.5', 'US 7', 'US 7.5', 'US 8', 'US 8.5', 'US 9', 'US 9.5', 'US 10', 'US 10.5', 'US 11', 'US 11.5', 'US 12', 'US 13', 'US 14']
+const PROFILE_CATEGORY_OPTIONS = ['Dresses', 'Jackets', 'Shoes', 'Handbags', 'Skirts', 'Accessories']
 
 function brandSizeChartUrl(brand, category) {
   const name = String(brand || '').trim().toLowerCase()
@@ -117,6 +130,30 @@ function fileToDataUrl(file) {
     reader.onerror = () => reject(reader.error || new Error('Failed reading file'))
     reader.readAsDataURL(file)
   })
+}
+
+let stripeJsPromise = null
+function loadStripeJs() {
+  if (typeof window === 'undefined') return Promise.reject(new Error('Browser context required'))
+  if (window.Stripe) return Promise.resolve(window.Stripe)
+  if (!stripeJsPromise) {
+    stripeJsPromise = new Promise((resolve, reject) => {
+      const existing = document.querySelector('script[data-stripe-js="true"]')
+      if (existing) {
+        existing.addEventListener('load', () => resolve(window.Stripe))
+        existing.addEventListener('error', () => reject(new Error('Failed to load Stripe.js')))
+        return
+      }
+      const script = document.createElement('script')
+      script.src = 'https://js.stripe.com/v3/'
+      script.async = true
+      script.dataset.stripeJs = 'true'
+      script.onload = () => resolve(window.Stripe)
+      script.onerror = () => reject(new Error('Failed to load Stripe.js'))
+      document.head.appendChild(script)
+    })
+  }
+  return stripeJsPromise
 }
 
 async function analyzeItem({ apiBaseUrl, apiKey, bearerToken, images, category, userCondition, itemDescription, debug }) {
@@ -229,6 +266,212 @@ async function updateListingRemote({ apiBaseUrl, apiKey, bearerToken, listingId,
   return data
 }
 
+async function fetchProfileQuizRemote({ apiBaseUrl, apiKey, bearerToken }) {
+  const headers = {}
+  if (bearerToken) headers.Authorization = `Bearer ${bearerToken}`
+  else if (apiKey) headers['x-api-key'] = apiKey
+  const resp = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/v1/me/profile-quiz`, { method: 'GET', headers })
+  const data = await resp.json()
+  if (!resp.ok) throw new Error(data?.detail || `API error (${resp.status})`)
+  return data
+}
+
+async function saveProfileQuizRemote({ apiBaseUrl, apiKey, bearerToken, payload }) {
+  const headers = { 'Content-Type': 'application/json' }
+  if (bearerToken) headers.Authorization = `Bearer ${bearerToken}`
+  else if (apiKey) headers['x-api-key'] = apiKey
+  const normalizedPayload = {
+    ...payload,
+    gender: payload?.gender ? payload.gender : null,
+  }
+  const resp = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/v1/me/profile-quiz`, {
+    method: 'PUT',
+    headers,
+    body: JSON.stringify(normalizedPayload),
+  })
+  const data = await resp.json()
+  if (!resp.ok) throw new Error(data?.detail || `API error (${resp.status})`)
+  return data
+}
+
+async function fetchUspsAddressSuggestionsRemote({ apiBaseUrl, apiKey, bearerToken, q, city, state, postalCode }) {
+  const headers = {}
+  if (bearerToken) headers.Authorization = `Bearer ${bearerToken}`
+  else if (apiKey) headers['x-api-key'] = apiKey
+  const params = new URLSearchParams()
+  if (q) params.set('q', q)
+  if (city) params.set('city', city)
+  if (state) params.set('state', state)
+  if (postalCode) params.set('postal_code', postalCode)
+  const resp = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/v1/usps/address-suggest?${params.toString()}`, { method: 'GET', headers })
+  let data = null
+  try { data = await resp.json() } catch {}
+  if (!resp.ok) throw new Error(data?.detail || `API error (${resp.status})`)
+  return Array.isArray(data?.suggestions) ? data.suggestions : []
+}
+
+async function fetchPaymentMethodsRemote({ apiBaseUrl, apiKey, bearerToken }) {
+  const headers = {}
+  if (bearerToken) headers.Authorization = `Bearer ${bearerToken}`
+  else if (apiKey) headers['x-api-key'] = apiKey
+  const resp = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/v1/me/payment-methods`, { method: 'GET', headers })
+  let data = null
+  try { data = await resp.json() } catch {}
+  if (!resp.ok) throw new Error(data?.detail || `API error (${resp.status})`)
+  return Array.isArray(data?.items) ? data.items : []
+}
+
+async function createPaymentMethodRemote({ apiBaseUrl, apiKey, bearerToken, payload }) {
+  const headers = { 'Content-Type': 'application/json' }
+  if (bearerToken) headers.Authorization = `Bearer ${bearerToken}`
+  else if (apiKey) headers['x-api-key'] = apiKey
+  const resp = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/v1/me/payment-methods`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(payload),
+  })
+  let data = null
+  try { data = await resp.json() } catch {}
+  if (!resp.ok) throw new Error(data?.detail || `API error (${resp.status})`)
+  return data
+}
+
+async function deletePaymentMethodRemote({ apiBaseUrl, apiKey, bearerToken, paymentMethodId }) {
+  const headers = {}
+  if (bearerToken) headers.Authorization = `Bearer ${bearerToken}`
+  else if (apiKey) headers['x-api-key'] = apiKey
+  const resp = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/v1/me/payment-methods/${paymentMethodId}`, { method: 'DELETE', headers })
+  let data = null
+  try { data = await resp.json() } catch {}
+  if (!resp.ok) throw new Error(data?.detail || `API error (${resp.status})`)
+  return data
+}
+
+async function setDefaultPaymentMethodRemote({ apiBaseUrl, apiKey, bearerToken, paymentMethodId }) {
+  const headers = { 'Content-Type': 'application/json' }
+  if (bearerToken) headers.Authorization = `Bearer ${bearerToken}`
+  else if (apiKey) headers['x-api-key'] = apiKey
+  const resp = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/v1/me/payment-methods/${paymentMethodId}/default`, { method: 'POST', headers })
+  let data = null
+  try { data = await resp.json() } catch {}
+  if (!resp.ok) throw new Error(data?.detail || `API error (${resp.status})`)
+  return data
+}
+
+async function createStripeSetupCheckoutSessionRemote({ apiBaseUrl, apiKey, bearerToken, successUrl, cancelUrl }) {
+  const headers = { 'Content-Type': 'application/json' }
+  if (bearerToken) headers.Authorization = `Bearer ${bearerToken}`
+  else if (apiKey) headers['x-api-key'] = apiKey
+  const resp = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/v1/me/payment-methods/stripe/setup-checkout-session`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ success_url: successUrl, cancel_url: cancelUrl }),
+  })
+  let data = null
+  try { data = await resp.json() } catch {}
+  if (!resp.ok) throw new Error(data?.detail || `API error (${resp.status})`)
+  return data
+}
+
+async function syncStripePaymentMethodsRemote({ apiBaseUrl, apiKey, bearerToken }) {
+  const headers = { 'Content-Type': 'application/json' }
+  if (bearerToken) headers.Authorization = `Bearer ${bearerToken}`
+  else if (apiKey) headers['x-api-key'] = apiKey
+  const resp = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/v1/me/payment-methods/stripe/sync`, { method: 'POST', headers })
+  let data = null
+  try { data = await resp.json() } catch {}
+  if (!resp.ok) throw new Error(data?.detail || `API error (${resp.status})`)
+  return Array.isArray(data?.items) ? data.items : []
+}
+
+async function createStripeSetupIntentRemote({ apiBaseUrl, apiKey, bearerToken }) {
+  const headers = { 'Content-Type': 'application/json' }
+  if (bearerToken) headers.Authorization = `Bearer ${bearerToken}`
+  else if (apiKey) headers['x-api-key'] = apiKey
+  const resp = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/v1/me/payment-methods/stripe/setup-intent`, {
+    method: 'POST',
+    headers,
+  })
+  let data = null
+  try { data = await resp.json() } catch {}
+  if (!resp.ok) throw new Error(data?.detail || `API error (${resp.status})`)
+  return data
+}
+
+async function createOfferRemote({ apiBaseUrl, apiKey, bearerToken, payload }) {
+  const headers = { 'Content-Type': 'application/json' }
+  if (bearerToken) headers.Authorization = `Bearer ${bearerToken}`
+  else if (apiKey) headers['x-api-key'] = apiKey
+  const resp = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/v1/offers`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(payload),
+  })
+  let data = null
+  try { data = await resp.json() } catch {}
+  if (!resp.ok) throw new Error(data?.detail || `API error (${resp.status})`)
+  return data
+}
+
+async function fetchIncomingOffersRemote({ apiBaseUrl, apiKey, bearerToken, status = 'pending', limit = 50 }) {
+  const headers = {}
+  if (bearerToken) headers.Authorization = `Bearer ${bearerToken}`
+  else if (apiKey) headers['x-api-key'] = apiKey
+  const resp = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/v1/offers/incoming?status=${encodeURIComponent(status)}&limit=${limit}`, { method: 'GET', headers })
+  let data = null
+  try { data = await resp.json() } catch {}
+  if (!resp.ok) throw new Error(data?.detail || `API error (${resp.status})`)
+  return data
+}
+
+async function actionOfferRemote({ apiBaseUrl, apiKey, bearerToken, offerId, status }) {
+  const headers = { 'Content-Type': 'application/json' }
+  if (bearerToken) headers.Authorization = `Bearer ${bearerToken}`
+  else if (apiKey) headers['x-api-key'] = apiKey
+  const resp = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/v1/offers/${offerId}/action`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ status }),
+  })
+  let data = null
+  try { data = await resp.json() } catch {}
+  if (!resp.ok) throw new Error(data?.detail || `API error (${resp.status})`)
+  return data
+}
+
+async function createShippingLabelsRemote({ apiBaseUrl, apiKey, bearerToken, offerId }) {
+  const headers = { 'Content-Type': 'application/json' }
+  if (bearerToken) headers.Authorization = `Bearer ${bearerToken}`
+  else if (apiKey) headers['x-api-key'] = apiKey
+  const resp = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/v1/offers/${offerId}/shipping-labels`, { method: 'POST', headers })
+  let data = null
+  try { data = await resp.json() } catch {}
+  if (!resp.ok) throw new Error(data?.detail || `API error (${resp.status})`)
+  return data
+}
+
+async function fetchShippingLabelsRemote({ apiBaseUrl, apiKey, bearerToken, offerId }) {
+  const headers = {}
+  if (bearerToken) headers.Authorization = `Bearer ${bearerToken}`
+  else if (apiKey) headers['x-api-key'] = apiKey
+  const resp = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/v1/offers/${offerId}/shipping-labels`, { method: 'GET', headers })
+  let data = null
+  try { data = await resp.json() } catch {}
+  if (!resp.ok) throw new Error(data?.detail || `API error (${resp.status})`)
+  return data
+}
+
+async function fetchShippingLabelDocumentRemote({ apiBaseUrl, apiKey, bearerToken, shipmentId }) {
+  const headers = {}
+  if (bearerToken) headers.Authorization = `Bearer ${bearerToken}`
+  else if (apiKey) headers['x-api-key'] = apiKey
+  const resp = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/v1/shipments/${shipmentId}/label`, { method: 'GET', headers })
+  let data = null
+  try { data = await resp.json() } catch {}
+  if (!resp.ok) throw new Error(data?.detail || `API error (${resp.status})`)
+  return data
+}
+
 export default function App() {
   if (CLERK_ENABLED) return <ClerkMarketplaceApp />
   return <LocalMarketplaceApp />
@@ -267,13 +510,30 @@ function ClerkMarketplaceApp() {
     name: [user.firstName, user.lastName].filter(Boolean).join(' ') || user.username || user.primaryEmailAddress?.emailAddress || 'User',
     email: user.primaryEmailAddress?.emailAddress || '',
   }
+  const profileData = {
+    userId: user.id || '',
+    name: [user.firstName, user.lastName].filter(Boolean).join(' ') || '',
+    firstName: user.firstName || '',
+    lastName: user.lastName || '',
+    username: user.username || '',
+    email: user.primaryEmailAddress?.emailAddress || '',
+    phone: user.primaryPhoneNumber?.phoneNumber || '',
+    createdAt: user.createdAt ? new Date(user.createdAt).toLocaleString() : '',
+  }
 
   return (
     <MarketplaceWorkspace
       session={session}
+      profileData={profileData}
       clerkEnabled
       getBearerToken={() => getToken()}
-      userMenu={<UserButton afterSignOutUrl="/" />}
+      userMenu={(
+        <UserButton afterSignOutUrl="/">
+          <UserButton.MenuItems>
+            <UserButton.Action label="Profile" />
+          </UserButton.MenuItems>
+        </UserButton>
+      )}
     />
   )
 }
@@ -375,7 +635,7 @@ function LoadingShell({ message }) {
   )
 }
 
-function MarketplaceWorkspace({ session, onLogout, clerkEnabled = false, getBearerToken, userMenu = null }) {
+function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnabled = false, getBearerToken, userMenu = null, onOpenProfile = null }) {
   const [apiBaseUrl] = useState(API_DEFAULT)
   const [apiKey, setApiKey] = useState('local-dev-key')
   const [myListings, setMyListings] = useState([])
@@ -411,6 +671,223 @@ function MarketplaceWorkspace({ session, onLogout, clerkEnabled = false, getBear
   const [modalEditingListing, setModalEditingListing] = useState(null)
   const [savedListingNotice, setSavedListingNotice] = useState('')
   const [wizardStep, setWizardStep] = useState(1)
+  const [profileQuiz, setProfileQuiz] = useState({
+    gender: '', tops_size: '', dresses_size: '', bottoms_size: '', shoes_size: '', category_preferences: [],
+    shipping_full_name: '', shipping_address_line1: '', shipping_address_line2: '', shipping_city: '', shipping_state: '', shipping_postal_code: '', shipping_country: '',
+    subscription_plan: '', subscription_status: '', subscription_renewal_date: '', payment_methods: [],
+  })
+  const [addressSuggestions, setAddressSuggestions] = useState([])
+  const [profileSaveMsg, setProfileSaveMsg] = useState('')
+  const [paymentMethods, setPaymentMethods] = useState([])
+  const [paymentBusy, setPaymentBusy] = useState(false)
+  const [showStripePaymentModal, setShowStripePaymentModal] = useState(false)
+  const [stripeUiBusy, setStripeUiBusy] = useState(false)
+  const [stripeUiError, setStripeUiError] = useState('')
+  const stripeRef = useRef(null)
+  const stripeElementsRef = useRef(null)
+  const stripePaymentElementRef = useRef(null)
+  const [incomingOffers, setIncomingOffers] = useState([])
+  const [tradeComposerTarget, setTradeComposerTarget] = useState(null)
+  const [marketMatchesTargetId, setMarketMatchesTargetId] = useState(null)
+  const [tradeOfferListingIds, setTradeOfferListingIds] = useState([])
+  const [tradeOfferMessage, setTradeOfferMessage] = useState('')
+  const [tradeOfferError, setTradeOfferError] = useState('')
+  const [tradeOfferBusy, setTradeOfferBusy] = useState(false)
+  const [tradeDetailListing, setTradeDetailListing] = useState(null)
+  const [offerStatusFilter, setOfferStatusFilter] = useState('pending')
+  const [closetFilter, setClosetFilter] = useState('all')
+  const [profileSection, setProfileSection] = useState('general')
+  const [shippingLabelsByOffer, setShippingLabelsByOffer] = useState({})
+
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
+        const data = await fetchProfileQuizRemote({ apiBaseUrl, apiKey: clerkEnabled ? '' : apiKey.trim(), bearerToken })
+        if (!cancelled) {
+          setProfileQuiz({
+            gender: data?.gender || '',
+            tops_size: data?.tops_size || '',
+            dresses_size: data?.dresses_size || '',
+            bottoms_size: data?.bottoms_size || '',
+            shoes_size: data?.shoes_size || '',
+            category_preferences: Array.isArray(data?.category_preferences) ? data.category_preferences : [],
+            shipping_full_name: data?.shipping_full_name || '',
+            shipping_address_line1: data?.shipping_address_line1 || '',
+            shipping_address_line2: data?.shipping_address_line2 || '',
+            shipping_city: data?.shipping_city || '',
+            shipping_state: data?.shipping_state || '',
+            shipping_postal_code: data?.shipping_postal_code || '',
+            shipping_country: data?.shipping_country || '',
+            subscription_plan: data?.subscription_plan || '',
+            subscription_status: data?.subscription_status || '',
+            subscription_renewal_date: data?.subscription_renewal_date || '',
+            payment_methods: Array.isArray(data?.payment_methods) ? data.payment_methods : [],
+          })
+        }
+      } catch {}
+    })()
+    return () => { cancelled = true }
+  }, [apiBaseUrl, apiKey, clerkEnabled, getBearerToken])
+
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      if (!showStripePaymentModal) return
+      setStripeUiError('')
+      setStripeUiBusy(true)
+      try {
+        const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
+        const setup = await createStripeSetupIntentRemote({
+          apiBaseUrl,
+          apiKey: clerkEnabled ? '' : apiKey.trim(),
+          bearerToken,
+        })
+        if (!setup?.client_secret || !setup?.publishable_key) {
+          throw new Error(setup?.message || 'Stripe setup is not configured.')
+        }
+        const StripeCtor = await loadStripeJs()
+        const stripe = StripeCtor(setup.publishable_key)
+        const elements = stripe.elements({ clientSecret: setup.client_secret, appearance: { theme: 'stripe' } })
+        const payment = elements.create('payment')
+        const mountEl = document.getElementById('stripe-payment-element')
+        if (!mountEl) throw new Error('Payment UI container unavailable.')
+        payment.mount(mountEl)
+        if (cancelled) return
+        stripeRef.current = stripe
+        stripeElementsRef.current = elements
+        stripePaymentElementRef.current = payment
+      } catch (err) {
+        if (!cancelled) setStripeUiError(err.message || 'Failed to initialize Stripe payment UI.')
+      } finally {
+        if (!cancelled) setStripeUiBusy(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+      try { stripePaymentElementRef.current?.unmount?.() } catch {}
+      stripePaymentElementRef.current = null
+      stripeElementsRef.current = null
+      stripeRef.current = null
+    }
+  }, [showStripePaymentModal, apiBaseUrl, apiKey, clerkEnabled, getBearerToken])
+
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      if (typeof window === 'undefined') return
+      const params = new URLSearchParams(window.location.search)
+      const setup = params.get('stripe_setup')
+      if (setup !== 'success') return
+      try {
+        const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
+        const methods = await syncStripePaymentMethodsRemote({
+          apiBaseUrl,
+          apiKey: clerkEnabled ? '' : apiKey.trim(),
+          bearerToken,
+        })
+        if (!cancelled) setPaymentMethods(methods)
+        if (!cancelled) setProfileSaveMsg('Stripe payment method added.')
+      } catch (err) {
+        if (!cancelled) setProfileSaveMsg(err.message || 'Stripe sync failed.')
+      } finally {
+        params.delete('stripe_setup')
+        const next = params.toString()
+        window.history.replaceState({}, '', `${window.location.pathname}${next ? `?${next}` : ''}`)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [apiBaseUrl, apiKey, clerkEnabled, getBearerToken])
+
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
+        const methods = await fetchPaymentMethodsRemote({ apiBaseUrl, apiKey: clerkEnabled ? '' : apiKey.trim(), bearerToken })
+        if (!cancelled) setPaymentMethods(methods)
+      } catch {
+        if (!cancelled) setPaymentMethods([])
+      }
+    })()
+    return () => { cancelled = true }
+  }, [apiBaseUrl, apiKey, clerkEnabled, getBearerToken])
+
+  useEffect(() => {
+    let cancelled = false
+    let timer = null
+    async function refreshOffers() {
+      try {
+        const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
+        const payload = await fetchIncomingOffersRemote({
+          apiBaseUrl,
+          apiKey: clerkEnabled ? '' : apiKey.trim(),
+          bearerToken,
+          status: offerStatusFilter,
+          limit: 50,
+        })
+        if (!cancelled) setIncomingOffers(Array.isArray(payload?.items) ? payload.items : [])
+      } catch {
+        if (!cancelled) setIncomingOffers([])
+      } finally {
+        if (!cancelled) timer = setTimeout(refreshOffers, 15000)
+      }
+    }
+    refreshOffers()
+    return () => {
+      cancelled = true
+      if (timer) clearTimeout(timer)
+    }
+  }, [apiBaseUrl, apiKey, clerkEnabled, getBearerToken, offerStatusFilter])
+  const normalizedProfileGender = profileQuiz.gender === 'male' || profileQuiz.gender === 'female' || profileQuiz.gender === 'other'
+    ? profileQuiz.gender
+    : ''
+  const profileApparelSizeOptions = normalizedProfileGender === 'male' ? MALE_APPAREL_SIZE_OPTIONS : FEMALE_APPAREL_SIZE_OPTIONS
+  const profileShoeSizeOptions = normalizedProfileGender === 'male' ? MALE_SHOE_SIZE_OPTIONS : FEMALE_SHOE_SIZE_OPTIONS
+  const profileCategoryOptions = normalizedProfileGender === 'male'
+    ? PROFILE_CATEGORY_OPTIONS.filter((c) => c !== 'Dresses')
+    : PROFILE_CATEGORY_OPTIONS
+
+  useEffect(() => {
+    let cancelled = false
+    const line1 = (profileQuiz.shipping_address_line1 || '').trim()
+    const state = (profileQuiz.shipping_state || '').trim()
+    if (line1.length < 5 || state.length !== 2) {
+      setAddressSuggestions([])
+      return undefined
+    }
+    const timer = setTimeout(async () => {
+      try {
+        const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
+        const suggestions = await fetchUspsAddressSuggestionsRemote({
+          apiBaseUrl,
+          apiKey: clerkEnabled ? '' : apiKey.trim(),
+          bearerToken,
+          q: line1,
+          city: profileQuiz.shipping_city || '',
+          state,
+          postalCode: profileQuiz.shipping_postal_code || '',
+        })
+        if (!cancelled) setAddressSuggestions(suggestions.slice(0, 5))
+      } catch {
+        if (!cancelled) setAddressSuggestions([])
+      }
+    }, 350)
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [
+    profileQuiz.shipping_address_line1,
+    profileQuiz.shipping_city,
+    profileQuiz.shipping_state,
+    profileQuiz.shipping_postal_code,
+    apiBaseUrl,
+    apiKey,
+    clerkEnabled,
+    getBearerToken,
+  ])
 
   function fromRemoteListing(item) {
     if (!item) return null
@@ -582,6 +1059,33 @@ function MarketplaceWorkspace({ session, onLogout, clerkEnabled = false, getBear
       return `${item.title} ${item.brand} ${item.category} ${item.city} ${item.wants}`.toLowerCase().includes(q)
     })
   }, [allListings, deferredMarketSearch, tradeOnly])
+  const marketMatchesTarget = useMemo(
+    () => allListings.find((x) => x.id === marketMatchesTargetId) || null,
+    [allListings, marketMatchesTargetId]
+  )
+  const similarListingsForTarget = useMemo(() => {
+    if (!marketMatchesTarget) return []
+    const baseValue = Number(marketMatchesTarget.estimatedValue || 0)
+    const tolerance = Math.max(50, baseValue * 0.2)
+    return allListings
+      .filter((candidate) => candidate.id !== marketMatchesTarget.id)
+      .filter((candidate) => (candidate.owner || '') !== (marketMatchesTarget.owner || ''))
+      .filter((candidate) => Math.abs(Number(candidate.estimatedValue || 0) - baseValue) <= tolerance)
+      .slice(0, 12)
+  }, [allListings, marketMatchesTarget])
+  useEffect(() => {
+    if (!marketMatchesTarget) return
+    function onKeyDown(e) {
+      if (e.key === 'Escape') setMarketMatchesTargetId(null)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [marketMatchesTarget])
+
+  const latestActiveListings = useMemo(
+    () => allListings.filter((item) => String(item?.status || '').toLowerCase() === 'active').slice(0, 6),
+    [allListings],
+  )
 
   const suggestedTrades = useMemo(() => {
     const target = Number(askingValue || analysisResult?.valuation?.estimated_value || 0)
@@ -609,6 +1113,46 @@ function MarketplaceWorkspace({ session, onLogout, clerkEnabled = false, getBear
     })
   }, [adminAnalyses, adminSearch])
 
+  const closetBreakdown = useMemo(() => {
+    let active = 0
+    let draft = 0
+    let traded = 0
+    for (const item of myListings) {
+      const status = String(item?.status || '').toLowerCase()
+      if (status === 'active') active += 1
+      else if (status === 'traded') traded += 1
+      else draft += 1
+    }
+    return {
+      active,
+      draft,
+      traded,
+      offers: incomingOffers.filter((o) => String(o?.status || '').toLowerCase() === 'pending').length,
+    }
+  }, [myListings, incomingOffers])
+
+  const filteredClosetListings = useMemo(() => {
+    if (closetFilter === 'all') return myListings
+    if (closetFilter === 'offers') {
+      const targetIds = new Set(
+        incomingOffers
+          .filter((o) => String(o?.status || '').toLowerCase() === 'pending')
+          .map((o) => o?.target_listing?.listing_id)
+          .filter(Boolean)
+      )
+      return myListings.filter((x) => targetIds.has(x.id))
+    }
+    if (closetFilter === 'active') return myListings.filter((x) => String(x?.status || '').toLowerCase() === 'active')
+    if (closetFilter === 'traded') return myListings.filter((x) => String(x?.status || '').toLowerCase() === 'traded')
+    if (closetFilter === 'draft') {
+      return myListings.filter((x) => {
+        const s = String(x?.status || '').toLowerCase()
+        return s !== 'active' && s !== 'traded'
+      })
+    }
+    return myListings
+  }, [myListings, incomingOffers, closetFilter])
+
   async function loadAdminAnalyses() {
     if (!clerkEnabled && !apiKey.trim()) {
       setAdminError('API key is required.')
@@ -631,6 +1175,155 @@ function MarketplaceWorkspace({ session, onLogout, clerkEnabled = false, getBear
       setAdminLoading(false)
     }
   }
+
+  function openTradeComposer(targetListing) {
+    const mineActive = myListings
+      .filter((x) => String(x.status || '').toLowerCase() === 'active')
+      .filter((x) => Number(x.estimatedValue || 0) > 0)
+      .filter((x) => Number(targetListing?.estimatedValue || 0) > 0)
+      .filter((x) => Math.abs(Number(x.estimatedValue || 0) - Number(targetListing.estimatedValue || 0)) / Number(targetListing.estimatedValue || 1) <= 0.30)
+    setTradeComposerTarget(targetListing)
+    setTradeOfferListingIds(mineActive[0]?.id ? [mineActive[0].id] : [])
+    setTradeOfferMessage('')
+    setTradeOfferError('')
+    setMarketMatchesTargetId(null)
+    setActiveTab('trade')
+  }
+
+  async function submitTradeOffer() {
+    if (!tradeComposerTarget?.id) return
+    if (!tradeOfferListingIds.length) {
+      setTradeOfferError('Select one or more of your listings to offer for trade.')
+      return
+    }
+    setTradeOfferBusy(true)
+    setTradeOfferError('')
+    try {
+      const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
+      await createOfferRemote({
+        apiBaseUrl,
+        apiKey: clerkEnabled ? '' : apiKey.trim(),
+        bearerToken,
+        payload: {
+          target_listing_id: tradeComposerTarget.id,
+          offered_listing_ids: tradeOfferListingIds,
+          message: tradeOfferMessage.trim(),
+        },
+      })
+      setTradeComposerTarget(null)
+      setTradeOfferListingIds([])
+      setTradeOfferMessage('')
+      setSavedListingNotice('Trade offer sent. The listing owner has been notified.')
+      setActiveTab('market')
+    } catch (err) {
+      setTradeOfferError(err.message || 'Failed to send trade offer.')
+    } finally {
+      setTradeOfferBusy(false)
+    }
+  }
+
+  function openMarketMatches(targetListing) {
+    setMarketMatchesTargetId(targetListing?.id || null)
+    setActiveTab('market')
+  }
+
+  async function respondToOffer(offerId, status) {
+    try {
+      const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
+      await actionOfferRemote({
+        apiBaseUrl,
+        apiKey: clerkEnabled ? '' : apiKey.trim(),
+        bearerToken,
+        offerId,
+        status,
+      })
+      setIncomingOffers((prev) => prev.filter((o) => o.offer_id !== offerId))
+      if (status === 'accepted') {
+        const myItems = await fetchMyListings({
+          apiBaseUrl,
+          apiKey: clerkEnabled ? '' : apiKey.trim(),
+          bearerToken,
+          limit: 100,
+        })
+        const marketItems = await fetchMarketplaceListings({
+          apiBaseUrl,
+          apiKey: clerkEnabled ? '' : apiKey.trim(),
+          bearerToken,
+          limit: 50,
+        })
+        setMyListings(myItems.map(fromRemoteListing).filter(Boolean))
+        setMarketListings(marketItems.map(fromRemoteListing).filter(Boolean))
+      }
+    } catch (err) {
+      setSavedListingNotice(err.message || 'Failed to update trade offer.')
+    }
+  }
+
+  async function loadShippingLabelsForOffer(offerId) {
+    const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
+    const payload = await fetchShippingLabelsRemote({
+      apiBaseUrl,
+      apiKey: clerkEnabled ? '' : apiKey.trim(),
+      bearerToken,
+      offerId,
+    })
+    const shipments = Array.isArray(payload?.shipments) ? payload.shipments : []
+    setShippingLabelsByOffer((prev) => ({ ...prev, [offerId]: shipments }))
+    return shipments
+  }
+
+  async function createShippingLabelsForOffer(offerId) {
+    const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
+    const payload = await createShippingLabelsRemote({
+      apiBaseUrl,
+      apiKey: clerkEnabled ? '' : apiKey.trim(),
+      bearerToken,
+      offerId,
+    })
+    const shipments = Array.isArray(payload?.shipments) ? payload.shipments : []
+    setShippingLabelsByOffer((prev) => ({ ...prev, [offerId]: shipments }))
+    return shipments
+  }
+
+  async function openShippingLabel(shipment) {
+    try {
+      const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
+      const payload = await fetchShippingLabelDocumentRemote({
+        apiBaseUrl,
+        apiKey: clerkEnabled ? '' : apiKey.trim(),
+        bearerToken,
+        shipmentId: shipment?.shipment_id,
+      })
+      const rawUrl = (payload?.label_url || shipment?.label_url || '').trim()
+      if (!rawUrl) {
+        const msg = 'Label URL is not available yet.'
+        setSavedListingNotice(msg)
+        window.alert(msg)
+        return
+      }
+      if (/^\/v1\/shipments\/[^/]+\/label$/i.test(rawUrl)) {
+        const msg = 'Carrier label URL is not available yet. Click Create Shipping Labels again after both shipping profiles are complete.'
+        setSavedListingNotice(msg)
+        window.alert(msg)
+        return
+      }
+      const resolved = /^https?:\/\//i.test(rawUrl)
+        ? rawUrl
+        : `${apiBaseUrl.replace(/\/$/, '')}${rawUrl}`
+      window.open(resolved, '_blank', 'noopener,noreferrer')
+    } catch (err) {
+      const msg = err.message || 'Failed to open label.'
+      setSavedListingNotice(msg)
+      window.alert(msg)
+    }
+  }
+
+  const offeredTotalValue = myListings
+    .filter((x) => tradeOfferListingIds.includes(x.id))
+    .reduce((sum, x) => sum + Number(x.estimatedValue || 0), 0)
+  const composerTargetValue = Number(tradeComposerTarget?.estimatedValue || 0)
+  const composerGapPct = composerTargetValue > 0 ? Math.abs(offeredTotalValue - composerTargetValue) / composerTargetValue : null
+  const composerWithinBand = composerGapPct !== null ? composerGapPct <= 0.30 : false
 
   async function analyzeUploadedPhotosForWizard() {
     if (!clerkEnabled && !apiKey.trim()) {
@@ -858,10 +1551,13 @@ function MarketplaceWorkspace({ session, onLogout, clerkEnabled = false, getBear
         const resolvedBrand = resolved?.brand?.name || current.brand
         const resolvedCategory = resolved?.category || current.category
         const resolvedValue = Number(askingValue || resolved?.valuation?.estimated_value || current.estimatedValue || 0)
+        const resolvedImageUrls = getUploadedImageUrlsFromAnalysis(resolved)
         const updatedPayload = {
           ...current,
           title: itemTitle.trim() || itemDescription.trim() || resolved?.item_profile?.model_identification?.name || current.title,
           description: (itemDescription || '').trim() || current.description || profileDescription || '',
+          image: resolvedImageUrls[0] || current.image || null,
+          images: resolvedImageUrls.length > 0 ? resolvedImageUrls : (Array.isArray(current.images) ? current.images : [current.image].filter(Boolean)),
           brand: resolvedBrand,
           category: resolvedCategory,
           condition: resolvedCondition,
@@ -948,10 +1644,13 @@ function MarketplaceWorkspace({ session, onLogout, clerkEnabled = false, getBear
         const resolvedBrand = resolved?.brand?.name || current.brand
         const resolvedCategory = resolved?.category || category || current.category
         const resolvedValue = Number(askingValue || resolved?.valuation?.estimated_value || current.estimatedValue || 0)
+        const resolvedImageUrls = getUploadedImageUrlsFromAnalysis(resolved)
         const updatedPayload = {
           ...current,
           title: (itemTitle || '').trim() || (itemDescription || '').trim() || resolved?.item_profile?.model_identification?.name || current.title,
           description: (itemDescription || '').trim() || current.description || profileDescription || '',
+          image: resolvedImageUrls[0] || current.image || null,
+          images: resolvedImageUrls.length > 0 ? resolvedImageUrls : (Array.isArray(current.images) ? current.images : [current.image].filter(Boolean)),
           brand: resolvedBrand,
           category: resolvedCategory,
           condition: resolvedCondition,
@@ -1051,28 +1750,401 @@ function MarketplaceWorkspace({ session, onLogout, clerkEnabled = false, getBear
         </div>
         <div className="topbar-actions">
           {!clerkEnabled && <label className="inline-field"><span>API Key</span><input value={apiKey} onChange={(e) => setApiKey(e.target.value)} /></label>}
-          {clerkEnabled ? userMenu : <button className="ghost" onClick={onLogout}>Log out</button>}
+          {clerkEnabled ? (
+            <>
+              <button className="ghost" type="button" onClick={() => setActiveTab('profile')}>Profile</button>
+              {userMenu}
+            </>
+          ) : <button className="ghost" onClick={onLogout}>Log out</button>}
         </div>
       </div>
 
-      <section className="stats-strip" aria-label="Workspace summary">
-        <div className="stat-card">
-          <span className="stat-label">My Listings</span>
-          <strong>{myListings.length}</strong>
-          <small>{myListings.length ? 'Active portfolio items' : 'Create your first listing'}</small>
+      {activeTab !== 'profile' && latestActiveListings.length > 0 && (
+      <section className="panel latest-hero">
+        <div className="panel-header" style={{ marginBottom: 8 }}>
+          <div>
+            <p className="eyebrow">Latest Marketplace</p>
+            <h2 style={{ marginTop: 4 }}>Fresh active listings</h2>
+          </div>
+          <div className="button-row">
+            <button className="ghost small" type="button" onClick={() => setActiveTab('market')}>View Marketplace</button>
+          </div>
         </div>
-        <div className="stat-card">
-          <span className="stat-label">Marketplace Listings</span>
-          <strong>{allListings.length}</strong>
-          <small>{tradeOnly ? 'Trade-filter enabled' : 'Sell + trade inventory'}</small>
+        <div className="latest-rail">
+          {latestActiveListings.map((item) => {
+            const thumb = (Array.isArray(item.images) && item.images.length > 0) ? item.images[0] : item.image
+            return (
+              <button key={`latest-${item.id}`} type="button" className="latest-card" onClick={() => setActiveTab('market')}>
+                <div className="latest-thumb">
+                  {thumb ? <img src={thumb} alt={item.title || 'Listing'} /> : <div className="latest-empty">No image</div>}
+                </div>
+                <div className="latest-meta">
+                  <strong>{item.title || 'Untitled listing'}</strong>
+                  <span>{money(item.estimatedValue)}</span>
+                </div>
+              </button>
+            )
+          })}
         </div>
       </section>
+      )}
 
+      {activeTab === 'profile' ? (
+        <main className="content" style={{ marginTop: 12 }}>
+          <section className="panel">
+            <div style={{ maxWidth: 980 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                <h3 style={{ margin: 0 }}>Profile</h3>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '220px 1fr', gap: 16 }}>
+                <aside style={{ border: '1px solid var(--line)', borderRadius: 12, padding: 10, alignSelf: 'start' }}>
+                  <button className={profileSection === 'general' ? 'nav-item active' : 'nav-item'} type="button" onClick={() => setProfileSection('general')}>General</button>
+                  <button className={profileSection === 'style' ? 'nav-item active' : 'nav-item'} type="button" onClick={() => setProfileSection('style')}>Style Preferences</button>
+                  <button className={profileSection === 'subscription' ? 'nav-item active' : 'nav-item'} type="button" onClick={() => setProfileSection('subscription')}>Subscription</button>
+                  <button className={profileSection === 'shipping' ? 'nav-item active' : 'nav-item'} type="button" onClick={() => setProfileSection('shipping')}>Shipping</button>
+                </aside>
+                <div>
+                  {profileSection === 'general' && (
+                    <div className="metric-grid">
+                      <div><span>User ID</span><strong>{profileData?.userId || session?.id || 'n/a'}</strong></div>
+                      <div><span>Name</span><strong>{profileData?.name || session?.name || 'n/a'}</strong></div>
+                      <div><span>First Name</span><strong>{profileData?.firstName || 'n/a'}</strong></div>
+                      <div><span>Last Name</span><strong>{profileData?.lastName || 'n/a'}</strong></div>
+                      <div><span>Username</span><strong>{profileData?.username || 'n/a'}</strong></div>
+                      <div><span>Email</span><strong>{profileData?.email || session?.email || 'n/a'}</strong></div>
+                      <div><span>Phone</span><strong>{profileData?.phone || 'n/a'}</strong></div>
+                      <div><span>Account Created</span><strong>{profileData?.createdAt || 'n/a'}</strong></div>
+                    </div>
+                  )}
+                  {profileSection === 'style' && (
+                    <div style={{ marginTop: 4 }}>
+                      <p className="eyebrow" style={{ marginBottom: 8 }}>Style Preferences</p>
+                      <div className="field-grid">
+                        <label>
+                          <span>Gender</span>
+                          <select
+                            value={profileQuiz.gender || ''}
+                            onChange={(e) => {
+                              const nextGender = e.target.value
+                              setProfileQuiz((p) => ({
+                                ...p,
+                                gender: nextGender,
+                                dresses_size: nextGender === 'male' ? '' : p.dresses_size,
+                                category_preferences: nextGender === 'male'
+                                  ? p.category_preferences.filter((x) => x !== 'Dresses')
+                                  : p.category_preferences,
+                              }))
+                            }}
+                          >
+                            <option value="">Select gender</option>
+                            <option value="female">Female</option>
+                            <option value="male">Male</option>
+                            <option value="other">Other</option>
+                          </select>
+                        </label>
+                        <label>
+                          <span>Tops Size</span>
+                          <select value={profileQuiz.tops_size} onChange={(e) => setProfileQuiz((p) => ({ ...p, tops_size: e.target.value }))}>
+                            <option value="">Select size</option>
+                            {profileApparelSizeOptions.map((s) => <option key={`tops-${s}`} value={s}>{s}</option>)}
+                          </select>
+                        </label>
+                        {normalizedProfileGender !== 'male' && (
+                          <label>
+                            <span>Dresses Size</span>
+                            <select value={profileQuiz.dresses_size} onChange={(e) => setProfileQuiz((p) => ({ ...p, dresses_size: e.target.value }))}>
+                              <option value="">Select size</option>
+                              {profileApparelSizeOptions.map((s) => <option key={`dresses-${s}`} value={s}>{s}</option>)}
+                            </select>
+                          </label>
+                        )}
+                        <label>
+                          <span>Bottoms Size</span>
+                          <select value={profileQuiz.bottoms_size} onChange={(e) => setProfileQuiz((p) => ({ ...p, bottoms_size: e.target.value }))}>
+                            <option value="">Select size</option>
+                            {profileApparelSizeOptions.map((s) => <option key={`bottoms-${s}`} value={s}>{s}</option>)}
+                          </select>
+                        </label>
+                        <label>
+                          <span>Shoes Size</span>
+                          <select value={profileQuiz.shoes_size} onChange={(e) => setProfileQuiz((p) => ({ ...p, shoes_size: e.target.value }))}>
+                            <option value="">Select size</option>
+                            {profileShoeSizeOptions.map((s) => <option key={`shoes-${s}`} value={s}>{s}</option>)}
+                          </select>
+                        </label>
+                      </div>
+                      <div style={{ marginTop: 10 }}>
+                        <span className="tiny-note">Category Preferences</span>
+                        <div className="tag-row" style={{ marginTop: 6 }}>
+                          {profileCategoryOptions.map((c) => {
+                            const selected = profileQuiz.category_preferences.includes(c)
+                            return (
+                              <button
+                                key={c}
+                                type="button"
+                                className={selected ? 'pill' : 'ghost small'}
+                                onClick={() => setProfileQuiz((p) => ({
+                                  ...p,
+                                  category_preferences: selected
+                                    ? p.category_preferences.filter((x) => x !== c)
+                                    : [...p.category_preferences, c],
+                                }))}
+                              >
+                                {c}
+                              </button>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  {profileSection === 'subscription' && (
+                    <div style={{ marginTop: 4 }}>
+                      <p className="eyebrow" style={{ marginBottom: 8 }}>Subscription</p>
+                      <div className="field-grid">
+                        <label>
+                          <span>Plan</span>
+                          <input value={profileQuiz.subscription_plan || ''} onChange={(e) => setProfileQuiz((p) => ({ ...p, subscription_plan: e.target.value }))} placeholder="Premium" />
+                        </label>
+                        <label>
+                          <span>Status</span>
+                          <input value={profileQuiz.subscription_status || ''} onChange={(e) => setProfileQuiz((p) => ({ ...p, subscription_status: e.target.value }))} placeholder="Active" />
+                        </label>
+                        <label>
+                          <span>Renewal Date</span>
+                          <input type="date" value={profileQuiz.subscription_renewal_date || ''} onChange={(e) => setProfileQuiz((p) => ({ ...p, subscription_renewal_date: e.target.value }))} />
+                        </label>
+                      </div>
+                      <div style={{ marginTop: 14 }}>
+                        <p className="eyebrow" style={{ marginBottom: 8 }}>Payment Methods</p>
+                        <span className="tiny-note">Payments are fully managed by Stripe. No raw card data is collected or stored by this app.</span>
+                        <div className="button-row" style={{ marginBottom: 8 }}>
+                          <button className="ghost small" type="button" disabled={paymentBusy} onClick={() => setShowStripePaymentModal(true)}>
+                            + Add Payment Method
+                          </button>
+                          <button
+                            className="ghost small"
+                            type="button"
+                            disabled={paymentBusy}
+                            onClick={async () => {
+                              setPaymentBusy(true)
+                              try {
+                                const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
+                                const methods = await syncStripePaymentMethodsRemote({
+                                  apiBaseUrl,
+                                  apiKey: clerkEnabled ? '' : apiKey.trim(),
+                                  bearerToken,
+                                })
+                                setPaymentMethods(methods)
+                                setProfileSaveMsg('Synced payment methods from Stripe.')
+                              } catch (err) {
+                                setProfileSaveMsg(err.message || 'Failed to sync payment methods.')
+                              } finally {
+                                setPaymentBusy(false)
+                              }
+                            }}
+                          >
+                            Sync from Stripe
+                          </button>
+                        </div>
+                        <div style={{ display: 'grid', gap: 8 }}>
+                          {paymentMethods.length === 0 && <span className="tiny-note">No payment methods added yet.</span>}
+                          {paymentMethods.map((method) => (
+                            <div key={method.payment_method_id} style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', border: '1px solid var(--line)', borderRadius: 10, padding: '8px 10px' }}>
+                              <div>
+                                <strong>{method.label || method.method_type}</strong>
+                                <div className="tiny-note">{method.provider}{method.is_default ? ' • Default' : ''}</div>
+                              </div>
+                              <div className="button-row">
+                                {!method.is_default && (
+                                  <button
+                                    className="ghost small"
+                                    type="button"
+                                    disabled={paymentBusy}
+                                    onClick={async () => {
+                                      setPaymentBusy(true)
+                                      try {
+                                        const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
+                                        await setDefaultPaymentMethodRemote({
+                                          apiBaseUrl,
+                                          apiKey: clerkEnabled ? '' : apiKey.trim(),
+                                          bearerToken,
+                                          paymentMethodId: method.payment_method_id,
+                                        })
+                                        const refreshed = await fetchPaymentMethodsRemote({
+                                          apiBaseUrl,
+                                          apiKey: clerkEnabled ? '' : apiKey.trim(),
+                                          bearerToken,
+                                        })
+                                        setPaymentMethods(refreshed)
+                                      } catch (err) {
+                                        setProfileSaveMsg(err.message || 'Failed to set default method.')
+                                      } finally {
+                                        setPaymentBusy(false)
+                                      }
+                                    }}
+                                  >
+                                    Set Default
+                                  </button>
+                                )}
+                                <button
+                                  className="ghost small"
+                                  type="button"
+                                  disabled={paymentBusy}
+                                  onClick={async () => {
+                                    setPaymentBusy(true)
+                                    try {
+                                      const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
+                                      await deletePaymentMethodRemote({
+                                        apiBaseUrl,
+                                        apiKey: clerkEnabled ? '' : apiKey.trim(),
+                                        bearerToken,
+                                        paymentMethodId: method.payment_method_id,
+                                      })
+                                      setPaymentMethods((prev) => prev.filter((x) => x.payment_method_id !== method.payment_method_id))
+                                    } catch (err) {
+                                      setProfileSaveMsg(err.message || 'Failed to remove method.')
+                                    } finally {
+                                      setPaymentBusy(false)
+                                    }
+                                  }}
+                                >
+                                  Remove
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  {profileSection === 'shipping' && (
+                    <div style={{ marginTop: 4 }}>
+                      <p className="eyebrow" style={{ marginBottom: 8 }}>Shipping Address</p>
+                      <div className="field-grid">
+                        <label>
+                          <span>Full Name</span>
+                          <input value={profileQuiz.shipping_full_name || ''} onChange={(e) => setProfileQuiz((p) => ({ ...p, shipping_full_name: e.target.value }))} />
+                        </label>
+                        <label>
+                          <span>Address Line 1</span>
+                          <input value={profileQuiz.shipping_address_line1 || ''} onChange={(e) => setProfileQuiz((p) => ({ ...p, shipping_address_line1: e.target.value }))} />
+                        </label>
+                        {addressSuggestions.length > 0 && (
+                          <div style={{ gridColumn: '1 / -1', border: '1px solid var(--line)', borderRadius: 10, background: 'var(--panel)' }}>
+                            {addressSuggestions.map((s, idx) => (
+                              <button
+                                key={`${s.formatted || s.street_address || 'addr'}-${idx}`}
+                                type="button"
+                                className="ghost small"
+                                style={{ width: '100%', textAlign: 'left', borderRadius: 0, border: 'none', borderBottom: idx === addressSuggestions.length - 1 ? 'none' : '1px solid var(--line)' }}
+                                onClick={() => {
+                                  setProfileQuiz((p) => ({
+                                    ...p,
+                                    shipping_address_line1: s.street_address || p.shipping_address_line1,
+                                    shipping_city: s.city || p.shipping_city,
+                                    shipping_state: s.state || p.shipping_state,
+                                    shipping_postal_code: s.postal_code || p.shipping_postal_code,
+                                    shipping_country: p.shipping_country || 'US',
+                                  }))
+                                  setAddressSuggestions([])
+                                }}
+                              >
+                                {s.formatted || s.street_address}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                        <label>
+                          <span>Address Line 2</span>
+                          <input value={profileQuiz.shipping_address_line2 || ''} onChange={(e) => setProfileQuiz((p) => ({ ...p, shipping_address_line2: e.target.value }))} />
+                        </label>
+                        <label>
+                          <span>City</span>
+                          <input value={profileQuiz.shipping_city || ''} onChange={(e) => setProfileQuiz((p) => ({ ...p, shipping_city: e.target.value }))} />
+                        </label>
+                        <label>
+                          <span>State</span>
+                          <input value={profileQuiz.shipping_state || ''} onChange={(e) => setProfileQuiz((p) => ({ ...p, shipping_state: e.target.value }))} />
+                        </label>
+                        <label>
+                          <span>Postal Code</span>
+                          <input value={profileQuiz.shipping_postal_code || ''} onChange={(e) => setProfileQuiz((p) => ({ ...p, shipping_postal_code: e.target.value }))} />
+                        </label>
+                        <label>
+                          <span>Country</span>
+                          <input value={profileQuiz.shipping_country || ''} onChange={(e) => setProfileQuiz((p) => ({ ...p, shipping_country: e.target.value }))} />
+                        </label>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div className="button-row" style={{ marginTop: 12 }}>
+                <button
+                  className="ghost small"
+                  type="button"
+                  onClick={() => setActiveTab('portfolio')}
+                >
+                  Cancel
+                </button>
+                <button
+                  className="primary"
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
+                      const payload = {
+                        ...profileQuiz,
+                        payment_methods: paymentMethods
+                          .map((m) => (typeof m?.label === 'string' ? m.label.trim() : ''))
+                          .filter(Boolean),
+                      }
+                      const saved = await saveProfileQuizRemote({
+                        apiBaseUrl,
+                        apiKey: clerkEnabled ? '' : apiKey.trim(),
+                        bearerToken,
+                        payload,
+                      })
+                      setProfileQuiz({
+                        gender: saved?.gender || '',
+                        tops_size: saved?.tops_size || '',
+                        dresses_size: saved?.dresses_size || '',
+                        bottoms_size: saved?.bottoms_size || '',
+                        shoes_size: saved?.shoes_size || '',
+                        category_preferences: Array.isArray(saved?.category_preferences) ? saved.category_preferences : [],
+                        shipping_full_name: saved?.shipping_full_name || '',
+                        shipping_address_line1: saved?.shipping_address_line1 || '',
+                        shipping_address_line2: saved?.shipping_address_line2 || '',
+                        shipping_city: saved?.shipping_city || '',
+                        shipping_state: saved?.shipping_state || '',
+                        shipping_postal_code: saved?.shipping_postal_code || '',
+                        shipping_country: saved?.shipping_country || '',
+                        subscription_plan: saved?.subscription_plan || '',
+                        subscription_status: saved?.subscription_status || '',
+                        subscription_renewal_date: saved?.subscription_renewal_date || '',
+                        payment_methods: Array.isArray(saved?.payment_methods) ? saved.payment_methods : [],
+                      })
+                      setProfileSaveMsg('Profile saved.')
+                    } catch (err) {
+                      setProfileSaveMsg(err.message || 'Failed to save profile.')
+                    }
+                  }}
+                >
+                  Save Profile
+                </button>
+                {profileSaveMsg && <span className="tiny-note">{profileSaveMsg}</span>}
+              </div>
+            </div>
+          </section>
+        </main>
+      ) : (
       <div className="app-grid">
         <aside className="sidebar">
           <p className="sidebar-section-title">Workspace</p>
-          <button className={activeTab === 'portfolio' ? 'nav-item active' : 'nav-item'} onClick={() => setActiveTab('portfolio')}>My Listings</button>
-          <button className={activeTab === 'market' ? 'nav-item active' : 'nav-item'} onClick={() => setActiveTab('market')}>Marketplace</button>
+          <button className={activeTab === 'portfolio' ? 'nav-item active' : 'nav-item'} onClick={() => setActiveTab('portfolio')}>My Closet ({myListings.length})</button>
+          <button className={activeTab === 'inbox' ? 'nav-item active' : 'nav-item'} onClick={() => setActiveTab('inbox')}>Trade Inbox ({incomingOffers.length})</button>
+          <button className={activeTab === 'market' ? 'nav-item active' : 'nav-item'} onClick={() => setActiveTab('market')}>Marketplace ({allListings.length})</button>
           <button className={activeTab === 'admin' ? 'nav-item active' : 'nav-item'} onClick={() => setActiveTab('admin')}>Admin</button>
           <div className="sidebar-card"><h3>Trade Targeting</h3><p>Use the AI valuation as your anchor, then tune your target value to discover comparable listings.</p></div>
           <div className="sidebar-card sidebar-card-dark">
@@ -1349,14 +2421,138 @@ function MarketplaceWorkspace({ session, onLogout, clerkEnabled = false, getBear
           {activeTab === 'portfolio' && (
             <section className="panel">
               <div className="panel-header">
-                <div><p className="eyebrow">Portfolio</p><h2>Your active listings</h2></div>
+                <div>
+                  <p className="eyebrow">Portfolio</p>
+                  <h2>Your active listings</h2>
+                  <div className="button-row" style={{ marginTop: 6 }}>
+                    <button className={closetFilter === 'all' ? 'primary' : 'ghost small'} type="button" onClick={() => setClosetFilter('all')}>All ({myListings.length})</button>
+                    <button className={closetFilter === 'active' ? 'primary' : 'ghost small'} type="button" onClick={() => setClosetFilter('active')}>Active ({closetBreakdown.active})</button>
+                    <button className={closetFilter === 'draft' ? 'primary' : 'ghost small'} type="button" onClick={() => setClosetFilter('draft')}>Draft ({closetBreakdown.draft})</button>
+                    <button className={closetFilter === 'offers' ? 'primary' : 'ghost small'} type="button" onClick={() => setClosetFilter('offers')}>Offers ({closetBreakdown.offers})</button>
+                    <button className={closetFilter === 'traded' ? 'primary' : 'ghost small'} type="button" onClick={() => setClosetFilter('traded')}>Traded ({closetBreakdown.traded})</button>
+                  </div>
+                </div>
                 <div className="header-actions">
                   <button className="primary" onClick={openCreateListingModal}>Create Listing</button>
                 </div>
               </div>
-              {myListings.length === 0 ? (
+              {filteredClosetListings.length === 0 ? (
                 <div className="empty-state"><h3>No listings yet</h3><p>Analyze an item and publish your first listing to start selling or trading.</p><button className="primary" onClick={() => setActiveTab('upload')}>Create first listing</button></div>
-              ) : <div className="listing-grid">{myListings.map((item) => <ListingCard key={item.id} item={item} own onEditDraft={openEditListingModal} />)}</div>}
+              ) : <div className="listing-grid">{filteredClosetListings.map((item) => <ListingCard key={item.id} item={item} own onEditDraft={openEditListingModal} />)}</div>}
+            </section>
+          )}
+
+          {activeTab === 'inbox' && (
+            <section className="panel">
+              <div className="panel-header">
+                <div><p className="eyebrow">Trade Inbox</p><h2>Incoming offers</h2></div>
+                <div className="market-controls">
+                  <select value={offerStatusFilter} onChange={(e) => setOfferStatusFilter(e.target.value)}>
+                    <option value="pending">Pending</option>
+                    <option value="all">All</option>
+                  </select>
+                </div>
+              </div>
+              {incomingOffers.length === 0 ? (
+                <div className="empty-state"><h3>No offers</h3><p>No incoming trade offers for this filter yet.</p></div>
+              ) : (
+                <div style={{ display: 'grid', gap: 10 }}>
+                  {incomingOffers.map((offer) => (
+                    <div key={offer.offer_id} style={{ border: '1px solid rgba(18,26,36,0.12)', borderRadius: 12, padding: 12, background: '#f8fafc' }}>
+                      <p style={{ margin: 0 }}>
+                        <strong>{offer.from_subject}</strong> wants to trade
+                        <strong> {offer.offered_listing?.title || 'their listing'}</strong>
+                        {' '}for your <strong>{offer.target_listing?.title || 'listing'}</strong>.
+                      </p>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 8 }}>
+                        <div>
+                          <p className="tiny-note" style={{ margin: '0 0 6px' }}>Your item</p>
+                          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                            {(Array.isArray(offer.target_listing?.images) && offer.target_listing.images.length > 0
+                              ? offer.target_listing.images
+                              : [offer.target_listing?.image].filter(Boolean)
+                            ).slice(0, 4).map((url) => (
+                              <button key={`target-${offer.offer_id}-${url}`} type="button" className="ghost small" style={{ padding: 0, border: 'none', background: 'transparent' }} onClick={() => setTradeDetailListing(offer.target_listing || null)}>
+                                <img src={url} alt="Your listing" style={{ width: 58, height: 58, objectFit: 'cover', borderRadius: 8, border: '1px solid rgba(18,26,36,0.12)' }} />
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                        <div>
+                          <p className="tiny-note" style={{ margin: '0 0 6px' }}>Offered items</p>
+                          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                            {(Array.isArray(offer.offered_listings) && offer.offered_listings.length > 0 ? offer.offered_listings : (offer.offered_listing ? [offer.offered_listing] : []))
+                              .flatMap((listing) => ((Array.isArray(listing?.images) && listing.images.length > 0 ? listing.images : [listing?.image].filter(Boolean)).slice(0, 2)).map((url) => ({ url, listing })))
+                              .slice(0, 6)
+                              .map(({ url, listing }) => (
+                                <button key={`offered-${offer.offer_id}-${listing?.listing_id || 'listing'}-${url}`} type="button" className="ghost small" style={{ padding: 0, border: 'none', background: 'transparent' }} onClick={() => setTradeDetailListing(listing || null)}>
+                                  <img src={url} alt="Offered listing" style={{ width: 58, height: 58, objectFit: 'cover', borderRadius: 8, border: '1px solid rgba(18,26,36,0.12)' }} />
+                                </button>
+                              ))}
+                          </div>
+                        </div>
+                      </div>
+                      {offer.message ? <p className="tiny-note" style={{ marginTop: 4 }}>Message: {offer.message}</p> : null}
+                      {offer.status === 'pending' && (
+                        <div className="button-row" style={{ marginTop: 8 }}>
+                          <button className="primary" type="button" onClick={() => respondToOffer(offer.offer_id, 'accepted')}>Accept Trade</button>
+                          <button className="ghost" type="button" onClick={() => respondToOffer(offer.offer_id, 'declined')}>Decline</button>
+                        </div>
+                      )}
+                      {offer.status === 'accepted' && (
+                        <div style={{ marginTop: 8 }}>
+                          <div className="button-row">
+                            <button
+                              className="primary"
+                              type="button"
+                              onClick={async () => {
+                                try {
+                                  await createShippingLabelsForOffer(offer.offer_id)
+                                  setSavedListingNotice('Shipping labels created.')
+                                } catch (err) {
+                                  setSavedListingNotice(err.message || 'Failed to create shipping labels.')
+                                }
+                              }}
+                            >
+                              Create Shipping Labels
+                            </button>
+                            <button
+                              className="ghost"
+                              type="button"
+                              onClick={async () => {
+                                try {
+                                  await loadShippingLabelsForOffer(offer.offer_id)
+                                } catch (err) {
+                                  setSavedListingNotice(err.message || 'Failed to load shipping labels.')
+                                }
+                              }}
+                            >
+                              View Labels
+                            </button>
+                          </div>
+                          {Array.isArray(shippingLabelsByOffer[offer.offer_id]) && shippingLabelsByOffer[offer.offer_id].length > 0 && (
+                            <div style={{ display: 'grid', gap: 8, marginTop: 8 }}>
+                              {shippingLabelsByOffer[offer.offer_id].map((s) => (
+                                <div key={s.shipment_id} style={{ border: '1px solid rgba(18,26,36,0.12)', borderRadius: 10, padding: 8, background: '#fff' }}>
+                                  <strong>{s.carrier} • {s.service_level}</strong>
+                                  <div className="tiny-note">Tracking: {s.tracking_number || 'pending'}</div>
+                                  <div className="tiny-note">From: {s.from_name || 'n/a'} • {s.from_city || ''} {s.from_state || ''}</div>
+                                  <div className="tiny-note">To: {s.to_name || 'n/a'} • {s.to_city || ''} {s.to_state || ''}</div>
+                                  {s.label_url ? (
+                                    <button type="button" className="ghost small" onClick={() => openShippingLabel(s)}>
+                                      Open label
+                                    </button>
+                                  ) : null}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
             </section>
           )}
 
@@ -1366,18 +2562,98 @@ function MarketplaceWorkspace({ session, onLogout, clerkEnabled = false, getBear
                 <div><p className="eyebrow">Marketplace</p><h2>Find trade opportunities near your value target</h2></div>
                 <div className="market-controls"><input value={marketSearch} onChange={(e) => setMarketSearch(e.target.value)} placeholder="Search brand, category, city, style..." /><label className="toggle"><input type="checkbox" checked={tradeOnly} onChange={(e) => setTradeOnly(e.target.checked)} /><span>Trade only</span></label></div>
               </div>
-              <div className="listing-grid">
-                {filteredListings.map((item) => {
-                  const baseValue = Number(item.estimatedValue || 0)
-                  const tolerance = Math.max(50, baseValue * 0.2)
-                  const similarItems = allListings
-                    .filter((candidate) => candidate.id !== item.id)
-                    .filter((candidate) => (candidate.owner || '') !== (item.owner || ''))
-                    .filter((candidate) => Math.abs(Number(candidate.estimatedValue || 0) - baseValue) <= tolerance)
-                    .slice(0, 5)
-                  return <ListingCard key={item.id} item={item} similarItems={similarItems} marketplaceCompact />
-                })}
+              <div className="market-layout">
+                <div className="listing-grid market-listing-grid">
+                  {filteredListings.map((item) => {
+                    const baseValue = Number(item.estimatedValue || 0)
+                    const tolerance = Math.max(50, baseValue * 0.2)
+                    const similarCount = allListings
+                      .filter((candidate) => candidate.id !== item.id)
+                      .filter((candidate) => (candidate.owner || '') !== (item.owner || ''))
+                      .filter((candidate) => Math.abs(Number(candidate.estimatedValue || 0) - baseValue) <= tolerance)
+                      .length
+                    const myTradeCandidates = myListings
+                      .filter((mine) => String(mine.status || '').toLowerCase() === 'active')
+                      .filter((mine) => Math.abs(Number(mine.estimatedValue || 0) - baseValue) <= Math.max(50, baseValue * 0.3))
+                    return (
+                      <ListingCard
+                        key={item.id}
+                        item={item}
+                        marketplaceCompact
+                        onOpenTrade={openTradeComposer}
+                        myTradeCandidates={myTradeCandidates}
+                        onOpenMatches={openMarketMatches}
+                        matchesCount={similarCount}
+                      />
+                    )
+                  })}
+                </div>
               </div>
+            </section>
+          )}
+
+          {activeTab === 'trade' && (
+            <section className="panel trade-page">
+              <div className="panel-header">
+                <div>
+                  <p className="eyebrow">Trade Offer</p>
+                  <h2>{tradeComposerTarget ? 'Build and send your offer' : 'Select a target listing first'}</h2>
+                </div>
+                <div className="header-actions">
+                  <button className="ghost" type="button" onClick={() => setActiveTab('market')}>Back to Marketplace</button>
+                </div>
+              </div>
+              {!tradeComposerTarget ? (
+                <div className="empty-state">
+                  <h3>No target selected</h3>
+                  <p>Open Marketplace and click Start Trade on a listing to begin.</p>
+                  <button className="primary" type="button" onClick={() => setActiveTab('market')}>Go to Marketplace</button>
+                </div>
+              ) : (
+                <div className="trade-page-grid">
+                  <article className="trade-page-card">
+                    <p className="eyebrow">Target Listing</p>
+                    <h3>{tradeComposerTarget.title}</h3>
+                    <p className="tiny-note">{tradeComposerTarget.brand || 'Unknown brand'} • {tradeComposerTarget.condition || 'Unknown condition'} • {tradeComposerTarget.city || 'Unknown city'}</p>
+                    <div className="value-chip">{money(tradeComposerTarget.estimatedValue)}</div>
+                    <div className="button-row" style={{ marginTop: 10 }}>
+                      <button className="ghost small" type="button" onClick={() => setTradeDetailListing(tradeComposerTarget)}>View details</button>
+                    </div>
+                  </article>
+
+                  <article className="trade-page-card">
+                    <p className="eyebrow">Your Listings To Offer</p>
+                    <div className="trade-offer-list">
+                      {myListings.filter((x) => String(x.status || '').toLowerCase() === 'active').map((x) => {
+                        const checked = tradeOfferListingIds.includes(x.id)
+                        return (
+                          <div key={x.id} className="trade-offer-row">
+                            <input type="checkbox" className="trade-offer-checkbox" checked={checked} onChange={(e) => setTradeOfferListingIds((prev) => (e.target.checked ? [...prev, x.id] : prev.filter((id) => id !== x.id)))} />
+                            <span className="trade-offer-row-text">{x.title} ({money(x.estimatedValue)})</span>
+                          </div>
+                        )
+                      })}
+                    </div>
+                    <p className="tiny-note" style={{ marginTop: 10 }}>
+                      Offered total: {money(offeredTotalValue)} • Target: {money(composerTargetValue)}
+                    </p>
+                    <p className={composerWithinBand ? 'ok-text' : 'error-text'} style={{ marginTop: 0 }}>
+                      {composerGapPct === null ? 'Select target listing.' : (composerWithinBand ? 'Within 30% trade band' : 'Outside 30% trade band')}
+                    </p>
+                    <label style={{ marginTop: 8, display: 'block' }}>
+                      <span>Message (optional)</span>
+                      <textarea value={tradeOfferMessage} onChange={(e) => setTradeOfferMessage(e.target.value)} rows={4} placeholder="I’d like to trade with this item. Let me know what you think." />
+                    </label>
+                    {tradeOfferError ? <p className="error-text">{tradeOfferError}</p> : null}
+                    <div className="button-row" style={{ marginTop: 12 }}>
+                      <button className="ghost" type="button" onClick={() => setActiveTab('market')}>Cancel</button>
+                      <button className="primary" type="button" onClick={submitTradeOffer} disabled={tradeOfferBusy || !composerWithinBand}>
+                        {tradeOfferBusy ? 'Sending...' : 'Send Trade Offer'}
+                      </button>
+                    </div>
+                  </article>
+                </div>
+              )}
             </section>
           )}
 
@@ -1407,6 +2683,90 @@ function MarketplaceWorkspace({ session, onLogout, clerkEnabled = false, getBear
           )}
         </main>
       </div>
+      )}
+
+      {tradeDetailListing && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.45)', display: 'grid', alignItems: 'start', justifyItems: 'center', zIndex: 1150, overflowY: 'auto', padding: '24px 12px' }}>
+          <div style={{ width: 'min(640px, 92vw)', maxHeight: 'calc(100vh - 48px)', overflowY: 'auto', background: '#fff', borderRadius: 14, padding: 16, boxShadow: '0 24px 80px rgba(0,0,0,.25)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+              <h3 style={{ margin: 0 }}>Item Details</h3>
+              <button className="ghost small" type="button" onClick={() => setTradeDetailListing(null)}>Close</button>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))', gap: 8, marginBottom: 12 }}>
+              {(Array.isArray(tradeDetailListing.images) && tradeDetailListing.images.length > 0
+                ? tradeDetailListing.images
+                : [tradeDetailListing.image].filter(Boolean)
+              ).map((url) => (
+                <img
+                  key={url}
+                  src={url}
+                  alt={tradeDetailListing.title || 'Listing image'}
+                  style={{ width: '100%', height: 110, objectFit: 'cover', borderRadius: 10, border: '1px solid rgba(18,26,36,0.12)' }}
+                />
+              ))}
+            </div>
+            <div className="metric-grid">
+              <div><span>Title</span><strong>{tradeDetailListing.title || 'n/a'}</strong></div>
+              <div><span>Estimated value</span><strong>{money(tradeDetailListing.estimatedValue ?? tradeDetailListing.estimated_value)}</strong></div>
+              <div><span>Brand</span><strong>{tradeDetailListing.brand || 'n/a'}</strong></div>
+              <div><span>Category</span><strong>{tradeDetailListing.category || 'n/a'}</strong></div>
+              <div><span>Condition</span><strong>{tradeDetailListing.condition || 'n/a'}</strong></div>
+              <div><span>Status</span><strong>{tradeDetailListing.status || 'n/a'}</strong></div>
+            </div>
+            <p className="listing-notes" style={{ marginTop: 12 }}>{tradeDetailListing.description || tradeDetailListing.wants || 'No additional notes.'}</p>
+          </div>
+        </div>
+      )}
+
+      {marketMatchesTarget && (
+        <div className="market-matches-backdrop" onClick={() => setMarketMatchesTargetId(null)}>
+          <aside className="market-matches-drawer" onClick={(e) => e.stopPropagation()}>
+            <div className="market-matches-head">
+              <div>
+                <p className="eyebrow">Similar Matches</p>
+                <h3>Matches for {marketMatchesTarget.title}</h3>
+              </div>
+              <button className="ghost small" type="button" onClick={() => setMarketMatchesTargetId(null)}>Close</button>
+            </div>
+            {similarListingsForTarget.length === 0 ? (
+              <p className="tiny-note">No close value matches found right now.</p>
+            ) : (
+              <div className="market-matches-grid">
+                {similarListingsForTarget.map((sim) => (
+                  <article key={sim.id} className="market-match-card">
+                    {(Array.isArray(sim.images) && sim.images.length > 0 ? sim.images[0] : sim.image) ? (
+                      <img
+                        src={(Array.isArray(sim.images) && sim.images.length > 0 ? sim.images[0] : sim.image)}
+                        alt={sim.title || 'Matched item'}
+                      />
+                    ) : (
+                      <div className="market-match-empty">No image</div>
+                    )}
+                    <div className="market-match-body">
+                      <strong>{money(sim.estimatedValue)}</strong>
+                      <p>{sim.title || 'Untitled item'}</p>
+                      <small>{sim.brand || 'Unknown brand'} • {sim.condition || 'Unknown condition'} • {sim.city || 'Unknown city'}</small>
+                      <div className="listing-actions">
+                        <button className="ghost small" type="button" onClick={() => setTradeDetailListing(sim)}>View details</button>
+                        <button
+                          className="ghost small"
+                          type="button"
+                          onClick={() => {
+                            setMarketMatchesTargetId(null)
+                            openTradeComposer(sim)
+                          }}
+                        >
+                          Start Trade
+                        </button>
+                      </div>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            )}
+          </aside>
+        </div>
+      )}
 
       {showCreateListingModal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.45)', display: 'grid', placeItems: 'center', zIndex: 1000 }}>
@@ -1663,11 +3023,65 @@ function MarketplaceWorkspace({ session, onLogout, clerkEnabled = false, getBear
           </div>
         </div>
       )}
+
+      {showStripePaymentModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.45)', display: 'grid', placeItems: 'center', zIndex: 1100 }}>
+          <div style={{ width: 'min(560px, 92vw)', background: '#fff', borderRadius: 14, padding: 18, boxShadow: '0 24px 80px rgba(0,0,0,.25)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+              <h3 style={{ margin: 0 }}>Add Payment Method</h3>
+              <button className="ghost small" type="button" onClick={() => setShowStripePaymentModal(false)}>Close</button>
+            </div>
+            <p className="tiny-note" style={{ marginTop: 0 }}>
+              Securely processed by Stripe. Your card data is never stored on this app.
+            </p>
+            <div id="stripe-payment-element" style={{ border: '1px solid var(--line)', borderRadius: 10, padding: 12, minHeight: 120 }} />
+            {stripeUiError && <div className="tiny-note" style={{ color: '#b42318', marginTop: 8 }}>{stripeUiError}</div>}
+            <div className="button-row" style={{ marginTop: 12 }}>
+              <button
+                className="primary"
+                type="button"
+                disabled={stripeUiBusy}
+                onClick={async () => {
+                  try {
+                    if (!stripeRef.current || !stripeElementsRef.current) throw new Error('Stripe is not ready yet.')
+                    setStripeUiBusy(true)
+                    setStripeUiError('')
+                    const result = await stripeRef.current.confirmSetup({
+                      elements: stripeElementsRef.current,
+                      confirmParams: { return_url: window.location.href },
+                      redirect: 'if_required',
+                    })
+                    if (result?.error) throw new Error(result.error.message || 'Failed to save payment method.')
+                    const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
+                    const methods = await syncStripePaymentMethodsRemote({
+                      apiBaseUrl,
+                      apiKey: clerkEnabled ? '' : apiKey.trim(),
+                      bearerToken,
+                    })
+                    setPaymentMethods(methods)
+                    setProfileSaveMsg('Payment method added via Stripe.')
+                    setShowStripePaymentModal(false)
+                  } catch (err) {
+                    setStripeUiError(err.message || 'Failed to save payment method.')
+                  } finally {
+                    setStripeUiBusy(false)
+                  }
+                }}
+              >
+                {stripeUiBusy ? 'Saving…' : 'Save Payment Method'}
+              </button>
+              <button className="ghost small" type="button" onClick={() => setShowStripePaymentModal(false)} disabled={stripeUiBusy}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
 
-function ListingCard({ item, own = false, onEditDraft = null, similarItems = [], marketplaceCompact = false }) {
+function ListingCard({ item, own = false, onEditDraft = null, marketplaceCompact = false, onOpenTrade = null, myTradeCandidates = [], onOpenMatches = null, matchesCount = 0 }) {
   const gallery = Array.isArray(item.images) && item.images.length > 0
     ? item.images
     : [item.image].filter(Boolean)
@@ -1690,18 +3104,16 @@ function ListingCard({ item, own = false, onEditDraft = null, similarItems = [],
   const editDisabled = own && String(statusLabel).toLowerCase() === 'analyzing'
   const badgeLabel = item.status || 'Active'
   const badgeClass = `status-${String(badgeLabel).toLowerCase().replace(/\s+/g, '')}`
-  const [selectedMatch, setSelectedMatch] = useState(null)
-  const anchorValue = Number(item.estimatedValue || 0)
-
-  function matchLabel(sim) {
-    const simValue = Number(sim?.estimatedValue || 0)
-    if (!(anchorValue > 0) || !(simValue > 0)) return 'Match'
-    const pctGap = Math.abs(simValue - anchorValue) / anchorValue
-    if (pctGap <= 0.08) return 'Best Match'
-    if (pctGap <= 0.18) return 'Close'
-    return 'Stretch'
-  }
-
+  const brandLabel = String(item.brand || '').trim() || 'Unknown brand'
+  const conditionLabel = String(item.condition || '').trim() || 'Unknown condition'
+  const cityLabel = String(item.city || '').trim() || 'Unknown city'
+  const tradeDisabledReason = !own && myTradeCandidates.length < 1
+    ? 'Add an active listing in a similar value range to start a trade.'
+    : ''
+  const ctaDisabled = own ? editDisabled : Boolean(tradeDisabledReason)
+  const ctaTitle = own
+    ? (editDisabled ? 'Cannot edit while analysis is running' : undefined)
+    : (tradeDisabledReason || undefined)
   return (
     <>
       <article className="listing-card">
@@ -1725,108 +3137,52 @@ function ListingCard({ item, own = false, onEditDraft = null, similarItems = [],
       <div className="listing-body">
         <div className="listing-head">
           <h3>{item.title}</h3>
-          {!marketplaceCompact && <div className="value-chip">{money(item.estimatedValue)}</div>}
+          <div className="value-chip">{money(item.estimatedValue)}</div>
+        </div>
+        <div className="listing-scan-row">
+          <span>{brandLabel}</span>
+          <span>{conditionLabel}</span>
+          <span>{cityLabel}</span>
         </div>
         <p className="listing-notes">{getListingDescription(item) || 'No description provided.'}</p>
-        {!own && similarItems.length > 0 && (
-          <div className="similar-section">
-            <div className="similar-head">
-              <small>Similar Price Matches</small>
-              <span>{similarItems.length} items</span>
-            </div>
-            <div className="similar-rail">
-              {similarItems.slice(0, 6).map((sim) => (
-                <button
-                  key={sim.id}
-                  type="button"
-                  className="similar-card"
-                  onClick={() => setSelectedMatch(sim)}
-                  title={`${sim.title} • ${money(sim.estimatedValue)}`}
-                >
-                  {(Array.isArray(sim.images) && sim.images.length > 0 ? sim.images[0] : sim.image) ? (
-                    <img
-                      src={(Array.isArray(sim.images) && sim.images.length > 0 ? sim.images[0] : sim.image)}
-                      alt={sim.title}
-                    />
-                  ) : (
-                    <div style={{ width: '100%', aspectRatio: '1 / 1', display: 'grid', placeItems: 'center', color: '#666', background: '#f2f2f2', fontSize: 11 }}>
-                      No image
-                    </div>
-                  )}
-                  <div className="similar-card-body">
-                    <span className="similar-score">{matchLabel(sim)}</span>
-                    <strong>{money(sim.estimatedValue)}</strong>
-                    <small>{sim.title || 'Untitled item'}</small>
-                  </div>
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
         {!marketplaceCompact && <div className="tag-row">{(item.tags || []).slice(0, 4).map((tag) => <span key={tag}>{tag}</span>)}</div>}
-        {!marketplaceCompact && (
+        {(!marketplaceCompact || !own) && (
           <div className="listing-footer">
-            <small>{own ? 'Your listing' : `Listed by ${item.owner}`}</small>
-            <button
-              className="ghost small"
-              type="button"
-              disabled={editDisabled}
-              title={editDisabled ? 'Cannot edit while analysis is running' : undefined}
-              onClick={() => (own && !editDisabled ? onEditDraft?.(item) : null)}
-            >
-              {own ? 'Edit draft' : 'Open offer'}
-            </button>
+            <div className="listing-footer-meta">
+              <small>{own ? 'Your listing' : `Listed by ${item.owner}`}</small>
+              {!own && tradeDisabledReason ? <span className="inline-disabled-reason">{tradeDisabledReason}</span> : null}
+            </div>
+            <div className="listing-actions">
+              {!own && (
+                <button
+                  className="ghost small"
+                  type="button"
+                  onClick={() => onOpenMatches?.(item)}
+                >
+                  Matches ({matchesCount})
+                </button>
+              )}
+              <button
+                className="ghost small"
+                type="button"
+                disabled={ctaDisabled}
+                title={ctaTitle}
+                onClick={() => {
+                  if (own) {
+                    if (!editDisabled) onEditDraft?.(item)
+                    return
+                  }
+                  if (tradeDisabledReason) return
+                  onOpenTrade?.(item)
+                }}
+              >
+                {own ? 'Edit draft' : 'Start Trade'}
+              </button>
+            </div>
           </div>
         )}
       </div>
       </article>
-      {selectedMatch && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.45)', display: 'grid', alignItems: 'start', justifyItems: 'center', zIndex: 1100, overflowY: 'auto', padding: '24px 12px' }}>
-          <div style={{ width: 'min(640px, 92vw)', maxHeight: 'calc(100vh - 48px)', overflowY: 'auto', background: '#fff', borderRadius: 14, padding: 16, boxShadow: '0 24px 80px rgba(0,0,0,.25)' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-              <h3 style={{ margin: 0 }}>Matched Item Details</h3>
-              <button className="ghost small" type="button" onClick={() => setSelectedMatch(null)}>Close</button>
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))', gap: 8, marginBottom: 12 }}>
-              {(Array.isArray(selectedMatch.images) && selectedMatch.images.length > 0
-                ? selectedMatch.images
-                : [selectedMatch.image].filter(Boolean)
-              ).map((url) => (
-                <img
-                  key={url}
-                  src={url}
-                  alt={selectedMatch.title}
-                  style={{ width: '100%', height: 110, objectFit: 'cover', borderRadius: 10, border: '1px solid rgba(18,26,36,0.12)' }}
-                />
-              ))}
-            </div>
-            <div className="metric-grid">
-              <div><span>Title</span><strong>{selectedMatch.title || 'n/a'}</strong></div>
-              <div><span>Estimated value</span><strong>{money(selectedMatch.estimatedValue)}</strong></div>
-              <div><span>Brand</span><strong>{selectedMatch.brand || 'n/a'}</strong></div>
-              <div><span>Category</span><strong>{selectedMatch.category || 'n/a'}</strong></div>
-              <div><span>Condition</span><strong>{selectedMatch.condition || 'n/a'}</strong></div>
-              <div><span>City</span><strong>{selectedMatch.city || 'n/a'}</strong></div>
-              <div><span>Owner</span><strong>{selectedMatch.owner || 'n/a'}</strong></div>
-            </div>
-            <p className="listing-notes" style={{ marginTop: 12 }}>{selectedMatch.wants || 'No additional notes.'}</p>
-            <div className="button-row" style={{ marginTop: 12 }}>
-              <button
-                className="primary"
-                type="button"
-                onClick={() => {
-                  setSelectedMatch(null)
-                  if (typeof window !== 'undefined') {
-                    window.alert('Trade request flow will be wired next.')
-                  }
-                }}
-              >
-                Trade
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </>
   )
 }

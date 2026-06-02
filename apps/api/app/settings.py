@@ -78,7 +78,11 @@ class Settings(BaseSettings):
     clerk_audience: str | None = None
     clerk_authorized_parties: str | None = None
     clerk_jwt_leeway_seconds: int = 60
-    cors_allow_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
+    cors_allow_origins: str = (
+        "http://localhost:5173,http://127.0.0.1:5173,"
+        "http://localhost:5174,http://127.0.0.1:5174,"
+        "http://localhost:5175,http://127.0.0.1:5175"
+    )
 
     valuation_enabled: bool = True
     valuation_providers: str = "stub"
@@ -89,6 +93,18 @@ class Settings(BaseSettings):
     instagram_graph_api_version: str = "v20.0"
     instagram_user_id: str | None = None
     instagram_access_token: str | None = None
+
+    usps_addresses_api_url: str = "https://apis.usps.com/addresses/v3/address"
+    usps_bearer_token: str | None = None
+    usps_timeout_s: float = 8.0
+    stripe_secret_key: str | None = None
+    stripe_publishable_key: str | None = None
+    paypal_client_id: str | None = None
+    shippo_api_key: str | None = None
+    shippo_api_base_url: str = "https://api.goshippo.com"
+    shippo_parcel_weight_oz: float = 32.0
+    shippo_default_contact_email: str | None = None
+    shippo_default_contact_phone: str | None = None
 
 
 @lru_cache(maxsize=1)
