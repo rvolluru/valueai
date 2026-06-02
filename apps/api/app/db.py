@@ -1061,6 +1061,7 @@ class Database:
                 "owner_subject", "gender", "tops_size", "dresses_size", "bottoms_size", "shoes_size",
                 "category_preferences_json", "shipping_full_name", "shipping_address_line1", "shipping_address_line2",
                 "shipping_city", "shipping_state", "shipping_postal_code", "shipping_country",
+                "shipping_email", "shipping_phone",
                 "subscription_plan", "subscription_status", "subscription_renewal_date", "payment_methods_json",
                 "created_at", "updated_at",
             ]
