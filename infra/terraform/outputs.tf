@@ -7,7 +7,7 @@ output "s3_bucket_name" {
 }
 
 output "ecr_repository_url" {
-  value = aws_ecr_repository.api.repository_url
+  value = local.ecr_repository_url
 }
 
 output "rds_endpoint" {

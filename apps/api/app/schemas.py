@@ -54,6 +54,19 @@ class HealthResponse(BaseModel):
 class VersionResponse(BaseModel):
     version: str
 
+
+class ShippingAddress(BaseModel):
+    label: str | None = None
+    full_name: str | None = None
+    address_line1: str | None = None
+    address_line2: str | None = None
+    city: str | None = None
+    state: str | None = None
+    postal_code: str | None = None
+    country: str | None = None
+    is_default: bool = False
+
+
 class UserProfileQuizUpdateRequest(BaseModel):
     gender: Literal["female", "male", "other"] | None = None
     tops_size: str | None = None
@@ -68,7 +81,9 @@ class UserProfileQuizUpdateRequest(BaseModel):
     shipping_state: str | None = None
     shipping_postal_code: str | None = None
     shipping_country: str | None = None
+    shipping_addresses: list[ShippingAddress] = Field(default_factory=list)
     subscription_plan: str | None = None
+    subscription_billing_cycle: Literal["monthly", "annual"] | None = None
     subscription_status: str | None = None
     subscription_renewal_date: str | None = None
     payment_methods: list[str] = Field(default_factory=list)
@@ -191,6 +206,10 @@ class OfferResponse(BaseModel):
     from_subject: str
     to_subject: str
     status: Literal["pending", "accepted", "declined", "countered", "cancelled"] = "pending"
+    accepted_by_from: bool = False
+    accepted_by_to: bool = False
+    from_receive_address: ShippingAddress | None = None
+    to_receive_address: ShippingAddress | None = None
     message: str = ""
     created_at: str
     updated_at: str
@@ -204,6 +223,24 @@ class OfferWithListingsResponse(OfferResponse):
 
 class OfferActionRequest(BaseModel):
     status: Literal["accepted", "declined", "countered", "cancelled"]
+    receive_address: ShippingAddress | None = None
+
+
+class ShippingQuoteResponse(BaseModel):
+    offer_id: str
+    actor_subject: str
+    status: str
+    carrier: str
+    service_level: str
+    amount: str | None = None
+    currency: str | None = None
+    rate_id: str | None = None
+    debug: str | None = None
+
+
+class ShippingLabelCreateRequest(BaseModel):
+    confirmed: bool = True
+    rate_id: str | None = None
 
 
 class InstagramShareResponse(BaseModel):

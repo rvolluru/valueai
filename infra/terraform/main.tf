@@ -3,7 +3,9 @@ data "aws_availability_zones" "available" {
 }
 
 locals {
-  azs = slice(data.aws_availability_zones.available.names, 0, 2)
+  azs                       = slice(data.aws_availability_zones.available.names, 0, 2)
+  cloudwatch_log_group_name = var.create_cloudwatch_log_group ? aws_cloudwatch_log_group.api[0].name : var.existing_cloudwatch_log_group_name
+  ecr_repository_url        = var.create_ecr_repository ? aws_ecr_repository.api[0].repository_url : var.existing_ecr_repository_url
 }
 
 resource "aws_vpc" "this" {
@@ -62,11 +64,13 @@ resource "aws_s3_bucket_public_access_block" "uploads" {
 }
 
 resource "aws_ecr_repository" "api" {
+  count                = var.create_ecr_repository ? 1 : 0
   name                 = "${var.project_name}-api"
   image_tag_mutability = "MUTABLE"
 }
 
 resource "aws_cloudwatch_log_group" "api" {
+  count             = var.create_cloudwatch_log_group ? 1 : 0
   name              = "/ecs/${var.project_name}"
   retention_in_days = 14
 }
@@ -251,7 +255,7 @@ resource "aws_ecs_task_definition" "api" {
       essential    = true
       portMappings = [{ containerPort = 8000, hostPort = 8000, protocol = "tcp" }]
       environment = [
-        { name = "APP_ENV", value = "prod" },
+        { name = "APP_ENV", value = var.app_env },
         { name = "API_KEY", value = var.api_key },
         { name = "VERSION", value = "0.1.0" },
         { name = "STORAGE_BACKEND", value = "s3" },
@@ -291,7 +295,7 @@ resource "aws_ecs_task_definition" "api" {
       logConfiguration = {
         logDriver = "awslogs"
         options = {
-          awslogs-group         = aws_cloudwatch_log_group.api.name
+          awslogs-group         = local.cloudwatch_log_group_name
           awslogs-region        = var.aws_region
           awslogs-stream-prefix = "ecs"
         }

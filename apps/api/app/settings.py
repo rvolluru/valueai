@@ -105,6 +105,12 @@ class Settings(BaseSettings):
     shippo_parcel_weight_oz: float = 32.0
     shippo_default_contact_email: str | None = None
     shippo_default_contact_phone: str | None = None
+    smtp_host: str | None = None
+    smtp_port: int = 587
+    smtp_username: str | None = None
+    smtp_password: str | None = None
+    smtp_from_email: str | None = None
+    smtp_use_tls: bool = True
 
 
 @lru_cache(maxsize=1)

@@ -52,6 +52,60 @@ function makeId(prefix) {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
 }
 
+function emptyShippingAddress() {
+  return {
+    id: makeId('ship'),
+    label: '',
+    full_name: '',
+    address_line1: '',
+    address_line2: '',
+    city: '',
+    state: '',
+    postal_code: '',
+    country: 'US',
+    is_default: false,
+  }
+}
+
+function normalizeShippingAddresses(addresses, fallback = null) {
+  const normalized = Array.isArray(addresses)
+    ? addresses
+      .filter((a) => a && typeof a === 'object')
+      .map((a) => ({
+        id: typeof a.id === 'string' && a.id.trim() ? a.id : makeId('ship'),
+        label: typeof a.label === 'string' ? a.label : '',
+        full_name: typeof a.full_name === 'string' ? a.full_name : '',
+        address_line1: typeof a.address_line1 === 'string' ? a.address_line1 : '',
+        address_line2: typeof a.address_line2 === 'string' ? a.address_line2 : '',
+        city: typeof a.city === 'string' ? a.city : '',
+        state: typeof a.state === 'string' ? a.state : '',
+        postal_code: typeof a.postal_code === 'string' ? a.postal_code : '',
+        country: typeof a.country === 'string' && a.country.trim() ? a.country : 'US',
+        is_default: Boolean(a.is_default),
+      }))
+    : []
+  if (normalized.length > 0) return normalized
+  if (fallback && typeof fallback === 'object') {
+    const hasLegacy = ['shipping_full_name', 'shipping_address_line1', 'shipping_address_line2', 'shipping_city', 'shipping_state', 'shipping_postal_code', 'shipping_country']
+      .some((key) => typeof fallback?.[key] === 'string' && fallback[key].trim())
+    if (hasLegacy) {
+      return [{
+        ...emptyShippingAddress(),
+        label: 'Primary',
+        full_name: fallback.shipping_full_name || '',
+        address_line1: fallback.shipping_address_line1 || '',
+        address_line2: fallback.shipping_address_line2 || '',
+        city: fallback.shipping_city || '',
+        state: fallback.shipping_state || '',
+        postal_code: fallback.shipping_postal_code || '',
+        country: fallback.shipping_country || 'US',
+        is_default: true,
+      }]
+    }
+  }
+  return [emptyShippingAddress()]
+}
+
 function buildSuggestedDescriptionFromProfile(profile) {
   const modelName = profile?.model_identification?.name?.trim?.() || ''
   const attrs = Array.isArray(profile?.model_identification?.attributes)
@@ -73,6 +127,12 @@ function getListingDescription(item) {
   return ''
 }
 
+function getListingGallery(item) {
+  if (!item) return []
+  if (Array.isArray(item.images) && item.images.length > 0) return item.images.filter(Boolean)
+  return [item.image].filter(Boolean)
+}
+
 function getUploadedImageUrlsFromAnalysis(analysis) {
   if (!analysis || !Array.isArray(analysis.uploaded_images)) return []
   return analysis.uploaded_images
@@ -92,6 +152,26 @@ const MALE_APPAREL_SIZE_OPTIONS = ['XS', 'S', 'M', 'L', 'XL', 'XXL', 'XXXL']
 const FEMALE_SHOE_SIZE_OPTIONS = ['US 5', 'US 5.5', 'US 6', 'US 6.5', 'US 7', 'US 7.5', 'US 8', 'US 8.5', 'US 9', 'US 9.5', 'US 10', 'US 10.5', 'US 11', 'US 12']
 const MALE_SHOE_SIZE_OPTIONS = ['US 6', 'US 6.5', 'US 7', 'US 7.5', 'US 8', 'US 8.5', 'US 9', 'US 9.5', 'US 10', 'US 10.5', 'US 11', 'US 11.5', 'US 12', 'US 13', 'US 14']
 const PROFILE_CATEGORY_OPTIONS = ['Dresses', 'Jackets', 'Shoes', 'Handbags', 'Skirts', 'Accessories']
+const SUBSCRIPTION_PLANS = [
+  { id: 'free', name: 'Free Tier', monthlyPrice: 0, listingsPerMonth: 3, description: '3 listings per month' },
+  { id: 'starter', name: 'Starter', monthlyPrice: 15, listingsPerMonth: 25, description: 'Up to 25 listings per month' },
+  { id: 'pro', name: 'Pro', monthlyPrice: 25, listingsPerMonth: null, description: 'Unlimited listings' },
+]
+
+function normalizeSubscriptionPlanId(plan) {
+  const raw = String(plan || '').trim().toLowerCase()
+  if (!raw) return 'free'
+  if (raw === 'starter') return 'starter'
+  if (raw === 'pro') return 'pro'
+  if (raw.includes('free')) return 'free'
+  if (raw.includes('15') || raw.includes('starter')) return 'starter'
+  if (raw.includes('25') || raw.includes('pro') || raw.includes('unlimited')) return 'pro'
+  return 'free'
+}
+
+function normalizeBillingCycle(cycle) {
+  return String(cycle || '').toLowerCase() === 'annual' ? 'annual' : 'monthly'
+}
 
 function brandSizeChartUrl(brand, category) {
   const name = String(brand || '').trim().toLowerCase()
@@ -223,7 +303,24 @@ async function fetchMarketplaceListings({ apiBaseUrl, apiKey, bearerToken, limit
   const headers = {}
   if (bearerToken) headers.Authorization = `Bearer ${bearerToken}`
   else if (apiKey) headers['x-api-key'] = apiKey
-  const resp = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/v1/listings?limit=${limit}`, {
+  const resp = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/v1/listings?limit=${limit}&include_matches=true`, {
+    method: 'GET',
+    headers,
+  })
+  let payload = null
+  try { payload = await resp.json() } catch {}
+  if (!resp.ok) {
+    const detail = Array.isArray(payload?.detail) ? payload.detail[0]?.msg : payload?.detail
+    throw new Error(detail || `API error (${resp.status})`)
+  }
+  return payload?.items || []
+}
+
+async function fetchOfferCandidates({ apiBaseUrl, apiKey, bearerToken, targetListingId, limit = 100 }) {
+  const headers = {}
+  if (bearerToken) headers.Authorization = `Bearer ${bearerToken}`
+  else if (apiKey) headers['x-api-key'] = apiKey
+  const resp = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/v1/listings/${encodeURIComponent(targetListingId)}/offer-candidates?limit=${limit}`, {
     method: 'GET',
     headers,
   })
@@ -424,14 +521,14 @@ async function fetchIncomingOffersRemote({ apiBaseUrl, apiKey, bearerToken, stat
   return data
 }
 
-async function actionOfferRemote({ apiBaseUrl, apiKey, bearerToken, offerId, status }) {
+async function actionOfferRemote({ apiBaseUrl, apiKey, bearerToken, offerId, status, receiveAddress = null }) {
   const headers = { 'Content-Type': 'application/json' }
   if (bearerToken) headers.Authorization = `Bearer ${bearerToken}`
   else if (apiKey) headers['x-api-key'] = apiKey
   const resp = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/v1/offers/${offerId}/action`, {
     method: 'POST',
     headers,
-    body: JSON.stringify({ status }),
+    body: JSON.stringify({ status, receive_address: receiveAddress }),
   })
   let data = null
   try { data = await resp.json() } catch {}
@@ -439,11 +536,26 @@ async function actionOfferRemote({ apiBaseUrl, apiKey, bearerToken, offerId, sta
   return data
 }
 
-async function createShippingLabelsRemote({ apiBaseUrl, apiKey, bearerToken, offerId }) {
+async function fetchShippingQuoteRemote({ apiBaseUrl, apiKey, bearerToken, offerId }) {
   const headers = { 'Content-Type': 'application/json' }
   if (bearerToken) headers.Authorization = `Bearer ${bearerToken}`
   else if (apiKey) headers['x-api-key'] = apiKey
-  const resp = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/v1/offers/${offerId}/shipping-labels`, { method: 'POST', headers })
+  const resp = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/v1/offers/${offerId}/shipping-quote`, { method: 'POST', headers, body: JSON.stringify({}) })
+  let data = null
+  try { data = await resp.json() } catch {}
+  if (!resp.ok) throw new Error(data?.detail || `API error (${resp.status})`)
+  return data
+}
+
+async function createShippingLabelsRemote({ apiBaseUrl, apiKey, bearerToken, offerId, rateId = null }) {
+  const headers = { 'Content-Type': 'application/json' }
+  if (bearerToken) headers.Authorization = `Bearer ${bearerToken}`
+  else if (apiKey) headers['x-api-key'] = apiKey
+  const resp = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/v1/offers/${offerId}/shipping-labels`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ confirmed: true, rate_id: rateId || null }),
+  })
   let data = null
   try { data = await resp.json() } catch {}
   if (!resp.ok) throw new Error(data?.detail || `API error (${resp.status})`)
@@ -640,7 +752,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   const [apiKey, setApiKey] = useState('local-dev-key')
   const [myListings, setMyListings] = useState([])
   const [marketListings, setMarketListings] = useState([])
-  const [activeTab, setActiveTab] = useState('upload')
+  const [activeTab, setActiveTab] = useState('market')
   const [marketSearch, setMarketSearch] = useState('')
   const [tradeOnly, setTradeOnly] = useState(false)
   const [listingMode, setListingMode] = useState('sell_trade')
@@ -674,8 +786,10 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   const [profileQuiz, setProfileQuiz] = useState({
     gender: '', tops_size: '', dresses_size: '', bottoms_size: '', shoes_size: '', category_preferences: [],
     shipping_full_name: '', shipping_address_line1: '', shipping_address_line2: '', shipping_city: '', shipping_state: '', shipping_postal_code: '', shipping_country: '',
-    subscription_plan: '', subscription_status: '', subscription_renewal_date: '', payment_methods: [],
+    shipping_addresses: [emptyShippingAddress()],
+    subscription_plan: 'free', subscription_billing_cycle: 'monthly', subscription_status: '', subscription_renewal_date: '', payment_methods: [],
   })
+  const [activeShippingAddressIdx, setActiveShippingAddressIdx] = useState(0)
   const [addressSuggestions, setAddressSuggestions] = useState([])
   const [profileSaveMsg, setProfileSaveMsg] = useState('')
   const [paymentMethods, setPaymentMethods] = useState([])
@@ -687,8 +801,10 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   const stripeElementsRef = useRef(null)
   const stripePaymentElementRef = useRef(null)
   const [incomingOffers, setIncomingOffers] = useState([])
+  const [offersActorSubject, setOffersActorSubject] = useState('')
   const [tradeComposerTarget, setTradeComposerTarget] = useState(null)
   const [marketMatchesTargetId, setMarketMatchesTargetId] = useState(null)
+  const [tradeOfferCandidates, setTradeOfferCandidates] = useState([])
   const [tradeOfferListingIds, setTradeOfferListingIds] = useState([])
   const [tradeOfferMessage, setTradeOfferMessage] = useState('')
   const [tradeOfferError, setTradeOfferError] = useState('')
@@ -698,6 +814,26 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   const [closetFilter, setClosetFilter] = useState('all')
   const [profileSection, setProfileSection] = useState('general')
   const [shippingLabelsByOffer, setShippingLabelsByOffer] = useState({})
+  const [offerReceiveAddressById, setOfferReceiveAddressById] = useState({})
+  const [shippingQuoteByOffer, setShippingQuoteByOffer] = useState({})
+  const [marketMagazineIndex, setMarketMagazineIndex] = useState(null)
+  const [newMarketIndex, setNewMarketIndex] = useState(0)
+  const [newMarketFlipDir, setNewMarketFlipDir] = useState('next')
+  const [newMarketIsFlipping, setNewMarketIsFlipping] = useState(false)
+
+  function resolveOfferActorSubject(offer) {
+    const participants = [String(offer?.from_subject || ''), String(offer?.to_subject || '')]
+      .map((value) => value.trim())
+      .filter(Boolean)
+    const candidates = [String(session?.id || ''), String(offersActorSubject || '')]
+      .map((value) => value.trim())
+      .filter(Boolean)
+      .filter((value) => value.toLowerCase() !== 'api-key')
+    for (const candidate of candidates) {
+      if (participants.includes(candidate)) return candidate
+    }
+    return candidates[0] || participants[0] || ''
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -706,6 +842,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
         const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
         const data = await fetchProfileQuizRemote({ apiBaseUrl, apiKey: clerkEnabled ? '' : apiKey.trim(), bearerToken })
         if (!cancelled) {
+          const shippingAddresses = normalizeShippingAddresses(data?.shipping_addresses, data)
           setProfileQuiz({
             gender: data?.gender || '',
             tops_size: data?.tops_size || '',
@@ -713,18 +850,21 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
             bottoms_size: data?.bottoms_size || '',
             shoes_size: data?.shoes_size || '',
             category_preferences: Array.isArray(data?.category_preferences) ? data.category_preferences : [],
-            shipping_full_name: data?.shipping_full_name || '',
-            shipping_address_line1: data?.shipping_address_line1 || '',
-            shipping_address_line2: data?.shipping_address_line2 || '',
-            shipping_city: data?.shipping_city || '',
-            shipping_state: data?.shipping_state || '',
-            shipping_postal_code: data?.shipping_postal_code || '',
-            shipping_country: data?.shipping_country || '',
-            subscription_plan: data?.subscription_plan || '',
+            shipping_full_name: shippingAddresses[0]?.full_name || '',
+            shipping_address_line1: shippingAddresses[0]?.address_line1 || '',
+            shipping_address_line2: shippingAddresses[0]?.address_line2 || '',
+            shipping_city: shippingAddresses[0]?.city || '',
+            shipping_state: shippingAddresses[0]?.state || '',
+            shipping_postal_code: shippingAddresses[0]?.postal_code || '',
+            shipping_country: shippingAddresses[0]?.country || '',
+            shipping_addresses: shippingAddresses,
+            subscription_plan: normalizeSubscriptionPlanId(data?.subscription_plan),
+            subscription_billing_cycle: normalizeBillingCycle(data?.subscription_billing_cycle),
             subscription_status: data?.subscription_status || '',
             subscription_renewal_date: data?.subscription_renewal_date || '',
             payment_methods: Array.isArray(data?.payment_methods) ? data.payment_methods : [],
           })
+          setActiveShippingAddressIdx(0)
         }
       } catch {}
     })()
@@ -827,9 +967,25 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
           status: offerStatusFilter,
           limit: 50,
         })
-        if (!cancelled) setIncomingOffers(Array.isArray(payload?.items) ? payload.items : [])
+        if (!cancelled) {
+          const items = Array.isArray(payload?.items) ? payload.items : []
+          setIncomingOffers(items)
+          setOffersActorSubject(typeof payload?.actor?.subject === 'string' ? payload.actor.subject : '')
+          setOfferReceiveAddressById((prev) => {
+            const next = { ...prev }
+            items.forEach((offer) => {
+              if (!next[offer.offer_id]) {
+                next[offer.offer_id] = (shippingAddresses[0]?.id || '')
+              }
+            })
+            return next
+          })
+        }
       } catch {
-        if (!cancelled) setIncomingOffers([])
+        if (!cancelled) {
+          setIncomingOffers([])
+          setOffersActorSubject('')
+        }
       } finally {
         if (!cancelled) timer = setTimeout(refreshOffers, 15000)
       }
@@ -839,7 +995,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
       cancelled = true
       if (timer) clearTimeout(timer)
     }
-  }, [apiBaseUrl, apiKey, clerkEnabled, getBearerToken, offerStatusFilter])
+  }, [apiBaseUrl, apiKey, clerkEnabled, getBearerToken, offerStatusFilter, profileQuiz.shipping_addresses])
   const normalizedProfileGender = profileQuiz.gender === 'male' || profileQuiz.gender === 'female' || profileQuiz.gender === 'other'
     ? profileQuiz.gender
     : ''
@@ -848,11 +1004,47 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   const profileCategoryOptions = normalizedProfileGender === 'male'
     ? PROFILE_CATEGORY_OPTIONS.filter((c) => c !== 'Dresses')
     : PROFILE_CATEGORY_OPTIONS
+  const selectedSubscriptionPlanId = normalizeSubscriptionPlanId(profileQuiz.subscription_plan)
+  const selectedBillingCycle = normalizeBillingCycle(profileQuiz.subscription_billing_cycle)
+  const shippingAddresses = normalizeShippingAddresses(profileQuiz.shipping_addresses, profileQuiz)
+  const safeActiveShippingAddressIdx = Math.max(0, Math.min(activeShippingAddressIdx, shippingAddresses.length - 1))
+  const activeShippingAddress = shippingAddresses[safeActiveShippingAddressIdx] || shippingAddresses[0] || emptyShippingAddress()
+
+  function updateActiveShippingAddress(patch) {
+    setProfileQuiz((prev) => {
+      const nextAddresses = normalizeShippingAddresses(prev.shipping_addresses, prev)
+      const idx = Math.max(0, Math.min(activeShippingAddressIdx, nextAddresses.length - 1))
+      nextAddresses[idx] = { ...nextAddresses[idx], ...patch }
+      return { ...prev, shipping_addresses: nextAddresses }
+    })
+  }
+
+  function addShippingAddress() {
+    const newAddress = { ...emptyShippingAddress(), label: `Address ${shippingAddresses.length + 1}` }
+    const updated = [...shippingAddresses, newAddress]
+    setProfileQuiz((prev) => ({ ...prev, shipping_addresses: updated }))
+    setActiveShippingAddressIdx(updated.length - 1)
+    setAddressSuggestions([])
+  }
+
+  function removeActiveShippingAddress() {
+    if (shippingAddresses.length <= 1) {
+      setProfileQuiz((prev) => ({ ...prev, shipping_addresses: [emptyShippingAddress()] }))
+      setActiveShippingAddressIdx(0)
+      setAddressSuggestions([])
+      return
+    }
+    const idx = safeActiveShippingAddressIdx
+    const updated = shippingAddresses.filter((_, i) => i !== idx)
+    setProfileQuiz((prev) => ({ ...prev, shipping_addresses: updated }))
+    setActiveShippingAddressIdx(Math.max(0, idx - 1))
+    setAddressSuggestions([])
+  }
 
   useEffect(() => {
     let cancelled = false
-    const line1 = (profileQuiz.shipping_address_line1 || '').trim()
-    const state = (profileQuiz.shipping_state || '').trim()
+    const line1 = (activeShippingAddress?.address_line1 || '').trim()
+    const state = (activeShippingAddress?.state || '').trim()
     if (line1.length < 5 || state.length !== 2) {
       setAddressSuggestions([])
       return undefined
@@ -865,9 +1057,9 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
           apiKey: clerkEnabled ? '' : apiKey.trim(),
           bearerToken,
           q: line1,
-          city: profileQuiz.shipping_city || '',
+          city: activeShippingAddress?.city || '',
           state,
-          postalCode: profileQuiz.shipping_postal_code || '',
+          postalCode: activeShippingAddress?.postal_code || '',
         })
         if (!cancelled) setAddressSuggestions(suggestions.slice(0, 5))
       } catch {
@@ -879,10 +1071,11 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
       clearTimeout(timer)
     }
   }, [
-    profileQuiz.shipping_address_line1,
-    profileQuiz.shipping_city,
-    profileQuiz.shipping_state,
-    profileQuiz.shipping_postal_code,
+    activeShippingAddress?.address_line1,
+    activeShippingAddress?.city,
+    activeShippingAddress?.state,
+    activeShippingAddress?.postal_code,
+    safeActiveShippingAddressIdx,
     apiBaseUrl,
     apiKey,
     clerkEnabled,
@@ -914,7 +1107,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     if (normalizedImages.length === 0 && fromAnalysisUploads.length > 0) {
       normalizedImages = fromAnalysisUploads
     }
-    return {
+    const normalized = {
       id: item.listing_id || item.id,
       owner: item.owner_name || session.name || 'You',
       title: item.title || 'Untitled listing',
@@ -935,6 +1128,10 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
       status: item.status || 'Review',
       createdAt: item.created_at || item.createdAt || null,
     }
+    if (Array.isArray(item.matches)) {
+      normalized.matches = item.matches.map((m) => fromRemoteListing(m)).filter(Boolean)
+    }
+    return normalized
   }
 
   function toRemoteListingPayload(listing) {
@@ -1069,14 +1266,8 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   )
   const similarListingsForTarget = useMemo(() => {
     if (!marketMatchesTarget) return []
-    const baseValue = Number(marketMatchesTarget.estimatedValue || 0)
-    const tolerance = Math.max(50, baseValue * 0.2)
-    return allListings
-      .filter((candidate) => candidate.id !== marketMatchesTarget.id)
-      .filter((candidate) => (candidate.owner || '') !== (marketMatchesTarget.owner || ''))
-      .filter((candidate) => Math.abs(Number(candidate.estimatedValue || 0) - baseValue) <= tolerance)
-      .slice(0, 12)
-  }, [allListings, marketMatchesTarget])
+    return Array.isArray(marketMatchesTarget.matches) ? marketMatchesTarget.matches : []
+  }, [marketMatchesTarget])
   useEffect(() => {
     if (!marketMatchesTarget) return
     function onKeyDown(e) {
@@ -1090,6 +1281,63 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     () => allListings.filter((item) => String(item?.status || '').toLowerCase() === 'active').slice(0, 6),
     [allListings],
   )
+
+  useEffect(() => {
+    if (filteredListings.length === 0) {
+      setMarketMagazineIndex(null)
+      return
+    }
+    if (marketMagazineIndex == null) return
+    setMarketMagazineIndex((prev) => {
+      if (prev == null) return null
+      return Math.max(0, Math.min(prev, filteredListings.length - 1))
+    })
+  }, [filteredListings, marketMagazineIndex])
+
+  useEffect(() => {
+    if (filteredListings.length === 0) {
+      setNewMarketIndex(0)
+      return
+    }
+    setNewMarketIndex((prev) => Math.min(prev, filteredListings.length - 1))
+  }, [filteredListings])
+
+  function flipToNewMarketplaceIndex(nextIndex, direction) {
+    if (filteredListings.length === 0) return
+    setNewMarketFlipDir(direction)
+    setNewMarketIsFlipping(true)
+    setTimeout(() => {
+      setNewMarketIndex(nextIndex)
+      setNewMarketIsFlipping(false)
+    }, 180)
+  }
+
+  function flipNewMarketplaceNext() {
+    if (filteredListings.length <= 1) return
+    const next = (newMarketIndex + 1) % filteredListings.length
+    flipToNewMarketplaceIndex(next, 'next')
+  }
+
+  function flipNewMarketplacePrev() {
+    if (filteredListings.length <= 1) return
+    const prev = (newMarketIndex - 1 + filteredListings.length) % filteredListings.length
+    flipToNewMarketplaceIndex(prev, 'prev')
+  }
+
+  function openMarketplaceMagazine(item) {
+    const idx = filteredListings.findIndex((entry) => entry?.id === item?.id)
+    if (idx >= 0) setMarketMagazineIndex(idx)
+  }
+
+  function flipMarketplaceMagazineNext() {
+    if (filteredListings.length <= 1 || marketMagazineIndex == null) return
+    setMarketMagazineIndex((marketMagazineIndex + 1) % filteredListings.length)
+  }
+
+  function flipMarketplaceMagazinePrev() {
+    if (filteredListings.length <= 1 || marketMagazineIndex == null) return
+    setMarketMagazineIndex((marketMagazineIndex - 1 + filteredListings.length) % filteredListings.length)
+  }
 
   const suggestedTrades = useMemo(() => {
     const target = Number(askingValue || analysisResult?.valuation?.estimated_value || 0)
@@ -1180,18 +1428,34 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     }
   }
 
-  function openTradeComposer(targetListing) {
-    const mineActive = myListings
-      .filter((x) => String(x.status || '').toLowerCase() === 'active')
-      .filter((x) => Number(x.estimatedValue || 0) > 0)
-      .filter((x) => Number(targetListing?.estimatedValue || 0) > 0)
-      .filter((x) => Math.abs(Number(x.estimatedValue || 0) - Number(targetListing.estimatedValue || 0)) / Number(targetListing.estimatedValue || 1) <= 0.30)
+  async function openTradeComposer(targetListing, preferredOfferedListingId = null) {
+    if (!targetListing?.id) return
     setTradeComposerTarget(targetListing)
-    setTradeOfferListingIds(mineActive[0]?.id ? [mineActive[0].id] : [])
     setTradeOfferMessage('')
     setTradeOfferError('')
     setMarketMatchesTargetId(null)
     setActiveTab('trade')
+
+    try {
+      const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
+      const items = await fetchOfferCandidates({
+        apiBaseUrl,
+        apiKey: clerkEnabled ? '' : apiKey.trim(),
+        bearerToken,
+        targetListingId: targetListing.id,
+        limit: 100,
+      })
+      const normalized = items.map(fromRemoteListing).filter(Boolean)
+      setTradeOfferCandidates(normalized)
+      const preferred = preferredOfferedListingId
+        ? normalized.find((x) => x.id === preferredOfferedListingId)
+        : null
+      setTradeOfferListingIds(preferred?.id ? [preferred.id] : (normalized[0]?.id ? [normalized[0].id] : []))
+    } catch (err) {
+      setTradeOfferError(err.message || 'Failed to load offer candidates.')
+      setTradeOfferCandidates([])
+      setTradeOfferListingIds([])
+    }
   }
 
   async function submitTradeOffer() {
@@ -1215,6 +1479,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
         },
       })
       setTradeComposerTarget(null)
+      setTradeOfferCandidates([])
       setTradeOfferListingIds([])
       setTradeOfferMessage('')
       setSavedListingNotice('Trade offer sent. The listing owner has been notified.')
@@ -1231,18 +1496,26 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     setActiveTab('market')
   }
 
-  async function respondToOffer(offerId, status) {
+  async function respondToOffer(offerId, status, receiveAddress = null) {
     try {
       const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
-      await actionOfferRemote({
+      const updatedOffer = await actionOfferRemote({
         apiBaseUrl,
         apiKey: clerkEnabled ? '' : apiKey.trim(),
         bearerToken,
         offerId,
         status,
+        receiveAddress,
       })
-      setIncomingOffers((prev) => prev.filter((o) => o.offer_id !== offerId))
+      setIncomingOffers((prev) => prev.map((o) => (o.offer_id === offerId ? { ...o, ...updatedOffer } : o)))
       if (status === 'accepted') {
+        const actorSubject = resolveOfferActorSubject(updatedOffer)
+        const actorAccepted = actorSubject
+          ? (
+            (actorSubject === updatedOffer.from_subject && Boolean(updatedOffer.accepted_by_from))
+            || (actorSubject === updatedOffer.to_subject && Boolean(updatedOffer.accepted_by_to))
+          )
+          : false
         const myItems = await fetchMyListings({
           apiBaseUrl,
           apiKey: clerkEnabled ? '' : apiKey.trim(),
@@ -1257,7 +1530,21 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
         })
         setMyListings(myItems.map(fromRemoteListing).filter(Boolean))
         setMarketListings(marketItems.map(fromRemoteListing).filter(Boolean))
+        if (updatedOffer?.status === 'accepted') {
+          setSavedListingNotice('Trade accepted by both users. Get shipping cost and create labels.')
+        } else if (actorAccepted) {
+          setSavedListingNotice('Your acceptance is recorded. Waiting for the other user to accept.')
+        }
       }
+      const refreshed = await fetchIncomingOffersRemote({
+        apiBaseUrl,
+        apiKey: clerkEnabled ? '' : apiKey.trim(),
+        bearerToken,
+        status: offerStatusFilter,
+        limit: 50,
+      })
+      setIncomingOffers(Array.isArray(refreshed?.items) ? refreshed.items : [])
+      setOffersActorSubject(typeof refreshed?.actor?.subject === 'string' ? refreshed.actor.subject : '')
     } catch (err) {
       setSavedListingNotice(err.message || 'Failed to update trade offer.')
     }
@@ -1278,15 +1565,29 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
 
   async function createShippingLabelsForOffer(offerId) {
     const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
+    const quote = shippingQuoteByOffer[offerId] || null
     const payload = await createShippingLabelsRemote({
       apiBaseUrl,
       apiKey: clerkEnabled ? '' : apiKey.trim(),
       bearerToken,
       offerId,
+      rateId: quote?.rate_id || null,
     })
     const shipments = Array.isArray(payload?.shipments) ? payload.shipments : []
     setShippingLabelsByOffer((prev) => ({ ...prev, [offerId]: shipments }))
     return shipments
+  }
+
+  async function loadShippingQuoteForOffer(offerId) {
+    const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
+    const quote = await fetchShippingQuoteRemote({
+      apiBaseUrl,
+      apiKey: clerkEnabled ? '' : apiKey.trim(),
+      bearerToken,
+      offerId,
+    })
+    setShippingQuoteByOffer((prev) => ({ ...prev, [offerId]: quote }))
+    return quote
   }
 
   async function openShippingLabel(shipment) {
@@ -1299,14 +1600,32 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
         shipmentId: shipment?.shipment_id,
       })
       const rawUrl = (payload?.label_url || shipment?.label_url || '').trim()
+      const fromAddr = payload?.from || {}
+      const toAddr = payload?.to || {}
+      const requiredKeys = ['name', 'line1', 'city', 'state', 'postal_code', 'country']
+      const missingFrom = requiredKeys.filter((k) => !String(fromAddr?.[k] || '').trim())
+      const missingTo = requiredKeys.filter((k) => !String(toAddr?.[k] || '').trim())
+      const hasIncompleteProfile = missingFrom.length > 0 || missingTo.length > 0
+      const fmt = {
+        name: 'name',
+        line1: 'address line 1',
+        city: 'city',
+        state: 'state',
+        postal_code: 'postal code',
+        country: 'country',
+      }
       if (!rawUrl) {
-        const msg = 'Label URL is not available yet.'
+        const msg = hasIncompleteProfile
+          ? `Shipping profile incomplete.${missingFrom.length > 0 ? ` Sender missing: ${missingFrom.map((k) => fmt[k]).join(', ')}.` : ''}${missingTo.length > 0 ? ` Receiver missing: ${missingTo.map((k) => fmt[k]).join(', ')}.` : ''}`
+          : 'Carrier label URL is not available yet. Click Create Shipping Labels again in a few seconds.'
         setSavedListingNotice(msg)
         window.alert(msg)
         return
       }
       if (/^\/v1\/shipments\/[^/]+\/label$/i.test(rawUrl)) {
-        const msg = 'Carrier label URL is not available yet. Click Create Shipping Labels again after both shipping profiles are complete.'
+        const msg = hasIncompleteProfile
+          ? `Shipping profile incomplete.${missingFrom.length > 0 ? ` Sender missing: ${missingFrom.map((k) => fmt[k]).join(', ')}.` : ''}${missingTo.length > 0 ? ` Receiver missing: ${missingTo.map((k) => fmt[k]).join(', ')}.` : ''}`
+          : 'Carrier label URL is still processing. Click Create Shipping Labels again in a few seconds.'
         setSavedListingNotice(msg)
         window.alert(msg)
         return
@@ -1322,7 +1641,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     }
   }
 
-  const offeredTotalValue = myListings
+  const offeredTotalValue = tradeOfferCandidates
     .filter((x) => tradeOfferListingIds.includes(x.id))
     .reduce((sum, x) => sum + Number(x.estimatedValue || 0), 0)
   const composerTargetValue = Number(tradeComposerTarget?.estimatedValue || 0)
@@ -1779,12 +2098,19 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
             const thumb = (Array.isArray(item.images) && item.images.length > 0) ? item.images[0] : item.image
             return (
               <button key={`latest-${item.id}`} type="button" className="latest-card" onClick={() => setActiveTab('market')}>
-                <div className="latest-thumb">
-                  {thumb ? <img src={thumb} alt={item.title || 'Listing'} /> : <div className="latest-empty">No image</div>}
+                <div className="latest-thumb" aria-hidden="true">
+                  {thumb ? (
+                    <img src={thumb} alt="" />
+                  ) : (
+                    <div className="listing-image-fallback">Image unavailable</div>
+                  )}
                 </div>
                 <div className="latest-meta">
-                  <strong>{item.title || 'Untitled listing'}</strong>
-                  <span>{money(item.estimatedValue)}</span>
+                  <h3 className="editorial-title latest-title">{item.title || 'Untitled listing'}</h3>
+                  <p className="editorial-byline">BY {String(item.owner || 'Unknown seller').toUpperCase()}</p>
+                  <p className="editorial-meta">
+                    EST. {money(item.estimatedValue)}
+                  </p>
                 </div>
               </button>
             )
@@ -1801,7 +2127,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                 <h3 style={{ margin: 0 }}>Profile</h3>
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: '220px 1fr', gap: 16 }}>
-                <aside style={{ border: '1px solid var(--line)', borderRadius: 12, padding: 10, alignSelf: 'start' }}>
+                <aside className="profile-nav" style={{ border: '1px solid var(--line)', borderRadius: 12, padding: 10, alignSelf: 'start' }}>
                   <button className={profileSection === 'general' ? 'nav-item active' : 'nav-item'} type="button" onClick={() => setProfileSection('general')}>General</button>
                   <button className={profileSection === 'style' ? 'nav-item active' : 'nav-item'} type="button" onClick={() => setProfileSection('style')}>Style Preferences</button>
                   <button className={profileSection === 'subscription' ? 'nav-item active' : 'nav-item'} type="button" onClick={() => setProfileSection('subscription')}>Subscription</button>
@@ -1810,14 +2136,11 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                 <div>
                   {profileSection === 'general' && (
                     <div className="metric-grid">
-                      <div><span>User ID</span><strong>{profileData?.userId || session?.id || 'n/a'}</strong></div>
                       <div><span>Name</span><strong>{profileData?.name || session?.name || 'n/a'}</strong></div>
                       <div><span>First Name</span><strong>{profileData?.firstName || 'n/a'}</strong></div>
                       <div><span>Last Name</span><strong>{profileData?.lastName || 'n/a'}</strong></div>
-                      <div><span>Username</span><strong>{profileData?.username || 'n/a'}</strong></div>
                       <div><span>Email</span><strong>{profileData?.email || session?.email || 'n/a'}</strong></div>
                       <div><span>Phone</span><strong>{profileData?.phone || 'n/a'}</strong></div>
-                      <div><span>Account Created</span><strong>{profileData?.createdAt || 'n/a'}</strong></div>
                     </div>
                   )}
                   {profileSection === 'style' && (
@@ -1905,14 +2228,63 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                   {profileSection === 'subscription' && (
                     <div style={{ marginTop: 4 }}>
                       <p className="eyebrow" style={{ marginBottom: 8 }}>Subscription</p>
-                      <div className="field-grid">
-                        <label>
-                          <span>Plan</span>
-                          <input value={profileQuiz.subscription_plan || ''} onChange={(e) => setProfileQuiz((p) => ({ ...p, subscription_plan: e.target.value }))} placeholder="Premium" />
-                        </label>
+                      <div className="billing-cycle-toggle">
+                        <button
+                          className={selectedBillingCycle === 'monthly' ? 'nav-item active' : 'nav-item'}
+                          type="button"
+                          onClick={() => setProfileQuiz((p) => ({ ...p, subscription_billing_cycle: 'monthly' }))}
+                        >
+                          Monthly Billing
+                        </button>
+                        <button
+                          className={selectedBillingCycle === 'annual' ? 'nav-item active' : 'nav-item'}
+                          type="button"
+                          onClick={() => setProfileQuiz((p) => ({ ...p, subscription_billing_cycle: 'annual' }))}
+                        >
+                          Annual Billing (10% Off)
+                        </button>
+                      </div>
+                      <div className="subscription-plan-grid">
+                        {SUBSCRIPTION_PLANS.map((plan) => {
+                          const isSelected = selectedSubscriptionPlanId === plan.id
+                          const annualTotal = plan.monthlyPrice > 0 ? Math.round(plan.monthlyPrice * 12 * 0.9) : 0
+                          const annualMonthlyEquivalent = plan.monthlyPrice > 0 ? (annualTotal / 12) : 0
+                          const priceLabel = selectedBillingCycle === 'annual'
+                            ? (plan.monthlyPrice > 0
+                              ? `$${annualTotal}/year ($${annualMonthlyEquivalent.toFixed(2)}/month)`
+                              : '$0/year')
+                            : (plan.monthlyPrice > 0 ? `$${plan.monthlyPrice}/month` : '$0/month')
+                          return (
+                            <button
+                              key={plan.id}
+                              type="button"
+                              className={isSelected ? 'subscription-plan-card active' : 'subscription-plan-card'}
+                              onClick={() => setProfileQuiz((p) => ({
+                                ...p,
+                                subscription_plan: plan.id,
+                                subscription_status: 'active',
+                              }))}
+                            >
+                              <span className="subscription-plan-name">{plan.name}</span>
+                              <strong className="subscription-plan-price">{priceLabel}</strong>
+                              <span className="subscription-plan-limit">{plan.description}</span>
+                            </button>
+                          )
+                        })}
+                      </div>
+                      <div className="field-grid two">
                         <label>
                           <span>Status</span>
-                          <input value={profileQuiz.subscription_status || ''} onChange={(e) => setProfileQuiz((p) => ({ ...p, subscription_status: e.target.value }))} placeholder="Active" />
+                          <select
+                            value={profileQuiz.subscription_status || ''}
+                            onChange={(e) => setProfileQuiz((p) => ({ ...p, subscription_status: e.target.value }))}
+                          >
+                            <option value="">Select status</option>
+                            <option value="active">Active</option>
+                            <option value="trialing">Trialing</option>
+                            <option value="paused">Paused</option>
+                            <option value="canceled">Canceled</option>
+                          </select>
                         </label>
                         <label>
                           <span>Renewal Date</span>
@@ -2024,15 +2396,40 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                   )}
                   {profileSection === 'shipping' && (
                     <div style={{ marginTop: 4 }}>
-                      <p className="eyebrow" style={{ marginBottom: 8 }}>Shipping Address</p>
+                      <div className="shipping-address-head">
+                        <p className="eyebrow" style={{ marginBottom: 8 }}>Shipping Addresses</p>
+                        <div className="button-row" style={{ marginTop: 0 }}>
+                          <button className="ghost small" type="button" onClick={addShippingAddress}>Add Address</button>
+                          <button className="ghost small" type="button" onClick={removeActiveShippingAddress} disabled={shippingAddresses.length <= 1}>Remove Selected</button>
+                        </div>
+                      </div>
+                      <div className="shipping-address-tabs">
+                        {shippingAddresses.map((address, idx) => (
+                          <button
+                            key={address.id || `shipping-address-${idx}`}
+                            type="button"
+                            className={safeActiveShippingAddressIdx === idx ? 'nav-item active' : 'nav-item'}
+                            onClick={() => {
+                              setActiveShippingAddressIdx(idx)
+                              setAddressSuggestions([])
+                            }}
+                          >
+                            {address.label?.trim() || `Address ${idx + 1}`}
+                          </button>
+                        ))}
+                      </div>
                       <div className="field-grid">
                         <label>
+                          <span>Address Label</span>
+                          <input value={activeShippingAddress?.label || ''} onChange={(e) => updateActiveShippingAddress({ label: e.target.value })} placeholder="Home, Office, etc." />
+                        </label>
+                        <label>
                           <span>Full Name</span>
-                          <input value={profileQuiz.shipping_full_name || ''} onChange={(e) => setProfileQuiz((p) => ({ ...p, shipping_full_name: e.target.value }))} />
+                          <input value={activeShippingAddress?.full_name || ''} onChange={(e) => updateActiveShippingAddress({ full_name: e.target.value })} />
                         </label>
                         <label>
                           <span>Address Line 1</span>
-                          <input value={profileQuiz.shipping_address_line1 || ''} onChange={(e) => setProfileQuiz((p) => ({ ...p, shipping_address_line1: e.target.value }))} />
+                          <input value={activeShippingAddress?.address_line1 || ''} onChange={(e) => updateActiveShippingAddress({ address_line1: e.target.value })} />
                         </label>
                         {addressSuggestions.length > 0 && (
                           <div style={{ gridColumn: '1 / -1', border: '1px solid var(--line)', borderRadius: 10, background: 'var(--panel)' }}>
@@ -2043,14 +2440,13 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                                 className="ghost small"
                                 style={{ width: '100%', textAlign: 'left', borderRadius: 0, border: 'none', borderBottom: idx === addressSuggestions.length - 1 ? 'none' : '1px solid var(--line)' }}
                                 onClick={() => {
-                                  setProfileQuiz((p) => ({
-                                    ...p,
-                                    shipping_address_line1: s.street_address || p.shipping_address_line1,
-                                    shipping_city: s.city || p.shipping_city,
-                                    shipping_state: s.state || p.shipping_state,
-                                    shipping_postal_code: s.postal_code || p.shipping_postal_code,
-                                    shipping_country: p.shipping_country || 'US',
-                                  }))
+                                  updateActiveShippingAddress({
+                                    address_line1: s.street_address || activeShippingAddress?.address_line1 || '',
+                                    city: s.city || activeShippingAddress?.city || '',
+                                    state: s.state || activeShippingAddress?.state || '',
+                                    postal_code: s.postal_code || activeShippingAddress?.postal_code || '',
+                                    country: activeShippingAddress?.country || 'US',
+                                  })
                                   setAddressSuggestions([])
                                 }}
                               >
@@ -2061,23 +2457,23 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                         )}
                         <label>
                           <span>Address Line 2</span>
-                          <input value={profileQuiz.shipping_address_line2 || ''} onChange={(e) => setProfileQuiz((p) => ({ ...p, shipping_address_line2: e.target.value }))} />
+                          <input value={activeShippingAddress?.address_line2 || ''} onChange={(e) => updateActiveShippingAddress({ address_line2: e.target.value })} />
                         </label>
                         <label>
                           <span>City</span>
-                          <input value={profileQuiz.shipping_city || ''} onChange={(e) => setProfileQuiz((p) => ({ ...p, shipping_city: e.target.value }))} />
+                          <input value={activeShippingAddress?.city || ''} onChange={(e) => updateActiveShippingAddress({ city: e.target.value })} />
                         </label>
                         <label>
                           <span>State</span>
-                          <input value={profileQuiz.shipping_state || ''} onChange={(e) => setProfileQuiz((p) => ({ ...p, shipping_state: e.target.value }))} />
+                          <input value={activeShippingAddress?.state || ''} onChange={(e) => updateActiveShippingAddress({ state: e.target.value })} />
                         </label>
                         <label>
                           <span>Postal Code</span>
-                          <input value={profileQuiz.shipping_postal_code || ''} onChange={(e) => setProfileQuiz((p) => ({ ...p, shipping_postal_code: e.target.value }))} />
+                          <input value={activeShippingAddress?.postal_code || ''} onChange={(e) => updateActiveShippingAddress({ postal_code: e.target.value })} />
                         </label>
                         <label>
                           <span>Country</span>
-                          <input value={profileQuiz.shipping_country || ''} onChange={(e) => setProfileQuiz((p) => ({ ...p, shipping_country: e.target.value }))} />
+                          <input value={activeShippingAddress?.country || ''} onChange={(e) => updateActiveShippingAddress({ country: e.target.value })} />
                         </label>
                       </div>
                     </div>
@@ -2098,8 +2494,30 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                   onClick={async () => {
                     try {
                       const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
+                      const normalizedAddresses = normalizeShippingAddresses(profileQuiz.shipping_addresses, profileQuiz)
+                      const primaryAddress = normalizedAddresses[0] || emptyShippingAddress()
                       const payload = {
                         ...profileQuiz,
+                        subscription_plan: selectedSubscriptionPlanId,
+                        subscription_billing_cycle: selectedBillingCycle,
+                        shipping_addresses: normalizedAddresses.map((address, idx) => ({
+                          label: address.label || null,
+                          full_name: address.full_name || null,
+                          address_line1: address.address_line1 || null,
+                          address_line2: address.address_line2 || null,
+                          city: address.city || null,
+                          state: address.state || null,
+                          postal_code: address.postal_code || null,
+                          country: address.country || null,
+                          is_default: idx === 0,
+                        })),
+                        shipping_full_name: primaryAddress.full_name || null,
+                        shipping_address_line1: primaryAddress.address_line1 || null,
+                        shipping_address_line2: primaryAddress.address_line2 || null,
+                        shipping_city: primaryAddress.city || null,
+                        shipping_state: primaryAddress.state || null,
+                        shipping_postal_code: primaryAddress.postal_code || null,
+                        shipping_country: primaryAddress.country || null,
                         payment_methods: paymentMethods
                           .map((m) => (typeof m?.label === 'string' ? m.label.trim() : ''))
                           .filter(Boolean),
@@ -2110,6 +2528,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                         bearerToken,
                         payload,
                       })
+                      const savedShippingAddresses = normalizeShippingAddresses(saved?.shipping_addresses, saved)
                       setProfileQuiz({
                         gender: saved?.gender || '',
                         tops_size: saved?.tops_size || '',
@@ -2117,18 +2536,21 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                         bottoms_size: saved?.bottoms_size || '',
                         shoes_size: saved?.shoes_size || '',
                         category_preferences: Array.isArray(saved?.category_preferences) ? saved.category_preferences : [],
-                        shipping_full_name: saved?.shipping_full_name || '',
-                        shipping_address_line1: saved?.shipping_address_line1 || '',
-                        shipping_address_line2: saved?.shipping_address_line2 || '',
-                        shipping_city: saved?.shipping_city || '',
-                        shipping_state: saved?.shipping_state || '',
-                        shipping_postal_code: saved?.shipping_postal_code || '',
-                        shipping_country: saved?.shipping_country || '',
-                        subscription_plan: saved?.subscription_plan || '',
+                        shipping_full_name: savedShippingAddresses[0]?.full_name || '',
+                        shipping_address_line1: savedShippingAddresses[0]?.address_line1 || '',
+                        shipping_address_line2: savedShippingAddresses[0]?.address_line2 || '',
+                        shipping_city: savedShippingAddresses[0]?.city || '',
+                        shipping_state: savedShippingAddresses[0]?.state || '',
+                        shipping_postal_code: savedShippingAddresses[0]?.postal_code || '',
+                        shipping_country: savedShippingAddresses[0]?.country || '',
+                        shipping_addresses: savedShippingAddresses,
+                        subscription_plan: normalizeSubscriptionPlanId(saved?.subscription_plan),
+                        subscription_billing_cycle: normalizeBillingCycle(saved?.subscription_billing_cycle),
                         subscription_status: saved?.subscription_status || '',
                         subscription_renewal_date: saved?.subscription_renewal_date || '',
                         payment_methods: Array.isArray(saved?.payment_methods) ? saved.payment_methods : [],
                       })
+                      setActiveShippingAddressIdx(0)
                       setProfileSaveMsg('Profile saved.')
                     } catch (err) {
                       setProfileSaveMsg(err.message || 'Failed to save profile.')
@@ -2149,6 +2571,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
           <button className={activeTab === 'portfolio' ? 'nav-item active' : 'nav-item'} onClick={() => setActiveTab('portfolio')}>My Closet ({myListings.length})</button>
           <button className={activeTab === 'inbox' ? 'nav-item active' : 'nav-item'} onClick={() => setActiveTab('inbox')}>Trade Inbox ({incomingOffers.length})</button>
           <button className={activeTab === 'market' ? 'nav-item active' : 'nav-item'} onClick={() => setActiveTab('market')}>Marketplace ({marketplaceNavCount})</button>
+          <button className={activeTab === 'market_new' ? 'nav-item active' : 'nav-item'} onClick={() => setActiveTab('market_new')}>New Marketplace ({marketplaceNavCount})</button>
           <button className={activeTab === 'admin' ? 'nav-item active' : 'nav-item'} onClick={() => setActiveTab('admin')}>Admin</button>
           <div className="sidebar-card"><h3>Trade Targeting</h3><p>Use the AI valuation as your anchor, then tune your target value to discover comparable listings.</p></div>
           <div className="sidebar-card sidebar-card-dark">
@@ -2442,7 +2865,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
               </div>
               {filteredClosetListings.length === 0 ? (
                 <div className="empty-state"><h3>No listings yet</h3><p>Analyze an item and publish your first listing to start selling or trading.</p><button className="primary" onClick={() => setActiveTab('upload')}>Create first listing</button></div>
-              ) : <div className="listing-grid">{filteredClosetListings.map((item) => <ListingCard key={item.id} item={item} own onEditDraft={openEditListingModal} />)}</div>}
+              ) : <div className="listing-grid market-editorial-grid">{filteredClosetListings.map((item) => <ListingCard key={item.id} item={item} own onEditDraft={openEditListingModal} editorialStyle />)}</div>}
             </section>
           )}
 
@@ -2461,7 +2884,15 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                 <div className="empty-state"><h3>No offers</h3><p>No incoming trade offers for this filter yet.</p></div>
               ) : (
                 <div style={{ display: 'grid', gap: 10 }}>
-                  {incomingOffers.map((offer) => (
+                  {incomingOffers.map((offer) => {
+                    const actorSubject = resolveOfferActorSubject(offer)
+                    const isSender = actorSubject && actorSubject === offer.from_subject
+                    const actorAccepted = isSender ? Boolean(offer.accepted_by_from) : Boolean(offer.accepted_by_to)
+                    const bothAccepted = Boolean(offer.accepted_by_from) && Boolean(offer.accepted_by_to)
+                    const selectedAddressId = offerReceiveAddressById[offer.offer_id] || shippingAddresses[0]?.id || ''
+                    const selectedAddress = shippingAddresses.find((a) => a.id === selectedAddressId) || shippingAddresses[0] || null
+                    const quote = shippingQuoteByOffer[offer.offer_id]
+                    return (
                     <div key={offer.offer_id} style={{ border: '1px solid rgba(18,26,36,0.12)', borderRadius: 12, padding: 12, background: '#f8fafc' }}>
                       <p style={{ margin: 0 }}>
                         <strong>{offer.from_subject}</strong> wants to trade
@@ -2499,11 +2930,75 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                       {offer.message ? <p className="tiny-note" style={{ marginTop: 4 }}>Message: {offer.message}</p> : null}
                       {offer.status === 'pending' && (
                         <div className="button-row" style={{ marginTop: 8 }}>
-                          <button className="primary" type="button" onClick={() => respondToOffer(offer.offer_id, 'accepted')}>Accept Trade</button>
-                          <button className="ghost" type="button" onClick={() => respondToOffer(offer.offer_id, 'declined')}>Decline</button>
+                          {!actorAccepted ? (
+                            <>
+                              <label style={{ minWidth: 260 }}>
+                                <span>Receive At Address</span>
+                                <select
+                                  value={selectedAddressId}
+                                  onChange={(e) => setOfferReceiveAddressById((prev) => ({ ...prev, [offer.offer_id]: e.target.value }))}
+                                >
+                                  {shippingAddresses.map((addr, idx) => (
+                                    <option key={addr.id} value={addr.id}>{addr.label?.trim() || `Address ${idx + 1}`} - {addr.city || 'City'} {addr.state || ''}</option>
+                                  ))}
+                                </select>
+                              </label>
+                              <button
+                                className="primary"
+                                type="button"
+                                onClick={() => respondToOffer(
+                                  offer.offer_id,
+                                  'accepted',
+                                  selectedAddress ? {
+                                    label: selectedAddress.label || null,
+                                    full_name: selectedAddress.full_name || null,
+                                    address_line1: selectedAddress.address_line1 || null,
+                                    address_line2: selectedAddress.address_line2 || null,
+                                    city: selectedAddress.city || null,
+                                    state: selectedAddress.state || null,
+                                    postal_code: selectedAddress.postal_code || null,
+                                    country: selectedAddress.country || null,
+                                    is_default: false,
+                                  } : null,
+                                )}
+                              >
+                                Accept Trade
+                              </button>
+                              <button className="ghost" type="button" onClick={() => respondToOffer(offer.offer_id, 'declined')}>Decline</button>
+                            </>
+                          ) : (
+                            <span className="tiny-note">You accepted this trade. Waiting for the other user to accept.</span>
+                          )}
                         </div>
                       )}
-                      {offer.status === 'accepted' && (
+                      {offer.status !== 'declined' && offer.status !== 'cancelled' && (
+                        <div className="button-row" style={{ marginTop: 8 }}>
+                          <button
+                            className="ghost"
+                            type="button"
+                            onClick={async () => {
+                              try {
+                                const q = await loadShippingQuoteForOffer(offer.offer_id)
+                                if (q?.amount) {
+                                  setSavedListingNotice(`Shipping cost: ${q.currency || 'USD'} ${q.amount} (${q.service_level || 'Service'})`)
+                                } else {
+                                  setSavedListingNotice('Unable to fetch shipping quote.')
+                                }
+                              } catch (err) {
+                                setSavedListingNotice(err.message || 'Failed to load shipping quote.')
+                              }
+                            }}
+                          >
+                            Get Shipping Cost
+                          </button>
+                        </div>
+                      )}
+                      {quote?.amount ? (
+                        <p className="tiny-note" style={{ marginTop: 8 }}>
+                          Quote: {quote.currency || 'USD'} {quote.amount} • {quote.carrier || 'USPS'} {quote.service_level || ''}
+                        </p>
+                      ) : null}
+                      {(offer.status === 'accepted' || bothAccepted) && (
                         <div style={{ marginTop: 8 }}>
                           <div className="button-row">
                             <button
@@ -2512,13 +3007,14 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                               onClick={async () => {
                                 try {
                                   await createShippingLabelsForOffer(offer.offer_id)
-                                  setSavedListingNotice('Shipping labels created.')
+                                  setSavedListingNotice('Shipping label created and emailed when configured.')
                                 } catch (err) {
                                   setSavedListingNotice(err.message || 'Failed to create shipping labels.')
                                 }
                               }}
+                              disabled={!quote?.rate_id}
                             >
-                              Create Shipping Labels
+                              Confirm & Create Label
                             </button>
                             <button
                               className="ghost"
@@ -2554,7 +3050,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                         </div>
                       )}
                     </div>
-                  ))}
+                  )})}
                 </div>
               )}
             </section>
@@ -2564,35 +3060,199 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
             <section className="panel">
               <div className="panel-header">
                 <div><p className="eyebrow">Marketplace</p><h2>Find trade opportunities near your value target</h2></div>
-                <div className="market-controls"><input value={marketSearch} onChange={(e) => setMarketSearch(e.target.value)} placeholder="Search brand, category, city, style..." /><label className="toggle"><input type="checkbox" checked={tradeOnly} onChange={(e) => setTradeOnly(e.target.checked)} /><span>Trade only</span></label></div>
-              </div>
-              <div className="market-layout">
-                <div className="listing-grid market-listing-grid">
-                  {filteredListings.map((item) => {
-                    const baseValue = Number(item.estimatedValue || 0)
-                    const tolerance = Math.max(50, baseValue * 0.2)
-                    const similarCount = allListings
-                      .filter((candidate) => candidate.id !== item.id)
-                      .filter((candidate) => (candidate.owner || '') !== (item.owner || ''))
-                      .filter((candidate) => Math.abs(Number(candidate.estimatedValue || 0) - baseValue) <= tolerance)
-                      .length
-                    const myTradeCandidates = myListings
-                      .filter((mine) => String(mine.status || '').toLowerCase() === 'active')
-                      .filter((mine) => Math.abs(Number(mine.estimatedValue || 0) - baseValue) <= Math.max(50, baseValue * 0.3))
-                    return (
-                      <ListingCard
-                        key={item.id}
-                        item={item}
-                        marketplaceCompact
-                        onOpenTrade={openTradeComposer}
-                        myTradeCandidates={myTradeCandidates}
-                        onOpenMatches={openMarketMatches}
-                        matchesCount={similarCount}
-                      />
-                    )
-                  })}
+                <div className="market-controls">
+                  <input value={marketSearch} onChange={(e) => setMarketSearch(e.target.value)} placeholder="Search brand, category, city, style..." />
+                  <label className="toggle"><input type="checkbox" checked={tradeOnly} onChange={(e) => setTradeOnly(e.target.checked)} /><span>Trade only</span></label>
+                  {marketMagazineIndex !== null ? (
+                    <button className="ghost small" type="button" onClick={() => setMarketMagazineIndex(null)}>Back to Regular View</button>
+                  ) : null}
                 </div>
               </div>
+              <div className="market-layout">
+                {marketMagazineIndex !== null && filteredListings[marketMagazineIndex] ? (
+                  <div className="market-magazine-shell">
+                    <button className="market-magazine-nav" type="button" onClick={flipMarketplaceMagazinePrev} aria-label="Previous listing page">&#8249;</button>
+                    <div className="market-magazine-viewport">
+                      {(() => {
+                        const item = filteredListings[marketMagazineIndex]
+                        const similarMatches = Array.isArray(item.matches) ? item.matches : []
+                        const matchPreviewImages = similarMatches
+                          .map((candidate) => getListingGallery(candidate)[0])
+                          .filter(Boolean)
+                        const heroGallery = getListingGallery(item)
+                        const hero = heroGallery[0]
+                        const own = String(item.owner || '').trim().toLowerCase() === String(session?.name || '').trim().toLowerCase()
+                        return (
+                          <article className="market-magazine-page" key={`market-page-${item.id}-${marketMagazineIndex}`}>
+                            <div className="market-magazine-feature">
+                              <div className="market-magazine-top">
+                                <div className="market-magazine-copy">
+                                  <p className="eyebrow">Marketplace</p>
+                                  <h3 className="editorial-title">{item.title || 'Untitled listing'}</h3>
+                                  <p className="editorial-meta">
+                                    EST. {money(item.estimatedValue)} · {String(item.brand || 'Unknown').toUpperCase()} · {String(item.condition || 'Unknown').toUpperCase()} · {String(item.city || 'Unknown').toUpperCase()}
+                                  </p>
+                                </div>
+                              </div>
+                              <div className="market-magazine-media-row">
+                                <div className="market-magazine-image-wrap">
+                                  {heroGallery.length > 1 ? (
+                                    <div className="market-magazine-image-grid" role="img" aria-label={`${item.title || 'Listing'} images`}>
+                                      {heroGallery.map((src, idx) => (
+                                        <img key={`${item.id}-hero-${idx}`} src={src} alt={`${item.title || 'Listing'} image ${idx + 1}`} />
+                                      ))}
+                                    </div>
+                                  ) : hero ? (
+                                    <img src={hero} alt={item.title || 'Listing'} />
+                                  ) : (
+                                    <div className="listing-image-fallback">Image unavailable</div>
+                                  )}
+                                </div>
+                                <div className="market-magazine-matches">
+                                  <button
+                                    className="editorial-match-btn"
+                                    type="button"
+                                    onClick={() => openMarketMatches(item)}
+                                    disabled={own}
+                                  >
+                                    {own ? 'YOUR LISTING' : 'MATCHES'}
+                                  </button>
+                                  <div className="market-magazine-match-strip" aria-hidden="true">
+                                    {!own && matchPreviewImages.length > 0 ? (
+                                      matchPreviewImages.slice(0, 3).map((src, idx) => (
+                                        <img key={`${item.id}-market-match-${idx}`} src={src} alt="" className="market-magazine-match-thumb" />
+                                      ))
+                                    ) : (
+                                      <span className="match-thumb-empty">{own ? 'N/A' : 'NO MATCHES'}</span>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          </article>
+                        )
+                      })()}
+                    </div>
+                    <button className="market-magazine-nav" type="button" onClick={flipMarketplaceMagazineNext} aria-label="Next listing page">&#8250;</button>
+                    <div className="market-magazine-meta">
+                      <span>PAGE {marketMagazineIndex + 1} / {filteredListings.length}</span>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="listing-grid market-listing-grid market-editorial-grid">
+                    {filteredListings.map((item) => {
+                      const baseValue = Number(item.estimatedValue || 0)
+                      const similarMatches = Array.isArray(item.matches) ? item.matches : []
+                      const matchPreviewImages = similarMatches
+                        .map((candidate) => getListingGallery(candidate)[0])
+                        .filter(Boolean)
+                      const myTradeCandidates = myListings
+                        .filter((mine) => String(mine.status || '').toLowerCase() === 'active')
+                        .filter((mine) => Math.abs(Number(mine.estimatedValue || 0) - baseValue) <= Math.max(50, baseValue * 0.3))
+                      return (
+                        <ListingCard
+                          key={item.id}
+                          item={item}
+                          marketplaceCompact
+                          onOpenTrade={openTradeComposer}
+                          myTradeCandidates={myTradeCandidates}
+                          onOpenMatches={openMarketMatches}
+                          matchPreviewImages={matchPreviewImages}
+                          onOpenMagazinePage={openMarketplaceMagazine}
+                        />
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+            </section>
+          )}
+
+          {activeTab === 'market_new' && (
+            <section className="panel">
+              <div className="panel-header">
+                <div><p className="eyebrow">New Marketplace</p><h2>Magazine page-flip experience for comparison</h2></div>
+                <div className="market-controls"><input value={marketSearch} onChange={(e) => setMarketSearch(e.target.value)} placeholder="Search brand, category, city, style..." /><label className="toggle"><input type="checkbox" checked={tradeOnly} onChange={(e) => setTradeOnly(e.target.checked)} /><span>Trade only</span></label></div>
+              </div>
+              {filteredListings.length === 0 ? (
+                <div className="empty-state">
+                  <h3>No listings match this filter</h3>
+                  <p>Try broadening your search terms or turn off trade-only mode.</p>
+                </div>
+              ) : (
+                <div className="market-magazine-shell">
+                  <button className="market-magazine-nav" type="button" onClick={flipNewMarketplacePrev} aria-label="Previous listing page">&#8249;</button>
+                  <div className="market-magazine-viewport">
+                    <div className="market-magazine-stack" aria-hidden="true">
+                      <span />
+                      <span />
+                    </div>
+                    {(() => {
+                      const item = filteredListings[newMarketIndex]
+                      const similarMatches = Array.isArray(item.matches) ? item.matches : []
+                      const matchPreviewImages = similarMatches
+                        .map((candidate) => getListingGallery(candidate)[0])
+                        .filter(Boolean)
+                      const heroGallery = getListingGallery(item)
+                      const hero = heroGallery[0]
+                      const own = String(item.owner || '').trim().toLowerCase() === String(session?.name || '').trim().toLowerCase()
+                      return (
+                        <article className={`market-magazine-page ${newMarketIsFlipping ? `is-flipping ${newMarketFlipDir}` : ''}`} key={`new-market-page-${item.id}-${newMarketIndex}`}>
+                          <div className="market-magazine-feature">
+                            <div className="market-magazine-top">
+                              <div className="market-magazine-copy">
+                                <p className="eyebrow">Marketplace</p>
+                                <h3 className="editorial-title">{item.title || 'Untitled listing'}</h3>
+                                <p className="editorial-meta">
+                                  EST. {money(item.estimatedValue)} · {String(item.brand || 'Unknown').toUpperCase()} · {String(item.condition || 'Unknown').toUpperCase()} · {String(item.city || 'Unknown').toUpperCase()}
+                                </p>
+                              </div>
+                            </div>
+                            <div className="market-magazine-media-row">
+                              <div className="market-magazine-image-wrap">
+                                {heroGallery.length > 1 ? (
+                                  <div className="market-magazine-image-grid" role="img" aria-label={`${item.title || 'Listing'} images`}>
+                                    {heroGallery.map((src, idx) => (
+                                      <img key={`${item.id}-hero-${idx}`} src={src} alt={`${item.title || 'Listing'} image ${idx + 1}`} />
+                                    ))}
+                                  </div>
+                                ) : hero ? (
+                                  <img src={hero} alt={item.title || 'Listing'} />
+                                ) : (
+                                  <div className="listing-image-fallback">Image unavailable</div>
+                                )}
+                              </div>
+                              <div className="market-magazine-matches">
+                                <button
+                                  className="editorial-match-btn"
+                                  type="button"
+                                  onClick={() => openMarketMatches(item)}
+                                  disabled={own}
+                                >
+                                  {own ? 'YOUR LISTING' : 'MATCHES'}
+                                </button>
+                                <div className="market-magazine-match-strip" aria-hidden="true">
+                                  {!own && matchPreviewImages.length > 0 ? (
+                                    matchPreviewImages.slice(0, 3).map((src, idx) => (
+                                      <img key={`${item.id}-new-market-match-${idx}`} src={src} alt="" className="market-magazine-match-thumb" />
+                                    ))
+                                  ) : (
+                                    <span className="match-thumb-empty">{own ? 'N/A' : 'NO MATCHES'}</span>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        </article>
+                      )
+                    })()}
+                  </div>
+                  <button className="market-magazine-nav" type="button" onClick={flipNewMarketplaceNext} aria-label="Next listing page">&#8250;</button>
+                  <div className="market-magazine-meta">
+                    <span>PAGE {newMarketIndex + 1} / {filteredListings.length}</span>
+                  </div>
+                </div>
+              )}
             </section>
           )}
 
@@ -2617,6 +3277,13 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                 <div className="trade-page-grid">
                   <article className="trade-page-card">
                     <p className="eyebrow">Target Listing</p>
+                    {getListingGallery(tradeComposerTarget)[0] ? (
+                      <img
+                        src={getListingGallery(tradeComposerTarget)[0]}
+                        alt={tradeComposerTarget.title || 'Target listing'}
+                        className="trade-target-image"
+                      />
+                    ) : null}
                     <h3>{tradeComposerTarget.title}</h3>
                     <p className="tiny-note">{tradeComposerTarget.brand || 'Unknown brand'} • {tradeComposerTarget.condition || 'Unknown condition'} • {tradeComposerTarget.city || 'Unknown city'}</p>
                     <div className="value-chip">{money(tradeComposerTarget.estimatedValue)}</div>
@@ -2628,15 +3295,29 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                   <article className="trade-page-card">
                     <p className="eyebrow">Your Listings To Offer</p>
                     <div className="trade-offer-list">
-                      {myListings.filter((x) => String(x.status || '').toLowerCase() === 'active').map((x) => {
+                      {tradeOfferCandidates.map((x) => {
                         const checked = tradeOfferListingIds.includes(x.id)
+                        const thumb = getListingGallery(x)[0] || null
                         return (
                           <div key={x.id} className="trade-offer-row">
                             <input type="checkbox" className="trade-offer-checkbox" checked={checked} onChange={(e) => setTradeOfferListingIds((prev) => (e.target.checked ? [...prev, x.id] : prev.filter((id) => id !== x.id)))} />
-                            <span className="trade-offer-row-text">{x.title} ({money(x.estimatedValue)})</span>
+                            {thumb ? (
+                              <img src={thumb} alt={x.title || 'Listing'} className="trade-offer-thumb" />
+                            ) : (
+                              <div className="trade-offer-thumb trade-offer-thumb-empty">No image</div>
+                            )}
+                            <span className="trade-offer-row-text">
+                              <strong>{x.title}</strong>
+                              <small>{money(x.estimatedValue)}</small>
+                            </span>
                           </div>
                         )
                       })}
+                      {tradeOfferCandidates.length === 0 && (
+                        <p className="tiny-note" style={{ margin: 0 }}>
+                          No eligible listings found. Offer candidates must match brand and be within price band.
+                        </p>
+                      )}
                     </div>
                     <p className="tiny-note" style={{ marginTop: 10 }}>
                       Offered total: {money(offeredTotalValue)} • Target: {money(composerTargetValue)}
@@ -2717,14 +3398,14 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
               <div><span>Condition</span><strong>{tradeDetailListing.condition || 'n/a'}</strong></div>
               <div><span>Status</span><strong>{tradeDetailListing.status || 'n/a'}</strong></div>
             </div>
-            <p className="listing-notes" style={{ marginTop: 12 }}>{tradeDetailListing.description || tradeDetailListing.wants || 'No additional notes.'}</p>
+            <p className="listing-notes" style={{ marginTop: 12 }}>{getListingDescription(tradeDetailListing) || 'No additional notes.'}</p>
           </div>
         </div>
       )}
 
       {marketMatchesTarget && (
         <div className="market-matches-backdrop" onClick={() => setMarketMatchesTargetId(null)}>
-          <aside className="market-matches-drawer" onClick={(e) => e.stopPropagation()}>
+          <aside className={`market-matches-drawer ${similarListingsForTarget.length === 1 ? 'single-match' : ''}`} onClick={(e) => e.stopPropagation()}>
             <div className="market-matches-head">
               <div>
                 <p className="eyebrow">Similar Matches</p>
@@ -2735,7 +3416,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
             {similarListingsForTarget.length === 0 ? (
               <p className="tiny-note">No close value matches found right now.</p>
             ) : (
-              <div className="market-matches-grid">
+              <div className={`market-matches-grid ${similarListingsForTarget.length === 1 ? 'single' : ''}`}>
                 {similarListingsForTarget.map((sim) => (
                   <article key={sim.id} className="market-match-card">
                     {(Array.isArray(sim.images) && sim.images.length > 0 ? sim.images[0] : sim.image) ? (
@@ -2745,6 +3426,13 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                       />
                     ) : (
                       <div className="market-match-empty">No image</div>
+                    )}
+                    {similarListingsForTarget.length === 1 && Array.isArray(sim.images) && sim.images.length > 1 && (
+                      <div className="market-match-gallery-row">
+                        {sim.images.slice(1, 5).map((url, idx) => (
+                          <img key={`${sim.id}-extra-${idx}`} src={url} alt="" />
+                        ))}
+                      </div>
                     )}
                     <div className="market-match-body">
                       <strong>{money(sim.estimatedValue)}</strong>
@@ -2756,8 +3444,9 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                           className="ghost small"
                           type="button"
                           onClick={() => {
+                            const target = marketMatchesTarget
                             setMarketMatchesTargetId(null)
-                            openTradeComposer(sim)
+                            if (target) openTradeComposer(target, sim.id)
                           }}
                         >
                           Start Trade
@@ -3085,23 +3774,11 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   )
 }
 
-function ListingCard({ item, own = false, onEditDraft = null, marketplaceCompact = false, onOpenTrade = null, myTradeCandidates = [], onOpenMatches = null, matchesCount = 0 }) {
+function ListingCard({ item, own = false, onEditDraft = null, marketplaceCompact = false, onOpenTrade = null, myTradeCandidates = [], onOpenMatches = null, matchPreviewImages = [], editorialStyle = false, onOpenMagazinePage = null }) {
   const gallery = Array.isArray(item.images) && item.images.length > 0
     ? item.images
     : [item.image].filter(Boolean)
-  const [activeImageIdx, setActiveImageIdx] = useState(0)
-  const safeIndex = Math.min(activeImageIdx, Math.max(gallery.length - 1, 0))
-  const imageSrc = gallery[safeIndex] || null
-
-  function showPrev() {
-    if (gallery.length <= 1) return
-    setActiveImageIdx((prev) => (prev - 1 + gallery.length) % gallery.length)
-  }
-
-  function showNext() {
-    if (gallery.length <= 1) return
-    setActiveImageIdx((prev) => (prev + 1) % gallery.length)
-  }
+  const imageSrc = gallery[0] || null
 
   const statusLabel = item.status || 'Review'
   const statusClass = `status-${String(statusLabel).toLowerCase().replace(/\s+/g, '')}`
@@ -3111,79 +3788,152 @@ function ListingCard({ item, own = false, onEditDraft = null, marketplaceCompact
   const brandLabel = String(item.brand || '').trim() || 'Unknown brand'
   const conditionLabel = String(item.condition || '').trim() || 'Unknown condition'
   const cityLabel = String(item.city || '').trim() || 'Unknown city'
-  const tradeDisabledReason = !own && myTradeCandidates.length < 1
-    ? 'Add an active listing in a similar value range to start a trade.'
-    : ''
-  const ctaDisabled = own ? editDisabled : Boolean(tradeDisabledReason)
-  const ctaTitle = own
-    ? (editDisabled ? 'Cannot edit while analysis is running' : undefined)
-    : (tradeDisabledReason || undefined)
+  const isEditorial = editorialStyle || (marketplaceCompact && !own)
+  const isMagazineClickable = typeof onOpenMagazinePage === 'function'
+
+  function openMagazinePage() {
+    if (!isMagazineClickable) return
+    onOpenMagazinePage(item)
+  }
+
   return (
     <>
-      <article className="listing-card">
-        <div className="image-wrap">
-        {imageSrc ? (
+      <article
+        className={`listing-card ${isEditorial ? 'market-editorial' : ''} ${isMagazineClickable ? 'is-clickable' : ''}`}
+        onClick={isMagazineClickable ? openMagazinePage : undefined}
+        role={isMagazineClickable ? 'button' : undefined}
+        tabIndex={isMagazineClickable ? 0 : undefined}
+        onKeyDown={isMagazineClickable ? (e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault()
+            openMagazinePage()
+          }
+        } : undefined}
+      >
+        <div className={`image-wrap ${gallery.length > 1 ? 'multi-images' : ''}`}>
+        {gallery.length > 1 ? (
+          <div className="listing-image-grid" role="img" aria-label={`${item.title || 'Listing'} images`}>
+            {gallery.map((src, idx) => (
+              <img key={`${item.id}-gallery-${idx}`} src={src} alt={`${item.title || 'Listing'} image ${idx + 1}`} />
+            ))}
+          </div>
+        ) : imageSrc ? (
           <img src={imageSrc} alt={item.title} />
         ) : (
-          <div style={{ width: '100%', height: '100%', display: 'grid', placeItems: 'center', color: '#666', background: '#f2f2f2', fontSize: 13 }}>
-            No image
+          <div className="listing-image-fallback" aria-label="No image available">
+            Image unavailable
           </div>
         )}
-        <span className={`mode-badge ${badgeClass}`}>{badgeLabel}</span>
-        {gallery.length > 1 && (
-          <div style={{ position: 'absolute', left: 8, right: 8, bottom: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <button className="ghost small" type="button" onClick={showPrev}>‹</button>
-            <span style={{ fontSize: 12, color: '#fff', background: 'rgba(0,0,0,.55)', borderRadius: 999, padding: '2px 8px' }}>{safeIndex + 1}/{gallery.length}</span>
-            <button className="ghost small" type="button" onClick={showNext}>›</button>
-          </div>
-        )}
+        {own && !isEditorial && <span className={`mode-badge ${badgeClass}`}>{badgeLabel}</span>}
       </div>
       <div className="listing-body">
-        <div className="listing-head">
-          <h3>{item.title}</h3>
-          <div className="value-chip">{money(item.estimatedValue)}</div>
-        </div>
-        <div className="listing-scan-row">
-          <span>{brandLabel}</span>
-          <span>{conditionLabel}</span>
-          <span>{cityLabel}</span>
-        </div>
-        <p className="listing-notes">{getListingDescription(item) || 'No description provided.'}</p>
-        {!marketplaceCompact && <div className="tag-row">{(item.tags || []).slice(0, 4).map((tag) => <span key={tag}>{tag}</span>)}</div>}
-        {(!marketplaceCompact || !own) && (
-          <div className="listing-footer">
-            <div className="listing-footer-meta">
-              <small>{own ? 'Your listing' : `Listed by ${item.owner}`}</small>
-              {!own && tradeDisabledReason ? <span className="inline-disabled-reason">{tradeDisabledReason}</span> : null}
+        {isEditorial ? (
+          <>
+            <h3 className="editorial-title">{item.title || 'Untitled listing'}</h3>
+            <p className="editorial-byline">BY {String(item.owner || 'Unknown seller').toUpperCase()}</p>
+            <p className="editorial-meta">
+              EST. {money(item.estimatedValue)} · {brandLabel.toUpperCase()} · {conditionLabel.toUpperCase()} · {cityLabel.toUpperCase()}
+            </p>
+            <div className="listing-footer editorial-footer">
+              <div className="listing-actions">
+                {!own && (
+                  <button
+                    className="editorial-match-btn"
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onOpenMatches?.(item)
+                    }}
+                    title="View matched items from your closet"
+                  >
+                    <span>MATCHES</span>
+                    <span className="match-thumb-strip" aria-hidden="true">
+                      {matchPreviewImages.length > 0 ? (
+                        matchPreviewImages.slice(0, 3).map((src, idx) => (
+                          <img key={`${item.id}-match-${idx}`} src={src} alt="" className="match-thumb" />
+                        ))
+                      ) : (
+                        <span className="match-thumb-empty">NO MATCHES</span>
+                      )}
+                    </span>
+                  </button>
+                )}
+                {own && (
+                  <button
+                    className="editorial-match-btn"
+                    type="button"
+                    disabled={editDisabled}
+                    title={editDisabled ? 'Cannot edit while analysis is running' : undefined}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      if (!editDisabled) onEditDraft?.(item)
+                    }}
+                  >
+                    <span>EDIT DRAFT</span>
+                  </button>
+                )}
+              </div>
             </div>
-            <div className="listing-actions">
-              {!own && (
-                <button
-                  className="ghost small"
-                  type="button"
-                  onClick={() => onOpenMatches?.(item)}
-                >
-                  Matches ({matchesCount})
-                </button>
-              )}
-              <button
-                className="ghost small"
-                type="button"
-                disabled={ctaDisabled}
-                title={ctaTitle}
-                onClick={() => {
-                  if (own) {
-                    if (!editDisabled) onEditDraft?.(item)
-                    return
-                  }
-                  if (tradeDisabledReason) return
-                  onOpenTrade?.(item)
-                }}
-              >
-                {own ? 'Edit draft' : 'Start Trade'}
-              </button>
+          </>
+        ) : (
+          <>
+            <div className="listing-head">
+              <h3>{item.title}</h3>
+              <div className="value-chip">{money(item.estimatedValue)}</div>
             </div>
-          </div>
+            <div className="listing-scan-row">
+              <span>{brandLabel}</span>
+              <span>{conditionLabel}</span>
+              <span>{cityLabel}</span>
+            </div>
+            <p className="listing-notes listing-notes-clamp">{getListingDescription(item) || 'No description provided.'}</p>
+            {!marketplaceCompact && <div className="tag-row">{(item.tags || []).slice(0, 4).map((tag) => <span key={tag}>{tag}</span>)}</div>}
+            {(!marketplaceCompact || !own) && (
+              <div className="listing-footer">
+                <div className="listing-footer-meta">
+                  <small>{own ? 'Your listing' : `Listed by ${item.owner}`}</small>
+                </div>
+                <div className="listing-actions">
+                  {!own && (
+                    <button
+                      className="ghost small"
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        onOpenMatches?.(item)
+                      }}
+                      title="View matched items from your closet"
+                    >
+                      <span>Matches</span>
+                      <span className="match-thumb-strip" aria-hidden="true">
+                        {matchPreviewImages.length > 0 ? (
+                          matchPreviewImages.slice(0, 3).map((src, idx) => (
+                            <img key={`${item.id}-match-${idx}`} src={src} alt="" className="match-thumb" />
+                          ))
+                        ) : (
+                          <span className="match-thumb-empty">No matches</span>
+                        )}
+                      </span>
+                    </button>
+                  )}
+                  {own && (
+                    <button
+                      className="ghost small"
+                      type="button"
+                      disabled={editDisabled}
+                      title={editDisabled ? 'Cannot edit while analysis is running' : undefined}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        if (!editDisabled) onEditDraft?.(item)
+                      }}
+                    >
+                      Edit draft
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+          </>
         )}
       </div>
       </article>

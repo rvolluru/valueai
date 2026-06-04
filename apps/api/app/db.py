@@ -134,7 +134,9 @@ class Database:
               shipping_country TEXT,
               shipping_email TEXT,
               shipping_phone TEXT,
+              shipping_addresses_json TEXT NOT NULL DEFAULT '[]',
               subscription_plan TEXT,
+              subscription_billing_cycle TEXT,
               subscription_status TEXT,
               subscription_renewal_date TEXT,
               payment_methods_json TEXT NOT NULL DEFAULT '[]',
@@ -151,6 +153,10 @@ class Database:
               from_subject TEXT NOT NULL,
               to_subject TEXT NOT NULL,
               status TEXT NOT NULL DEFAULT 'pending',
+              accepted_by_from INTEGER NOT NULL DEFAULT 0,
+              accepted_by_to INTEGER NOT NULL DEFAULT 0,
+              from_receive_address_json TEXT,
+              to_receive_address_json TEXT,
               message TEXT NOT NULL DEFAULT '',
               created_at TEXT NOT NULL,
               updated_at TEXT NOT NULL
@@ -235,11 +241,17 @@ class Database:
             "ALTER TABLE user_profiles ADD COLUMN shipping_country TEXT",
             "ALTER TABLE user_profiles ADD COLUMN shipping_email TEXT",
             "ALTER TABLE user_profiles ADD COLUMN shipping_phone TEXT",
+            "ALTER TABLE user_profiles ADD COLUMN shipping_addresses_json TEXT NOT NULL DEFAULT '[]'",
             "ALTER TABLE user_profiles ADD COLUMN subscription_plan TEXT",
+            "ALTER TABLE user_profiles ADD COLUMN subscription_billing_cycle TEXT",
             "ALTER TABLE user_profiles ADD COLUMN subscription_status TEXT",
             "ALTER TABLE user_profiles ADD COLUMN subscription_renewal_date TEXT",
             "ALTER TABLE user_profiles ADD COLUMN payment_methods_json TEXT NOT NULL DEFAULT '[]'",
             "ALTER TABLE trade_offers ADD COLUMN offered_listing_ids_json TEXT NOT NULL DEFAULT '[]'",
+            "ALTER TABLE trade_offers ADD COLUMN accepted_by_from INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE trade_offers ADD COLUMN accepted_by_to INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE trade_offers ADD COLUMN from_receive_address_json TEXT",
+            "ALTER TABLE trade_offers ADD COLUMN to_receive_address_json TEXT",
             "ALTER TABLE user_payment_methods ADD COLUMN email TEXT",
         ):
             try:
@@ -250,6 +262,27 @@ class Database:
                     self._pg.rollback()
                 pass
         self.commit()
+
+    @staticmethod
+    def _normalize_shipping_addresses(raw: object) -> list[dict[str, object]]:
+        if not isinstance(raw, list):
+            return []
+        normalized: list[dict[str, object]] = []
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            normalized.append({
+                "label": item.get("label") if isinstance(item.get("label"), str) else None,
+                "full_name": item.get("full_name") if isinstance(item.get("full_name"), str) else None,
+                "address_line1": item.get("address_line1") if isinstance(item.get("address_line1"), str) else None,
+                "address_line2": item.get("address_line2") if isinstance(item.get("address_line2"), str) else None,
+                "city": item.get("city") if isinstance(item.get("city"), str) else None,
+                "state": item.get("state") if isinstance(item.get("state"), str) else None,
+                "postal_code": item.get("postal_code") if isinstance(item.get("postal_code"), str) else None,
+                "country": item.get("country") if isinstance(item.get("country"), str) else None,
+                "is_default": bool(item.get("is_default")),
+            })
+        return normalized
 
     def get_listing_by_id(self, listing_id: str) -> dict | None:
         query = (
@@ -282,8 +315,8 @@ class Database:
         now = utc_now_iso()
         self.execute(
             f"""INSERT INTO trade_offers
-            (offer_id, target_listing_id, offered_listing_id, offered_listing_ids_json, from_subject, to_subject, status, message, created_at, updated_at)
-            VALUES ({self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param})""",
+            (offer_id, target_listing_id, offered_listing_id, offered_listing_ids_json, from_subject, to_subject, status, accepted_by_from, accepted_by_to, from_receive_address_json, to_receive_address_json, message, created_at, updated_at)
+            VALUES ({self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param})""",
             (
                 offer_id,
                 target_listing_id,
@@ -292,13 +325,17 @@ class Database:
                 from_subject,
                 to_subject,
                 "pending",
+                0,
+                0,
+                None,
+                None,
                 message or "",
                 now,
                 now,
             ),
         )
         self.commit()
-        return {
+        return self.get_trade_offer_by_id(offer_id) or {
             "offer_id": offer_id,
             "target_listing_id": target_listing_id,
             "offered_listing_id": offered_listing_id,
@@ -306,29 +343,100 @@ class Database:
             "from_subject": from_subject,
             "to_subject": to_subject,
             "status": "pending",
+            "accepted_by_from": False,
+            "accepted_by_to": False,
+            "from_receive_address": None,
+            "to_receive_address": None,
             "message": message or "",
             "created_at": now,
             "updated_at": now,
         }
 
-    def list_incoming_trade_offers(self, to_subject: str, limit: int = 50, status: str | None = None) -> list[dict]:
+    @staticmethod
+    def _normalize_offer_address(raw: object) -> dict | None:
+        if not isinstance(raw, dict):
+            return None
+        out = {
+            "label": raw.get("label") if isinstance(raw.get("label"), str) else None,
+            "full_name": raw.get("full_name") if isinstance(raw.get("full_name"), str) else None,
+            "address_line1": raw.get("address_line1") if isinstance(raw.get("address_line1"), str) else None,
+            "address_line2": raw.get("address_line2") if isinstance(raw.get("address_line2"), str) else None,
+            "city": raw.get("city") if isinstance(raw.get("city"), str) else None,
+            "state": raw.get("state") if isinstance(raw.get("state"), str) else None,
+            "postal_code": raw.get("postal_code") if isinstance(raw.get("postal_code"), str) else None,
+            "country": raw.get("country") if isinstance(raw.get("country"), str) else None,
+            "is_default": bool(raw.get("is_default")),
+        }
+        if not any(isinstance(out.get(k), str) and out.get(k) for k in ("full_name", "address_line1", "city", "state", "postal_code", "country")):
+            return None
+        return out
+
+    def _trade_offer_row_to_dict(self, row) -> dict:
+        if isinstance(row, sqlite3.Row):
+            data = dict(row)
+        else:
+            keys = [
+                "offer_id", "target_listing_id", "offered_listing_id", "from_subject", "to_subject", "status",
+                "accepted_by_from", "accepted_by_to", "from_receive_address_json", "to_receive_address_json",
+                "message", "created_at", "updated_at", "offered_listing_ids_json",
+            ]
+            data = {k: row[idx] for idx, k in enumerate(keys)}
+        try:
+            offered_ids = json.loads(data.get("offered_listing_ids_json") or "[]")
+            if not isinstance(offered_ids, list):
+                offered_ids = []
+        except Exception:
+            offered_ids = []
+        offered_ids = [x for x in offered_ids if isinstance(x, str) and x.strip()]
+        if not offered_ids and isinstance(data.get("offered_listing_id"), str):
+            offered_ids = [data["offered_listing_id"]]
+        try:
+            from_receive = self._normalize_offer_address(json.loads(data.get("from_receive_address_json") or "null"))
+        except Exception:
+            from_receive = None
+        try:
+            to_receive = self._normalize_offer_address(json.loads(data.get("to_receive_address_json") or "null"))
+        except Exception:
+            to_receive = None
+        status = str(data.get("status") or "pending")
+        accepted_by_from = bool(data.get("accepted_by_from"))
+        accepted_by_to = bool(data.get("accepted_by_to"))
+        if status == "accepted":
+            accepted_by_from = True
+            accepted_by_to = True
+        return {
+            "offer_id": data.get("offer_id"),
+            "target_listing_id": data.get("target_listing_id"),
+            "offered_listing_id": data.get("offered_listing_id"),
+            "offered_listing_ids": offered_ids,
+            "from_subject": data.get("from_subject"),
+            "to_subject": data.get("to_subject"),
+            "status": status,
+            "accepted_by_from": accepted_by_from,
+            "accepted_by_to": accepted_by_to,
+            "from_receive_address": from_receive,
+            "to_receive_address": to_receive,
+            "message": data.get("message") or "",
+            "created_at": data.get("created_at"),
+            "updated_at": data.get("updated_at"),
+        }
+
+    def list_trade_offers_for_subject(self, subject: str, limit: int = 50, status: str | None = None) -> list[dict]:
         safe_limit = max(1, min(int(limit), 200))
         if status:
             query = (
-                f"SELECT offer_id, target_listing_id, offered_listing_id, from_subject, to_subject, status, message, created_at, updated_at "
-                f", offered_listing_ids_json "
-                f"FROM trade_offers WHERE to_subject = {self.param} AND status = {self.param} "
+                f"SELECT offer_id, target_listing_id, offered_listing_id, from_subject, to_subject, status, accepted_by_from, accepted_by_to, from_receive_address_json, to_receive_address_json, message, created_at, updated_at, offered_listing_ids_json "
+                f"FROM trade_offers WHERE (to_subject = {self.param} OR from_subject = {self.param}) AND status = {self.param} "
                 f"ORDER BY created_at DESC LIMIT {self.param}"
             )
-            params = (to_subject, status, safe_limit)
+            params = (subject, subject, status, safe_limit)
         else:
             query = (
-                f"SELECT offer_id, target_listing_id, offered_listing_id, from_subject, to_subject, status, message, created_at, updated_at "
-                f", offered_listing_ids_json "
-                f"FROM trade_offers WHERE to_subject = {self.param} "
+                f"SELECT offer_id, target_listing_id, offered_listing_id, from_subject, to_subject, status, accepted_by_from, accepted_by_to, from_receive_address_json, to_receive_address_json, message, created_at, updated_at, offered_listing_ids_json "
+                f"FROM trade_offers WHERE (to_subject = {self.param} OR from_subject = {self.param}) "
                 f"ORDER BY created_at DESC LIMIT {self.param}"
             )
-            params = (to_subject, safe_limit)
+            params = (subject, subject, safe_limit)
 
         if self._sqlite_conn is not None:
             rows = self._sqlite_conn.execute(query, params).fetchall()
@@ -338,25 +446,10 @@ class Database:
             rows = cur.fetchall()
             cur.close()
 
-        offers: list[dict] = []
-        for row in rows:
-            if isinstance(row, sqlite3.Row):
-                data = dict(row)
-            else:
-                keys = ["offer_id", "target_listing_id", "offered_listing_id", "from_subject", "to_subject", "status", "message", "created_at", "updated_at", "offered_listing_ids_json"]
-                data = {k: row[idx] for idx, k in enumerate(keys)}
-            try:
-                offered_ids = json.loads(data.get("offered_listing_ids_json") or "[]")
-                if not isinstance(offered_ids, list):
-                    offered_ids = []
-            except Exception:
-                offered_ids = []
-            offered_ids = [x for x in offered_ids if isinstance(x, str) and x.strip()]
-            if not offered_ids and isinstance(data.get("offered_listing_id"), str):
-                offered_ids = [data["offered_listing_id"]]
-            data["offered_listing_ids"] = offered_ids
-            offers.append(data)
-        return offers
+        return [self._trade_offer_row_to_dict(row) for row in rows]
+
+    def list_incoming_trade_offers(self, to_subject: str, limit: int = 50, status: str | None = None) -> list[dict]:
+        return self.list_trade_offers_for_subject(to_subject, limit=limit, status=status)
 
     def set_trade_offer_status(self, *, offer_id: str, to_subject: str, status: str) -> dict | None:
         now = utc_now_iso()
@@ -384,7 +477,7 @@ class Database:
             return None
         self.commit()
         query = (
-            f"SELECT offer_id, target_listing_id, offered_listing_id, from_subject, to_subject, status, message, created_at, updated_at, offered_listing_ids_json "
+            f"SELECT offer_id, target_listing_id, offered_listing_id, from_subject, to_subject, status, accepted_by_from, accepted_by_to, from_receive_address_json, to_receive_address_json, message, created_at, updated_at, offered_listing_ids_json "
             f"FROM trade_offers WHERE offer_id = {self.param} LIMIT 1"
         )
         if self._sqlite_conn is not None:
@@ -396,32 +489,68 @@ class Database:
             cur.close()
         if not row:
             return None
-        if isinstance(row, sqlite3.Row):
-            data = dict(row)
-            try:
-                offered_ids = json.loads(data.get("offered_listing_ids_json") or "[]")
-                if not isinstance(offered_ids, list):
-                    offered_ids = []
-            except Exception:
-                offered_ids = []
-            offered_ids = [x for x in offered_ids if isinstance(x, str) and x.strip()]
-            if not offered_ids and isinstance(data.get("offered_listing_id"), str):
-                offered_ids = [data["offered_listing_id"]]
-            data["offered_listing_ids"] = offered_ids
-            return data
-        keys = ["offer_id", "target_listing_id", "offered_listing_id", "from_subject", "to_subject", "status", "message", "created_at", "updated_at", "offered_listing_ids_json"]
-        data = {k: row[idx] for idx, k in enumerate(keys)}
-        try:
-            offered_ids = json.loads(data.get("offered_listing_ids_json") or "[]")
-            if not isinstance(offered_ids, list):
-                offered_ids = []
-        except Exception:
-            offered_ids = []
-        offered_ids = [x for x in offered_ids if isinstance(x, str) and x.strip()]
-        if not offered_ids and isinstance(data.get("offered_listing_id"), str):
-            offered_ids = [data["offered_listing_id"]]
-        data["offered_listing_ids"] = offered_ids
-        return data
+        return self._trade_offer_row_to_dict(row)
+
+    def set_trade_offer_participant_action(
+        self,
+        *,
+        offer_id: str,
+        actor_subject: str,
+        status: str,
+        receive_address: dict | None = None,
+    ) -> dict | None:
+        offer = self.get_trade_offer_by_id(offer_id)
+        if not offer:
+            return None
+        from_subject = str(offer.get("from_subject") or "")
+        to_subject = str(offer.get("to_subject") or "")
+        if actor_subject not in {from_subject, to_subject}:
+            return None
+
+        now = utc_now_iso()
+        status_norm = str(status or "").strip().lower()
+        accepted_by_from = bool(offer.get("accepted_by_from"))
+        accepted_by_to = bool(offer.get("accepted_by_to"))
+        from_receive = self._normalize_offer_address(offer.get("from_receive_address"))
+        to_receive = self._normalize_offer_address(offer.get("to_receive_address"))
+
+        if status_norm == "accepted":
+            normalized_addr = self._normalize_offer_address(receive_address or {})
+            if actor_subject == from_subject:
+                accepted_by_from = True
+                if normalized_addr:
+                    from_receive = normalized_addr
+            else:
+                accepted_by_to = True
+                if normalized_addr:
+                    to_receive = normalized_addr
+            next_status = "accepted" if accepted_by_from and accepted_by_to else "pending"
+        else:
+            next_status = status_norm
+            accepted_by_from = False
+            accepted_by_to = False
+            from_receive = None
+            to_receive = None
+
+        sql = (
+            f"UPDATE trade_offers SET status = {self.param}, accepted_by_from = {self.param}, accepted_by_to = {self.param}, "
+            f"from_receive_address_json = {self.param}, to_receive_address_json = {self.param}, updated_at = {self.param} "
+            f"WHERE offer_id = {self.param}"
+        )
+        self.execute(
+            sql,
+            (
+                next_status,
+                1 if accepted_by_from else 0,
+                1 if accepted_by_to else 0,
+                json.dumps(from_receive) if from_receive else None,
+                json.dumps(to_receive) if to_receive else None,
+                now,
+                offer_id,
+            ),
+        )
+        self.commit()
+        return self.get_trade_offer_by_id(offer_id)
 
     def mark_listings_traded(self, listing_ids: list[str]) -> None:
         if not listing_ids:
@@ -437,7 +566,7 @@ class Database:
 
     def get_trade_offer_by_id(self, offer_id: str) -> dict | None:
         query = (
-            f"SELECT offer_id, target_listing_id, offered_listing_id, from_subject, to_subject, status, message, created_at, updated_at, offered_listing_ids_json "
+            f"SELECT offer_id, target_listing_id, offered_listing_id, from_subject, to_subject, status, accepted_by_from, accepted_by_to, from_receive_address_json, to_receive_address_json, message, created_at, updated_at, offered_listing_ids_json "
             f"FROM trade_offers WHERE offer_id = {self.param} LIMIT 1"
         )
         if self._sqlite_conn is not None:
@@ -449,22 +578,7 @@ class Database:
             cur.close()
         if not row:
             return None
-        if isinstance(row, sqlite3.Row):
-            data = dict(row)
-        else:
-            keys = ["offer_id", "target_listing_id", "offered_listing_id", "from_subject", "to_subject", "status", "message", "created_at", "updated_at", "offered_listing_ids_json"]
-            data = {k: row[idx] for idx, k in enumerate(keys)}
-        try:
-            offered_ids = json.loads(data.get("offered_listing_ids_json") or "[]")
-            if not isinstance(offered_ids, list):
-                offered_ids = []
-        except Exception:
-            offered_ids = []
-        offered_ids = [x for x in offered_ids if isinstance(x, str) and x.strip()]
-        if not offered_ids and isinstance(data.get("offered_listing_id"), str):
-            offered_ids = [data["offered_listing_id"]]
-        data["offered_listing_ids"] = offered_ids
-        return data
+        return self._trade_offer_row_to_dict(row)
 
     def execute(self, sql: str, params: tuple = ()) -> None:
         if self._sqlite_conn is not None:
@@ -1045,8 +1159,8 @@ class Database:
         query = (
             f"SELECT owner_subject, gender, tops_size, dresses_size, bottoms_size, shoes_size, "
             f"category_preferences_json, shipping_full_name, shipping_address_line1, shipping_address_line2, "
-            f"shipping_city, shipping_state, shipping_postal_code, shipping_country, shipping_email, shipping_phone, "
-            f"subscription_plan, subscription_status, subscription_renewal_date, payment_methods_json, "
+            f"shipping_city, shipping_state, shipping_postal_code, shipping_country, shipping_email, shipping_phone, shipping_addresses_json, "
+            f"subscription_plan, subscription_billing_cycle, subscription_status, subscription_renewal_date, payment_methods_json, "
             f"created_at, updated_at "
             f"FROM user_profiles WHERE owner_subject = {self.param} LIMIT 1"
         )
@@ -1066,8 +1180,8 @@ class Database:
                 "owner_subject", "gender", "tops_size", "dresses_size", "bottoms_size", "shoes_size",
                 "category_preferences_json", "shipping_full_name", "shipping_address_line1", "shipping_address_line2",
                 "shipping_city", "shipping_state", "shipping_postal_code", "shipping_country",
-                "shipping_email", "shipping_phone",
-                "subscription_plan", "subscription_status", "subscription_renewal_date", "payment_methods_json",
+                "shipping_email", "shipping_phone", "shipping_addresses_json",
+                "subscription_plan", "subscription_billing_cycle", "subscription_status", "subscription_renewal_date", "payment_methods_json",
                 "created_at", "updated_at",
             ]
             data = {k: row[idx] for idx, k in enumerate(keys)}
@@ -1083,6 +1197,29 @@ class Database:
                 payment_methods = []
         except Exception:
             payment_methods = []
+        try:
+            shipping_addresses = self._normalize_shipping_addresses(json.loads(data.get("shipping_addresses_json") or "[]"))
+        except Exception:
+            shipping_addresses = []
+        if not shipping_addresses:
+            legacy_address = {
+                "label": "Primary",
+                "full_name": data.get("shipping_full_name"),
+                "address_line1": data.get("shipping_address_line1"),
+                "address_line2": data.get("shipping_address_line2"),
+                "city": data.get("shipping_city"),
+                "state": data.get("shipping_state"),
+                "postal_code": data.get("shipping_postal_code"),
+                "country": data.get("shipping_country"),
+                "is_default": True,
+            }
+            has_any_legacy = any(
+                isinstance(legacy_address.get(k), str) and legacy_address.get(k)
+                for k in ("full_name", "address_line1", "address_line2", "city", "state", "postal_code", "country")
+            )
+            if has_any_legacy:
+                shipping_addresses = [legacy_address]
+        primary_address = shipping_addresses[0] if shipping_addresses else {}
         return {
             "owner_subject": data["owner_subject"],
             "gender": data.get("gender"),
@@ -1091,14 +1228,18 @@ class Database:
             "bottoms_size": data.get("bottoms_size"),
             "shoes_size": data.get("shoes_size"),
             "category_preferences": [p for p in prefs if isinstance(p, str)],
-            "shipping_full_name": data.get("shipping_full_name"),
-            "shipping_address_line1": data.get("shipping_address_line1"),
-            "shipping_address_line2": data.get("shipping_address_line2"),
-            "shipping_city": data.get("shipping_city"),
-            "shipping_state": data.get("shipping_state"),
-            "shipping_postal_code": data.get("shipping_postal_code"),
-            "shipping_country": data.get("shipping_country"),
+            "shipping_full_name": primary_address.get("full_name") or data.get("shipping_full_name"),
+            "shipping_address_line1": primary_address.get("address_line1") or data.get("shipping_address_line1"),
+            "shipping_address_line2": primary_address.get("address_line2") or data.get("shipping_address_line2"),
+            "shipping_city": primary_address.get("city") or data.get("shipping_city"),
+            "shipping_state": primary_address.get("state") or data.get("shipping_state"),
+            "shipping_postal_code": primary_address.get("postal_code") or data.get("shipping_postal_code"),
+            "shipping_country": primary_address.get("country") or data.get("shipping_country"),
+            "shipping_email": data.get("shipping_email"),
+            "shipping_phone": data.get("shipping_phone"),
+            "shipping_addresses": shipping_addresses,
             "subscription_plan": data.get("subscription_plan"),
+            "subscription_billing_cycle": data.get("subscription_billing_cycle"),
             "subscription_status": data.get("subscription_status"),
             "subscription_renewal_date": data.get("subscription_renewal_date"),
             "payment_methods": [m for m in payment_methods if isinstance(m, str)],
@@ -1125,7 +1266,9 @@ class Database:
         shipping_country: str | None,
         shipping_email: str | None,
         shipping_phone: str | None,
+        shipping_addresses: list[dict[str, object]],
         subscription_plan: str | None,
+        subscription_billing_cycle: str | None,
         subscription_status: str | None,
         subscription_renewal_date: str | None,
         payment_methods: list[str],
@@ -1133,11 +1276,12 @@ class Database:
         now = utc_now_iso()
         cats = json.dumps([c for c in category_preferences if isinstance(c, str)])
         payment_methods_json = json.dumps([m for m in payment_methods if isinstance(m, str) and m.strip()])
+        shipping_addresses_json = json.dumps(self._normalize_shipping_addresses(shipping_addresses))
         if self._sqlite_conn is not None:
             self._sqlite_conn.execute(
                 """INSERT INTO user_profiles
-                (owner_subject, gender, tops_size, dresses_size, bottoms_size, shoes_size, category_preferences_json, shipping_full_name, shipping_address_line1, shipping_address_line2, shipping_city, shipping_state, shipping_postal_code, shipping_country, shipping_email, shipping_phone, subscription_plan, subscription_status, subscription_renewal_date, payment_methods_json, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (owner_subject, gender, tops_size, dresses_size, bottoms_size, shoes_size, category_preferences_json, shipping_full_name, shipping_address_line1, shipping_address_line2, shipping_city, shipping_state, shipping_postal_code, shipping_country, shipping_email, shipping_phone, shipping_addresses_json, subscription_plan, subscription_billing_cycle, subscription_status, subscription_renewal_date, payment_methods_json, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(owner_subject) DO UPDATE SET
                   gender=excluded.gender,
                   tops_size=excluded.tops_size,
@@ -1154,7 +1298,9 @@ class Database:
                   shipping_country=excluded.shipping_country,
                   shipping_email=excluded.shipping_email,
                   shipping_phone=excluded.shipping_phone,
+                  shipping_addresses_json=excluded.shipping_addresses_json,
                   subscription_plan=excluded.subscription_plan,
+                  subscription_billing_cycle=excluded.subscription_billing_cycle,
                   subscription_status=excluded.subscription_status,
                   subscription_renewal_date=excluded.subscription_renewal_date,
                   payment_methods_json=excluded.payment_methods_json,
@@ -1163,7 +1309,7 @@ class Database:
                 (
                     owner_subject, gender, tops_size, dresses_size, bottoms_size, shoes_size, cats,
                     shipping_full_name, shipping_address_line1, shipping_address_line2, shipping_city, shipping_state,
-                    shipping_postal_code, shipping_country, shipping_email, shipping_phone, subscription_plan, subscription_status, subscription_renewal_date,
+                    shipping_postal_code, shipping_country, shipping_email, shipping_phone, shipping_addresses_json, subscription_plan, subscription_billing_cycle, subscription_status, subscription_renewal_date,
                     payment_methods_json, now, now,
                 ),
             )
@@ -1172,8 +1318,8 @@ class Database:
             cur = self._pg.cursor()
             cur.execute(
                 f"""INSERT INTO user_profiles
-                (owner_subject, gender, tops_size, dresses_size, bottoms_size, shoes_size, category_preferences_json, shipping_full_name, shipping_address_line1, shipping_address_line2, shipping_city, shipping_state, shipping_postal_code, shipping_country, shipping_email, shipping_phone, subscription_plan, subscription_status, subscription_renewal_date, payment_methods_json, created_at, updated_at)
-                VALUES ({self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param})
+                (owner_subject, gender, tops_size, dresses_size, bottoms_size, shoes_size, category_preferences_json, shipping_full_name, shipping_address_line1, shipping_address_line2, shipping_city, shipping_state, shipping_postal_code, shipping_country, shipping_email, shipping_phone, shipping_addresses_json, subscription_plan, subscription_billing_cycle, subscription_status, subscription_renewal_date, payment_methods_json, created_at, updated_at)
+                VALUES ({self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param})
                 ON CONFLICT (owner_subject) DO UPDATE SET
                   gender=EXCLUDED.gender,
                   tops_size=EXCLUDED.tops_size,
@@ -1190,7 +1336,9 @@ class Database:
                   shipping_country=EXCLUDED.shipping_country,
                   shipping_email=EXCLUDED.shipping_email,
                   shipping_phone=EXCLUDED.shipping_phone,
+                  shipping_addresses_json=EXCLUDED.shipping_addresses_json,
                   subscription_plan=EXCLUDED.subscription_plan,
+                  subscription_billing_cycle=EXCLUDED.subscription_billing_cycle,
                   subscription_status=EXCLUDED.subscription_status,
                   subscription_renewal_date=EXCLUDED.subscription_renewal_date,
                   payment_methods_json=EXCLUDED.payment_methods_json,
@@ -1199,7 +1347,7 @@ class Database:
                 (
                     owner_subject, gender, tops_size, dresses_size, bottoms_size, shoes_size, cats,
                     shipping_full_name, shipping_address_line1, shipping_address_line2, shipping_city, shipping_state,
-                    shipping_postal_code, shipping_country, shipping_email, shipping_phone, subscription_plan, subscription_status, subscription_renewal_date,
+                    shipping_postal_code, shipping_country, shipping_email, shipping_phone, shipping_addresses_json, subscription_plan, subscription_billing_cycle, subscription_status, subscription_renewal_date,
                     payment_methods_json, now, now,
                 ),
             )
@@ -1220,7 +1368,11 @@ class Database:
             "shipping_state": shipping_state,
             "shipping_postal_code": shipping_postal_code,
             "shipping_country": shipping_country,
+            "shipping_email": shipping_email,
+            "shipping_phone": shipping_phone,
+            "shipping_addresses": self._normalize_shipping_addresses(shipping_addresses),
             "subscription_plan": subscription_plan,
+            "subscription_billing_cycle": subscription_billing_cycle,
             "subscription_status": subscription_status,
             "subscription_renewal_date": subscription_renewal_date,
             "payment_methods": [m for m in payment_methods if isinstance(m, str) and m.strip()],

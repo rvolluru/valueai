@@ -3,6 +3,11 @@ variable "project_name" {
   default = "valueai-mvp"
 }
 
+variable "app_env" {
+  type    = string
+  default = "prod"
+}
+
 variable "aws_region" {
   type    = string
   default = "us-east-1"
@@ -29,6 +34,26 @@ variable "container_image" {
   type        = string
   description = "ECR image URI to deploy"
   default     = "public.ecr.aws/docker/library/python:3.11-slim"
+}
+
+variable "create_ecr_repository" {
+  type    = bool
+  default = true
+}
+
+variable "existing_ecr_repository_url" {
+  type    = string
+  default = ""
+}
+
+variable "create_cloudwatch_log_group" {
+  type    = bool
+  default = true
+}
+
+variable "existing_cloudwatch_log_group_name" {
+  type    = string
+  default = ""
 }
 
 variable "db_name" {

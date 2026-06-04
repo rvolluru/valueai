@@ -3,10 +3,12 @@ from __future__ import annotations
 import json
 import os
 import re
+import smtplib
 import time
 import uuid
 from io import BytesIO
 from pathlib import Path
+from email.message import EmailMessage
 from typing import Annotated
 from urllib.parse import urlparse
 
@@ -46,6 +48,8 @@ from .schemas import (
     OfferCreateRequest,
     OfferResponse,
     OfferWithListingsResponse,
+    ShippingLabelCreateRequest,
+    ShippingQuoteResponse,
     PaymentMethodCreateRequest,
     PaymentMethodListResponse,
     PaymentMethodResponse,
@@ -711,7 +715,9 @@ def get_profile_quiz(
             shipping_state=None,
             shipping_postal_code=None,
             shipping_country=None,
+            shipping_addresses=[],
             subscription_plan=None,
+            subscription_billing_cycle=None,
             subscription_status=None,
             subscription_renewal_date=None,
             payment_methods=[],
@@ -728,6 +734,36 @@ def put_profile_quiz(
     db: Database = Depends(get_db),
 ):
     existing = db.get_user_profile_quiz(principal.subject) or {}
+    shipping_addresses_payload = [
+        a.model_dump() if hasattr(a, "model_dump") else dict(a)
+        for a in (payload.shipping_addresses or [])
+    ]
+    if not shipping_addresses_payload:
+        legacy_has_shipping = any(
+            bool((v or "").strip()) if isinstance(v, str) else bool(v)
+            for v in (
+                payload.shipping_full_name,
+                payload.shipping_address_line1,
+                payload.shipping_address_line2,
+                payload.shipping_city,
+                payload.shipping_state,
+                payload.shipping_postal_code,
+                payload.shipping_country,
+            )
+        )
+        if legacy_has_shipping:
+            shipping_addresses_payload = [{
+                "label": "Primary",
+                "full_name": payload.shipping_full_name,
+                "address_line1": payload.shipping_address_line1,
+                "address_line2": payload.shipping_address_line2,
+                "city": payload.shipping_city,
+                "state": payload.shipping_state,
+                "postal_code": payload.shipping_postal_code,
+                "country": payload.shipping_country,
+                "is_default": True,
+            }]
+    primary_shipping = shipping_addresses_payload[0] if shipping_addresses_payload else {}
     saved = db.upsert_user_profile_quiz(
         owner_subject=principal.subject,
         gender=payload.gender,
@@ -736,16 +772,46 @@ def put_profile_quiz(
         bottoms_size=payload.bottoms_size,
         shoes_size=payload.shoes_size,
         category_preferences=payload.category_preferences,
-        shipping_full_name=payload.shipping_full_name,
-        shipping_address_line1=payload.shipping_address_line1,
-        shipping_address_line2=payload.shipping_address_line2,
-        shipping_city=payload.shipping_city,
-        shipping_state=payload.shipping_state,
-        shipping_postal_code=payload.shipping_postal_code,
-        shipping_country=payload.shipping_country,
+        shipping_full_name=(
+            primary_shipping.get("full_name")
+            if isinstance(primary_shipping.get("full_name"), str)
+            else payload.shipping_full_name
+        ),
+        shipping_address_line1=(
+            primary_shipping.get("address_line1")
+            if isinstance(primary_shipping.get("address_line1"), str)
+            else payload.shipping_address_line1
+        ),
+        shipping_address_line2=(
+            primary_shipping.get("address_line2")
+            if isinstance(primary_shipping.get("address_line2"), str)
+            else payload.shipping_address_line2
+        ),
+        shipping_city=(
+            primary_shipping.get("city")
+            if isinstance(primary_shipping.get("city"), str)
+            else payload.shipping_city
+        ),
+        shipping_state=(
+            primary_shipping.get("state")
+            if isinstance(primary_shipping.get("state"), str)
+            else payload.shipping_state
+        ),
+        shipping_postal_code=(
+            primary_shipping.get("postal_code")
+            if isinstance(primary_shipping.get("postal_code"), str)
+            else payload.shipping_postal_code
+        ),
+        shipping_country=(
+            primary_shipping.get("country")
+            if isinstance(primary_shipping.get("country"), str)
+            else payload.shipping_country
+        ),
         shipping_email=((existing.get("shipping_email") or "").strip() or None),
         shipping_phone=((existing.get("shipping_phone") or "").strip() or None),
+        shipping_addresses=shipping_addresses_payload,
         subscription_plan=payload.subscription_plan,
+        subscription_billing_cycle=payload.subscription_billing_cycle,
         subscription_status=payload.subscription_status,
         subscription_renewal_date=payload.subscription_renewal_date,
         payment_methods=payload.payment_methods,
@@ -1199,6 +1265,7 @@ def create_listing(
 def list_recent_listings(
     limit: int = 50,
     mine: bool = False,
+    include_matches: bool = False,
     principal: AuthPrincipal = Depends(get_request_principal),
     db: Database = Depends(get_db),
     settings: Settings = Depends(get_settings),
@@ -1222,13 +1289,7 @@ def list_recent_listings(
     def _is_resolvable_listing_image(value: object) -> bool:
         return _to_http_image_url(value) is not None
 
-    safe_limit = max(1, min(limit, 100))
-    records = (
-        db.list_owner_listings(principal.subject, limit=safe_limit)
-        if mine
-        else db.list_recent_listings(limit=safe_limit, include_analysis=False, include_media=True)
-    )
-    for record in records:
+    def _normalize_listing_media(record: dict) -> dict:
         image = record.get("image")
         images = record.get("images") or []
         normalized_image = _to_http_image_url(image)
@@ -1247,15 +1308,133 @@ def list_recent_listings(
             isinstance(record.get("images"), list)
             and any(_is_resolvable_listing_image(img) for img in (record.get("images") or []))
         )
-        if has_valid_image or has_valid_gallery:
-            continue
-        record["image"] = None
-        record["images"] = []
+        if not (has_valid_image or has_valid_gallery):
+            record["image"] = None
+            record["images"] = []
+        return record
+
+    safe_limit = max(1, min(limit, 100))
+    records = (
+        db.list_owner_listings(principal.subject, limit=safe_limit)
+        if mine
+        else db.list_recent_listings(limit=safe_limit, include_analysis=False, include_media=True)
+    )
+    records = [_normalize_listing_media(record) for record in records]
+
+    if include_matches and not mine:
+        my_active = [
+            _normalize_listing_media(x)
+            for x in db.list_owner_listings(principal.subject, limit=200)
+            if str(x.get("status", "")).lower() == "active"
+        ]
+        for record in records:
+            base_value = float(record.get("estimated_value") or 0)
+            if base_value <= 0:
+                record["matches"] = []
+                continue
+            tolerance = max(50.0, base_value * 0.2)
+            owner_subject = str(record.get("owner_subject") or "")
+            matches: list[dict] = []
+            for candidate in my_active:
+                if str(candidate.get("listing_id") or "") == str(record.get("listing_id") or ""):
+                    continue
+                candidate_owner_subject = str(candidate.get("owner_subject") or "")
+                if owner_subject and candidate_owner_subject and owner_subject == candidate_owner_subject:
+                    # Never return same-owner listings as matches.
+                    continue
+                candidate_value = float(candidate.get("estimated_value") or 0)
+                if candidate_value <= 0:
+                    continue
+                if abs(candidate_value - base_value) > tolerance:
+                    continue
+                matches.append(candidate)
+                if len(matches) >= 12:
+                    break
+            record["matches"] = matches
     return {
         "count": len(records),
         "items": records,
         "actor": {"auth_type": principal.auth_type, "subject": principal.subject},
     }
+
+
+@app.get("/v1/listings/{listing_id}/offer-candidates")
+def list_offer_candidates(
+    listing_id: str,
+    limit: int = 100,
+    principal: AuthPrincipal = Depends(get_request_principal),
+    db: Database = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+):
+    def _to_http_image_url(value: object) -> str | None:
+        if not isinstance(value, str):
+            return None
+        s = value.strip()
+        if not s or s.startswith("blob:"):
+            return None
+        if s.startswith("http://") or s.startswith("https://") or s.startswith("/"):
+            return s
+        if s.startswith("s3://"):
+            try:
+                signed = _presign_s3_uri(s, settings)
+            except Exception:
+                signed = None
+            return signed
+        return None
+
+    def _normalize_listing_media(record: dict) -> dict:
+        image = record.get("image")
+        images = record.get("images") or []
+        normalized_image = _to_http_image_url(image)
+        normalized_gallery: list[str] = []
+        if isinstance(images, list):
+            for img in images:
+                resolved = _to_http_image_url(img)
+                if resolved:
+                    normalized_gallery.append(resolved)
+        if normalized_image:
+            record["image"] = normalized_image
+        if normalized_gallery:
+            record["images"] = normalized_gallery
+        if not normalized_image and not normalized_gallery:
+            record["image"] = None
+            record["images"] = []
+        return record
+
+    def _norm_brand(value: object) -> str:
+        return str(value or "").strip().casefold()
+
+    target = db.get_listing_by_id(listing_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="Target listing not found")
+    if str(target.get("owner_subject") or "") == principal.subject:
+        raise HTTPException(status_code=400, detail="Cannot create a trade offer on your own listing")
+
+    target_value = float(target.get("estimated_value") or 0)
+    target_brand = _norm_brand(target.get("brand"))
+    if target_value <= 0:
+        return {"count": 0, "items": []}
+
+    tolerance = max(50.0, target_value * 0.30)
+    safe_limit = max(1, min(limit, 200))
+    mine = db.list_owner_listings(principal.subject, limit=safe_limit)
+    candidates: list[dict] = []
+    for record in mine:
+        if str(record.get("status") or "").lower() != "active":
+            continue
+        if str(record.get("listing_id") or "") == str(target.get("listing_id") or ""):
+            continue
+        cand_value = float(record.get("estimated_value") or 0)
+        if cand_value <= 0:
+            continue
+        if abs(cand_value - target_value) > tolerance:
+            continue
+        cand_brand = _norm_brand(record.get("brand"))
+        if target_brand and cand_brand and cand_brand != target_brand:
+            continue
+        candidates.append(_normalize_listing_media(record))
+
+    return {"count": len(candidates), "items": candidates}
 
 
 @app.put("/v1/listings/{listing_id}", response_model=ListingResponse)
@@ -1364,7 +1543,7 @@ def list_incoming_offers(
     if status_norm not in allowed_status:
         raise HTTPException(status_code=400, detail="Invalid status filter")
     filter_status = None if status_norm == "all" else status_norm
-    offers = db.list_incoming_trade_offers(principal.subject, limit=limit, status=filter_status)
+    offers = db.list_trade_offers_for_subject(principal.subject, limit=limit, status=filter_status)
     items: list[OfferWithListingsResponse] = []
     for offer in offers:
         target = db.get_listing_by_id(offer["target_listing_id"])
@@ -1406,19 +1585,22 @@ def action_offer(
     db: Database = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ):
-    updated = db.set_trade_offer_status(
+    if payload.status == "accepted" and payload.receive_address is None:
+        raise HTTPException(status_code=400, detail="Select receive shipping address while accepting trade")
+    receive_address_payload = payload.receive_address.model_dump() if payload.receive_address else None
+    updated = db.set_trade_offer_participant_action(
         offer_id=offer_id,
-        to_subject=principal.subject,
+        actor_subject=principal.subject,
         status=payload.status,
+        receive_address=receive_address_payload,
     )
     if not updated:
         raise HTTPException(status_code=404, detail="Offer not found")
-    if payload.status == "accepted":
+    if str(updated.get("status") or "").lower() == "accepted":
         offered_ids = [x for x in (updated.get("offered_listing_ids") or []) if isinstance(x, str) and x.strip()]
         if not offered_ids and isinstance(updated.get("offered_listing_id"), str):
             offered_ids = [updated["offered_listing_id"]]
         db.mark_listings_traded([updated["target_listing_id"], *offered_ids])
-        _create_trade_shipments_if_missing(db=db, offer=updated, settings=settings)
     return OfferResponse(**updated)
 
 
@@ -1444,6 +1626,36 @@ def _subject_shipping_snapshot(db: Database, subject: str, settings: Settings | 
         "email": (p.get("shipping_email") if p.get("shipping_email") else (settings.shippo_default_contact_email if settings else None)),
         "phone": (p.get("shipping_phone") if p.get("shipping_phone") else (settings.shippo_default_contact_phone if settings else None)),
     }
+
+
+def _receive_address_snapshot_from_offer(*, offer: dict, subject: str, db: Database, settings: Settings) -> dict[str, str | None]:
+    key = "from_receive_address" if subject == str(offer.get("from_subject") or "") else "to_receive_address"
+    raw = offer.get(key)
+    if isinstance(raw, dict):
+        return {
+            "name": (raw.get("full_name") if isinstance(raw.get("full_name"), str) else None),
+            "line1": (raw.get("address_line1") if isinstance(raw.get("address_line1"), str) else None),
+            "line2": (raw.get("address_line2") if isinstance(raw.get("address_line2"), str) else None),
+            "city": (raw.get("city") if isinstance(raw.get("city"), str) else None),
+            "state": (raw.get("state") if isinstance(raw.get("state"), str) else None),
+            "postal": (raw.get("postal_code") if isinstance(raw.get("postal_code"), str) else None),
+            "country": (raw.get("country") if isinstance(raw.get("country"), str) else "US"),
+            "email": None,
+            "phone": None,
+        }
+    return _subject_shipping_snapshot(db, subject, settings)
+
+
+def _outbound_leg_for_subject(offer: dict, subject: str) -> tuple[str, str, str, str]:
+    from_subject_offer = str(offer.get("from_subject") or "")
+    to_subject_offer = str(offer.get("to_subject") or "")
+    offered_ids = [x for x in (offer.get("offered_listing_ids") or []) if isinstance(x, str) and x.strip()]
+    if not offered_ids and isinstance(offer.get("offered_listing_id"), str):
+        offered_ids = [offer["offered_listing_id"]]
+    target_listing_id = str(offer.get("target_listing_id") or "")
+    if subject == from_subject_offer:
+        return from_subject_offer, to_subject_offer, (offered_ids[0] if offered_ids else ""), target_listing_id
+    return to_subject_offer, from_subject_offer, target_listing_id, (offered_ids[0] if offered_ids else "")
 
 
 def _hydrate_shipment_party_fields(db: Database, shipment: dict) -> dict:
@@ -1503,6 +1715,133 @@ def _address_complete(a: dict[str, str | None]) -> bool:
 
 def _contact_complete(a: dict[str, str | None]) -> bool:
     return bool((a.get("email") or "").strip() and (a.get("phone") or "").strip())
+
+
+def _shippo_quote_rate(
+    *,
+    settings: Settings,
+    from_addr: dict[str, str | None],
+    to_addr: dict[str, str | None],
+) -> dict[str, str]:
+    key = (settings.shippo_api_key or "").strip()
+    if not key:
+        return {"status": "awaiting_shippo_config", "carrier": "USPS", "service_level": "Priority Mail", "debug": "SHIPPO_API_KEY is not configured"}
+    if not _address_complete(from_addr) or not _address_complete(to_addr):
+        return {"status": "awaiting_address", "carrier": "USPS", "service_level": "Priority Mail", "debug": "from/to shipping address is incomplete"}
+    if not _contact_complete(from_addr) or not _contact_complete(to_addr):
+        return {"status": "awaiting_contact", "carrier": "USPS", "service_level": "Priority Mail", "debug": "from/to contact info (email + phone) is incomplete"}
+
+    base = settings.shippo_api_base_url.rstrip("/")
+    headers = {"Authorization": f"ShippoToken {key}", "Content-Type": "application/json"}
+    shipment_payload = {
+        "address_from": {
+            "name": from_addr.get("name"),
+            "street1": from_addr.get("line1"),
+            "street2": from_addr.get("line2") or "",
+            "city": from_addr.get("city"),
+            "state": from_addr.get("state"),
+            "zip": from_addr.get("postal"),
+            "country": from_addr.get("country") or "US",
+            "email": from_addr.get("email"),
+            "phone": from_addr.get("phone"),
+        },
+        "address_to": {
+            "name": to_addr.get("name"),
+            "street1": to_addr.get("line1"),
+            "street2": to_addr.get("line2") or "",
+            "city": to_addr.get("city"),
+            "state": to_addr.get("state"),
+            "zip": to_addr.get("postal"),
+            "country": to_addr.get("country") or "US",
+            "email": to_addr.get("email"),
+            "phone": to_addr.get("phone"),
+        },
+        "parcels": [{
+            "length": "12", "width": "10", "height": "6", "distance_unit": "in",
+            "weight": str(settings.shippo_parcel_weight_oz), "mass_unit": "oz",
+        }],
+        "async": False,
+    }
+    try:
+        with httpx.Client(timeout=20.0) as client:
+            ship = client.post(f"{base}/shipments/", json=shipment_payload, headers=headers)
+            if ship.status_code >= 400:
+                return {"status": "shippo_shipment_error", "carrier": "USPS", "service_level": "Priority Mail", "debug": f"shipment_http_{ship.status_code}: {ship.text[:500]}"}
+            rates = ship.json().get("rates") or []
+            if not isinstance(rates, list) or not rates:
+                return {"status": "shippo_no_rates", "carrier": "USPS", "service_level": "Priority Mail", "debug": f"shipment_has_no_rates: {ship.text[:500]}"}
+            rates_sorted = sorted(rates, key=lambda r: float(r.get("amount") or 1e9))
+            chosen = next((r for r in rates_sorted if str(r.get("provider") or "").lower() == "usps"), rates_sorted[0])
+            rate_id = str(chosen.get("object_id") or "").strip()
+            return {
+                "status": "quoted",
+                "carrier": str(chosen.get("provider") or "USPS"),
+                "service_level": str((chosen.get("servicelevel") or {}).get("name") if isinstance(chosen.get("servicelevel"), dict) else (chosen.get("servicelevel") or "Priority Mail")),
+                "amount": str(chosen.get("amount") or ""),
+                "currency": str(chosen.get("currency") or "USD"),
+                "rate_id": rate_id,
+            }
+    except Exception:
+        return {"status": "shippo_unavailable", "carrier": "USPS", "service_level": "Priority Mail", "debug": "exception while calling Shippo API"}
+
+
+def _shippo_buy_label_from_rate(*, settings: Settings, rate_id: str) -> dict[str, str]:
+    key = (settings.shippo_api_key or "").strip()
+    if not key:
+        return {"status": "awaiting_shippo_config", "carrier": "USPS", "service_level": "Priority Mail", "debug": "SHIPPO_API_KEY is not configured"}
+    if not rate_id:
+        return {"status": "shippo_no_rate_id", "carrier": "USPS", "service_level": "Priority Mail", "debug": "rate_id is required"}
+    base = settings.shippo_api_base_url.rstrip("/")
+    headers = {"Authorization": f"ShippoToken {key}", "Content-Type": "application/json"}
+    try:
+        with httpx.Client(timeout=20.0) as client:
+            txn = client.post(f"{base}/transactions/", json={"rate": rate_id, "label_file_type": "PDF", "async": False}, headers=headers)
+            if txn.status_code >= 400:
+                return {"status": "shippo_transaction_error", "carrier": "USPS", "service_level": "Priority Mail", "debug": f"transaction_http_{txn.status_code}: {txn.text[:500]}"}
+            tx = txn.json()
+            tx_label_url = str(tx.get("label_url") or tx.get("label_url_pdf") or tx.get("label_file") or tx.get("label_file_url") or "").strip()
+            tx_status = str(tx.get("status") or "").strip().upper()
+            return {
+                "status": ("label_created" if tx_label_url and tx_status in {"SUCCESS", "QUEUED", "WAITING"} else "awaiting_label_url"),
+                "carrier": str(tx.get("carrier") or "USPS"),
+                "service_level": str((tx.get("servicelevel") or {}).get("name") if isinstance(tx.get("servicelevel"), dict) else (tx.get("servicelevel") or "Priority Mail")),
+                "tracking_number": str(tx.get("tracking_number") or ""),
+                "label_url": tx_label_url,
+                "debug": f"tx_status={tx_status or 'UNKNOWN'}; has_label_url={'yes' if tx_label_url else 'no'}",
+            }
+    except Exception:
+        return {"status": "shippo_unavailable", "carrier": "USPS", "service_level": "Priority Mail", "debug": "exception while creating transaction"}
+
+
+def _send_label_email_if_configured(
+    *,
+    settings: Settings,
+    to_email: str | None,
+    offer_id: str,
+    label_url: str,
+) -> str:
+    recipient = str(to_email or "").strip()
+    if not recipient:
+        return "skipped_no_recipient"
+    host = str(settings.smtp_host or "").strip()
+    from_email = str(settings.smtp_from_email or "").strip()
+    if not host or not from_email:
+        return "skipped_not_configured"
+    msg = EmailMessage()
+    msg["Subject"] = f"Your ValueAI shipping label for offer {offer_id}"
+    msg["From"] = from_email
+    msg["To"] = recipient
+    msg.set_content(f"Your shipping label is ready.\n\nOffer: {offer_id}\nLabel URL: {label_url}\n")
+    try:
+        with smtplib.SMTP(host, int(settings.smtp_port), timeout=20) as smtp:
+            if settings.smtp_use_tls:
+                smtp.starttls()
+            if settings.smtp_username:
+                smtp.login(settings.smtp_username, settings.smtp_password or "")
+            smtp.send_message(msg)
+        return "sent"
+    except Exception:
+        return "failed"
 
 
 def _shippo_buy_label(
@@ -1783,8 +2122,95 @@ def _create_trade_shipments_if_missing(*, db: Database, offer: dict, settings: S
     return created
 
 
-@app.post("/v1/offers/{offer_id}/shipping-labels")
-def create_shipping_labels(
+def _create_or_refresh_trade_shipment_for_subject(
+    *,
+    db: Database,
+    offer: dict,
+    subject: str,
+    settings: Settings,
+    rate_id: str | None = None,
+) -> dict | None:
+    offer_id = str(offer.get("offer_id") or "")
+    if not offer_id:
+        return None
+    if subject not in {str(offer.get("from_subject") or ""), str(offer.get("to_subject") or "")}:
+        return None
+    from_subject, to_subject, from_listing_id, to_listing_id = _outbound_leg_for_subject(offer, subject)
+    sender_profile = _subject_shipping_snapshot(db, from_subject, settings)
+    receiver_profile = _receive_address_snapshot_from_offer(offer=offer, subject=to_subject, db=db, settings=settings)
+    receiver_profile["email"] = _subject_shipping_snapshot(db, to_subject, settings).get("email")
+    receiver_profile["phone"] = _subject_shipping_snapshot(db, to_subject, settings).get("phone")
+
+    existing_shipments = db.list_shipments_for_offer(offer_id)
+    existing_leg = next(
+        (
+            s for s in existing_shipments
+            if str(s.get("from_subject") or "") == from_subject and str(s.get("to_subject") or "") == to_subject
+        ),
+        None,
+    )
+    if existing_leg and str(existing_leg.get("status") or "").lower() == "label_created" and str(existing_leg.get("label_url") or "").strip():
+        return _hydrate_shipment_party_fields(db, existing_leg)
+
+    quote = _shippo_quote_rate(settings=settings, from_addr=sender_profile, to_addr=receiver_profile)
+    chosen_rate_id = str(rate_id or quote.get("rate_id") or "").strip()
+    label_result = _shippo_buy_label_from_rate(settings=settings, rate_id=chosen_rate_id)
+    if not chosen_rate_id:
+        label_result = {
+            "status": quote.get("status") or "shippo_no_rate_id",
+            "carrier": quote.get("carrier") or "USPS",
+            "service_level": quote.get("service_level") or "Priority Mail",
+            "debug": quote.get("debug") or "rate_id unavailable",
+        }
+
+    if existing_leg:
+        updated = db.update_trade_shipment_label(
+            shipment_id=str(existing_leg.get("shipment_id") or ""),
+            carrier=label_result.get("carrier"),
+            service_level=label_result.get("service_level"),
+            tracking_number=label_result.get("tracking_number") or None,
+            label_url=label_result.get("label_url") or None,
+            status=label_result.get("status"),
+        ) or existing_leg
+        out = _hydrate_shipment_party_fields(db, updated)
+        out["label_debug"] = label_result.get("debug")
+        return out
+
+    tracking = label_result.get("tracking_number") or f"TRD{uuid.uuid4().hex[:12].upper()}"
+    created = db.insert_trade_shipment(
+        shipment_id=str(uuid.uuid4()),
+        offer_id=offer_id,
+        from_subject=from_subject,
+        to_subject=to_subject,
+        from_listing_id=from_listing_id,
+        to_listing_id=to_listing_id,
+        from_name=sender_profile["name"],
+        from_address_line1=sender_profile["line1"],
+        from_address_line2=sender_profile["line2"],
+        from_city=sender_profile["city"],
+        from_state=sender_profile["state"],
+        from_postal_code=sender_profile["postal"],
+        from_country=sender_profile["country"],
+        to_name=receiver_profile["name"],
+        to_address_line1=receiver_profile["line1"],
+        to_address_line2=receiver_profile["line2"],
+        to_city=receiver_profile["city"],
+        to_state=receiver_profile["state"],
+        to_postal_code=receiver_profile["postal"],
+        to_country=receiver_profile["country"],
+        carrier=label_result.get("carrier") or "USPS",
+        service_level=label_result.get("service_level") or "Priority Mail",
+        tracking_number=tracking,
+        label_url=(label_result.get("label_url") or ""),
+        status=label_result.get("status") or "label_created",
+    )
+    created = _hydrate_shipment_party_fields(db, created)
+    created["label_debug"] = label_result.get("debug")
+    return created
+
+
+@app.post("/v1/offers/{offer_id}/shipping-quote", response_model=ShippingQuoteResponse)
+def get_shipping_quote(
     offer_id: str,
     principal: AuthPrincipal = Depends(get_request_principal),
     db: Database = Depends(get_db),
@@ -1795,11 +2221,67 @@ def create_shipping_labels(
         raise HTTPException(status_code=404, detail="Offer not found")
     if principal.subject not in {offer.get("from_subject"), offer.get("to_subject")}:
         raise HTTPException(status_code=403, detail="Forbidden")
+    status_norm = str(offer.get("status") or "").lower()
+    if status_norm in {"declined", "cancelled"}:
+        raise HTTPException(status_code=400, detail="Shipping quote is unavailable for declined or cancelled offers")
+    from_subject, to_subject, _, _ = _outbound_leg_for_subject(offer, principal.subject)
+    from_addr = _subject_shipping_snapshot(db, from_subject, settings)
+    to_addr = _receive_address_snapshot_from_offer(offer=offer, subject=to_subject, db=db, settings=settings)
+    to_full = _subject_shipping_snapshot(db, to_subject, settings)
+    to_addr["email"] = to_full.get("email")
+    to_addr["phone"] = to_full.get("phone")
+    quote = _shippo_quote_rate(settings=settings, from_addr=from_addr, to_addr=to_addr)
+    return ShippingQuoteResponse(
+        offer_id=offer_id,
+        actor_subject=principal.subject,
+        status=quote.get("status") or "unknown",
+        carrier=quote.get("carrier") or "USPS",
+        service_level=quote.get("service_level") or "Priority Mail",
+        amount=quote.get("amount"),
+        currency=quote.get("currency"),
+        rate_id=quote.get("rate_id"),
+        debug=quote.get("debug"),
+    )
+
+
+@app.post("/v1/offers/{offer_id}/shipping-labels")
+def create_shipping_labels(
+    offer_id: str,
+    payload: ShippingLabelCreateRequest | None = None,
+    principal: AuthPrincipal = Depends(get_request_principal),
+    db: Database = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+):
+    payload = payload or ShippingLabelCreateRequest()
+    offer = db.get_trade_offer_by_id(offer_id)
+    if not offer:
+        raise HTTPException(status_code=404, detail="Offer not found")
+    if principal.subject not in {offer.get("from_subject"), offer.get("to_subject")}:
+        raise HTTPException(status_code=403, detail="Forbidden")
     if str(offer.get("status") or "").lower() != "accepted":
-        raise HTTPException(status_code=400, detail="Shipping labels can only be created after trade is accepted")
-    shipments = _create_trade_shipments_if_missing(db=db, offer=offer, settings=settings)
-    shipments = [_hydrate_shipment_party_fields(db, s) for s in shipments]
-    return {"offer_id": offer_id, "count": len(shipments), "shipments": shipments}
+        raise HTTPException(status_code=400, detail="Shipping labels can only be created after both users accept trade")
+    if not payload.confirmed:
+        raise HTTPException(status_code=400, detail="Shipping cost confirmation is required before creating label")
+    if not offer.get("from_receive_address") or not offer.get("to_receive_address"):
+        raise HTTPException(status_code=400, detail="Both users must select a receive shipping address before creating labels")
+    created_or_updated = _create_or_refresh_trade_shipment_for_subject(
+        db=db,
+        offer=offer,
+        subject=principal.subject,
+        settings=settings,
+        rate_id=payload.rate_id,
+    )
+    shipments = [_hydrate_shipment_party_fields(db, s) for s in db.list_shipments_for_offer(offer_id)]
+    email_result = "skipped_no_label"
+    if created_or_updated and str(created_or_updated.get("label_url") or "").strip():
+        actor_snapshot = _subject_shipping_snapshot(db, principal.subject, settings)
+        email_result = _send_label_email_if_configured(
+            settings=settings,
+            to_email=actor_snapshot.get("email"),
+            offer_id=offer_id,
+            label_url=str(created_or_updated.get("label_url") or ""),
+        )
+    return {"offer_id": offer_id, "count": len(shipments), "shipments": shipments, "email_status": email_result}
 
 
 @app.get("/v1/offers/{offer_id}/shipping-labels")
