@@ -157,6 +157,18 @@ const SUBSCRIPTION_PLANS = [
   { id: 'starter', name: 'Starter', monthlyPrice: 15, listingsPerMonth: 25, description: 'Up to 25 listings per month' },
   { id: 'pro', name: 'Pro', monthlyPrice: 25, listingsPerMonth: null, description: 'Unlimited listings' },
 ]
+const CLERK_AUTH_APPEARANCE = {
+  variables: {
+    colorPrimary: '#0d1118',
+    borderRadius: '0px',
+    fontFamily: '"Plus Jakarta Sans", "Helvetica Neue", Arial, sans-serif',
+  },
+  elements: {
+    rootBox: 'auth-clerk-root',
+    card: 'auth-clerk-card',
+    formButtonPrimary: 'auth-clerk-primary-btn',
+  },
+}
 
 function normalizeSubscriptionPlanId(plan) {
   const raw = String(plan || '').trim().toLowerCase()
@@ -593,26 +605,37 @@ function ClerkMarketplaceApp() {
   const { isLoaded, isSignedIn, getToken } = useAuth()
   const { user } = useUser()
   const [authMode, setAuthMode] = useState('login')
+  const [authPanelOpen, setAuthPanelOpen] = useState(false)
 
   if (!isLoaded) return <LoadingShell message="Loading authentication..." />
 
   if (!isSignedIn || !user) {
     return (
-      <AuthShell>
-        <section className="auth-panel">
-          <div className="tab-strip">
-            <button className={authMode === 'login' ? 'active' : ''} onClick={() => setAuthMode('login')}>Log In</button>
-            <button className={authMode === 'signup' ? 'active' : ''} onClick={() => setAuthMode('signup')}>Sign Up</button>
+      <AuthShell
+        actions={(
+        <div className="auth-cta-actions auth-cta-actions-fixed">
+          <button className="primary" type="button" onClick={() => { setAuthMode('login'); setAuthPanelOpen(true) }}>Sign In</button>
+          <button className="ghost" type="button" onClick={() => { setAuthMode('signup'); setAuthPanelOpen(true) }}>Create Account</button>
+        </div>
+        )}
+      >
+        {authPanelOpen && (
+          <div className="auth-modal-shell" onClick={() => setAuthPanelOpen(false)}>
+            <section className="auth-panel auth-panel-modal auth-panel-clerk" onClick={(e) => e.stopPropagation()}>
+              <div className="auth-panel-head auth-panel-head-clerk">
+                <p className="eyebrow">{authMode === 'login' ? 'Sign In' : 'Create Account'}</p>
+                <button className="ghost small" type="button" onClick={() => setAuthPanelOpen(false)}>Close</button>
+              </div>
+              <div className="auth-clerk-wrap">
+                {authMode === 'login' ? (
+                  <SignIn routing="virtual" signUpUrl="#" appearance={CLERK_AUTH_APPEARANCE} />
+                ) : (
+                  <SignUp routing="virtual" signInUrl="#" appearance={CLERK_AUTH_APPEARANCE} />
+                )}
+              </div>
+            </section>
           </div>
-          <div style={{ marginTop: 14 }}>
-            {authMode === 'login' ? (
-              <SignIn routing="virtual" signUpUrl="#" />
-            ) : (
-              <SignUp routing="virtual" signInUrl="#" />
-            )}
-          </div>
-          <p className="tiny-note">Clerk is enabled. The app will call the backend using your Clerk bearer token.</p>
-        </section>
+        )}
       </AuthShell>
     )
   }
@@ -652,6 +675,7 @@ function ClerkMarketplaceApp() {
 
 function LocalMarketplaceApp() {
   const [authMode, setAuthMode] = useState('login')
+  const [authPanelOpen, setAuthPanelOpen] = useState(false)
   const [session, setSession] = useState(null)
   const [users, setUsers] = useState([])
   const [authEmail, setAuthEmail] = useState('')
@@ -681,32 +705,43 @@ function LocalMarketplaceApp() {
 
   if (!session) {
     return (
-      <AuthShell>
-        <section className="auth-panel">
-          <div className="tab-strip">
-            <button className={authMode === 'login' ? 'active' : ''} onClick={() => setAuthMode('login')}>Log In</button>
-            <button className={authMode === 'signup' ? 'active' : ''} onClick={() => setAuthMode('signup')}>Sign Up</button>
+      <AuthShell
+        actions={(
+        <div className="auth-cta-actions auth-cta-actions-fixed">
+          <button className="primary" type="button" onClick={() => { setAuthMode('login'); setAuthPanelOpen(true) }}>Sign In</button>
+          <button className="ghost" type="button" onClick={() => { setAuthMode('signup'); setAuthPanelOpen(true) }}>Create Account</button>
+        </div>
+        )}
+      >
+        {authPanelOpen && (
+          <div className="auth-modal-shell" onClick={() => setAuthPanelOpen(false)}>
+            <section className="auth-panel auth-panel-modal" onClick={(e) => e.stopPropagation()}>
+              <div className="auth-panel-head">
+                <p className="eyebrow">{authMode === 'login' ? 'Sign In' : 'Create Account'}</p>
+                <button className="ghost small" type="button" onClick={() => setAuthPanelOpen(false)}>Close</button>
+              </div>
+              <form className="auth-form" onSubmit={handleAuthSubmit}>
+                {authMode === 'signup' && (
+                  <label>
+                    <span>Display name</span>
+                    <input value={authName} onChange={(e) => setAuthName(e.target.value)} placeholder="Avery" />
+                  </label>
+                )}
+                <label>
+                  <span>Email</span>
+                  <input type="email" value={authEmail} onChange={(e) => setAuthEmail(e.target.value)} placeholder="you@example.com" />
+                </label>
+                <label>
+                  <span>Password</span>
+                  <input type="password" value={authPassword} onChange={(e) => setAuthPassword(e.target.value)} placeholder="••••••••" />
+                </label>
+                {authError && <p className="error-text">{authError}</p>}
+                <button className="primary" type="submit">{authMode === 'signup' ? 'Create account' : 'Continue'}</button>
+              </form>
+              <p className="tiny-note">MVP auth is local-browser demo storage. Add `VITE_CLERK_PUBLISHABLE_KEY` to use Clerk.</p>
+            </section>
           </div>
-          <form className="auth-form" onSubmit={handleAuthSubmit}>
-            {authMode === 'signup' && (
-              <label>
-                <span>Display name</span>
-                <input value={authName} onChange={(e) => setAuthName(e.target.value)} placeholder="Avery" />
-              </label>
-            )}
-            <label>
-              <span>Email</span>
-              <input type="email" value={authEmail} onChange={(e) => setAuthEmail(e.target.value)} placeholder="you@example.com" />
-            </label>
-            <label>
-              <span>Password</span>
-              <input type="password" value={authPassword} onChange={(e) => setAuthPassword(e.target.value)} placeholder="••••••••" />
-            </label>
-            {authError && <p className="error-text">{authError}</p>}
-            <button className="primary" type="submit">{authMode === 'signup' ? 'Create account' : 'Continue'}</button>
-          </form>
-          <p className="tiny-note">MVP auth is local-browser demo storage. Add `VITE_CLERK_PUBLISHABLE_KEY` to use Clerk.</p>
-        </section>
+        )}
       </AuthShell>
     )
   }
@@ -714,23 +749,75 @@ function LocalMarketplaceApp() {
   return <MarketplaceWorkspace session={session} onLogout={() => setSession(null)} />
 }
 
-function AuthShell({ children }) {
+function AuthShell({ children, actions = null }) {
+  const authImages = [
+    'https://images.unsplash.com/photo-1529139574466-a303027c1d8b?auto=format&fit=crop&w=1600&q=80',
+    'https://images.unsplash.com/photo-1483985988355-763728e1935b?auto=format&fit=crop&w=1200&q=80',
+    'https://images.unsplash.com/photo-1509631179647-0177331693ae?auto=format&fit=crop&w=1200&q=80',
+    'https://images.unsplash.com/photo-1503342217505-b0a15ec3261c?auto=format&fit=crop&w=1200&q=80',
+  ]
   return (
     <div className="shell auth-shell">
       <div className="ambient ambient-a" />
       <div className="ambient ambient-b" />
       <section className="auth-hero">
-        <p className="eyebrow">ValueAI Exchange</p>
-        <h1>
-          Sell or trade pre-owned fashion with <em>AI valuation confidence</em>
-        </h1>
-        <p className="lede">
-          Upload item photos, infer brand and condition, estimate current market value, and match with buyers or traders in a similar value band.
-        </p>
+        <div className="auth-hero-topbar">
+            <div className="auth-brandmark" aria-label="Jouft brand">
+              <span className="auth-brand-emblem">J</span>
+              <div className="auth-brand-lockup">
+                <strong>Jouft</strong>
+                <small>AI LUXURY EXCHANGE</small>
+              </div>
+            </div>
+          {actions}
+        </div>
+        <div className="auth-hero-feature">
+          <div className="auth-hero-copy">
+            <div className="auth-marquee" aria-hidden="true">
+              <span>WOMEN</span>
+              <span>MEN</span>
+              <span>TRADES</span>
+              <span>VALUATION</span>
+              <span>CURATED MARKET</span>
+            </div>
+            <p className="auth-kicker">PRE-OWNED LUXURY MARKETPLACE</p>
+            <h1 className="auth-hero-title">
+              <span>Sell. Trade. Elevate.</span>
+              <span>Pre-owned luxury,</span>
+              <span>priced with <em>AI confidence</em>.</span>
+            </h1>
+            <p className="lede">
+              Upload item photos, infer brand and condition, estimate current market value, and match with buyers or traders in a similar value band.
+            </p>
+            <div className="auth-hero-meta">
+              <span>INSTANT ESTIMATES</span>
+              <span>CONDITION-AWARE MATCHING</span>
+              <span>TRUSTED TRADE WORKFLOW</span>
+            </div>
+          </div>
+          <div className="auth-hero-image-wall">
+            <div className="auth-hero-main-image">
+              <img src={authImages[0]} alt="Editorial fashion feature" />
+            </div>
+            <div className="auth-hero-side-images">
+              <img src={authImages[1]} alt="Pre-owned luxury marketplace" />
+              <img src={authImages[2]} alt="Curated trade listing details" />
+            </div>
+          </div>
+        </div>
         <div className="hero-cards">
-          <div className="hero-card"><span>1</span><h3>Analyze</h3><p>Brand + condition + valuation from your uploaded photos.</p></div>
-          <div className="hero-card"><span>2</span><h3>List</h3><p>Create a sell or trade listing with confidence and evidence.</p></div>
-          <div className="hero-card"><span>3</span><h3>Match</h3><p>Discover items in your target value range for swaps.</p></div>
+          <div className="hero-card">
+            <img src={authImages[1]} alt="" />
+            <div className="hero-card-content"><span>1</span><h3>Analyze</h3><p>Brand + condition + valuation from your uploaded photos.</p></div>
+          </div>
+          <div className="hero-card">
+            <img src={authImages[2]} alt="" />
+            <div className="hero-card-content"><span>2</span><h3>List</h3><p>Create a sell or trade listing with confidence and evidence.</p></div>
+          </div>
+          <div className="hero-card">
+            <img src={authImages[3]} alt="" />
+            <div className="hero-card-content"><span>3</span><h3>Match</h3><p>Discover items in your target value range for swaps.</p></div>
+          </div>
         </div>
       </section>
       {children}
@@ -741,7 +828,7 @@ function AuthShell({ children }) {
 function LoadingShell({ message }) {
   return (
     <div className="shell auth-shell">
-      <section className="auth-hero"><h1>ValueAI Exchange</h1><p className="lede">{message}</p></section>
+      <section className="auth-hero"><h1>Jouft</h1><p className="lede">{message}</p></section>
       <section className="auth-panel"><p className="tiny-note">Please wait...</p></section>
     </div>
   )
