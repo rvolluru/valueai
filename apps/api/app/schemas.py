@@ -96,7 +96,7 @@ class UserProfileQuizResponse(UserProfileQuizUpdateRequest):
 
 
 class PaymentMethodCreateRequest(BaseModel):
-    method_type: Literal["card", "apple_pay", "paypal"]
+    method_type: Literal["card", "apple_pay", "paypal", "link"]
     provider: Literal["stripe", "paypal"] = "stripe"
     label: str | None = None
     last4: str | None = None
@@ -117,7 +117,7 @@ class PaymentMethodResponse(BaseModel):
     payment_method_id: str
     owner_subject: str
     provider: str
-    method_type: Literal["card", "apple_pay", "paypal"]
+    method_type: Literal["card", "apple_pay", "paypal", "link"]
     label: str | None = None
     last4: str | None = None
     brand: str | None = None

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -10,6 +11,31 @@ from dotenv import load_dotenv
 # Ensure modules that read os.getenv() directly (e.g., valuation provider helpers)
 # see values from the local .env file in dev.
 load_dotenv(override=False)
+
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
+def _normalize_sqlite_database_url(url: str) -> str:
+    raw = str(url or "").strip()
+    if not raw.startswith("sqlite:///"):
+        return raw
+    # `sqlite:////abs/path.db` -> absolute path, keep as is.
+    path_part = raw.replace("sqlite:///", "", 1)
+    if path_part.startswith("/"):
+        return raw
+    # Resolve relative sqlite paths against repo root so local runs use one DB.
+    abs_path = (_REPO_ROOT / path_part).resolve()
+    return f"sqlite:///{abs_path}"
+
+
+def _normalize_local_storage_dir(path: str) -> str:
+    raw = str(path or "").strip()
+    if not raw:
+        return str((_REPO_ROOT / ".data").resolve())
+    p = Path(raw)
+    if p.is_absolute():
+        return str(p.resolve())
+    return str((_REPO_ROOT / p).resolve())
 
 
 class Settings(BaseSettings):
@@ -105,6 +131,18 @@ class Settings(BaseSettings):
     shippo_parcel_weight_oz: float = 32.0
     shippo_default_contact_email: str | None = None
     shippo_default_contact_phone: str | None = None
+    email_provider: str = "auto"  # auto|ses|smtp
+    ses_region: str | None = None
+    ses_from_email: str | None = None
+    ses_endpoint_url: str | None = None
+    ses_access_key_id: str | None = None
+    ses_secret_access_key: str | None = None
+    ses_session_token: str | None = None
+    ses_template_shipping_label: str | None = "jouft-shipping-label-v1"
+    ses_template_subscription: str | None = "jouft-subscription-v1"
+    ses_template_signup_welcome: str | None = "jouft-signup-welcome-v1"
+    ses_template_forgot_password: str | None = "jouft-forgot-password-v1"
+    ses_template_offer_update: str | None = "jouft-offer-update-v1"
     smtp_host: str | None = None
     smtp_port: int = 587
     smtp_username: str | None = None
@@ -115,4 +153,7 @@ class Settings(BaseSettings):
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
-    return Settings()
+    settings = Settings()
+    settings.database_url = _normalize_sqlite_database_url(settings.database_url)
+    settings.local_storage_dir = _normalize_local_storage_dir(settings.local_storage_dir)
+    return settings

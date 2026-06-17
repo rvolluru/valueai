@@ -75,13 +75,19 @@ _default_local_origins = {
     "http://localhost:5175",
     "http://127.0.0.1:5175",
 }
-_configured_origins = {o.strip() for o in get_settings().cors_allow_origins.split(",") if o.strip()}
+_settings_for_cors = get_settings()
+_configured_origins = {o.strip() for o in _settings_for_cors.cors_allow_origins.split(",") if o.strip()}
 _cors_origins = sorted(_configured_origins | _default_local_origins)
+_cors_origin_regex = r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"
+# In local development, allow any browser origin so frontend can run on
+# arbitrary hosts/ports (localhost, local network hostname/IP, tunnels).
+if _settings_for_cors.app_env.lower() == "local":
+    _cors_origin_regex = r"^https?://[a-zA-Z0-9.-]+(:\d+)?$"
 if _cors_origins:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=_cors_origins,
-        allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
+        allow_origin_regex=_cors_origin_regex,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -913,7 +919,37 @@ def delete_payment_method(
     payment_method_id: str,
     principal: AuthPrincipal = Depends(get_request_principal),
     db: Database = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ):
+    existing = db.get_payment_method(principal.subject, payment_method_id)
+    if existing is None:
+        raise HTTPException(status_code=404, detail="Payment method not found")
+
+    provider = str(existing.get("provider") or "").strip().lower()
+    provider_token = str(existing.get("provider_token") or "").strip()
+    secret_key = (settings.stripe_secret_key or "").strip()
+    if provider == "stripe" and provider_token and secret_key:
+        try:
+            with httpx.Client(timeout=10.0) as client:
+                detach_resp = client.post(
+                    f"https://api.stripe.com/v1/payment_methods/{provider_token}/detach",
+                    auth=(secret_key, ""),
+                )
+            if detach_resp.status_code >= 400:
+                payload = detach_resp.json() if detach_resp.content else {}
+                code = (
+                    payload.get("error", {}).get("code")
+                    if isinstance(payload, dict) and isinstance(payload.get("error"), dict)
+                    else None
+                )
+                # If already detached/missing in Stripe, continue local delete.
+                if code not in {"resource_missing", "payment_method_unexpected_state"}:
+                    raise HTTPException(status_code=502, detail="Failed to detach payment method in Stripe")
+        except HTTPException:
+            raise
+        except Exception:
+            raise HTTPException(status_code=502, detail="Stripe unavailable while deleting payment method")
+
     deleted = db.delete_payment_method(principal.subject, payment_method_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Payment method not found")
@@ -1052,14 +1088,18 @@ def sync_stripe_payment_methods(
         return PaymentMethodListResponse(items=[PaymentMethodResponse(**m) for m in db.list_payment_methods(principal.subject)])
     try:
         with httpx.Client(timeout=10.0) as client:
-            list_resp = client.get(
-                "https://api.stripe.com/v1/payment_methods",
-                params={"customer": customer_id, "type": "card"},
-                auth=(secret_key, ""),
-            )
-            if list_resp.status_code >= 400:
-                raise HTTPException(status_code=502, detail="Stripe payment methods list failed")
-            items = list_resp.json().get("data") or []
+            items: list[dict] = []
+            for stripe_type in ("card", "link"):
+                list_resp = client.get(
+                    "https://api.stripe.com/v1/payment_methods",
+                    params={"customer": customer_id, "type": stripe_type},
+                    auth=(secret_key, ""),
+                )
+                if list_resp.status_code >= 400:
+                    raise HTTPException(status_code=502, detail="Stripe payment methods list failed")
+                payload_items = list_resp.json().get("data") or []
+                if isinstance(payload_items, list):
+                    items.extend(payload_items)
     except HTTPException:
         raise
     except Exception:
@@ -1069,21 +1109,27 @@ def sync_stripe_payment_methods(
         pm_id = str(pm.get("id") or "").strip()
         if not pm_id:
             continue
+        stripe_pm_type = str(pm.get("type") or "").strip()
         card = pm.get("card") if isinstance(pm.get("card"), dict) else {}
         wallet = card.get("wallet") if isinstance(card, dict) and isinstance(card.get("wallet"), dict) else {}
-        method_type = "apple_pay" if wallet.get("type") == "apple_pay" else "card"
+        if stripe_pm_type == "link":
+            method_type = "link"
+        else:
+            method_type = "apple_pay" if wallet.get("type") == "apple_pay" else "card"
         brand = str(card.get("brand") or "").strip() or None
         last4 = str(card.get("last4") or "").strip() or None
         exp_month = int(card.get("exp_month")) if isinstance(card.get("exp_month"), int) else None
         exp_year = int(card.get("exp_year")) if isinstance(card.get("exp_year"), int) else None
-        label = ("Apple Pay" if method_type == "apple_pay" else (brand.title() if brand else "Card"))
-        if last4:
+        label = ("Link" if method_type == "link" else ("Apple Pay" if method_type == "apple_pay" else (brand.title() if brand else "Card")))
+        if last4 and method_type != "link":
             label = f"{label} •••• {last4}"
         billing = pm.get("billing_details") if isinstance(pm.get("billing_details"), dict) else {}
         email = str(billing.get("email") or "").strip() or None
+        if method_type == "link" and email:
+            label = f"Link ({email})"
         db.delete_payment_method_by_provider_token(principal.subject, "stripe", pm_id)
         db.create_payment_method(
-            payment_method_id=f"pm-local-{uuid.uuid4()}",
+            payment_method_id=f"pm-stripe-{pm_id}",
             owner_subject=principal.subject,
             provider="stripe",
             method_type=method_type,
@@ -1184,8 +1230,15 @@ def get_uploaded_image(
         return RedirectResponse(signed, status_code=307)
 
     path = Path(storage_uri)
-    if path.exists():
-        return FileResponse(path)
+    candidate_paths = [path]
+    if not path.is_absolute():
+        # Support legacy relative storage paths regardless of process cwd.
+        base = Path(settings.local_storage_dir).resolve().parent
+        candidate_paths.append((base / path).resolve())
+        candidate_paths.append((Path(settings.local_storage_dir).resolve() / path).resolve())
+    for candidate in candidate_paths:
+        if candidate.exists():
+            return FileResponse(candidate)
     raise HTTPException(status_code=404, detail="image not found")
 
 
@@ -1221,16 +1274,19 @@ def create_listing(
     if principal.auth_type == "clerk":
         owner_name = (
             principal.claims.get("name")
+            or " ".join(
+                p for p in [
+                    principal.claims.get("given_name"),
+                    principal.claims.get("family_name"),
+                ] if isinstance(p, str) and p.strip()
+            )
             or principal.claims.get("username")
             or principal.claims.get("email")
         )
         if isinstance(owner_name, str):
             owner_name = owner_name.strip()
-        if not owner_name:
-            raise HTTPException(
-                status_code=400,
-                detail="Owner name is required to create a listing. Please update your profile name and try again.",
-            )
+    if not owner_name:
+        owner_name = principal.subject
     created_at = db.insert_listing(
         listing_id=listing_id,
         owner_subject=principal.subject,
@@ -1322,6 +1378,9 @@ def list_recent_listings(
     records = [_normalize_listing_media(record) for record in records]
 
     if include_matches and not mine:
+        def _norm_brand(value: object) -> str:
+            return str(value or "").strip().casefold()
+
         my_active = [
             _normalize_listing_media(x)
             for x in db.list_owner_listings(principal.subject, limit=200)
@@ -1332,8 +1391,11 @@ def list_recent_listings(
             if base_value <= 0:
                 record["matches"] = []
                 continue
-            tolerance = max(50.0, base_value * 0.2)
+            # Keep marketplace "matches" aligned with offer-candidate rules so
+            # clicking Start Trade does not lead to zero eligible listings.
+            tolerance = max(50.0, base_value * 0.30)
             owner_subject = str(record.get("owner_subject") or "")
+            target_brand = _norm_brand(record.get("brand"))
             matches: list[dict] = []
             for candidate in my_active:
                 if str(candidate.get("listing_id") or "") == str(record.get("listing_id") or ""):
@@ -1346,6 +1408,9 @@ def list_recent_listings(
                 if candidate_value <= 0:
                     continue
                 if abs(candidate_value - base_value) > tolerance:
+                    continue
+                candidate_brand = _norm_brand(candidate.get("brand"))
+                if target_brand and candidate_brand and target_brand != candidate_brand:
                     continue
                 matches.append(candidate)
                 if len(matches) >= 12:
@@ -1544,13 +1609,23 @@ def list_incoming_offers(
         raise HTTPException(status_code=400, detail="Invalid status filter")
     filter_status = None if status_norm == "all" else status_norm
     offers = db.list_trade_offers_for_subject(principal.subject, limit=limit, status=filter_status)
+    listing_ids: list[str] = []
+    for offer in offers:
+        target_id = str(offer.get("target_listing_id") or "").strip()
+        if target_id:
+            listing_ids.append(target_id)
+        offered_ids = [x for x in (offer.get("offered_listing_ids") or []) if isinstance(x, str) and x.strip()]
+        if not offered_ids and isinstance(offer.get("offered_listing_id"), str):
+            offered_ids = [offer["offered_listing_id"]]
+        listing_ids.extend(offered_ids)
+    listing_map = db.get_listings_by_ids(listing_ids)
     items: list[OfferWithListingsResponse] = []
     for offer in offers:
-        target = db.get_listing_by_id(offer["target_listing_id"])
+        target = listing_map.get(str(offer["target_listing_id"]))
         offered_ids = [x for x in (offer.get("offered_listing_ids") or []) if isinstance(x, str) and x.strip()]
-        offered_listings = [db.get_listing_by_id(x) for x in offered_ids]
+        offered_listings = [listing_map.get(str(x)) for x in offered_ids]
         offered_listings = [x for x in offered_listings if x]
-        offered = offered_listings[0] if offered_listings else db.get_listing_by_id(offer["offered_listing_id"])
+        offered = offered_listings[0] if offered_listings else listing_map.get(str(offer["offered_listing_id"]))
         if not target or not offered:
             continue
         items.append(
@@ -1585,6 +1660,13 @@ def action_offer(
     db: Database = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ):
+    offer = db.get_trade_offer_by_id(offer_id)
+    if not offer:
+        raise HTTPException(status_code=404, detail="Offer not found")
+    if principal.subject not in {offer.get("from_subject"), offer.get("to_subject")}:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    if payload.status == "accepted" and principal.subject == str(offer.get("from_subject") or ""):
+        raise HTTPException(status_code=400, detail="Sender is already marked ready. Only the receiver needs to accept.")
     if payload.status == "accepted" and payload.receive_address is None:
         raise HTTPException(status_code=400, detail="Select receive shipping address while accepting trade")
     receive_address_payload = payload.receive_address.model_dump() if payload.receive_address else None
@@ -1601,6 +1683,11 @@ def action_offer(
         if not offered_ids and isinstance(updated.get("offered_listing_id"), str):
             offered_ids = [updated["offered_listing_id"]]
         db.mark_listings_traded([updated["target_listing_id"], *offered_ids])
+        try:
+            _auto_create_labels_for_accepted_offer_and_notify(db=db, offer=updated, settings=settings)
+        except Exception:
+            # Do not block offer acceptance if shipping providers/email providers are temporarily unavailable.
+            pass
     return OfferResponse(**updated)
 
 
@@ -1700,6 +1787,11 @@ def _hydrate_shipment_party_fields(db: Database, shipment: dict) -> dict:
         if isinstance(to_owner, str) and to_owner.strip():
             hydrated["to_name"] = to_owner.strip()
     return hydrated
+
+
+def _visible_shipments_for_subject(*, shipments: list[dict], subject: str) -> list[dict]:
+    actor = str(subject or "")
+    return [s for s in shipments if str(s.get("from_subject") or "") == actor]
 
 
 def _address_complete(a: dict[str, str | None]) -> bool:
@@ -1817,31 +1909,154 @@ def _send_label_email_if_configured(
     *,
     settings: Settings,
     to_email: str | None,
+    customer_name: str | None,
     offer_id: str,
     label_url: str,
+    tracking_number: str | None = None,
+    carrier: str | None = None,
+    service_level: str | None = None,
 ) -> str:
+    def _send_via_ses(recipient: str) -> str:
+        from_email = str(settings.ses_from_email or settings.smtp_from_email or "").strip()
+        template_name = str(settings.ses_template_shipping_label or "").strip()
+        region = str(settings.ses_region or settings.aws_region or "us-east-1").strip()
+        if not from_email:
+            return "skipped_ses_not_configured"
+        try:
+            session = boto3.session.Session(
+                aws_access_key_id=(settings.ses_access_key_id or None),
+                aws_secret_access_key=(settings.ses_secret_access_key or None),
+                aws_session_token=(settings.ses_session_token or None),
+                region_name=region,
+            )
+            client = session.client("ses", endpoint_url=(settings.ses_endpoint_url or None))
+            if template_name:
+                template_data = {
+                    "customer_name": str(customer_name or "there"),
+                    "offer_id": str(offer_id or ""),
+                    "label_url": str(label_url or ""),
+                    "tracking_number": str(tracking_number or ""),
+                    "carrier": str(carrier or "USPS"),
+                    "service_level": str(service_level or "Priority Mail"),
+                }
+                client.send_templated_email(
+                    Source=from_email,
+                    Destination={"ToAddresses": [recipient]},
+                    Template=template_name,
+                    TemplateData=json.dumps(template_data),
+                )
+            else:
+                client.send_email(
+                    Source=from_email,
+                    Destination={"ToAddresses": [recipient]},
+                    Message={
+                        "Subject": {"Data": f"Your ValueAI shipping label for offer {offer_id}", "Charset": "UTF-8"},
+                        "Body": {
+                            "Text": {
+                                "Data": (
+                                    "Your shipping label is ready.\n\n"
+                                    f"Offer: {offer_id}\n"
+                                    f"Label URL: {label_url}\n"
+                                ),
+                                "Charset": "UTF-8",
+                            }
+                        },
+                    },
+                )
+            return "sent_ses"
+        except Exception:
+            return "failed_ses"
+
+    def _send_via_smtp(recipient: str) -> str:
+        host = str(settings.smtp_host or "").strip()
+        from_email = str(settings.smtp_from_email or settings.ses_from_email or "").strip()
+        if not host or not from_email:
+            return "skipped_smtp_not_configured"
+        msg = EmailMessage()
+        msg["Subject"] = f"Your ValueAI shipping label for offer {offer_id}"
+        msg["From"] = from_email
+        msg["To"] = recipient
+        msg.set_content(f"Your shipping label is ready.\n\nOffer: {offer_id}\nLabel URL: {label_url}\n")
+        try:
+            with smtplib.SMTP(host, int(settings.smtp_port), timeout=20) as smtp:
+                if settings.smtp_use_tls:
+                    smtp.starttls()
+                if settings.smtp_username:
+                    smtp.login(settings.smtp_username, settings.smtp_password or "")
+                smtp.send_message(msg)
+            return "sent_smtp"
+        except Exception:
+            return "failed_smtp"
+
     recipient = str(to_email or "").strip()
     if not recipient:
         return "skipped_no_recipient"
-    host = str(settings.smtp_host or "").strip()
-    from_email = str(settings.smtp_from_email or "").strip()
-    if not host or not from_email:
-        return "skipped_not_configured"
-    msg = EmailMessage()
-    msg["Subject"] = f"Your ValueAI shipping label for offer {offer_id}"
-    msg["From"] = from_email
-    msg["To"] = recipient
-    msg.set_content(f"Your shipping label is ready.\n\nOffer: {offer_id}\nLabel URL: {label_url}\n")
-    try:
-        with smtplib.SMTP(host, int(settings.smtp_port), timeout=20) as smtp:
-            if settings.smtp_use_tls:
-                smtp.starttls()
-            if settings.smtp_username:
-                smtp.login(settings.smtp_username, settings.smtp_password or "")
-            smtp.send_message(msg)
-        return "sent"
-    except Exception:
-        return "failed"
+    provider = str(settings.email_provider or "auto").strip().lower()
+
+    if provider == "ses":
+        return _send_via_ses(recipient)
+    if provider == "smtp":
+        return _send_via_smtp(recipient)
+
+    ses_result = _send_via_ses(recipient)
+    if ses_result == "sent_ses":
+        return ses_result
+    smtp_result = _send_via_smtp(recipient)
+    if smtp_result == "sent_smtp":
+        return smtp_result
+    if ses_result.startswith("failed"):
+        return ses_result
+    if smtp_result.startswith("failed"):
+        return smtp_result
+    return "skipped_not_configured"
+
+
+def _auto_create_labels_for_accepted_offer_and_notify(*, db: Database, offer: dict, settings: Settings) -> None:
+    offer_id = str(offer.get("offer_id") or "")
+    if not offer_id:
+        return
+    from_subject = str(offer.get("from_subject") or "")
+    to_subject = str(offer.get("to_subject") or "")
+    if not from_subject or not to_subject:
+        return
+
+    preexisting_label_urls: dict[tuple[str, str], str] = {}
+    for shipment in db.list_shipments_for_offer(offer_id):
+        leg = (str(shipment.get("from_subject") or ""), str(shipment.get("to_subject") or ""))
+        preexisting_label_urls[leg] = str(shipment.get("label_url") or "").strip()
+
+    for subject in (from_subject, to_subject):
+        created_or_updated = _create_or_refresh_trade_shipment_for_subject(
+            db=db,
+            offer=offer,
+            subject=subject,
+            settings=settings,
+        )
+        if not created_or_updated:
+            continue
+        label_url = str(created_or_updated.get("label_url") or "").strip()
+        if not label_url:
+            continue
+        leg = (
+            str(created_or_updated.get("from_subject") or ""),
+            str(created_or_updated.get("to_subject") or ""),
+        )
+        if preexisting_label_urls.get(leg, "") == label_url:
+            continue
+
+        sender_subject = leg[0]
+        sender_snapshot = _subject_shipping_snapshot(db, sender_subject, settings)
+        _send_label_email_if_configured(
+            settings=settings,
+            to_email=sender_snapshot.get("email"),
+            customer_name=sender_snapshot.get("name"),
+            offer_id=offer_id,
+            label_url=label_url,
+            tracking_number=str(created_or_updated.get("tracking_number") or ""),
+            carrier=str(created_or_updated.get("carrier") or ""),
+            service_level=str(created_or_updated.get("service_level") or ""),
+        )
+        preexisting_label_urls[leg] = label_url
 
 
 def _shippo_buy_label(
@@ -2271,15 +2486,20 @@ def create_shipping_labels(
         settings=settings,
         rate_id=payload.rate_id,
     )
-    shipments = [_hydrate_shipment_party_fields(db, s) for s in db.list_shipments_for_offer(offer_id)]
+    shipments_all = [_hydrate_shipment_party_fields(db, s) for s in db.list_shipments_for_offer(offer_id)]
+    shipments = _visible_shipments_for_subject(shipments=shipments_all, subject=principal.subject)
     email_result = "skipped_no_label"
     if created_or_updated and str(created_or_updated.get("label_url") or "").strip():
         actor_snapshot = _subject_shipping_snapshot(db, principal.subject, settings)
         email_result = _send_label_email_if_configured(
             settings=settings,
             to_email=actor_snapshot.get("email"),
+            customer_name=actor_snapshot.get("name"),
             offer_id=offer_id,
             label_url=str(created_or_updated.get("label_url") or ""),
+            tracking_number=str(created_or_updated.get("tracking_number") or ""),
+            carrier=str(created_or_updated.get("carrier") or ""),
+            service_level=str(created_or_updated.get("service_level") or ""),
         )
     return {"offer_id": offer_id, "count": len(shipments), "shipments": shipments, "email_status": email_result}
 
@@ -2295,7 +2515,8 @@ def list_shipping_labels(
         raise HTTPException(status_code=404, detail="Offer not found")
     if principal.subject not in {offer.get("from_subject"), offer.get("to_subject")}:
         raise HTTPException(status_code=403, detail="Forbidden")
-    shipments = [_hydrate_shipment_party_fields(db, s) for s in db.list_shipments_for_offer(offer_id)]
+    shipments_all = [_hydrate_shipment_party_fields(db, s) for s in db.list_shipments_for_offer(offer_id)]
+    shipments = _visible_shipments_for_subject(shipments=shipments_all, subject=principal.subject)
     return {"offer_id": offer_id, "count": len(shipments), "shipments": shipments}
 
 
@@ -2308,7 +2529,7 @@ def get_shipping_label_document(
     shipment = db.get_trade_shipment_by_id(shipment_id)
     if not shipment:
         raise HTTPException(status_code=404, detail="Shipment not found")
-    if principal.subject not in {shipment.get("from_subject"), shipment.get("to_subject")}:
+    if principal.subject != shipment.get("from_subject"):
         raise HTTPException(status_code=403, detail="Forbidden")
     return {
         "shipment_id": shipment.get("shipment_id"),

@@ -301,6 +301,30 @@ class Database:
             return None
         return self._listing_row_to_dict(row)
 
+    def get_listings_by_ids(self, listing_ids: list[str]) -> dict[str, dict]:
+        unique_ids = [x for x in dict.fromkeys(listing_ids) if isinstance(x, str) and x.strip()]
+        if not unique_ids:
+            return {}
+        placeholders = ", ".join([self.param] * len(unique_ids))
+        query = (
+            f"SELECT listing_id, owner_subject, owner_name, title, mode, category, brand, condition, "
+            f"size, estimated_value, city, image, images_json, description, wants, tags_json, source_item_id, analysis_json, status, created_at "
+            f"FROM listings WHERE listing_id IN ({placeholders})"
+        )
+        params = tuple(unique_ids)
+        if self._sqlite_conn is not None:
+            rows = self._sqlite_conn.execute(query, params).fetchall()
+        else:
+            cur = self._pg.cursor()
+            cur.execute(query, params)
+            rows = cur.fetchall()
+            cur.close()
+        out: dict[str, dict] = {}
+        for row in rows:
+            listing = self._listing_row_to_dict(row)
+            out[str(listing["listing_id"])] = listing
+        return out
+
     def create_trade_offer(
         self,
         *,
@@ -325,7 +349,7 @@ class Database:
                 from_subject,
                 to_subject,
                 "pending",
-                0,
+                1,
                 0,
                 None,
                 None,
@@ -343,7 +367,7 @@ class Database:
             "from_subject": from_subject,
             "to_subject": to_subject,
             "status": "pending",
-            "accepted_by_from": False,
+            "accepted_by_from": True,
             "accepted_by_to": False,
             "from_receive_address": None,
             "to_receive_address": None,
@@ -516,15 +540,17 @@ class Database:
 
         if status_norm == "accepted":
             normalized_addr = self._normalize_offer_address(receive_address or {})
+            accepted_by_from = True
             if actor_subject == from_subject:
                 accepted_by_from = True
                 if normalized_addr:
                     from_receive = normalized_addr
+                next_status = "pending"
             else:
                 accepted_by_to = True
                 if normalized_addr:
                     to_receive = normalized_addr
-            next_status = "accepted" if accepted_by_from and accepted_by_to else "pending"
+                next_status = "accepted"
         else:
             next_status = status_norm
             accepted_by_from = False
@@ -1476,6 +1502,42 @@ class Database:
         self._pg.commit()
         return deleted
 
+    def get_payment_method(self, owner_subject: str, payment_method_id: str) -> dict | None:
+        query = (
+            f"SELECT payment_method_id, owner_subject, provider, method_type, label, last4, brand, exp_month, exp_year, email, is_default, provider_token, created_at, updated_at "
+            f"FROM user_payment_methods WHERE owner_subject = {self.param} AND payment_method_id = {self.param} LIMIT 1"
+        )
+        if self._sqlite_conn is not None:
+            row = self._sqlite_conn.execute(query, (owner_subject, payment_method_id)).fetchone()
+        else:
+            cur = self._pg.cursor()
+            cur.execute(query, (owner_subject, payment_method_id))
+            row = cur.fetchone()
+            cur.close()
+        if not row:
+            return None
+        keys = [
+            "payment_method_id", "owner_subject", "provider", "method_type", "label", "last4",
+            "brand", "exp_month", "exp_year", "email", "is_default", "provider_token", "created_at", "updated_at",
+        ]
+        data = dict(row) if isinstance(row, sqlite3.Row) else {k: row[idx] for idx, k in enumerate(keys)}
+        return {
+            "payment_method_id": data.get("payment_method_id"),
+            "owner_subject": data.get("owner_subject"),
+            "provider": data.get("provider"),
+            "method_type": data.get("method_type"),
+            "label": data.get("label"),
+            "last4": data.get("last4"),
+            "brand": data.get("brand"),
+            "exp_month": data.get("exp_month"),
+            "exp_year": data.get("exp_year"),
+            "email": data.get("email"),
+            "is_default": bool(data.get("is_default")),
+            "provider_token": data.get("provider_token"),
+            "created_at": data.get("created_at"),
+            "updated_at": data.get("updated_at"),
+        }
+
     def set_default_payment_method(self, owner_subject: str, payment_method_id: str) -> dict | None:
         self.execute(f"UPDATE user_payment_methods SET is_default = 0 WHERE owner_subject = {self.param}", (owner_subject,))
         self.execute(
@@ -1507,7 +1569,7 @@ class Database:
         if not row:
             return None
         if isinstance(row, sqlite3.Row):
-            return row.get("stripe_customer_id") or None
+            return row["stripe_customer_id"] if row["stripe_customer_id"] else None
         return row[0] if row and row[0] else None
 
     def set_stripe_customer_id(self, owner_subject: str, stripe_customer_id: str) -> None:

@@ -24,6 +24,21 @@ cp .env.example .env
 make run
 ```
 
+For background dev server with hot reload (no manual restart per code change):
+
+```bash
+make backend-dev-start
+make backend-dev-logs
+```
+
+Useful controls:
+
+```bash
+make backend-dev-status
+make backend-dev-restart
+make backend-dev-stop
+```
+
 Then open the built-in UI at:
 
 - `http://127.0.0.1:8000/`

@@ -614,8 +614,8 @@ function ClerkMarketplaceApp() {
       <AuthShell
         actions={(
         <div className="auth-cta-actions auth-cta-actions-fixed">
-          <button className="primary" type="button" onClick={() => { setAuthMode('login'); setAuthPanelOpen(true) }}>Sign In</button>
-          <button className="ghost" type="button" onClick={() => { setAuthMode('signup'); setAuthPanelOpen(true) }}>Create Account</button>
+          <button className="ghost" type="button" onClick={() => { setAuthMode('login'); setAuthPanelOpen(true) }}>Log In</button>
+          <button className="primary" type="button" onClick={() => { setAuthMode('signup'); setAuthPanelOpen(true) }}>Request Access</button>
         </div>
         )}
       >
@@ -708,8 +708,8 @@ function LocalMarketplaceApp() {
       <AuthShell
         actions={(
         <div className="auth-cta-actions auth-cta-actions-fixed">
-          <button className="primary" type="button" onClick={() => { setAuthMode('login'); setAuthPanelOpen(true) }}>Sign In</button>
-          <button className="ghost" type="button" onClick={() => { setAuthMode('signup'); setAuthPanelOpen(true) }}>Create Account</button>
+          <button className="ghost" type="button" onClick={() => { setAuthMode('login'); setAuthPanelOpen(true) }}>Log In</button>
+          <button className="primary" type="button" onClick={() => { setAuthMode('signup'); setAuthPanelOpen(true) }}>Request Access</button>
         </div>
         )}
       >
@@ -750,75 +750,134 @@ function LocalMarketplaceApp() {
 }
 
 function AuthShell({ children, actions = null }) {
-  const authImages = [
-    'https://images.unsplash.com/photo-1529139574466-a303027c1d8b?auto=format&fit=crop&w=1600&q=80',
-    'https://images.unsplash.com/photo-1483985988355-763728e1935b?auto=format&fit=crop&w=1200&q=80',
-    'https://images.unsplash.com/photo-1509631179647-0177331693ae?auto=format&fit=crop&w=1200&q=80',
-    'https://images.unsplash.com/photo-1503342217505-b0a15ec3261c?auto=format&fit=crop&w=1200&q=80',
-  ]
+  const authImages = {
+    hero: 'https://images.unsplash.com/photo-1617038220319-276d3cfab638?auto=format&fit=crop&w=1800&q=80',
+    bags: 'https://images.unsplash.com/photo-1594223274512-ad4803739b7c?auto=format&fit=crop&w=900&q=80',
+    apparel: 'https://images.unsplash.com/photo-1487222477894-8943e31ef7b2?auto=format&fit=crop&w=900&q=80',
+    shoes: 'https://images.unsplash.com/photo-1543163521-1bf539c55dd2?auto=format&fit=crop&w=900&q=80',
+    accessories: 'https://images.unsplash.com/photo-1524592094714-0f0654e20314?auto=format&fit=crop&w=900&q=80',
+    jewelry: 'https://images.unsplash.com/photo-1617038220319-276d3cfab638?auto=format&fit=crop&w=900&q=80',
+    designer: 'https://images.unsplash.com/photo-1511499767150-a48a237f0083?auto=format&fit=crop&w=900&q=80',
+  }
   return (
     <div className="shell auth-shell">
       <div className="ambient ambient-a" />
       <div className="ambient ambient-b" />
       <section className="auth-hero">
+        <div className="auth-announce-bar">INVITE ONLY COMMUNITY • CURATED MEMBERSHIP ACCESS</div>
         <div className="auth-hero-topbar">
-            <div className="auth-brandmark" aria-label="Jouft brand">
-              <span className="auth-brand-emblem">J</span>
-              <div className="auth-brand-lockup">
-                <strong>Jouft</strong>
-                <small>AI LUXURY EXCHANGE</small>
-              </div>
+          <div className="auth-brandmark" aria-label="Jouft brand">
+            <div className="auth-brand-lockup">
+              <strong>JOUFT</strong>
             </div>
+          </div>
+          <div className="auth-marquee" aria-label="Site sections">
+            <span>TRADING</span>
+            <span>CLOSET</span>
+            <span>DISCOVER</span>
+            <span>HOW IT WORKS</span>
+            <span>JOURNAL</span>
+          </div>
           {actions}
         </div>
         <div className="auth-hero-feature">
           <div className="auth-hero-copy">
-            <div className="auth-marquee" aria-hidden="true">
-              <span>WOMEN</span>
-              <span>MEN</span>
-              <span>TRADES</span>
-              <span>VALUATION</span>
-              <span>CURATED MARKET</span>
-            </div>
-            <p className="auth-kicker">PRE-OWNED LUXURY MARKETPLACE</p>
+            <p className="auth-kicker">TRADE. ELEVATE. BELONG.</p>
             <h1 className="auth-hero-title">
-              <span>Sell. Trade. Elevate.</span>
-              <span>Pre-owned luxury,</span>
-              <span>priced with <em>AI confidence</em>.</span>
+              <span>The Fashion Trading Platform</span>
+              <span>for Collectors</span>
             </h1>
             <p className="lede">
-              Upload item photos, infer brand and condition, estimate current market value, and match with buyers or traders in a similar value band.
+              Trade authentic, pre-loved and new fashion with our curated community. No listing fees. No marketplace clutter. Just the right match.
             </p>
-            <div className="auth-hero-meta">
-              <span>INSTANT ESTIMATES</span>
-              <span>CONDITION-AWARE MATCHING</span>
-              <span>TRUSTED TRADE WORKFLOW</span>
+            <div className="auth-hero-actions">
+              <button className="primary" type="button">Request Access</button>
+              <button className="ghost arrow" type="button">How It Works</button>
             </div>
+            <p className="auth-social-proof">Join 2,800+ members shaping the future of fashion.</p>
           </div>
           <div className="auth-hero-image-wall">
             <div className="auth-hero-main-image">
-              <img src={authImages[0]} alt="Editorial fashion feature" />
+              <img src={authImages.hero} alt="Jouft curated hero editorial" />
             </div>
-            <div className="auth-hero-side-images">
-              <img src={authImages[1]} alt="Pre-owned luxury marketplace" />
-              <img src={authImages[2]} alt="Curated trade listing details" />
+            <div className="auth-members-card">
+              <p className="auth-members-kicker">CURATED COMMUNITY</p>
+              <h3>Members Only</h3>
+              <p>Exclusivity. Trust. Quality.</p>
+              <span>+2.8K</span>
             </div>
           </div>
         </div>
-        <div className="hero-cards">
-          <div className="hero-card">
-            <img src={authImages[1]} alt="" />
-            <div className="hero-card-content"><span>1</span><h3>Analyze</h3><p>Brand + condition + valuation from your uploaded photos.</p></div>
-          </div>
-          <div className="hero-card">
-            <img src={authImages[2]} alt="" />
-            <div className="hero-card-content"><span>2</span><h3>List</h3><p>Create a sell or trade listing with confidence and evidence.</p></div>
-          </div>
-          <div className="hero-card">
-            <img src={authImages[3]} alt="" />
-            <div className="hero-card-content"><span>3</span><h3>Match</h3><p>Discover items in your target value range for swaps.</p></div>
-          </div>
+        <div className="auth-hero-meta auth-value-strip">
+          <span><strong>EXCLUSIVE ACCESS</strong>Invitation-only community of verified fashion lovers.</span>
+          <span><strong>CURATED QUALITY</strong>Every item is authenticated and quality-checked.</span>
+          <span><strong>SMART MATCHING</strong>We match you by style, value, and preferences.</span>
+          <span><strong>SUSTAINABLE IMPACT</strong>Extend item life, reduce waste, elevate style.</span>
         </div>
+        <section className="auth-closet-section">
+          <div className="auth-section-head">
+            <h2>BROWSE THE CLOSET</h2>
+            <button className="ghost arrow" type="button">View All Categories</button>
+          </div>
+          <div className="auth-closet-grid">
+            <article className="auth-closet-card">
+              <img src={authImages.bags} alt="Bags" />
+              <div><h3>BAGS</h3><p>312 items</p></div>
+            </article>
+            <article className="auth-closet-card">
+              <img src={authImages.apparel} alt="Apparel" />
+              <div><h3>APPAREL</h3><p>892 items</p></div>
+            </article>
+            <article className="auth-closet-card">
+              <img src={authImages.shoes} alt="Shoes" />
+              <div><h3>SHOES</h3><p>532 items</p></div>
+            </article>
+            <article className="auth-closet-card">
+              <img src={authImages.accessories} alt="Accessories" />
+              <div><h3>ACCESSORIES</h3><p>241 items</p></div>
+            </article>
+            <article className="auth-closet-card">
+              <img src={authImages.jewelry} alt="Jewelry" />
+              <div><h3>JEWELRY</h3><p>189 items</p></div>
+            </article>
+            <article className="auth-closet-card">
+              <img src={authImages.designer} alt="Designer collections" />
+              <div><h3>DESIGNER COLLECTIONS</h3><p>126 items</p></div>
+            </article>
+          </div>
+          <div className="auth-new-banner">
+            <span>NEW TO JOUFT</span>
+            <p>Not sure how it works? Watch our short walkthrough video.</p>
+            <button className="ghost arrow" type="button">Watch Now</button>
+          </div>
+        </section>
+        <section className="auth-how-section">
+          <div className="auth-section-head">
+            <h2>HOW JOUFT WORKS</h2>
+            <button className="ghost arrow" type="button">Learn More</button>
+          </div>
+          <div className="hero-cards">
+            <div className="hero-card">
+              <div className="hero-card-content"><span>01</span><h3>Share Your Items</h3><p>Add pieces from your closet. We evaluate them for you.</p></div>
+            </div>
+            <div className="hero-card">
+              <div className="hero-card-content"><span>02</span><h3>Get Matched</h3><p>Our algorithm finds the best matches based on style and value.</p></div>
+            </div>
+            <div className="hero-card">
+              <div className="hero-card-content"><span>03</span><h3>Trade Securely</h3><p>Approve the trade and we handle authentication and shipping.</p></div>
+            </div>
+            <div className="hero-card">
+              <div className="hero-card-content"><span>04</span><h3>Elevate Together</h3><p>Enjoy new pieces, build your style, and join the community.</p></div>
+            </div>
+          </div>
+        </section>
+        <footer className="auth-site-footer">
+          <strong>JOUFT</strong>
+          <div className="auth-footer-links">
+            <span>ABOUT</span><span>JOURNAL</span><span>FAQ</span><span>TERMS</span><span>PRIVACY</span>
+          </div>
+          <small>© 2026 JOUFT. ALL RIGHTS RESERVED.</small>
+        </footer>
       </section>
       {children}
     </div>
@@ -881,9 +940,15 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   const [profileSaveMsg, setProfileSaveMsg] = useState('')
   const [paymentMethods, setPaymentMethods] = useState([])
   const [paymentBusy, setPaymentBusy] = useState(false)
+  const [paymentSyncBusy, setPaymentSyncBusy] = useState(false)
+  const [paymentLoadError, setPaymentLoadError] = useState('')
+  const [paymentActionMsg, setPaymentActionMsg] = useState('')
+  const [paymentDeleteBusyId, setPaymentDeleteBusyId] = useState('')
   const [showStripePaymentModal, setShowStripePaymentModal] = useState(false)
   const [stripeUiBusy, setStripeUiBusy] = useState(false)
   const [stripeUiError, setStripeUiError] = useState('')
+  const [stripeUiReady, setStripeUiReady] = useState(false)
+  const [subscriptionStripeAutoSynced, setSubscriptionStripeAutoSynced] = useState(false)
   const stripeRef = useRef(null)
   const stripeElementsRef = useRef(null)
   const stripePaymentElementRef = useRef(null)
@@ -897,7 +962,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   const [tradeOfferError, setTradeOfferError] = useState('')
   const [tradeOfferBusy, setTradeOfferBusy] = useState(false)
   const [tradeDetailListing, setTradeDetailListing] = useState(null)
-  const [offerStatusFilter, setOfferStatusFilter] = useState('pending')
+  const [offerStatusFilter, setOfferStatusFilter] = useState('all')
   const [closetFilter, setClosetFilter] = useState('all')
   const [profileSection, setProfileSection] = useState('general')
   const [shippingLabelsByOffer, setShippingLabelsByOffer] = useState({})
@@ -961,9 +1026,41 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   useEffect(() => {
     let cancelled = false
     ;(async () => {
+      if (profileSection !== 'subscription') return
+      if (subscriptionStripeAutoSynced) return
+      if (paymentSyncBusy) return
+      setPaymentSyncBusy(true)
+      try {
+        const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
+        const methods = await syncStripePaymentMethodsRemote({
+          apiBaseUrl,
+          apiKey: clerkEnabled ? '' : apiKey.trim(),
+          bearerToken,
+        })
+        if (!cancelled) {
+          setPaymentMethods(methods)
+          setPaymentLoadError('')
+          setSubscriptionStripeAutoSynced(true)
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setPaymentLoadError(err?.message || 'Failed to sync payment methods.')
+          setProfileSaveMsg(err.message || 'Failed to sync payment methods.')
+        }
+      } finally {
+        if (!cancelled) setPaymentSyncBusy(false)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [profileSection, subscriptionStripeAutoSynced, paymentSyncBusy, apiBaseUrl, apiKey, clerkEnabled, getBearerToken])
+
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
       if (!showStripePaymentModal) return
       setStripeUiError('')
       setStripeUiBusy(true)
+      setStripeUiReady(false)
       try {
         const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
         const setup = await createStripeSetupIntentRemote({
@@ -985,6 +1082,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
         stripeRef.current = stripe
         stripeElementsRef.current = elements
         stripePaymentElementRef.current = payment
+        setStripeUiReady(true)
       } catch (err) {
         if (!cancelled) setStripeUiError(err.message || 'Failed to initialize Stripe payment UI.')
       } finally {
@@ -997,6 +1095,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
       stripePaymentElementRef.current = null
       stripeElementsRef.current = null
       stripeRef.current = null
+      setStripeUiReady(false)
     }
   }, [showStripePaymentModal, apiBaseUrl, apiKey, clerkEnabled, getBearerToken])
 
@@ -1033,9 +1132,14 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
       try {
         const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
         const methods = await fetchPaymentMethodsRemote({ apiBaseUrl, apiKey: clerkEnabled ? '' : apiKey.trim(), bearerToken })
-        if (!cancelled) setPaymentMethods(methods)
-      } catch {
-        if (!cancelled) setPaymentMethods([])
+        if (!cancelled) {
+          setPaymentMethods(methods)
+          setPaymentLoadError('')
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setPaymentLoadError(err?.message || 'Failed to load payment methods.')
+        }
       }
     })()
     return () => { cancelled = true }
@@ -1368,6 +1472,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     () => allListings.filter((item) => String(item?.status || '').toLowerCase() === 'active').slice(0, 6),
     [allListings],
   )
+  const showFreshListingsStrip = false
 
   useEffect(() => {
     if (filteredListings.length === 0) {
@@ -1618,7 +1723,10 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
         setMyListings(myItems.map(fromRemoteListing).filter(Boolean))
         setMarketListings(marketItems.map(fromRemoteListing).filter(Boolean))
         if (updatedOffer?.status === 'accepted') {
-          setSavedListingNotice('Trade accepted by both users. Get shipping cost and create labels.')
+          setSavedListingNotice('Trade accepted by both users. Shipping labels are being generated automatically and can be downloaded here even if email is unavailable.')
+          try {
+            await loadShippingLabelsForOffer(offerId)
+          } catch {}
         } else if (actorAccepted) {
           setSavedListingNotice('Your acceptance is recorded. Waiting for the other user to accept.')
         }
@@ -1649,6 +1757,25 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     setShippingLabelsByOffer((prev) => ({ ...prev, [offerId]: shipments }))
     return shipments
   }
+
+  useEffect(() => {
+    if (activeTab !== 'inbox') return
+    const acceptedOfferIds = incomingOffers
+      .filter((offer) => String(offer?.status || '').toLowerCase() === 'accepted')
+      .map((offer) => offer.offer_id)
+      .filter((offerId) => offerId && !Array.isArray(shippingLabelsByOffer[offerId]))
+    if (!acceptedOfferIds.length) return
+    let cancelled = false
+    ;(async () => {
+      for (const offerId of acceptedOfferIds) {
+        if (cancelled) return
+        try {
+          await loadShippingLabelsForOffer(offerId)
+        } catch {}
+      }
+    })()
+    return () => { cancelled = true }
+  }, [activeTab, incomingOffers, shippingLabelsByOffer])
 
   async function createShippingLabelsForOffer(offerId) {
     const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
@@ -1704,7 +1831,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
       if (!rawUrl) {
         const msg = hasIncompleteProfile
           ? `Shipping profile incomplete.${missingFrom.length > 0 ? ` Sender missing: ${missingFrom.map((k) => fmt[k]).join(', ')}.` : ''}${missingTo.length > 0 ? ` Receiver missing: ${missingTo.map((k) => fmt[k]).join(', ')}.` : ''}`
-          : 'Carrier label URL is not available yet. Click Create Shipping Labels again in a few seconds.'
+          : 'Carrier label is not available yet. Please retry in a few seconds.'
         setSavedListingNotice(msg)
         window.alert(msg)
         return
@@ -1712,7 +1839,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
       if (/^\/v1\/shipments\/[^/]+\/label$/i.test(rawUrl)) {
         const msg = hasIncompleteProfile
           ? `Shipping profile incomplete.${missingFrom.length > 0 ? ` Sender missing: ${missingFrom.map((k) => fmt[k]).join(', ')}.` : ''}${missingTo.length > 0 ? ` Receiver missing: ${missingTo.map((k) => fmt[k]).join(', ')}.` : ''}`
-          : 'Carrier label URL is still processing. Click Create Shipping Labels again in a few seconds.'
+          : 'Carrier label is still processing. Please retry in a few seconds.'
         setSavedListingNotice(msg)
         window.alert(msg)
         return
@@ -2152,11 +2279,21 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     <div className="shell app-shell">
       <div className="topbar">
         <div className="topbar-copy">
-          <p className="eyebrow">ValueAI Exchange</p>
-          <h1 className="app-title">Welcome back, {session.name}</h1>
-          <p className="topbar-subtitle">
-            Analyze inventory, publish listings, and surface trade matches by valuation range.
-          </p>
+          <div className="app-brand-row">
+            <div className="app-brandmark" aria-label="Jouft brand">
+              <span className="app-brand-emblem">J</span>
+              <div className="app-brand-lockup">
+                <strong>JOUFT</strong>
+                <small>AI LUXURY EXCHANGE</small>
+              </div>
+            </div>
+            <div className="app-brand-links" aria-label="Primary app sections">
+              <button type="button" className={activeTab === 'market' ? 'app-brand-link active' : 'app-brand-link'} onClick={() => setActiveTab('market')}>Marketplace</button>
+              <button type="button" className={activeTab === 'portfolio' ? 'app-brand-link active' : 'app-brand-link'} onClick={() => setActiveTab('portfolio')}>My Closet</button>
+              <button type="button" className={activeTab === 'inbox' ? 'app-brand-link active' : 'app-brand-link'} onClick={() => setActiveTab('inbox')}>Trade Inbox</button>
+              <button type="button" className={activeTab === 'profile' ? 'app-brand-link active' : 'app-brand-link'} onClick={() => setActiveTab('profile')}>Profile</button>
+            </div>
+          </div>
         </div>
         <div className="topbar-actions">
           {!clerkEnabled && <label className="inline-field"><span>API Key</span><input value={apiKey} onChange={(e) => setApiKey(e.target.value)} /></label>}
@@ -2169,7 +2306,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
         </div>
       </div>
 
-      {activeTab !== 'profile' && latestActiveListings.length > 0 && (
+      {showFreshListingsStrip && activeTab !== 'profile' && latestActiveListings.length > 0 && (
       <section className="panel latest-hero">
         <div className="panel-header" style={{ marginBottom: 8 }}>
           <div>
@@ -2379,44 +2516,25 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                         </label>
                       </div>
                       <div style={{ marginTop: 14 }}>
-                        <p className="eyebrow" style={{ marginBottom: 8 }}>Payment Methods</p>
+                        <p className="eyebrow" style={{ marginBottom: 8 }}>Payment Methods ({paymentMethods.length})</p>
                         <span className="tiny-note">Payments are fully managed by Stripe. No raw card data is collected or stored by this app.</span>
                         <div className="button-row" style={{ marginBottom: 8 }}>
-                          <button className="ghost small" type="button" disabled={paymentBusy} onClick={() => setShowStripePaymentModal(true)}>
+                          <button className="ghost small" type="button" onClick={() => setShowStripePaymentModal(true)}>
                             + Add Payment Method
-                          </button>
-                          <button
-                            className="ghost small"
-                            type="button"
-                            disabled={paymentBusy}
-                            onClick={async () => {
-                              setPaymentBusy(true)
-                              try {
-                                const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
-                                const methods = await syncStripePaymentMethodsRemote({
-                                  apiBaseUrl,
-                                  apiKey: clerkEnabled ? '' : apiKey.trim(),
-                                  bearerToken,
-                                })
-                                setPaymentMethods(methods)
-                                setProfileSaveMsg('Synced payment methods from Stripe.')
-                              } catch (err) {
-                                setProfileSaveMsg(err.message || 'Failed to sync payment methods.')
-                              } finally {
-                                setPaymentBusy(false)
-                              }
-                            }}
-                          >
-                            Sync from Stripe
                           </button>
                         </div>
                         <div style={{ display: 'grid', gap: 8 }}>
+                          {paymentActionMsg && <span className="tiny-note" style={{ color: '#067647' }}>{paymentActionMsg}</span>}
+                          {paymentLoadError && <span className="tiny-note" style={{ color: '#b42318' }}>{paymentLoadError}</span>}
                           {paymentMethods.length === 0 && <span className="tiny-note">No payment methods added yet.</span>}
                           {paymentMethods.map((method) => (
                             <div key={method.payment_method_id} style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', border: '1px solid var(--line)', borderRadius: 10, padding: '8px 10px' }}>
                               <div>
                                 <strong>{method.label || method.method_type}</strong>
                                 <div className="tiny-note">{method.provider}{method.is_default ? ' • Default' : ''}</div>
+                                {(method.last4 || method.email) && (
+                                  <div className="tiny-note">{method.last4 ? `•••• ${method.last4}` : method.email}</div>
+                                )}
                               </div>
                               <div className="button-row">
                                 {!method.is_default && (
@@ -2440,7 +2558,11 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                                           bearerToken,
                                         })
                                         setPaymentMethods(refreshed)
+                                        setPaymentActionMsg('Default payment method updated.')
+                                        setPaymentLoadError('')
                                       } catch (err) {
+                                        setPaymentActionMsg('')
+                                        setPaymentLoadError(err?.message || 'Failed to set default method.')
                                         setProfileSaveMsg(err.message || 'Failed to set default method.')
                                       } finally {
                                         setPaymentBusy(false)
@@ -2453,9 +2575,12 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                                 <button
                                   className="ghost small"
                                   type="button"
-                                  disabled={paymentBusy}
+                                  disabled={paymentDeleteBusyId === method.payment_method_id}
                                   onClick={async () => {
-                                    setPaymentBusy(true)
+                                    const confirmed = window.confirm('Delete this payment method from both Jouft and Stripe?')
+                                    if (!confirmed) return
+                                    setPaymentActionMsg('Removing payment method...')
+                                    setPaymentDeleteBusyId(method.payment_method_id)
                                     try {
                                       const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
                                       await deletePaymentMethodRemote({
@@ -2464,15 +2589,24 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                                         bearerToken,
                                         paymentMethodId: method.payment_method_id,
                                       })
-                                      setPaymentMethods((prev) => prev.filter((x) => x.payment_method_id !== method.payment_method_id))
+                                      const refreshed = await fetchPaymentMethodsRemote({
+                                        apiBaseUrl,
+                                        apiKey: clerkEnabled ? '' : apiKey.trim(),
+                                        bearerToken,
+                                      })
+                                      setPaymentMethods(refreshed)
+                                      setPaymentActionMsg('Payment method removed.')
+                                      setPaymentLoadError('')
                                     } catch (err) {
+                                      setPaymentActionMsg('')
+                                      setPaymentLoadError(err?.message || 'Failed to remove method.')
                                       setProfileSaveMsg(err.message || 'Failed to remove method.')
                                     } finally {
-                                      setPaymentBusy(false)
+                                      setPaymentDeleteBusyId('')
                                     }
                                   }}
                                 >
-                                  Remove
+                                  {paymentDeleteBusyId === method.payment_method_id ? 'Removing...' : 'Remove'}
                                 </button>
                               </div>
                             </div>
@@ -2652,22 +2786,14 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
           </section>
         </main>
       ) : (
-      <div className="app-grid">
-        <aside className="sidebar">
-          <p className="sidebar-section-title">Workspace</p>
+      <main className="content">
+        <nav className="workspace-nav" aria-label="Workspace">
           <button className={activeTab === 'portfolio' ? 'nav-item active' : 'nav-item'} onClick={() => setActiveTab('portfolio')}>My Closet ({myListings.length})</button>
           <button className={activeTab === 'inbox' ? 'nav-item active' : 'nav-item'} onClick={() => setActiveTab('inbox')}>Trade Inbox ({incomingOffers.length})</button>
           <button className={activeTab === 'market' ? 'nav-item active' : 'nav-item'} onClick={() => setActiveTab('market')}>Marketplace ({marketplaceNavCount})</button>
           <button className={activeTab === 'market_new' ? 'nav-item active' : 'nav-item'} onClick={() => setActiveTab('market_new')}>New Marketplace ({marketplaceNavCount})</button>
           <button className={activeTab === 'admin' ? 'nav-item active' : 'nav-item'} onClick={() => setActiveTab('admin')}>Admin</button>
-          <div className="sidebar-card"><h3>Trade Targeting</h3><p>Use the AI valuation as your anchor, then tune your target value to discover comparable listings.</p></div>
-          <div className="sidebar-card sidebar-card-dark">
-            <h3>Capture Tips</h3>
-            <p>Lead with a clean full-item shot, then add tag/logo close-ups for more reliable brand confidence and pricing comps.</p>
-          </div>
-        </aside>
-
-        <main className="content">
+        </nav>
           {activeTab === 'upload' && (
             <section className="panel">
               <div className="panel-header">
@@ -2961,65 +3087,74 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
               <div className="panel-header">
                 <div><p className="eyebrow">Trade Inbox</p><h2>Incoming offers</h2></div>
                 <div className="market-controls">
-                  <select value={offerStatusFilter} onChange={(e) => setOfferStatusFilter(e.target.value)}>
-                    <option value="pending">Pending</option>
-                    <option value="all">All</option>
-                  </select>
+                  <button className={offerStatusFilter === 'all' ? 'primary' : 'ghost small'} type="button" onClick={() => setOfferStatusFilter('all')}>All</button>
+                  <button className={offerStatusFilter === 'pending' ? 'primary' : 'ghost small'} type="button" onClick={() => setOfferStatusFilter('pending')}>Pending</button>
                 </div>
               </div>
               {incomingOffers.length === 0 ? (
                 <div className="empty-state"><h3>No offers</h3><p>No incoming trade offers for this filter yet.</p></div>
               ) : (
-                <div style={{ display: 'grid', gap: 10 }}>
+                <div className="inbox-editorial-list">
                   {incomingOffers.map((offer) => {
                     const actorSubject = resolveOfferActorSubject(offer)
                     const isSender = actorSubject && actorSubject === offer.from_subject
                     const actorAccepted = isSender ? Boolean(offer.accepted_by_from) : Boolean(offer.accepted_by_to)
                     const bothAccepted = Boolean(offer.accepted_by_from) && Boolean(offer.accepted_by_to)
+                    const canReceiverAccept = !isSender
+                    const offerShipments = shippingLabelsByOffer[offer.offer_id]
+                    const hasLoadedShipments = Array.isArray(offerShipments)
+                    const hasShipments = hasLoadedShipments && offerShipments.length > 0
                     const selectedAddressId = offerReceiveAddressById[offer.offer_id] || shippingAddresses[0]?.id || ''
                     const selectedAddress = shippingAddresses.find((a) => a.id === selectedAddressId) || shippingAddresses[0] || null
                     const quote = shippingQuoteByOffer[offer.offer_id]
+                    const targetThumbs = (Array.isArray(offer.target_listing?.images) && offer.target_listing.images.length > 0
+                      ? offer.target_listing.images
+                      : [offer.target_listing?.image].filter(Boolean)
+                    ).slice(0, 4)
+                    const offeredThumbs = (Array.isArray(offer.offered_listings) && offer.offered_listings.length > 0 ? offer.offered_listings : (offer.offered_listing ? [offer.offered_listing] : []))
+                      .flatMap((listing) => ((Array.isArray(listing?.images) && listing.images.length > 0 ? listing.images : [listing?.image].filter(Boolean)).slice(0, 2)).map((url) => ({ url, listing })))
+                      .slice(0, 8)
+                    const targetHero = targetThumbs[0] || null
                     return (
-                    <div key={offer.offer_id} style={{ border: '1px solid rgba(18,26,36,0.12)', borderRadius: 12, padding: 12, background: '#f8fafc' }}>
-                      <p style={{ margin: 0 }}>
-                        <strong>{offer.from_subject}</strong> wants to trade
-                        <strong> {offer.offered_listing?.title || 'their listing'}</strong>
-                        {' '}for your <strong>{offer.target_listing?.title || 'listing'}</strong>.
-                      </p>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 8 }}>
-                        <div>
-                          <p className="tiny-note" style={{ margin: '0 0 6px' }}>Your item</p>
-                          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                            {(Array.isArray(offer.target_listing?.images) && offer.target_listing.images.length > 0
-                              ? offer.target_listing.images
-                              : [offer.target_listing?.image].filter(Boolean)
-                            ).slice(0, 4).map((url) => (
-                              <button key={`target-${offer.offer_id}-${url}`} type="button" className="ghost small" style={{ padding: 0, border: 'none', background: 'transparent' }} onClick={() => setTradeDetailListing(offer.target_listing || null)}>
-                                <img src={url} alt="Your listing" style={{ width: 58, height: 58, objectFit: 'cover', borderRadius: 8, border: '1px solid rgba(18,26,36,0.12)' }} />
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                        <div>
-                          <p className="tiny-note" style={{ margin: '0 0 6px' }}>Offered items</p>
-                          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                            {(Array.isArray(offer.offered_listings) && offer.offered_listings.length > 0 ? offer.offered_listings : (offer.offered_listing ? [offer.offered_listing] : []))
-                              .flatMap((listing) => ((Array.isArray(listing?.images) && listing.images.length > 0 ? listing.images : [listing?.image].filter(Boolean)).slice(0, 2)).map((url) => ({ url, listing })))
-                              .slice(0, 6)
-                              .map(({ url, listing }) => (
-                                <button key={`offered-${offer.offer_id}-${listing?.listing_id || 'listing'}-${url}`} type="button" className="ghost small" style={{ padding: 0, border: 'none', background: 'transparent' }} onClick={() => setTradeDetailListing(listing || null)}>
-                                  <img src={url} alt="Offered listing" style={{ width: 58, height: 58, objectFit: 'cover', borderRadius: 8, border: '1px solid rgba(18,26,36,0.12)' }} />
+                    <article key={offer.offer_id} className="inbox-editorial-card">
+                      <div className="inbox-editorial-frame">
+                        <div className="inbox-editorial-media">
+                          <button type="button" className="inbox-target-hero" onClick={() => setTradeDetailListing(offer.target_listing || null)}>
+                            {targetHero ? (
+                              <img src={targetHero} alt={offer.target_listing?.title || 'Your listing'} />
+                            ) : (
+                              <span className="inbox-target-fallback">No image</span>
+                            )}
+                            <span className="inbox-target-chip">Your Item</span>
+                          </button>
+                          <div className="inbox-offered-column">
+                            <p className="inbox-lane-label">Offered Items</p>
+                            <div className="inbox-offered-grid">
+                              {offeredThumbs.map(({ url, listing }) => (
+                                <button key={`offered-${offer.offer_id}-${listing?.listing_id || 'listing'}-${url}`} type="button" className="inbox-thumb-btn" onClick={() => setTradeDetailListing(listing || null)}>
+                                  <img src={url} alt="Offered listing" className="inbox-thumb" />
                                 </button>
                               ))}
+                            </div>
                           </div>
                         </div>
+                        <div className="inbox-editorial-content">
+                          <div className="inbox-editorial-head">
+                            <p className="eyebrow">Trade Offer</p>
+                            <span className={`inbox-status-pill inbox-status-${String(offer.status || '').toLowerCase() || 'pending'}`}>{offer.status || 'pending'}</span>
+                          </div>
+                          <h3 className="inbox-editorial-title">
+                            {offer.from_subject} wants to trade {offer.offered_listing?.title || 'their listing'}
+                          </h3>
+                          <p className="inbox-editorial-subtitle">For your {offer.target_listing?.title || 'listing'}</p>
+                        </div>
                       </div>
-                      {offer.message ? <p className="tiny-note" style={{ marginTop: 4 }}>Message: {offer.message}</p> : null}
+                      {offer.message ? <p className="inbox-offer-message">Message: {offer.message}</p> : null}
                       {offer.status === 'pending' && (
-                        <div className="button-row" style={{ marginTop: 8 }}>
-                          {!actorAccepted ? (
+                        <div className="button-row inbox-editorial-actions">
+                          {canReceiverAccept && !actorAccepted ? (
                             <>
-                              <label style={{ minWidth: 260 }}>
+                              <label className="inbox-address-select">
                                 <span>Receive At Address</span>
                                 <select
                                   value={selectedAddressId}
@@ -3053,58 +3188,41 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                               </button>
                               <button className="ghost" type="button" onClick={() => respondToOffer(offer.offer_id, 'declined')}>Decline</button>
                             </>
+                          ) : isSender ? (
+                            <span className="tiny-note inbox-flow-note">Offer sent. Waiting for receiver to accept.</span>
                           ) : (
-                            <span className="tiny-note">You accepted this trade. Waiting for the other user to accept.</span>
+                            <span className="tiny-note inbox-flow-note">You accepted this trade. Finalizing shipment labels.</span>
                           )}
                         </div>
                       )}
-                      {offer.status !== 'declined' && offer.status !== 'cancelled' && (
-                        <div className="button-row" style={{ marginTop: 8 }}>
-                          <button
-                            className="ghost"
-                            type="button"
-                            onClick={async () => {
-                              try {
-                                const q = await loadShippingQuoteForOffer(offer.offer_id)
-                                if (q?.amount) {
-                                  setSavedListingNotice(`Shipping cost: ${q.currency || 'USD'} ${q.amount} (${q.service_level || 'Service'})`)
-                                } else {
-                                  setSavedListingNotice('Unable to fetch shipping quote.')
-                                }
-                              } catch (err) {
-                                setSavedListingNotice(err.message || 'Failed to load shipping quote.')
-                              }
-                            }}
-                          >
-                            Get Shipping Cost
-                          </button>
-                        </div>
-                      )}
                       {quote?.amount ? (
-                        <p className="tiny-note" style={{ marginTop: 8 }}>
+                        <p className="tiny-note inbox-flow-note">
                           Quote: {quote.currency || 'USD'} {quote.amount} • {quote.carrier || 'USPS'} {quote.service_level || ''}
                         </p>
                       ) : null}
                       {(offer.status === 'accepted' || bothAccepted) && (
-                        <div style={{ marginTop: 8 }}>
-                          <div className="button-row">
+                        <div className="inbox-label-section">
+                          {!hasLoadedShipments ? (
+                            <p className="tiny-note inbox-flow-note">Loading shipping labels...</p>
+                          ) : null}
+                          {hasShipments && (
+                            <div className="inbox-label-list">
+                              {offerShipments.map((s) => (
+                                <div key={s.shipment_id} className="inbox-label-card">
+                                  <strong>{s.carrier} • {s.service_level}</strong>
+                                  <div className="tiny-note">Tracking: {s.tracking_number || 'pending'}</div>
+                                  <div className="tiny-note">From: {s.from_name || 'n/a'} • {s.from_city || ''} {s.from_state || ''}</div>
+                                  <div className="tiny-note">To: {s.to_name || 'n/a'} • {s.to_city || ''} {s.to_state || ''}</div>
+                                  <button type="button" className="ghost small" onClick={() => openShippingLabel(s)}>
+                                    Download label
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                          <div className="button-row inbox-editorial-actions">
                             <button
-                              className="primary"
-                              type="button"
-                              onClick={async () => {
-                                try {
-                                  await createShippingLabelsForOffer(offer.offer_id)
-                                  setSavedListingNotice('Shipping label created and emailed when configured.')
-                                } catch (err) {
-                                  setSavedListingNotice(err.message || 'Failed to create shipping labels.')
-                                }
-                              }}
-                              disabled={!quote?.rate_id}
-                            >
-                              Confirm & Create Label
-                            </button>
-                            <button
-                              className="ghost"
+                              className="ghost small"
                               type="button"
                               onClick={async () => {
                                 try {
@@ -3114,29 +3232,12 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                                 }
                               }}
                             >
-                              View Labels
+                              Refresh Labels
                             </button>
                           </div>
-                          {Array.isArray(shippingLabelsByOffer[offer.offer_id]) && shippingLabelsByOffer[offer.offer_id].length > 0 && (
-                            <div style={{ display: 'grid', gap: 8, marginTop: 8 }}>
-                              {shippingLabelsByOffer[offer.offer_id].map((s) => (
-                                <div key={s.shipment_id} style={{ border: '1px solid rgba(18,26,36,0.12)', borderRadius: 10, padding: 8, background: '#fff' }}>
-                                  <strong>{s.carrier} • {s.service_level}</strong>
-                                  <div className="tiny-note">Tracking: {s.tracking_number || 'pending'}</div>
-                                  <div className="tiny-note">From: {s.from_name || 'n/a'} • {s.from_city || ''} {s.from_state || ''}</div>
-                                  <div className="tiny-note">To: {s.to_name || 'n/a'} • {s.to_city || ''} {s.to_state || ''}</div>
-                                  {s.label_url ? (
-                                    <button type="button" className="ghost small" onClick={() => openShippingLabel(s)}>
-                                      Open label
-                                    </button>
-                                  ) : null}
-                                </div>
-                              ))}
-                            </div>
-                          )}
                         </div>
                       )}
-                    </div>
+                    </article>
                   )})}
                 </div>
               )}
@@ -3344,7 +3445,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
           )}
 
           {activeTab === 'trade' && (
-            <section className="panel trade-page">
+            <section className="panel trade-page trade-editorial">
               <div className="panel-header">
                 <div>
                   <p className="eyebrow">Trade Offer</p>
@@ -3361,8 +3462,18 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                   <button className="primary" type="button" onClick={() => setActiveTab('market')}>Go to Marketplace</button>
                 </div>
               ) : (
-                <div className="trade-page-grid">
-                  <article className="trade-page-card">
+                <>
+                <div className="trade-editorial-banner">
+                  <div>
+                    <p className="eyebrow">Curated Exchange</p>
+                    <h3>Compose a value-aligned offer</h3>
+                  </div>
+                  <p>
+                    {tradeComposerTarget.brand || 'Unknown brand'} • {tradeComposerTarget.condition || 'Unknown condition'} • {tradeComposerTarget.city || 'Unknown city'}
+                  </p>
+                </div>
+                <div className="trade-page-grid trade-page-grid-editorial">
+                  <article className="trade-page-card trade-target-card">
                     <p className="eyebrow">Target Listing</p>
                     {getListingGallery(tradeComposerTarget)[0] ? (
                       <img
@@ -3374,14 +3485,14 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                     <h3>{tradeComposerTarget.title}</h3>
                     <p className="tiny-note">{tradeComposerTarget.brand || 'Unknown brand'} • {tradeComposerTarget.condition || 'Unknown condition'} • {tradeComposerTarget.city || 'Unknown city'}</p>
                     <div className="value-chip">{money(tradeComposerTarget.estimatedValue)}</div>
-                    <div className="button-row" style={{ marginTop: 10 }}>
+                    <div className="button-row trade-target-actions">
                       <button className="ghost small" type="button" onClick={() => setTradeDetailListing(tradeComposerTarget)}>View details</button>
                     </div>
                   </article>
 
-                  <article className="trade-page-card">
+                  <article className="trade-page-card trade-offer-card">
                     <p className="eyebrow">Your Listings To Offer</p>
-                    <div className="trade-offer-list">
+                    <div className="trade-offer-list trade-offer-list-editorial">
                       {tradeOfferCandidates.map((x) => {
                         const checked = tradeOfferListingIds.includes(x.id)
                         const thumb = getListingGallery(x)[0] || null
@@ -3401,23 +3512,25 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                         )
                       })}
                       {tradeOfferCandidates.length === 0 && (
-                        <p className="tiny-note" style={{ margin: 0 }}>
+                        <p className="tiny-note trade-empty-note">
                           No eligible listings found. Offer candidates must match brand and be within price band.
                         </p>
                       )}
                     </div>
-                    <p className="tiny-note" style={{ marginTop: 10 }}>
-                      Offered total: {money(offeredTotalValue)} • Target: {money(composerTargetValue)}
-                    </p>
-                    <p className={composerWithinBand ? 'ok-text' : 'error-text'} style={{ marginTop: 0 }}>
+                    <div className="trade-offer-metrics">
+                      <p className="tiny-note trade-metric-line">
+                        Offered total: {money(offeredTotalValue)} • Target: {money(composerTargetValue)}
+                      </p>
+                    <p className={composerWithinBand ? 'ok-text trade-band-line' : 'error-text trade-band-line'}>
                       {composerGapPct === null ? 'Select target listing.' : (composerWithinBand ? 'Within 30% trade band' : 'Outside 30% trade band')}
                     </p>
-                    <label style={{ marginTop: 8, display: 'block' }}>
+                    </div>
+                    <label className="trade-message-field">
                       <span>Message (optional)</span>
                       <textarea value={tradeOfferMessage} onChange={(e) => setTradeOfferMessage(e.target.value)} rows={4} placeholder="I’d like to trade with this item. Let me know what you think." />
                     </label>
                     {tradeOfferError ? <p className="error-text">{tradeOfferError}</p> : null}
-                    <div className="button-row" style={{ marginTop: 12 }}>
+                    <div className="button-row trade-offer-actions">
                       <button className="ghost" type="button" onClick={() => setActiveTab('market')}>Cancel</button>
                       <button className="primary" type="button" onClick={submitTradeOffer} disabled={tradeOfferBusy || !composerWithinBand}>
                         {tradeOfferBusy ? 'Sending...' : 'Send Trade Offer'}
@@ -3425,6 +3538,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                     </div>
                   </article>
                 </div>
+                </>
               )}
             </section>
           )}
@@ -3454,7 +3568,6 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
             </section>
           )}
         </main>
-      </div>
       )}
 
       {tradeDetailListing && (
@@ -3820,10 +3933,12 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
               <button
                 className="primary"
                 type="button"
-                disabled={stripeUiBusy}
+                disabled={stripeUiBusy || !stripeUiReady}
                 onClick={async () => {
                   try {
-                    if (!stripeRef.current || !stripeElementsRef.current) throw new Error('Stripe is not ready yet.')
+                    if (!stripeRef.current || !stripeElementsRef.current || !stripeUiReady) {
+                      throw new Error(stripeUiError || 'Stripe payment form is still loading. Please wait a moment and try again.')
+                    }
                     setStripeUiBusy(true)
                     setStripeUiError('')
                     const result = await stripeRef.current.confirmSetup({
@@ -3839,9 +3954,13 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                       bearerToken,
                     })
                     setPaymentMethods(methods)
+                    setPaymentLoadError('')
+                    setPaymentActionMsg('Payment method added.')
                     setProfileSaveMsg('Payment method added via Stripe.')
                     setShowStripePaymentModal(false)
                   } catch (err) {
+                    setPaymentActionMsg('')
+                    setPaymentLoadError(err?.message || 'Failed to sync payment methods.')
                     setStripeUiError(err.message || 'Failed to save payment method.')
                   } finally {
                     setStripeUiBusy(false)
