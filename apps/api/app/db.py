@@ -30,14 +30,32 @@ class Database:
             self._sqlite_conn.row_factory = sqlite3.Row
             self.param = "?"
         elif url.startswith("postgresql://"):
-            try:
-                import psycopg
-            except Exception as exc:  # pragma: no cover
-                raise RuntimeError("psycopg is required for PostgreSQL DATABASE_URL") from exc
-            self._pg = psycopg.connect(url)
+            self._connect_pg()
             self.param = "%s"
         else:
             raise ValueError(f"Unsupported DATABASE_URL: {url}")
+
+    def _connect_pg(self) -> None:
+        try:
+            import psycopg
+        except Exception as exc:  # pragma: no cover
+            raise RuntimeError("psycopg is required for PostgreSQL DATABASE_URL") from exc
+        self._pg = psycopg.connect(self.url)
+
+    def _ensure_pg_connection(self):
+        if self._sqlite_conn is not None:
+            return None
+        if self._pg is None or bool(getattr(self._pg, "closed", False)):
+            self._connect_pg()
+        return self._pg
+
+    def _pg_cursor(self):
+        conn = self._ensure_pg_connection()
+        try:
+            return conn.cursor()
+        except Exception:
+            self._connect_pg()
+            return self._pg.cursor()
 
     def initialize(self) -> None:
         statements = [
@@ -293,7 +311,7 @@ class Database:
         if self._sqlite_conn is not None:
             row = self._sqlite_conn.execute(query, (listing_id,)).fetchone()
         else:
-            cur = self._pg.cursor()
+            cur = self._pg_cursor()
             cur.execute(query, (listing_id,))
             row = cur.fetchone()
             cur.close()
@@ -315,7 +333,7 @@ class Database:
         if self._sqlite_conn is not None:
             rows = self._sqlite_conn.execute(query, params).fetchall()
         else:
-            cur = self._pg.cursor()
+            cur = self._pg_cursor()
             cur.execute(query, params)
             rows = cur.fetchall()
             cur.close()
@@ -465,7 +483,7 @@ class Database:
         if self._sqlite_conn is not None:
             rows = self._sqlite_conn.execute(query, params).fetchall()
         else:
-            cur = self._pg.cursor()
+            cur = self._pg_cursor()
             cur.execute(query, params)
             rows = cur.fetchall()
             cur.close()
@@ -488,7 +506,7 @@ class Database:
             changed_row = self._sqlite_conn.execute("SELECT changes() AS n").fetchone()
             changed = int(changed_row["n"] if isinstance(changed_row, sqlite3.Row) else changed_row[0]) > 0
         else:
-            cur = self._pg.cursor()
+            cur = self._pg_cursor()
             try:
                 cur.execute(sql, params)
                 changed = int(cur.rowcount or 0) > 0
@@ -507,7 +525,7 @@ class Database:
         if self._sqlite_conn is not None:
             row = self._sqlite_conn.execute(query, (offer_id,)).fetchone()
         else:
-            cur = self._pg.cursor()
+            cur = self._pg_cursor()
             cur.execute(query, (offer_id,))
             row = cur.fetchone()
             cur.close()
@@ -598,7 +616,7 @@ class Database:
         if self._sqlite_conn is not None:
             row = self._sqlite_conn.execute(query, (offer_id,)).fetchone()
         else:
-            cur = self._pg.cursor()
+            cur = self._pg_cursor()
             cur.execute(query, (offer_id,))
             row = cur.fetchone()
             cur.close()
@@ -610,7 +628,7 @@ class Database:
         if self._sqlite_conn is not None:
             self._sqlite_conn.execute(sql, params)
             return
-        cur = self._pg.cursor()
+        cur = self._pg_cursor()
         try:
             cur.execute(sql, params)
         except Exception:
@@ -623,7 +641,8 @@ class Database:
         if self._sqlite_conn is not None:
             self._sqlite_conn.commit()
         else:
-            self._pg.commit()
+            conn = self._ensure_pg_connection()
+            conn.commit()
 
     def insert_item(self, item_id: str) -> None:
         self.execute(
@@ -732,7 +751,7 @@ class Database:
         if self._sqlite_conn is not None:
             rows = self._sqlite_conn.execute(query, (limit,)).fetchall()
             return [self._analysis_row_to_dict(row) for row in rows]
-        cur = self._pg.cursor()
+        cur = self._pg_cursor()
         cur.execute(query, (limit,))
         rows = cur.fetchall()
         cur.close()
@@ -745,7 +764,7 @@ class Database:
             if not row:
                 return None
             return row["storage_uri"] if isinstance(row, sqlite3.Row) else row[0]
-        cur = self._pg.cursor()
+        cur = self._pg_cursor()
         cur.execute(query, (image_id,))
         row = cur.fetchone()
         cur.close()
@@ -760,7 +779,7 @@ class Database:
             if not row:
                 return None
             return row["image_id"] if isinstance(row, sqlite3.Row) else row[0]
-        cur = self._pg.cursor()
+        cur = self._pg_cursor()
         cur.execute(query, (storage_uri,))
         row = cur.fetchone()
         cur.close()
@@ -778,7 +797,7 @@ class Database:
             if not row:
                 return None
             return row["image_id"] if isinstance(row, sqlite3.Row) else row[0]
-        cur = self._pg.cursor()
+        cur = self._pg_cursor()
         cur.execute(query, (item_id,))
         row = cur.fetchone()
         cur.close()
@@ -800,7 +819,7 @@ class Database:
                 if isinstance(image_id, str) and image_id.strip():
                     result.append(image_id)
             return result
-        cur = self._pg.cursor()
+        cur = self._pg_cursor()
         cur.execute(query, (item_id, safe_limit))
         rows = cur.fetchall()
         cur.close()
@@ -884,7 +903,7 @@ class Database:
         if self._sqlite_conn is not None:
             rows = self._sqlite_conn.execute(query, (limit,)).fetchall()
             return [self._listing_row_to_dict(row) for row in rows]
-        cur = self._pg.cursor()
+        cur = self._pg_cursor()
         cur.execute(query, (limit,))
         rows = cur.fetchall()
         cur.close()
@@ -899,7 +918,7 @@ class Database:
         if self._sqlite_conn is not None:
             rows = self._sqlite_conn.execute(query, (owner_subject, limit)).fetchall()
             return [self._listing_row_to_dict(row) for row in rows]
-        cur = self._pg.cursor()
+        cur = self._pg_cursor()
         cur.execute(query, (owner_subject, limit))
         rows = cur.fetchall()
         cur.close()
@@ -970,7 +989,7 @@ class Database:
             changed_row = self._sqlite_conn.execute("SELECT changes() AS n").fetchone()
             changed = int(changed_row["n"] if isinstance(changed_row, sqlite3.Row) else changed_row[0]) > 0
         else:
-            cur = self._pg.cursor()
+            cur = self._pg_cursor()
             try:
                 cur.execute(sql, params)
                 changed = int(cur.rowcount or 0) > 0
@@ -988,7 +1007,7 @@ class Database:
                 "SELECT listing_id, image, images_json, source_item_id, analysis_json, description, wants FROM listings"
             ).fetchall()
         else:
-            cur = self._pg.cursor()
+            cur = self._pg_cursor()
             cur.execute("SELECT listing_id, image, images_json, source_item_id, analysis_json, description, wants FROM listings")
             rows = cur.fetchall()
             cur.close()
@@ -1193,7 +1212,7 @@ class Database:
         if self._sqlite_conn is not None:
             row = self._sqlite_conn.execute(query, (owner_subject,)).fetchone()
         else:
-            cur = self._pg.cursor()
+            cur = self._pg_cursor()
             cur.execute(query, (owner_subject,))
             row = cur.fetchone()
             cur.close()
@@ -1341,7 +1360,7 @@ class Database:
             )
             self._sqlite_conn.commit()
         else:
-            cur = self._pg.cursor()
+            cur = self._pg_cursor()
             cur.execute(
                 f"""INSERT INTO user_profiles
                 (owner_subject, gender, tops_size, dresses_size, bottoms_size, shoes_size, category_preferences_json, shipping_full_name, shipping_address_line1, shipping_address_line2, shipping_city, shipping_state, shipping_postal_code, shipping_country, shipping_email, shipping_phone, shipping_addresses_json, subscription_plan, subscription_billing_cycle, subscription_status, subscription_renewal_date, payment_methods_json, created_at, updated_at)
@@ -1414,7 +1433,7 @@ class Database:
         if self._sqlite_conn is not None:
             rows = self._sqlite_conn.execute(query, (owner_subject,)).fetchall()
         else:
-            cur = self._pg.cursor()
+            cur = self._pg_cursor()
             cur.execute(query, (owner_subject,))
             rows = cur.fetchall()
             cur.close()
@@ -1495,7 +1514,7 @@ class Database:
             deleted = cur.rowcount > 0
             self._sqlite_conn.commit()
             return deleted
-        cur = self._pg.cursor()
+        cur = self._pg_cursor()
         cur.execute(query, (owner_subject, payment_method_id))
         deleted = cur.rowcount > 0
         cur.close()
@@ -1510,7 +1529,7 @@ class Database:
         if self._sqlite_conn is not None:
             row = self._sqlite_conn.execute(query, (owner_subject, payment_method_id)).fetchone()
         else:
-            cur = self._pg.cursor()
+            cur = self._pg_cursor()
             cur.execute(query, (owner_subject, payment_method_id))
             row = cur.fetchone()
             cur.close()
@@ -1562,7 +1581,7 @@ class Database:
         if self._sqlite_conn is not None:
             row = self._sqlite_conn.execute(query, (owner_subject,)).fetchone()
         else:
-            cur = self._pg.cursor()
+            cur = self._pg_cursor()
             cur.execute(query, (owner_subject,))
             row = cur.fetchone()
             cur.close()
@@ -1586,7 +1605,7 @@ class Database:
             )
             self._sqlite_conn.commit()
             return
-        cur = self._pg.cursor()
+        cur = self._pg_cursor()
         cur.execute(
             f"""INSERT INTO user_billing_profiles (owner_subject, stripe_customer_id, created_at, updated_at)
             VALUES ({self.param}, {self.param}, {self.param}, {self.param})
@@ -1616,7 +1635,7 @@ class Database:
         if self._sqlite_conn is not None:
             rows = self._sqlite_conn.execute(query, (offer_id,)).fetchall()
         else:
-            cur = self._pg.cursor()
+            cur = self._pg_cursor()
             cur.execute(query, (offer_id,))
             rows = cur.fetchall()
             cur.close()
@@ -1642,7 +1661,7 @@ class Database:
         if self._sqlite_conn is not None:
             row = self._sqlite_conn.execute(query, (shipment_id,)).fetchone()
         else:
-            cur = self._pg.cursor()
+            cur = self._pg_cursor()
             cur.execute(query, (shipment_id,))
             row = cur.fetchone()
             cur.close()
