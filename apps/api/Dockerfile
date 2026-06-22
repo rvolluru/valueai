@@ -6,6 +6,7 @@ WORKDIR /web
 COPY apps/web/package.json apps/web/package-lock.json* ./
 RUN --mount=type=cache,target=/root/.npm npm ci
 COPY apps/web ./
+COPY packages /packages
 ARG VITE_CLERK_PUBLISHABLE_KEY=""
 ARG VITE_API_BASE_URL=""
 ENV VITE_CLERK_PUBLISHABLE_KEY=${VITE_CLERK_PUBLISHABLE_KEY}
