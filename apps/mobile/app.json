@@ -9,18 +9,29 @@
       "**/*"
     ],
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.anonymous.valueai-mobile"
     },
     "android": {
       "adaptiveIcon": {
         "backgroundColor": "#ffffff"
-      }
+      },
+      "permissions": [
+        "android.permission.RECORD_AUDIO"
+      ]
     },
     "plugins": [
-      "expo-image-picker"
+      "expo-image-picker",
+      "expo-web-browser",
+      "expo-notifications"
     ],
     "extra": {
-      "apiBaseUrl": "http://127.0.0.1:8000"
-    }
+      "apiBaseUrl": "http://127.0.0.1:8000",
+      "clerkPublishableKey": "",
+      "eas": {
+        "projectId": "9fea2985-7a8a-477e-ae73-335fdcb4a048"
+      }
+    },
+    "owner": "leavethemessage"
   }
 }

@@ -7,14 +7,32 @@
     "start": "expo start",
     "ios": "expo run:ios",
     "android": "expo run:android",
-    "web": "expo start --web"
+    "web": "expo start --web",
+    "eas:build:ios:preview": "eas build --platform ios --profile preview",
+    "eas:build:android:preview": "eas build --platform android --profile preview",
+    "eas:build:ios:production": "eas build --platform ios --profile production",
+    "eas:build:android:production": "eas build --platform android --profile production",
+    "eas:submit:ios": "eas submit --platform ios --profile production",
+    "eas:submit:android": "eas submit --platform android --profile production"
   },
   "dependencies": {
-    "expo": "~53.0.0",
-    "expo-constants": "~17.1.7",
-    "expo-image-picker": "~16.0.0",
-    "expo-status-bar": "~2.2.3",
-    "react": "19.0.0",
-    "react-native": "0.79.0"
+    "@clerk/clerk-expo": "^2.19.31",
+    "expo": "~54.0.0",
+    "expo-auth-session": "~7.0.11",
+    "expo-constants": "~18.0.13",
+    "expo-device": "^56.0.4",
+    "expo-image-picker": "~17.0.11",
+    "expo-notifications": "^56.0.18",
+    "expo-secure-store": "~15.0.8",
+    "expo-status-bar": "~3.0.9",
+    "expo-web-browser": "~15.0.11",
+    "react": "19.1.0",
+    "react-dom": "^19.1.0",
+    "react-native": "0.81.5",
+    "react-native-safe-area-context": "^5.6.2"
+  },
+  "devDependencies": {
+    "@expo/metro-config": "~54.0.16",
+    "babel-preset-expo": "~54.0.10"
   }
 }

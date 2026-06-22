@@ -6,6 +6,7 @@ import {
   useAuth,
   useUser,
 } from '@clerk/clerk-react'
+import { createWebApiClient } from './lib/apiClient'
 
 const API_DEFAULT =
   import.meta.env.VITE_API_BASE_URL ||
@@ -106,6 +107,25 @@ function normalizeShippingAddresses(addresses, fallback = null) {
   return [emptyShippingAddress()]
 }
 
+function normalizeMultiSizeValue(value) {
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => (typeof entry === 'string' ? entry.trim() : ''))
+      .filter(Boolean)
+  }
+  if (typeof value !== 'string') return []
+  return value
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+}
+
+function serializeMultiSizeValue(values) {
+  const normalized = normalizeMultiSizeValue(values)
+  if (normalized.length === 0) return null
+  return normalized.join(', ')
+}
+
 function buildSuggestedDescriptionFromProfile(profile) {
   const modelName = profile?.model_identification?.name?.trim?.() || ''
   const attrs = Array.isArray(profile?.model_identification?.attributes)
@@ -138,6 +158,17 @@ function getUploadedImageUrlsFromAnalysis(analysis) {
   return analysis.uploaded_images
     .map((u) => (typeof u?.image_url === 'string' ? u.image_url.trim() : ''))
     .filter((u) => Boolean(u) && !u.startsWith('data:') && !u.startsWith('blob:'))
+}
+
+function buildListingShareCaption(item) {
+  const title = String(item?.title || 'Listing').trim()
+  const brand = String(item?.brand || 'Unknown brand').trim()
+  const condition = String(item?.condition || 'Unknown condition').trim()
+  const value = money(item?.estimatedValue)
+  const description = getListingDescription(item)
+  const imageLinks = getListingGallery(item).slice(0, 3)
+  const imageLine = imageLinks.length > 0 ? ` Images: ${imageLinks.join(' ')}` : ''
+  return `${title} | ${brand} | ${condition} | Est. ${value}. ${description}${imageLine} #Jouft #FashionExchange`
 }
 
 function sizeOptionsForCategory(category) {
@@ -249,30 +280,17 @@ function loadStripeJs() {
 }
 
 async function analyzeItem({ apiBaseUrl, apiKey, bearerToken, images, category, userCondition, itemDescription, debug }) {
-  const fd = new FormData()
-  for (const file of images) fd.append('images', file, file.name)
-  if (category) fd.append('category', category)
-  if (userCondition) fd.append('user_condition', userCondition)
-  if (itemDescription) fd.append('item_description', itemDescription)
-  fd.append('debug', String(debug))
-
-  const headers = {}
-  if (bearerToken) headers.Authorization = `Bearer ${bearerToken}`
-  else if (apiKey) headers['x-api-key'] = apiKey
-
-  const resp = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/v1/analyze`, {
-    method: 'POST',
-    headers,
-    body: fd,
-  })
-
-  let payload = null
-  try { payload = await resp.json() } catch {}
-  if (!resp.ok) {
-    const detail = Array.isArray(payload?.detail) ? payload.detail[0]?.msg : payload?.detail
-    throw new Error(detail || `API error (${resp.status})`)
-  }
-  return payload
+  const { client, authContext } = createWebApiClient({ apiBaseUrl, apiKey })
+  return client.analyzeItem(
+    {
+      images: (images || []).map((file) => ({ file })),
+      category,
+      userCondition,
+      itemDescription,
+      debug,
+    },
+    authContext(bearerToken),
+  )
 }
 
 async function fetchAdminAnalyses({ apiBaseUrl, apiKey, bearerToken, limit = 50 }) {
@@ -295,305 +313,135 @@ async function fetchAdminAnalyses({ apiBaseUrl, apiKey, bearerToken, limit = 50 
 }
 
 async function fetchMyListings({ apiBaseUrl, apiKey, bearerToken, limit = 100 }) {
-  const headers = {}
-  if (bearerToken) headers.Authorization = `Bearer ${bearerToken}`
-  else if (apiKey) headers['x-api-key'] = apiKey
-  const resp = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/v1/listings?mine=true&limit=${limit}`, {
-    method: 'GET',
-    headers,
-  })
-  let payload = null
-  try { payload = await resp.json() } catch {}
-  if (!resp.ok) {
-    const detail = Array.isArray(payload?.detail) ? payload.detail[0]?.msg : payload?.detail
-    throw new Error(detail || `API error (${resp.status})`)
-  }
+  const { client, authContext } = createWebApiClient({ apiBaseUrl, apiKey })
+  const payload = await client.listMyListings(limit, authContext(bearerToken))
   return payload?.items || []
 }
 
 async function fetchMarketplaceListings({ apiBaseUrl, apiKey, bearerToken, limit = 50 }) {
-  const headers = {}
-  if (bearerToken) headers.Authorization = `Bearer ${bearerToken}`
-  else if (apiKey) headers['x-api-key'] = apiKey
-  const resp = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/v1/listings?limit=${limit}&include_matches=true`, {
-    method: 'GET',
-    headers,
-  })
-  let payload = null
-  try { payload = await resp.json() } catch {}
-  if (!resp.ok) {
-    const detail = Array.isArray(payload?.detail) ? payload.detail[0]?.msg : payload?.detail
-    throw new Error(detail || `API error (${resp.status})`)
-  }
+  const { client, authContext } = createWebApiClient({ apiBaseUrl, apiKey })
+  const payload = await client.listMarketplace(limit, authContext(bearerToken))
   return payload?.items || []
 }
 
 async function fetchOfferCandidates({ apiBaseUrl, apiKey, bearerToken, targetListingId, limit = 100 }) {
-  const headers = {}
-  if (bearerToken) headers.Authorization = `Bearer ${bearerToken}`
-  else if (apiKey) headers['x-api-key'] = apiKey
-  const resp = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/v1/listings/${encodeURIComponent(targetListingId)}/offer-candidates?limit=${limit}`, {
-    method: 'GET',
-    headers,
-  })
-  let payload = null
-  try { payload = await resp.json() } catch {}
-  if (!resp.ok) {
-    const detail = Array.isArray(payload?.detail) ? payload.detail[0]?.msg : payload?.detail
-    throw new Error(detail || `API error (${resp.status})`)
-  }
+  const { client, authContext } = createWebApiClient({ apiBaseUrl, apiKey })
+  const payload = await client.listOfferCandidates(targetListingId, limit, authContext(bearerToken))
   return payload?.items || []
 }
 
 async function createListingRemote({ apiBaseUrl, apiKey, bearerToken, payload }) {
-  const headers = { 'Content-Type': 'application/json' }
-  if (bearerToken) headers.Authorization = `Bearer ${bearerToken}`
-  else if (apiKey) headers['x-api-key'] = apiKey
-  const resp = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/v1/listings`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify(payload),
-  })
-  let data = null
-  try { data = await resp.json() } catch {}
-  if (!resp.ok) throw new Error(data?.detail || `API error (${resp.status})`)
-  return data
+  const { client, authContext } = createWebApiClient({ apiBaseUrl, apiKey })
+  return client.createListing(payload, authContext(bearerToken))
 }
 
 async function updateListingRemote({ apiBaseUrl, apiKey, bearerToken, listingId, payload }) {
-  const headers = { 'Content-Type': 'application/json' }
-  if (bearerToken) headers.Authorization = `Bearer ${bearerToken}`
-  else if (apiKey) headers['x-api-key'] = apiKey
-  const resp = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/v1/listings/${listingId}`, {
-    method: 'PUT',
-    headers,
-    body: JSON.stringify(payload),
-  })
-  let data = null
-  try { data = await resp.json() } catch {}
-  if (!resp.ok) throw new Error(data?.detail || `API error (${resp.status})`)
-  return data
+  const { client, authContext } = createWebApiClient({ apiBaseUrl, apiKey })
+  return client.updateListing(listingId, payload, authContext(bearerToken))
 }
 
 async function fetchProfileQuizRemote({ apiBaseUrl, apiKey, bearerToken }) {
-  const headers = {}
-  if (bearerToken) headers.Authorization = `Bearer ${bearerToken}`
-  else if (apiKey) headers['x-api-key'] = apiKey
-  const resp = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/v1/me/profile-quiz`, { method: 'GET', headers })
-  const data = await resp.json()
-  if (!resp.ok) throw new Error(data?.detail || `API error (${resp.status})`)
-  return data
+  const { client, authContext } = createWebApiClient({ apiBaseUrl, apiKey })
+  return client.profileQuiz(authContext(bearerToken))
 }
 
 async function saveProfileQuizRemote({ apiBaseUrl, apiKey, bearerToken, payload }) {
-  const headers = { 'Content-Type': 'application/json' }
-  if (bearerToken) headers.Authorization = `Bearer ${bearerToken}`
-  else if (apiKey) headers['x-api-key'] = apiKey
   const normalizedPayload = {
     ...payload,
     gender: payload?.gender ? payload.gender : null,
   }
-  const resp = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/v1/me/profile-quiz`, {
-    method: 'PUT',
-    headers,
-    body: JSON.stringify(normalizedPayload),
-  })
-  const data = await resp.json()
-  if (!resp.ok) throw new Error(data?.detail || `API error (${resp.status})`)
-  return data
+  const { client, authContext } = createWebApiClient({ apiBaseUrl, apiKey })
+  return client.put('/v1/me/profile-quiz', normalizedPayload, authContext(bearerToken))
 }
 
 async function fetchUspsAddressSuggestionsRemote({ apiBaseUrl, apiKey, bearerToken, q, city, state, postalCode }) {
-  const headers = {}
-  if (bearerToken) headers.Authorization = `Bearer ${bearerToken}`
-  else if (apiKey) headers['x-api-key'] = apiKey
   const params = new URLSearchParams()
   if (q) params.set('q', q)
   if (city) params.set('city', city)
   if (state) params.set('state', state)
   if (postalCode) params.set('postal_code', postalCode)
-  const resp = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/v1/usps/address-suggest?${params.toString()}`, { method: 'GET', headers })
-  let data = null
-  try { data = await resp.json() } catch {}
-  if (!resp.ok) throw new Error(data?.detail || `API error (${resp.status})`)
+  const { client, authContext } = createWebApiClient({ apiBaseUrl, apiKey })
+  const data = await client.get(`/v1/usps/address-suggest?${params.toString()}`, authContext(bearerToken))
   return Array.isArray(data?.suggestions) ? data.suggestions : []
 }
 
 async function fetchPaymentMethodsRemote({ apiBaseUrl, apiKey, bearerToken }) {
-  const headers = {}
-  if (bearerToken) headers.Authorization = `Bearer ${bearerToken}`
-  else if (apiKey) headers['x-api-key'] = apiKey
-  const resp = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/v1/me/payment-methods`, { method: 'GET', headers })
-  let data = null
-  try { data = await resp.json() } catch {}
-  if (!resp.ok) throw new Error(data?.detail || `API error (${resp.status})`)
+  const { client, authContext } = createWebApiClient({ apiBaseUrl, apiKey })
+  const data = await client.paymentMethods(authContext(bearerToken))
   return Array.isArray(data?.items) ? data.items : []
 }
 
 async function createPaymentMethodRemote({ apiBaseUrl, apiKey, bearerToken, payload }) {
-  const headers = { 'Content-Type': 'application/json' }
-  if (bearerToken) headers.Authorization = `Bearer ${bearerToken}`
-  else if (apiKey) headers['x-api-key'] = apiKey
-  const resp = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/v1/me/payment-methods`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify(payload),
-  })
-  let data = null
-  try { data = await resp.json() } catch {}
-  if (!resp.ok) throw new Error(data?.detail || `API error (${resp.status})`)
-  return data
+  const { client, authContext } = createWebApiClient({ apiBaseUrl, apiKey })
+  return client.post('/v1/me/payment-methods', payload, authContext(bearerToken))
 }
 
 async function deletePaymentMethodRemote({ apiBaseUrl, apiKey, bearerToken, paymentMethodId }) {
-  const headers = {}
-  if (bearerToken) headers.Authorization = `Bearer ${bearerToken}`
-  else if (apiKey) headers['x-api-key'] = apiKey
-  const resp = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/v1/me/payment-methods/${paymentMethodId}`, { method: 'DELETE', headers })
-  let data = null
-  try { data = await resp.json() } catch {}
-  if (!resp.ok) throw new Error(data?.detail || `API error (${resp.status})`)
-  return data
+  const { client, authContext } = createWebApiClient({ apiBaseUrl, apiKey })
+  return client.delete(`/v1/me/payment-methods/${paymentMethodId}`, authContext(bearerToken))
 }
 
 async function setDefaultPaymentMethodRemote({ apiBaseUrl, apiKey, bearerToken, paymentMethodId }) {
-  const headers = { 'Content-Type': 'application/json' }
-  if (bearerToken) headers.Authorization = `Bearer ${bearerToken}`
-  else if (apiKey) headers['x-api-key'] = apiKey
-  const resp = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/v1/me/payment-methods/${paymentMethodId}/default`, { method: 'POST', headers })
-  let data = null
-  try { data = await resp.json() } catch {}
-  if (!resp.ok) throw new Error(data?.detail || `API error (${resp.status})`)
-  return data
+  const { client, authContext } = createWebApiClient({ apiBaseUrl, apiKey })
+  return client.post(`/v1/me/payment-methods/${paymentMethodId}/default`, {}, authContext(bearerToken))
 }
 
 async function createStripeSetupCheckoutSessionRemote({ apiBaseUrl, apiKey, bearerToken, successUrl, cancelUrl }) {
-  const headers = { 'Content-Type': 'application/json' }
-  if (bearerToken) headers.Authorization = `Bearer ${bearerToken}`
-  else if (apiKey) headers['x-api-key'] = apiKey
-  const resp = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/v1/me/payment-methods/stripe/setup-checkout-session`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({ success_url: successUrl, cancel_url: cancelUrl }),
-  })
-  let data = null
-  try { data = await resp.json() } catch {}
-  if (!resp.ok) throw new Error(data?.detail || `API error (${resp.status})`)
-  return data
+  const { client, authContext } = createWebApiClient({ apiBaseUrl, apiKey })
+  return client.createSetupCheckoutSession(
+    { successUrl, cancelUrl },
+    authContext(bearerToken),
+  )
 }
 
 async function syncStripePaymentMethodsRemote({ apiBaseUrl, apiKey, bearerToken }) {
-  const headers = { 'Content-Type': 'application/json' }
-  if (bearerToken) headers.Authorization = `Bearer ${bearerToken}`
-  else if (apiKey) headers['x-api-key'] = apiKey
-  const resp = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/v1/me/payment-methods/stripe/sync`, { method: 'POST', headers })
-  let data = null
-  try { data = await resp.json() } catch {}
-  if (!resp.ok) throw new Error(data?.detail || `API error (${resp.status})`)
+  const { client, authContext } = createWebApiClient({ apiBaseUrl, apiKey })
+  const data = await client.syncStripePaymentMethods(authContext(bearerToken))
   return Array.isArray(data?.items) ? data.items : []
 }
 
 async function createStripeSetupIntentRemote({ apiBaseUrl, apiKey, bearerToken }) {
-  const headers = { 'Content-Type': 'application/json' }
-  if (bearerToken) headers.Authorization = `Bearer ${bearerToken}`
-  else if (apiKey) headers['x-api-key'] = apiKey
-  const resp = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/v1/me/payment-methods/stripe/setup-intent`, {
-    method: 'POST',
-    headers,
-  })
-  let data = null
-  try { data = await resp.json() } catch {}
-  if (!resp.ok) throw new Error(data?.detail || `API error (${resp.status})`)
-  return data
+  const { client, authContext } = createWebApiClient({ apiBaseUrl, apiKey })
+  return client.post('/v1/me/payment-methods/stripe/setup-intent', {}, authContext(bearerToken))
 }
 
 async function createOfferRemote({ apiBaseUrl, apiKey, bearerToken, payload }) {
-  const headers = { 'Content-Type': 'application/json' }
-  if (bearerToken) headers.Authorization = `Bearer ${bearerToken}`
-  else if (apiKey) headers['x-api-key'] = apiKey
-  const resp = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/v1/offers`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify(payload),
-  })
-  let data = null
-  try { data = await resp.json() } catch {}
-  if (!resp.ok) throw new Error(data?.detail || `API error (${resp.status})`)
-  return data
+  const { client, authContext } = createWebApiClient({ apiBaseUrl, apiKey })
+  return client.createOffer(payload, authContext(bearerToken))
 }
 
 async function fetchIncomingOffersRemote({ apiBaseUrl, apiKey, bearerToken, status = 'pending', limit = 50 }) {
-  const headers = {}
-  if (bearerToken) headers.Authorization = `Bearer ${bearerToken}`
-  else if (apiKey) headers['x-api-key'] = apiKey
-  const resp = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/v1/offers/incoming?status=${encodeURIComponent(status)}&limit=${limit}`, { method: 'GET', headers })
-  let data = null
-  try { data = await resp.json() } catch {}
-  if (!resp.ok) throw new Error(data?.detail || `API error (${resp.status})`)
-  return data
+  const { client, authContext } = createWebApiClient({ apiBaseUrl, apiKey })
+  return client.incomingOffers(status, limit, authContext(bearerToken))
 }
 
 async function actionOfferRemote({ apiBaseUrl, apiKey, bearerToken, offerId, status, receiveAddress = null }) {
-  const headers = { 'Content-Type': 'application/json' }
-  if (bearerToken) headers.Authorization = `Bearer ${bearerToken}`
-  else if (apiKey) headers['x-api-key'] = apiKey
-  const resp = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/v1/offers/${offerId}/action`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({ status, receive_address: receiveAddress }),
-  })
-  let data = null
-  try { data = await resp.json() } catch {}
-  if (!resp.ok) throw new Error(data?.detail || `API error (${resp.status})`)
-  return data
+  const { client, authContext } = createWebApiClient({ apiBaseUrl, apiKey })
+  return client.offerAction(offerId, status, receiveAddress, authContext(bearerToken))
 }
 
 async function fetchShippingQuoteRemote({ apiBaseUrl, apiKey, bearerToken, offerId }) {
-  const headers = { 'Content-Type': 'application/json' }
-  if (bearerToken) headers.Authorization = `Bearer ${bearerToken}`
-  else if (apiKey) headers['x-api-key'] = apiKey
-  const resp = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/v1/offers/${offerId}/shipping-quote`, { method: 'POST', headers, body: JSON.stringify({}) })
-  let data = null
-  try { data = await resp.json() } catch {}
-  if (!resp.ok) throw new Error(data?.detail || `API error (${resp.status})`)
-  return data
+  const { client, authContext } = createWebApiClient({ apiBaseUrl, apiKey })
+  return client.post(`/v1/offers/${offerId}/shipping-quote`, {}, authContext(bearerToken))
 }
 
 async function createShippingLabelsRemote({ apiBaseUrl, apiKey, bearerToken, offerId, rateId = null }) {
-  const headers = { 'Content-Type': 'application/json' }
-  if (bearerToken) headers.Authorization = `Bearer ${bearerToken}`
-  else if (apiKey) headers['x-api-key'] = apiKey
-  const resp = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/v1/offers/${offerId}/shipping-labels`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({ confirmed: true, rate_id: rateId || null }),
-  })
-  let data = null
-  try { data = await resp.json() } catch {}
-  if (!resp.ok) throw new Error(data?.detail || `API error (${resp.status})`)
-  return data
+  const { client, authContext } = createWebApiClient({ apiBaseUrl, apiKey })
+  return client.post(
+    `/v1/offers/${offerId}/shipping-labels`,
+    { confirmed: true, rate_id: rateId || null },
+    authContext(bearerToken),
+  )
 }
 
 async function fetchShippingLabelsRemote({ apiBaseUrl, apiKey, bearerToken, offerId }) {
-  const headers = {}
-  if (bearerToken) headers.Authorization = `Bearer ${bearerToken}`
-  else if (apiKey) headers['x-api-key'] = apiKey
-  const resp = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/v1/offers/${offerId}/shipping-labels`, { method: 'GET', headers })
-  let data = null
-  try { data = await resp.json() } catch {}
-  if (!resp.ok) throw new Error(data?.detail || `API error (${resp.status})`)
-  return data
+  const { client, authContext } = createWebApiClient({ apiBaseUrl, apiKey })
+  return client.get(`/v1/offers/${offerId}/shipping-labels`, authContext(bearerToken))
 }
 
 async function fetchShippingLabelDocumentRemote({ apiBaseUrl, apiKey, bearerToken, shipmentId }) {
-  const headers = {}
-  if (bearerToken) headers.Authorization = `Bearer ${bearerToken}`
-  else if (apiKey) headers['x-api-key'] = apiKey
-  const resp = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/v1/shipments/${shipmentId}/label`, { method: 'GET', headers })
-  let data = null
-  try { data = await resp.json() } catch {}
-  if (!resp.ok) throw new Error(data?.detail || `API error (${resp.status})`)
-  return data
+  const { client, authContext } = createWebApiClient({ apiBaseUrl, apiKey })
+  return client.get(`/v1/shipments/${shipmentId}/label`, authContext(bearerToken))
 }
 
 export default function App() {
@@ -930,7 +778,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   const [savedListingNotice, setSavedListingNotice] = useState('')
   const [wizardStep, setWizardStep] = useState(1)
   const [profileQuiz, setProfileQuiz] = useState({
-    gender: '', tops_size: '', dresses_size: '', bottoms_size: '', shoes_size: '', category_preferences: [],
+    gender: '', tops_size: [], dresses_size: [], bottoms_size: [], shoes_size: [], category_preferences: [],
     shipping_full_name: '', shipping_address_line1: '', shipping_address_line2: '', shipping_city: '', shipping_state: '', shipping_postal_code: '', shipping_country: '',
     shipping_addresses: [emptyShippingAddress()],
     subscription_plan: 'free', subscription_billing_cycle: 'monthly', subscription_status: '', subscription_renewal_date: '', payment_methods: [],
@@ -997,10 +845,10 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
           const shippingAddresses = normalizeShippingAddresses(data?.shipping_addresses, data)
           setProfileQuiz({
             gender: data?.gender || '',
-            tops_size: data?.tops_size || '',
-            dresses_size: data?.dresses_size || '',
-            bottoms_size: data?.bottoms_size || '',
-            shoes_size: data?.shoes_size || '',
+            tops_size: normalizeMultiSizeValue(data?.tops_size),
+            dresses_size: normalizeMultiSizeValue(data?.dresses_size),
+            bottoms_size: normalizeMultiSizeValue(data?.bottoms_size),
+            shoes_size: normalizeMultiSizeValue(data?.shoes_size),
             category_preferences: Array.isArray(data?.category_preferences) ? data.category_preferences : [],
             shipping_full_name: shippingAddresses[0]?.full_name || '',
             shipping_address_line1: shippingAddresses[0]?.address_line1 || '',
@@ -2380,7 +2228,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                               setProfileQuiz((p) => ({
                                 ...p,
                                 gender: nextGender,
-                                dresses_size: nextGender === 'male' ? '' : p.dresses_size,
+                                dresses_size: nextGender === 'male' ? [] : p.dresses_size,
                                 category_preferences: nextGender === 'male'
                                   ? p.category_preferences.filter((x) => x !== 'Dresses')
                                   : p.category_preferences,
@@ -2393,36 +2241,100 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                             <option value="other">Other</option>
                           </select>
                         </label>
-                        <label>
-                          <span>Tops Size</span>
-                          <select value={profileQuiz.tops_size} onChange={(e) => setProfileQuiz((p) => ({ ...p, tops_size: e.target.value }))}>
-                            <option value="">Select size</option>
-                            {profileApparelSizeOptions.map((s) => <option key={`tops-${s}`} value={s}>{s}</option>)}
-                          </select>
-                        </label>
+                        <div>
+                          <span className="tiny-note">Tops Size (multi-select)</span>
+                          <div className="tag-row" style={{ marginTop: 6 }}>
+                            {profileApparelSizeOptions.map((s) => {
+                              const selected = Array.isArray(profileQuiz.tops_size) && profileQuiz.tops_size.includes(s)
+                              return (
+                                <button
+                                  key={`tops-${s}`}
+                                  type="button"
+                                  className={selected ? 'pill' : 'ghost small'}
+                                  onClick={() => setProfileQuiz((p) => ({
+                                    ...p,
+                                    tops_size: selected
+                                      ? p.tops_size.filter((x) => x !== s)
+                                      : [...p.tops_size, s],
+                                  }))}
+                                >
+                                  {s}
+                                </button>
+                              )
+                            })}
+                          </div>
+                        </div>
                         {normalizedProfileGender !== 'male' && (
-                          <label>
-                            <span>Dresses Size</span>
-                            <select value={profileQuiz.dresses_size} onChange={(e) => setProfileQuiz((p) => ({ ...p, dresses_size: e.target.value }))}>
-                              <option value="">Select size</option>
-                              {profileApparelSizeOptions.map((s) => <option key={`dresses-${s}`} value={s}>{s}</option>)}
-                            </select>
-                          </label>
+                          <div>
+                            <span className="tiny-note">Dresses Size (multi-select)</span>
+                            <div className="tag-row" style={{ marginTop: 6 }}>
+                              {profileApparelSizeOptions.map((s) => {
+                                const selected = Array.isArray(profileQuiz.dresses_size) && profileQuiz.dresses_size.includes(s)
+                                return (
+                                  <button
+                                    key={`dresses-${s}`}
+                                    type="button"
+                                    className={selected ? 'pill' : 'ghost small'}
+                                    onClick={() => setProfileQuiz((p) => ({
+                                      ...p,
+                                      dresses_size: selected
+                                        ? p.dresses_size.filter((x) => x !== s)
+                                        : [...p.dresses_size, s],
+                                    }))}
+                                  >
+                                    {s}
+                                  </button>
+                                )
+                              })}
+                            </div>
+                          </div>
                         )}
-                        <label>
-                          <span>Bottoms Size</span>
-                          <select value={profileQuiz.bottoms_size} onChange={(e) => setProfileQuiz((p) => ({ ...p, bottoms_size: e.target.value }))}>
-                            <option value="">Select size</option>
-                            {profileApparelSizeOptions.map((s) => <option key={`bottoms-${s}`} value={s}>{s}</option>)}
-                          </select>
-                        </label>
-                        <label>
-                          <span>Shoes Size</span>
-                          <select value={profileQuiz.shoes_size} onChange={(e) => setProfileQuiz((p) => ({ ...p, shoes_size: e.target.value }))}>
-                            <option value="">Select size</option>
-                            {profileShoeSizeOptions.map((s) => <option key={`shoes-${s}`} value={s}>{s}</option>)}
-                          </select>
-                        </label>
+                        <div>
+                          <span className="tiny-note">Bottoms Size (multi-select)</span>
+                          <div className="tag-row" style={{ marginTop: 6 }}>
+                            {profileApparelSizeOptions.map((s) => {
+                              const selected = Array.isArray(profileQuiz.bottoms_size) && profileQuiz.bottoms_size.includes(s)
+                              return (
+                                <button
+                                  key={`bottoms-${s}`}
+                                  type="button"
+                                  className={selected ? 'pill' : 'ghost small'}
+                                  onClick={() => setProfileQuiz((p) => ({
+                                    ...p,
+                                    bottoms_size: selected
+                                      ? p.bottoms_size.filter((x) => x !== s)
+                                      : [...p.bottoms_size, s],
+                                  }))}
+                                >
+                                  {s}
+                                </button>
+                              )
+                            })}
+                          </div>
+                        </div>
+                        <div>
+                          <span className="tiny-note">Shoes Size (multi-select)</span>
+                          <div className="tag-row" style={{ marginTop: 6 }}>
+                            {profileShoeSizeOptions.map((s) => {
+                              const selected = Array.isArray(profileQuiz.shoes_size) && profileQuiz.shoes_size.includes(s)
+                              return (
+                                <button
+                                  key={`shoes-${s}`}
+                                  type="button"
+                                  className={selected ? 'pill' : 'ghost small'}
+                                  onClick={() => setProfileQuiz((p) => ({
+                                    ...p,
+                                    shoes_size: selected
+                                      ? p.shoes_size.filter((x) => x !== s)
+                                      : [...p.shoes_size, s],
+                                  }))}
+                                >
+                                  {s}
+                                </button>
+                              )
+                            })}
+                          </div>
+                        </div>
                       </div>
                       <div style={{ marginTop: 10 }}>
                         <span className="tiny-note">Category Preferences</span>
@@ -2719,6 +2631,10 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                       const primaryAddress = normalizedAddresses[0] || emptyShippingAddress()
                       const payload = {
                         ...profileQuiz,
+                        tops_size: serializeMultiSizeValue(profileQuiz.tops_size),
+                        dresses_size: serializeMultiSizeValue(profileQuiz.dresses_size),
+                        bottoms_size: serializeMultiSizeValue(profileQuiz.bottoms_size),
+                        shoes_size: serializeMultiSizeValue(profileQuiz.shoes_size),
                         subscription_plan: selectedSubscriptionPlanId,
                         subscription_billing_cycle: selectedBillingCycle,
                         shipping_addresses: normalizedAddresses.map((address, idx) => ({
@@ -2752,10 +2668,10 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                       const savedShippingAddresses = normalizeShippingAddresses(saved?.shipping_addresses, saved)
                       setProfileQuiz({
                         gender: saved?.gender || '',
-                        tops_size: saved?.tops_size || '',
-                        dresses_size: saved?.dresses_size || '',
-                        bottoms_size: saved?.bottoms_size || '',
-                        shoes_size: saved?.shoes_size || '',
+                        tops_size: normalizeMultiSizeValue(saved?.tops_size),
+                        dresses_size: normalizeMultiSizeValue(saved?.dresses_size),
+                        bottoms_size: normalizeMultiSizeValue(saved?.bottoms_size),
+                        shoes_size: normalizeMultiSizeValue(saved?.shoes_size),
                         category_preferences: Array.isArray(saved?.category_preferences) ? saved.category_preferences : [],
                         shipping_full_name: savedShippingAddresses[0]?.full_name || '',
                         shipping_address_line1: savedShippingAddresses[0]?.address_line1 || '',
@@ -2787,13 +2703,6 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
         </main>
       ) : (
       <main className="content">
-        <nav className="workspace-nav" aria-label="Workspace">
-          <button className={activeTab === 'portfolio' ? 'nav-item active' : 'nav-item'} onClick={() => setActiveTab('portfolio')}>My Closet ({myListings.length})</button>
-          <button className={activeTab === 'inbox' ? 'nav-item active' : 'nav-item'} onClick={() => setActiveTab('inbox')}>Trade Inbox ({incomingOffers.length})</button>
-          <button className={activeTab === 'market' ? 'nav-item active' : 'nav-item'} onClick={() => setActiveTab('market')}>Marketplace ({marketplaceNavCount})</button>
-          <button className={activeTab === 'market_new' ? 'nav-item active' : 'nav-item'} onClick={() => setActiveTab('market_new')}>New Marketplace ({marketplaceNavCount})</button>
-          <button className={activeTab === 'admin' ? 'nav-item active' : 'nav-item'} onClick={() => setActiveTab('admin')}>Admin</button>
-        </nav>
           {activeTab === 'upload' && (
             <section className="panel">
               <div className="panel-header">
@@ -3662,20 +3571,20 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
       )}
 
       {showCreateListingModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.45)', display: 'grid', placeItems: 'center', zIndex: 1000 }}>
-          <div style={{ width: 'min(620px, 92vw)', maxHeight: '88vh', overflowY: 'auto', background: '#fff', borderRadius: 14, padding: 18, boxShadow: '0 24px 80px rgba(0,0,0,.25)' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-              <h3 style={{ margin: 0 }}>{listingModalMode === 'edit' ? 'Edit Draft' : 'Create Listing'}</h3>
+        <div className="listing-modal-overlay">
+          <div className="listing-modal-card">
+            <div className="listing-modal-head">
+              <h3>{listingModalMode === 'edit' ? 'Edit Draft' : 'Create Listing'}</h3>
               <button className="ghost small" type="button" onClick={() => setShowCreateListingModal(false)}>Close</button>
             </div>
-            <p className="tiny-note" style={{ marginTop: 0 }}>
+            <p className="tiny-note listing-modal-note">
               {listingModalMode === 'edit'
                 ? 'Edit mode: update images/condition, then continue to listing details.'
                 : 'Step 1: Upload images and select condition.'}
             </p>
             {listingModalMode === 'edit' ? (
               <>
-                <p style={{ margin: '4px 0 8px' }}><strong>Images (1-4)</strong></p>
+                <p className="listing-modal-label"><strong>Images (1-4)</strong></p>
                 <input
                   id="edit-draft-image-input"
                   type="file"
@@ -3693,27 +3602,16 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                     setReceiptPromptDismissed(false)
                   }}
                 />
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 8, marginTop: 4, marginBottom: 12 }}>
+                <div className="listing-modal-image-grid">
                   {modalPreviewUrls.map((url, idx) => (
-                    <div key={url} style={{ border: '1px solid #ddd', borderRadius: 8, overflow: 'hidden', background: '#f7f7f7' }}>
-                      <img src={url} alt={`Upload ${idx + 1}`} style={{ width: '100%', height: 80, objectFit: 'cover', display: 'block' }} />
+                    <div key={url} className="listing-modal-thumb">
+                      <img src={url} alt={`Upload ${idx + 1}`} />
                     </div>
                   ))}
                   {modalPreviewUrls.length < 4 && (
                     <label
                       htmlFor="edit-draft-image-input"
-                      style={{
-                        height: 80,
-                        border: '1px dashed #9ca3af',
-                        borderRadius: 8,
-                        display: 'grid',
-                        placeItems: 'center',
-                        background: '#f9fafb',
-                        fontSize: 28,
-                        color: '#6b7280',
-                        cursor: 'pointer',
-                        userSelect: 'none',
-                      }}
+                      className="listing-modal-add-image"
                       title="Add image"
                     >
                       +
@@ -3766,7 +3664,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                 />
               </label>
             )}
-            <label>
+            <label className="listing-modal-field">
               <span>Your condition assessment</span>
               <select value={userCondition} onChange={(e) => setUserCondition(e.target.value)} required>
                 <option value="">Select condition</option>
@@ -3792,7 +3690,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
               </label>
             )}
             {listingModalMode === 'edit' && (
-              <div className="warning-list" style={{ marginTop: 10 }}>
+              <div className="warning-list listing-modal-warning">
                 <p>
                   This brand/model is often sold with authenticity receipt or proof of purchase.
                   Uploading receipt can improve valuation confidence.
@@ -3838,7 +3736,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
               </div>
             )}
             {listingModalMode === 'edit' && modalEditingListing?.analysis && (
-              <div className="analysis-panels" style={{ marginTop: 12 }}>
+              <div className="analysis-panels listing-modal-analysis">
                 <article className="result-card feature">
                   <p className="eyebrow">AI Analysis</p>
                   <h3>{modalEditingListing.analysis.brand?.name === 'unknown' ? 'Brand unknown' : (modalEditingListing.analysis.brand?.name || 'Unknown')}</h3>
@@ -3881,15 +3779,15 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
               </div>
             )}
             {listingModalMode !== 'edit' && (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 8, marginTop: 12 }}>
+              <div className="listing-modal-image-grid listing-modal-image-grid-top">
                 {modalPreviewUrls.map((url, idx) => (
-                  <div key={url} style={{ border: '1px solid #ddd', borderRadius: 8, overflow: 'hidden', background: '#f7f7f7' }}>
-                    <img src={url} alt={`Upload ${idx + 1}`} style={{ width: '100%', height: 80, objectFit: 'cover', display: 'block' }} />
+                  <div key={url} className="listing-modal-thumb">
+                    <img src={url} alt={`Upload ${idx + 1}`} />
                   </div>
                 ))}
               </div>
             )}
-            <div className="button-row" style={{ marginTop: 14 }}>
+            <div className="button-row listing-modal-actions">
               <button className="ghost" type="button" onClick={() => setShowCreateListingModal(false)}>Cancel</button>
               {listingModalMode !== 'edit' && (
                 <button
@@ -4002,6 +3900,34 @@ function ListingCard({ item, own = false, onEditDraft = null, marketplaceCompact
     onOpenMagazinePage(item)
   }
 
+  function shareToFacebook(e) {
+    e?.stopPropagation?.()
+    if (typeof window === 'undefined') return
+    const caption = buildListingShareCaption(item)
+    const listingId = String(item?.listing_id || item?.id || '').trim()
+    const base = API_DEFAULT.replace(/\/$/, '')
+    const fallbackUrl = typeof window.location?.href === 'string' ? window.location.href : 'https://jouft.com'
+    const shareUrl = listingId
+      ? `${base}/v1/share/listings/${encodeURIComponent(listingId)}`
+      : fallbackUrl
+    const url = `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(shareUrl)}&quote=${encodeURIComponent(caption)}`
+    window.open(url, '_blank', 'noopener,noreferrer,width=640,height=640')
+  }
+
+  async function shareToInstagram(e) {
+    e?.stopPropagation?.()
+    const caption = buildListingShareCaption(item)
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(caption)
+      }
+    } catch {}
+    if (typeof window !== 'undefined') {
+      window.open('https://www.instagram.com/', '_blank', 'noopener,noreferrer')
+      window.alert('Listing caption copied. Paste it into your Instagram post.')
+    }
+  }
+
   return (
     <>
       <article
@@ -4065,18 +3991,26 @@ function ListingCard({ item, own = false, onEditDraft = null, marketplaceCompact
                   </button>
                 )}
                 {own && (
-                  <button
-                    className="editorial-match-btn"
-                    type="button"
-                    disabled={editDisabled}
-                    title={editDisabled ? 'Cannot edit while analysis is running' : undefined}
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      if (!editDisabled) onEditDraft?.(item)
-                    }}
-                  >
-                    <span>EDIT DRAFT</span>
-                  </button>
+                  <>
+                    <button
+                      className="editorial-match-btn"
+                      type="button"
+                      disabled={editDisabled}
+                      title={editDisabled ? 'Cannot edit while analysis is running' : undefined}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        if (!editDisabled) onEditDraft?.(item)
+                      }}
+                    >
+                      <span>EDIT DRAFT</span>
+                    </button>
+                    <button className="editorial-match-btn" type="button" onClick={shareToFacebook}>
+                      <span>SHARE FACEBOOK</span>
+                    </button>
+                    <button className="editorial-match-btn" type="button" onClick={shareToInstagram}>
+                      <span>SHARE INSTAGRAM</span>
+                    </button>
+                  </>
                 )}
               </div>
             </div>
@@ -4123,18 +4057,22 @@ function ListingCard({ item, own = false, onEditDraft = null, marketplaceCompact
                     </button>
                   )}
                   {own && (
-                    <button
-                      className="ghost small"
-                      type="button"
-                      disabled={editDisabled}
-                      title={editDisabled ? 'Cannot edit while analysis is running' : undefined}
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        if (!editDisabled) onEditDraft?.(item)
-                      }}
-                    >
-                      Edit draft
-                    </button>
+                    <>
+                      <button
+                        className="ghost small"
+                        type="button"
+                        disabled={editDisabled}
+                        title={editDisabled ? 'Cannot edit while analysis is running' : undefined}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          if (!editDisabled) onEditDraft?.(item)
+                        }}
+                      >
+                        Edit draft
+                      </button>
+                      <button className="ghost small" type="button" onClick={shareToFacebook}>Share Facebook</button>
+                      <button className="ghost small" type="button" onClick={shareToInstagram}>Share Instagram</button>
+                    </>
                   )}
                 </div>
               </div>

@@ -17,6 +17,7 @@ __pycache__/
 dist/
 build/
 .vite/
+apps/mobile/.expo/
 infra/terraform/.terraform/
 infra/terraform/.terraform.lock.hcl
 infra/terraform/terraform.tfstate

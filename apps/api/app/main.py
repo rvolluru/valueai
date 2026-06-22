@@ -6,6 +6,7 @@ import re
 import smtplib
 import time
 import uuid
+from html import escape as html_escape
 from io import BytesIO
 from pathlib import Path
 from email.message import EmailMessage
@@ -14,9 +15,10 @@ from urllib.parse import urlparse
 
 import boto3
 import httpx
-from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Query, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from fastapi.responses import HTMLResponse
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image, ImageFilter, ImageOps
@@ -1240,6 +1242,77 @@ def get_uploaded_image(
         if candidate.exists():
             return FileResponse(candidate)
     raise HTTPException(status_code=404, detail="image not found")
+
+
+@app.get("/v1/share/listings/{listing_id}", response_class=HTMLResponse)
+def public_listing_share_page(
+    listing_id: str,
+    request: Request,
+    db: Database = Depends(get_db),
+):
+    listing = db.get_listing_by_id(listing_id)
+    if not listing:
+        raise HTTPException(status_code=404, detail="listing not found")
+
+    title = str(listing.get("title") or "Jouft Listing").strip() or "Jouft Listing"
+    brand = str(listing.get("brand") or "Unknown brand").strip() or "Unknown brand"
+    condition = str(listing.get("condition") or "Unknown condition").strip() or "Unknown condition"
+    value = listing.get("estimated_value")
+    description = str(listing.get("description") or listing.get("wants") or "").strip()
+    if not description:
+        price_text = f"${float(value):.0f}" if isinstance(value, (int, float)) else "N/A"
+        description = f"{brand} • {condition} • Est. {price_text}"
+
+    gallery = listing.get("images") if isinstance(listing.get("images"), list) else []
+    primary_image = None
+    if gallery:
+        primary_image = gallery[0]
+    if not primary_image:
+        primary_image = listing.get("image")
+    image_url = str(primary_image).strip() if isinstance(primary_image, str) else ""
+    if image_url.startswith("/"):
+        image_url = str(request.base_url).rstrip("/") + image_url
+    if not image_url.startswith("http://") and not image_url.startswith("https://"):
+        image_url = ""
+
+    page_url = str(request.url)
+    escaped_title = html_escape(title)
+    escaped_description = html_escape(description)
+    escaped_brand = html_escape(brand)
+    escaped_condition = html_escape(condition)
+    escaped_image = html_escape(image_url) if image_url else ""
+    escaped_page_url = html_escape(page_url)
+
+    image_meta = f"""
+    <meta property="og:image" content="{escaped_image}" />
+    <meta property="twitter:image" content="{escaped_image}" />
+    """ if escaped_image else ""
+
+    html = f"""<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{escaped_title} | Jouft</title>
+    <meta name="description" content="{escaped_description}" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Jouft" />
+    <meta property="og:title" content="{escaped_title}" />
+    <meta property="og:description" content="{escaped_description}" />
+    <meta property="og:url" content="{escaped_page_url}" />
+    {image_meta}
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="{escaped_title}" />
+    <meta name="twitter:description" content="{escaped_description}" />
+  </head>
+  <body style="font-family: -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif; margin: 24px; color:#1a1a1a;">
+    <h1 style="margin-bottom: 8px;">{escaped_title}</h1>
+    <p style="margin: 0 0 8px 0; color:#555;">{escaped_brand} • {escaped_condition}</p>
+    <p style="max-width: 720px;">{escaped_description}</p>
+    {"<img src=\"" + escaped_image + "\" alt=\"" + escaped_title + "\" style=\"max-width: 100%; height: auto; border: 1px solid #ddd;\" />" if escaped_image else ""}
+  </body>
+</html>"""
+    return HTMLResponse(content=html, status_code=200)
 
 
 @app.get("/v1/admin/analyses")
