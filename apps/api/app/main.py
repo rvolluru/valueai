@@ -1288,6 +1288,10 @@ def public_listing_share_page(
     <meta property="twitter:image" content="{escaped_image}" />
     """ if escaped_image else ""
 
+    image_html = ""
+    if escaped_image:
+        image_html = f'<img src="{escaped_image}" alt="{escaped_title}" style="max-width: 100%; height: auto; border: 1px solid #ddd;" />'
+
     html = f"""<!doctype html>
 <html lang="en">
   <head>
@@ -1309,7 +1313,7 @@ def public_listing_share_page(
     <h1 style="margin-bottom: 8px;">{escaped_title}</h1>
     <p style="margin: 0 0 8px 0; color:#555;">{escaped_brand} • {escaped_condition}</p>
     <p style="max-width: 720px;">{escaped_description}</p>
-    {"<img src=\"" + escaped_image + "\" alt=\"" + escaped_title + "\" style=\"max-width: 100%; height: auto; border: 1px solid #ddd;\" />" if escaped_image else ""}
+    {image_html}
   </body>
 </html>"""
     return HTMLResponse(content=html, status_code=200)
