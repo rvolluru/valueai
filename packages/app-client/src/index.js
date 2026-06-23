@@ -55,7 +55,18 @@ export async function requestJson({
   const payload = await parseJsonOrNull(resp);
   if (!resp.ok) {
     const detail = detailFromPayload(payload);
-    throw new Error(detail || `API error (${resp.status})`);
+    const error = new Error(detail || `API error (${resp.status})`);
+    error.status = resp.status;
+    error.payload = payload;
+    error.path = path;
+    if (resp.status === 401 && typeof window !== "undefined" && typeof window.dispatchEvent === "function") {
+      window.dispatchEvent(
+        new CustomEvent("valueai:unauthorized", {
+          detail: { status: resp.status, path },
+        }),
+      );
+    }
+    throw error;
   }
   return payload;
 }

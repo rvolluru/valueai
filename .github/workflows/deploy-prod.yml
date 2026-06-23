@@ -71,6 +71,8 @@ jobs:
       - name: Write production tfvars from secret
         env:
           TFVARS_PROD_B64: ${{ secrets.TFVARS_PROD_B64 }}
+          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+          STRIPE_PUBLISHABLE_KEY: ${{ secrets.STRIPE_PUBLISHABLE_KEY }}
         run: |
           set -euo pipefail
           test -n "${TFVARS_PROD_B64}"
@@ -85,6 +87,20 @@ jobs:
           fi
           if grep -qE '^[[:space:]]*aws_assume_role_arn[[:space:]]*=' "${TF_DIR}/terraform.tfvars"; then
             sed -i.bak -E 's#^[[:space:]]*aws_assume_role_arn[[:space:]]*=.*#aws_assume_role_arn               = null#' "${TF_DIR}/terraform.tfvars"
+          fi
+          if [ -n "${STRIPE_SECRET_KEY:-}" ]; then
+            if grep -qE '^[[:space:]]*stripe_secret_key[[:space:]]*=' "${TF_DIR}/terraform.tfvars"; then
+              sed -i.bak -E "s#^[[:space:]]*stripe_secret_key[[:space:]]*=.*#stripe_secret_key                  = \"${STRIPE_SECRET_KEY}\"#" "${TF_DIR}/terraform.tfvars"
+            else
+              echo "stripe_secret_key                  = \"${STRIPE_SECRET_KEY}\"" >> "${TF_DIR}/terraform.tfvars"
+            fi
+          fi
+          if [ -n "${STRIPE_PUBLISHABLE_KEY:-}" ]; then
+            if grep -qE '^[[:space:]]*stripe_publishable_key[[:space:]]*=' "${TF_DIR}/terraform.tfvars"; then
+              sed -i.bak -E "s#^[[:space:]]*stripe_publishable_key[[:space:]]*=.*#stripe_publishable_key             = \"${STRIPE_PUBLISHABLE_KEY}\"#" "${TF_DIR}/terraform.tfvars"
+            else
+              echo "stripe_publishable_key             = \"${STRIPE_PUBLISHABLE_KEY}\"" >> "${TF_DIR}/terraform.tfvars"
+            fi
           fi
 
       - name: Decide deploy mode (fast ECS vs full Terraform)
@@ -114,6 +130,8 @@ jobs:
         env:
           IMAGE_URI: ${{ steps.image.outputs.image_uri }}
           PROJECT_NAME: ${{ steps.mode.outputs.project_name }}
+          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+          STRIPE_PUBLISHABLE_KEY: ${{ secrets.STRIPE_PUBLISHABLE_KEY }}
         run: |
           set -euo pipefail
           CLUSTER="${PROJECT_NAME}-cluster"
@@ -124,7 +142,15 @@ jobs:
             --query 'services[0].taskDefinition' \
             --output text)
           aws ecs describe-task-definition --task-definition "${CURRENT_TASK_DEF_ARN}" > /tmp/current-td.json
-          jq --arg IMAGE "${IMAGE_URI}" '
+          jq --arg IMAGE "${IMAGE_URI}" \
+             --arg STRIPE_SECRET_KEY "${STRIPE_SECRET_KEY:-}" \
+             --arg STRIPE_PUBLISHABLE_KEY "${STRIPE_PUBLISHABLE_KEY:-}" '
+            def upsert_env($n; $v):
+              if ($v|length) == 0 then .
+              elif ((.environment // []) | map(.name) | index($n)) != null
+              then .environment = ((.environment // []) | map(if .name == $n then .value = $v else . end))
+              else .environment = ((.environment // []) + [{name: $n, value: $v}])
+              end;
             .taskDefinition
             | del(
                 .taskDefinitionArn,
@@ -136,7 +162,12 @@ jobs:
                 .registeredBy
               )
             | .containerDefinitions |= map(
-                if .name == "api" then .image = $IMAGE else . end
+                if .name == "api"
+                then
+                  (.image = $IMAGE
+                  | upsert_env("STRIPE_SECRET_KEY"; $STRIPE_SECRET_KEY)
+                  | upsert_env("STRIPE_PUBLISHABLE_KEY"; $STRIPE_PUBLISHABLE_KEY))
+                else . end
               )
           ' /tmp/current-td.json > /tmp/new-td.json
           NEW_TASK_DEF_ARN=$(aws ecs register-task-definition \

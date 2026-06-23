@@ -219,3 +219,15 @@ variable "brand_gap_min" {
   type    = number
   default = 8
 }
+
+variable "stripe_secret_key" {
+  type      = string
+  default   = ""
+  sensitive = true
+}
+
+variable "stripe_publishable_key" {
+  type      = string
+  default   = ""
+  sensitive = true
+}

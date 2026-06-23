@@ -4,6 +4,7 @@ import {
   SignUp,
   UserButton,
   useAuth,
+  useClerk,
   useUser,
 } from '@clerk/clerk-react'
 import { createWebApiClient } from './lib/apiClient'
@@ -451,6 +452,7 @@ export default function App() {
 
 function ClerkMarketplaceApp() {
   const { isLoaded, isSignedIn, getToken } = useAuth()
+  const { signOut } = useClerk()
   const { user } = useUser()
   const [authMode, setAuthMode] = useState('login')
   const [authPanelOpen, setAuthPanelOpen] = useState(false)
@@ -508,6 +510,7 @@ function ClerkMarketplaceApp() {
     <MarketplaceWorkspace
       session={session}
       profileData={profileData}
+      onLogout={() => signOut({ redirectUrl: '/' })}
       clerkEnabled
       getBearerToken={() => getToken()}
       userMenu={(
@@ -820,6 +823,19 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   const [newMarketIndex, setNewMarketIndex] = useState(0)
   const [newMarketFlipDir, setNewMarketFlipDir] = useState('next')
   const [newMarketIsFlipping, setNewMarketIsFlipping] = useState(false)
+  const forcedLogoutRef = useRef(false)
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof onLogout !== 'function') return undefined
+    function handleUnauthorized() {
+      if (forcedLogoutRef.current) return
+      forcedLogoutRef.current = true
+      setSavedListingNotice('Your session expired. Please sign in again.')
+      Promise.resolve(onLogout()).catch(() => {})
+    }
+    window.addEventListener('valueai:unauthorized', handleUnauthorized)
+    return () => window.removeEventListener('valueai:unauthorized', handleUnauthorized)
+  }, [onLogout])
 
   function resolveOfferActorSubject(offer) {
     const participants = [String(offer?.from_subject || ''), String(offer?.to_subject || '')]

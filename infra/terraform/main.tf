@@ -264,6 +264,8 @@ resource "aws_ecs_task_definition" "api" {
         { name = "DATABASE_URL", value = "postgresql://${var.db_username}:${var.db_password}@${aws_db_instance.postgres.address}:5432/${var.db_name}" },
         { name = "OPENAI_API_KEY", value = var.openai_api_key },
         { name = "GEMINI_API_KEY", value = var.gemini_api_key },
+        { name = "STRIPE_SECRET_KEY", value = var.stripe_secret_key },
+        { name = "STRIPE_PUBLISHABLE_KEY", value = var.stripe_publishable_key },
         { name = "CLERK_ENABLED", value = tostring(var.clerk_enabled) },
         { name = "CLERK_ISSUER", value = var.clerk_issuer },
         { name = "CLERK_JWKS_URL", value = var.clerk_jwks_url },

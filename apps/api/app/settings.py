@@ -39,7 +39,10 @@ def _normalize_local_storage_dir(path: str) -> str:
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=(str((_REPO_ROOT / ".env").resolve()), ".env"),
+        extra="ignore",
+    )
 
     app_env: str = "local"
     api_key: str = "local-dev-key"
