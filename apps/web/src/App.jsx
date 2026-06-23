@@ -3991,7 +3991,7 @@ function ListingCard({ item, own = false, onEditDraft = null, marketplaceCompact
                   </button>
                 )}
                 {own && (
-                  <>
+                  <div className="editorial-own-actions">
                     <button
                       className="editorial-match-btn"
                       type="button"
@@ -4010,7 +4010,7 @@ function ListingCard({ item, own = false, onEditDraft = null, marketplaceCompact
                     <button className="editorial-match-btn" type="button" onClick={shareToInstagram}>
                       <span>SHARE INSTAGRAM</span>
                     </button>
-                  </>
+                  </div>
                 )}
               </div>
             </div>

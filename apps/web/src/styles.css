@@ -1787,6 +1787,12 @@ textarea { resize: vertical; }
   color: #000;
   border-bottom-color: rgba(18,26,36,.6);
 }
+.editorial-own-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  gap: 10px;
+}
 .image-wrap {
   position: relative;
   height: 220px;
