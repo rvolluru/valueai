@@ -14,6 +14,18 @@ const API_DEFAULT =
   (typeof window !== 'undefined' ? window.location.origin : 'http://127.0.0.1:8000')
 const CLERK_ENABLED = Boolean(import.meta.env.VITE_CLERK_PUBLISHABLE_KEY)
 const IS_PROD = Boolean(import.meta.env.PROD)
+const VALID_TABS = new Set(['market', 'portfolio', 'inbox', 'profile', 'market_new', 'admin', 'trade', 'upload'])
+
+function tabFromLocation() {
+  if (typeof window === 'undefined') return 'market'
+  const params = new URLSearchParams(window.location.search)
+  const tab = String(params.get('tab') || '').trim().toLowerCase()
+  return VALID_TABS.has(tab) ? tab : 'market'
+}
+
+function tabHref(tab) {
+  return `/?tab=${encodeURIComponent(tab)}`
+}
 
 const seedListings = [
   {
@@ -749,7 +761,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   const [apiKey, setApiKey] = useState('local-dev-key')
   const [myListings, setMyListings] = useState([])
   const [marketListings, setMarketListings] = useState([])
-  const [activeTab, setActiveTab] = useState('market')
+  const [activeTab, setActiveTab] = useState(() => tabFromLocation())
   const [marketSearch, setMarketSearch] = useState('')
   const [tradeOnly, setTradeOnly] = useState(false)
   const [listingMode, setListingMode] = useState('sell_trade')
@@ -1139,6 +1151,16 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
 
   function fromRemoteListing(item) {
     if (!item) return null
+    const ownerNameRaw = typeof item.owner_name === 'string' ? item.owner_name.trim() : ''
+    const ownerSubjectRaw = typeof item.owner_subject === 'string' ? item.owner_subject.trim() : ''
+    const isCurrentUserListing = ownerSubjectRaw && String(session?.id || '').trim() === ownerSubjectRaw
+    const ownerNameLooksLikeSubject = ownerNameRaw && (
+      ownerNameRaw === ownerSubjectRaw
+      || /^user_[a-z0-9]+$/i.test(ownerNameRaw)
+    )
+    const displayOwnerName = !ownerNameRaw || ownerNameLooksLikeSubject
+      ? (isCurrentUserListing ? (session.name || 'You') : 'Member')
+      : ownerNameRaw
     const resolveUrl = (url) => {
       if (!url || typeof url !== 'string') return null
       if (url.startsWith('blob:')) return null
@@ -1164,7 +1186,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     }
     const normalized = {
       id: item.listing_id || item.id,
-      owner: item.owner_name || session.name || 'You',
+      owner: displayOwnerName,
       title: item.title || 'Untitled listing',
       mode: item.mode || 'sell_trade',
       category: item.category || 'unknown',
@@ -2152,10 +2174,10 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
               </div>
             </div>
             <div className="app-brand-links" aria-label="Primary app sections">
-              <button type="button" className={activeTab === 'market' ? 'app-brand-link active' : 'app-brand-link'} onClick={() => setActiveTab('market')}>Marketplace</button>
-              <button type="button" className={activeTab === 'portfolio' ? 'app-brand-link active' : 'app-brand-link'} onClick={() => setActiveTab('portfolio')}>My Closet</button>
-              <button type="button" className={activeTab === 'inbox' ? 'app-brand-link active' : 'app-brand-link'} onClick={() => setActiveTab('inbox')}>Trade Inbox</button>
-              <button type="button" className={activeTab === 'profile' ? 'app-brand-link active' : 'app-brand-link'} onClick={() => setActiveTab('profile')}>Profile</button>
+              <a href={tabHref('market')} className={activeTab === 'market' ? 'app-brand-link active' : 'app-brand-link'}>Marketplace</a>
+              <a href={tabHref('portfolio')} className={activeTab === 'portfolio' ? 'app-brand-link active' : 'app-brand-link'}>My Closet</a>
+              <a href={tabHref('inbox')} className={activeTab === 'inbox' ? 'app-brand-link active' : 'app-brand-link'}>Trade Inbox</a>
+              <a href={tabHref('profile')} className={activeTab === 'profile' ? 'app-brand-link active' : 'app-brand-link'}>Profile</a>
             </div>
           </div>
         </div>
@@ -3189,9 +3211,9 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                       {(() => {
                         const item = filteredListings[marketMagazineIndex]
                         const similarMatches = Array.isArray(item.matches) ? item.matches : []
-                        const matchPreviewImages = similarMatches
-                          .map((candidate) => getListingGallery(candidate)[0])
-                          .filter(Boolean)
+                        const matchPreviewListings = similarMatches
+                          .map((candidate) => ({ candidate, thumb: getListingGallery(candidate)[0] }))
+                          .filter((entry) => Boolean(entry.thumb))
                         const heroGallery = getListingGallery(item)
                         const hero = heroGallery[0]
                         const own = String(item.owner || '').trim().toLowerCase() === String(session?.name || '').trim().toLowerCase()
@@ -3230,10 +3252,18 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                                   >
                                     {own ? 'YOUR LISTING' : 'MATCHES'}
                                   </button>
-                                  <div className="market-magazine-match-strip" aria-hidden="true">
-                                    {!own && matchPreviewImages.length > 0 ? (
-                                      matchPreviewImages.slice(0, 3).map((src, idx) => (
-                                        <img key={`${item.id}-market-match-${idx}`} src={src} alt="" className="market-magazine-match-thumb" />
+                                  <div className="market-magazine-match-strip">
+                                    {!own && matchPreviewListings.length > 0 ? (
+                                      matchPreviewListings.slice(0, 3).map(({ candidate, thumb }, idx) => (
+                                        <button
+                                        key={`${item.id}-market-match-${idx}`}
+                                        type="button"
+                                        className="match-thumb-btn"
+                                        onClick={() => openMarketMatches(item)}
+                                        title="Open matches workflow"
+                                      >
+                                        <img src={thumb} alt={candidate?.title || 'Matched item'} className="market-magazine-match-thumb" />
+                                      </button>
                                       ))
                                     ) : (
                                       <span className="match-thumb-empty">{own ? 'N/A' : 'NO MATCHES'}</span>
@@ -3256,9 +3286,9 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                     {filteredListings.map((item) => {
                       const baseValue = Number(item.estimatedValue || 0)
                       const similarMatches = Array.isArray(item.matches) ? item.matches : []
-                      const matchPreviewImages = similarMatches
-                        .map((candidate) => getListingGallery(candidate)[0])
-                        .filter(Boolean)
+                      const matchPreviewListings = similarMatches
+                        .map((candidate) => ({ candidate, thumb: getListingGallery(candidate)[0] }))
+                        .filter((entry) => Boolean(entry.thumb))
                       const myTradeCandidates = myListings
                         .filter((mine) => String(mine.status || '').toLowerCase() === 'active')
                         .filter((mine) => Math.abs(Number(mine.estimatedValue || 0) - baseValue) <= Math.max(50, baseValue * 0.3))
@@ -3270,7 +3300,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                           onOpenTrade={openTradeComposer}
                           myTradeCandidates={myTradeCandidates}
                           onOpenMatches={openMarketMatches}
-                          matchPreviewImages={matchPreviewImages}
+                          matchPreviewImages={matchPreviewListings.map((entry) => entry.thumb)}
                           onOpenMagazinePage={openMarketplaceMagazine}
                         />
                       )
@@ -3344,10 +3374,18 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                                 >
                                   {own ? 'YOUR LISTING' : 'MATCHES'}
                                 </button>
-                                <div className="market-magazine-match-strip" aria-hidden="true">
-                                  {!own && matchPreviewImages.length > 0 ? (
-                                    matchPreviewImages.slice(0, 3).map((src, idx) => (
-                                      <img key={`${item.id}-new-market-match-${idx}`} src={src} alt="" className="market-magazine-match-thumb" />
+                                <div className="market-magazine-match-strip">
+                                  {!own && matchPreviewListings.length > 0 ? (
+                                    matchPreviewListings.slice(0, 3).map(({ candidate, thumb }, idx) => (
+                                      <button
+                                        key={`${item.id}-new-market-match-${idx}`}
+                                        type="button"
+                                        className="match-thumb-btn"
+                                        onClick={() => openMarketMatches(item)}
+                                        title="Open matches workflow"
+                                      >
+                                        <img src={thumb} alt={candidate?.title || 'Matched item'} className="market-magazine-match-thumb" />
+                                      </button>
                                     ))
                                   ) : (
                                     <span className="match-thumb-empty">{own ? 'N/A' : 'NO MATCHES'}</span>

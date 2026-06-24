@@ -111,6 +111,72 @@ VALID_CONDITION_GRADES = {"new": "New", "likenew": "LikeNew", "good": "Good", "f
 CONDITION_SEVERITY_RANK = {"New": 5, "LikeNew": 4, "Good": 3, "Fair": 2, "Poor": 1}
 
 
+def _trade_match_tolerance(value: float) -> tuple[float, float]:
+    v = float(value or 0.0)
+    if v <= 0:
+        return 0.0, 0.0
+    if v < 250:
+        pct = 0.30
+    elif v < 500:
+        pct = 0.25
+    elif v < 1000:
+        pct = 0.20
+    elif v < 1500:
+        pct = 0.15
+    elif v < 3000:
+        pct = 0.12
+    elif v < 5000:
+        pct = 0.10
+    elif v < 10000:
+        pct = 0.075
+    else:
+        pct = 0.05
+    tolerance = v * pct
+    if v >= 10000:
+        tolerance = min(tolerance, 1000.0)
+    return tolerance, pct
+
+
+def _normalize_size_token(value: object) -> str:
+    return re.sub(r"\s+", "", str(value or "").strip().casefold())
+
+
+def _split_size_tokens(value: object) -> set[str]:
+    if not isinstance(value, str):
+        return set()
+    tokens: set[str] = set()
+    for part in re.split(r"[,\n;/|]+", value):
+        token = _normalize_size_token(part)
+        if token:
+            tokens.add(token)
+    return tokens
+
+
+def _profile_size_preferences(profile: dict | None) -> dict[str, set[str]]:
+    p = profile or {}
+    clothes = set()
+    for key in ("tops_size", "dresses_size", "bottoms_size"):
+        clothes |= _split_size_tokens(p.get(key))
+    shoes = _split_size_tokens(p.get("shoes_size"))
+    return {"clothes": clothes, "shoes": shoes}
+
+
+def _listing_matches_viewer_size_preferences(
+    listing: dict,
+    viewer_size_prefs: dict[str, set[str]],
+) -> bool:
+    category = str(listing.get("category") or "").strip().casefold()
+    if category not in {"clothes", "shoes"}:
+        return True
+    listing_size = _normalize_size_token(listing.get("size"))
+    if not listing_size:
+        return False
+    allowed = viewer_size_prefs.get(category) or set()
+    if not allowed:
+        return False
+    return listing_size in allowed
+
+
 def _public_image_url_from_storage_uri(storage_uri: str, settings: Settings) -> str:
     if storage_uri.startswith("http://") or storage_uri.startswith("https://"):
         return storage_uri
@@ -1353,8 +1419,8 @@ def create_listing(
             principal.claims.get("name")
             or " ".join(
                 p for p in [
-                    principal.claims.get("given_name"),
-                    principal.claims.get("family_name"),
+                    principal.claims.get("first_name") or principal.claims.get("given_name"),
+                    principal.claims.get("last_name") or principal.claims.get("family_name"),
                 ] if isinstance(p, str) and p.strip()
             )
             or principal.claims.get("username")
@@ -1455,24 +1521,24 @@ def list_recent_listings(
     records = [_normalize_listing_media(record) for record in records]
 
     if include_matches and not mine:
-        def _norm_brand(value: object) -> str:
-            return str(value or "").strip().casefold()
-
+        viewer_size_prefs = _profile_size_preferences(db.get_user_profile_quiz(principal.subject))
         my_active = [
             _normalize_listing_media(x)
             for x in db.list_owner_listings(principal.subject, limit=200)
             if str(x.get("status", "")).lower() == "active"
         ]
         for record in records:
+            if not _listing_matches_viewer_size_preferences(record, viewer_size_prefs):
+                record["matches"] = []
+                continue
             base_value = float(record.get("estimated_value") or 0)
             if base_value <= 0:
                 record["matches"] = []
                 continue
             # Keep marketplace "matches" aligned with offer-candidate rules so
             # clicking Start Trade does not lead to zero eligible listings.
-            tolerance = max(50.0, base_value * 0.30)
+            tolerance, _ = _trade_match_tolerance(base_value)
             owner_subject = str(record.get("owner_subject") or "")
-            target_brand = _norm_brand(record.get("brand"))
             matches: list[dict] = []
             for candidate in my_active:
                 if str(candidate.get("listing_id") or "") == str(record.get("listing_id") or ""):
@@ -1485,9 +1551,6 @@ def list_recent_listings(
                 if candidate_value <= 0:
                     continue
                 if abs(candidate_value - base_value) > tolerance:
-                    continue
-                candidate_brand = _norm_brand(candidate.get("brand"))
-                if target_brand and candidate_brand and target_brand != candidate_brand:
                     continue
                 matches.append(candidate)
                 if len(matches) >= 12:
@@ -1543,9 +1606,6 @@ def list_offer_candidates(
             record["images"] = []
         return record
 
-    def _norm_brand(value: object) -> str:
-        return str(value or "").strip().casefold()
-
     target = db.get_listing_by_id(listing_id)
     if not target:
         raise HTTPException(status_code=404, detail="Target listing not found")
@@ -1553,11 +1613,13 @@ def list_offer_candidates(
         raise HTTPException(status_code=400, detail="Cannot create a trade offer on your own listing")
 
     target_value = float(target.get("estimated_value") or 0)
-    target_brand = _norm_brand(target.get("brand"))
     if target_value <= 0:
         return {"count": 0, "items": []}
+    viewer_size_prefs = _profile_size_preferences(db.get_user_profile_quiz(principal.subject))
+    if not _listing_matches_viewer_size_preferences(target, viewer_size_prefs):
+        return {"count": 0, "items": []}
 
-    tolerance = max(50.0, target_value * 0.30)
+    tolerance, _ = _trade_match_tolerance(target_value)
     safe_limit = max(1, min(limit, 200))
     mine = db.list_owner_listings(principal.subject, limit=safe_limit)
     candidates: list[dict] = []
@@ -1570,9 +1632,6 @@ def list_offer_candidates(
         if cand_value <= 0:
             continue
         if abs(cand_value - target_value) > tolerance:
-            continue
-        cand_brand = _norm_brand(record.get("brand"))
-        if target_brand and cand_brand and cand_brand != target_brand:
             continue
         candidates.append(_normalize_listing_media(record))
 
@@ -1657,8 +1716,8 @@ def create_offer(
         if offered_value <= 0:
             raise HTTPException(status_code=400, detail="All offered listings must have a valid estimated value")
         offered_value_total += offered_value
-    pct_gap = abs(offered_value_total - target_value) / target_value
-    if pct_gap > 0.30:
+    tolerance, _ = _trade_match_tolerance(target_value)
+    if abs(offered_value_total - target_value) > tolerance:
         raise HTTPException(status_code=400, detail="Offered total is outside the trade price band")
 
     offer = db.create_trade_offer(

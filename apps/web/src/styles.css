@@ -909,11 +909,17 @@ textarea { resize: vertical; }
   background: transparent;
   padding: 6px 0;
   color: #302626;
+  text-decoration: none;
   font-family: var(--font-auth-sans);
   font-size: 0.74rem;
   text-transform: uppercase;
   letter-spacing: 0.16em;
   cursor: pointer;
+}
+.app-brand-link:hover,
+.app-brand-link:focus,
+.app-brand-link:visited {
+  text-decoration: none;
 }
 .app-brand-link.active {
   color: #5a121b;
@@ -1525,6 +1531,17 @@ textarea { resize: vertical; }
   gap: 8px;
   align-items: center;
   justify-content: flex-start;
+}
+.match-thumb-btn {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  border-radius: 999px;
+}
+.match-thumb-btn:focus-visible {
+  outline: 2px solid rgba(90, 18, 27, 0.45);
+  outline-offset: 2px;
 }
 .market-magazine-match-thumb {
   width: 104px;
