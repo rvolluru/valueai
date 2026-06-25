@@ -763,7 +763,6 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   const [marketListings, setMarketListings] = useState([])
   const [activeTab, setActiveTab] = useState(() => tabFromLocation())
   const [marketSearch, setMarketSearch] = useState('')
-  const [tradeOnly, setTradeOnly] = useState(false)
   const [listingMode, setListingMode] = useState('sell_trade')
   const [itemTitle, setItemTitle] = useState('')
   const [category, setCategory] = useState('')
@@ -835,7 +834,12 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   const [newMarketIndex, setNewMarketIndex] = useState(0)
   const [newMarketFlipDir, setNewMarketFlipDir] = useState('next')
   const [newMarketIsFlipping, setNewMarketIsFlipping] = useState(false)
+  const [likedListingIds, setLikedListingIds] = useState([])
   const forcedLogoutRef = useRef(false)
+  const likesStorageKey = useMemo(
+    () => `jouft:marketplace:likes:${String(session?.id || session?.name || 'anon')}`,
+    [session?.id, session?.name],
+  )
 
   useEffect(() => {
     if (typeof window === 'undefined' || typeof onLogout !== 'function') return undefined
@@ -862,6 +866,35 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     }
     return candidates[0] || participants[0] || ''
   }
+
+  function isOwnedByCurrentUser(listing) {
+    const ownerSubject = String(listing?.ownerSubject || '').trim()
+    const currentSubject = String(session?.id || '').trim()
+    if (ownerSubject && currentSubject && ownerSubject === currentSubject) return true
+    const ownerName = String(listing?.owner || '').trim().toLowerCase()
+    const currentName = String(session?.name || '').trim().toLowerCase()
+    return Boolean(ownerName && currentName && ownerName === currentName)
+  }
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    try {
+      const raw = window.localStorage.getItem(likesStorageKey)
+      const parsed = JSON.parse(raw || '[]')
+      if (Array.isArray(parsed)) {
+        setLikedListingIds(parsed.map((id) => String(id)).filter(Boolean))
+      } else {
+        setLikedListingIds([])
+      }
+    } catch {
+      setLikedListingIds([])
+    }
+  }, [likesStorageKey])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    window.localStorage.setItem(likesStorageKey, JSON.stringify(likedListingIds))
+  }, [likesStorageKey, likedListingIds])
 
   useEffect(() => {
     let cancelled = false
@@ -1111,8 +1144,11 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   useEffect(() => {
     let cancelled = false
     const line1 = (activeShippingAddress?.address_line1 || '').trim()
-    const state = (activeShippingAddress?.state || '').trim()
-    if (line1.length < 5 || state.length !== 2) {
+    const primaryAddress = shippingAddresses[0] || emptyShippingAddress()
+    const state = ((activeShippingAddress?.state || '').trim() || (safeActiveShippingAddressIdx === 0 ? '' : (primaryAddress.state || '').trim())).toUpperCase()
+    const city = (activeShippingAddress?.city || '').trim() || (safeActiveShippingAddressIdx === 0 ? '' : (primaryAddress.city || '').trim())
+    const postalCode = (activeShippingAddress?.postal_code || '').trim() || (safeActiveShippingAddressIdx === 0 ? '' : (primaryAddress.postal_code || '').trim())
+    if (line1.length < 3) {
       setAddressSuggestions([])
       return undefined
     }
@@ -1124,9 +1160,9 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
           apiKey: clerkEnabled ? '' : apiKey.trim(),
           bearerToken,
           q: line1,
-          city: activeShippingAddress?.city || '',
+          city,
           state,
-          postalCode: activeShippingAddress?.postal_code || '',
+          postalCode,
         })
         if (!cancelled) setAddressSuggestions(suggestions.slice(0, 5))
       } catch {
@@ -1142,6 +1178,9 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     activeShippingAddress?.city,
     activeShippingAddress?.state,
     activeShippingAddress?.postal_code,
+    shippingAddresses[0]?.city,
+    shippingAddresses[0]?.state,
+    shippingAddresses[0]?.postal_code,
     safeActiveShippingAddressIdx,
     apiBaseUrl,
     apiKey,
@@ -1187,6 +1226,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     const normalized = {
       id: item.listing_id || item.id,
       owner: displayOwnerName,
+      ownerSubject: ownerSubjectRaw || null,
       title: item.title || 'Untitled listing',
       mode: item.mode || 'sell_trade',
       category: item.category || 'unknown',
@@ -1328,11 +1368,10 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     return allListings.filter((item) => {
       const status = typeof item.status === 'string' ? item.status.toLowerCase() : ''
       if (status !== 'active') return false
-      if (tradeOnly && item.mode === 'sell') return false
       if (!q) return true
       return `${item.title} ${item.brand} ${item.category} ${item.city} ${item.wants}`.toLowerCase().includes(q)
     })
-  }, [allListings, deferredMarketSearch, tradeOnly])
+  }, [allListings, deferredMarketSearch])
   const marketplaceNavCount = useMemo(
     () => allListings.filter((item) => String(item?.status || '').toLowerCase() === 'active').length,
     [allListings],
@@ -1415,6 +1454,16 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   function flipMarketplaceMagazinePrev() {
     if (filteredListings.length <= 1 || marketMagazineIndex == null) return
     setMarketMagazineIndex((marketMagazineIndex - 1 + filteredListings.length) % filteredListings.length)
+  }
+
+  function toggleMarketplaceLike(listingId) {
+    const normalizedId = String(listingId || '').trim()
+    if (!normalizedId) return
+    setLikedListingIds((prev) => (
+      prev.includes(normalizedId)
+        ? prev.filter((id) => id !== normalizedId)
+        : [...prev, normalizedId]
+    ))
   }
 
   const suggestedTrades = useMemo(() => {
@@ -3158,6 +3207,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                                 <div key={s.shipment_id} className="inbox-label-card">
                                   <strong>{s.carrier} • {s.service_level}</strong>
                                   <div className="tiny-note">Tracking: {s.tracking_number || 'pending'}</div>
+                                  <div className="tiny-note">Status: {String(s.status || 'label_created').replace(/_/g, ' ')}</div>
                                   <div className="tiny-note">From: {s.from_name || 'n/a'} • {s.from_city || ''} {s.from_state || ''}</div>
                                   <div className="tiny-note">To: {s.to_name || 'n/a'} • {s.to_city || ''} {s.to_state || ''}</div>
                                   <button type="button" className="ghost small" onClick={() => openShippingLabel(s)}>
@@ -3197,7 +3247,6 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                 <div><p className="eyebrow">Marketplace</p><h2>Find trade opportunities near your value target</h2></div>
                 <div className="market-controls">
                   <input value={marketSearch} onChange={(e) => setMarketSearch(e.target.value)} placeholder="Search brand, category, city, style..." />
-                  <label className="toggle"><input type="checkbox" checked={tradeOnly} onChange={(e) => setTradeOnly(e.target.checked)} /><span>Trade only</span></label>
                   {marketMagazineIndex !== null ? (
                     <button className="ghost small" type="button" onClick={() => setMarketMagazineIndex(null)}>Back to Regular View</button>
                   ) : null}
@@ -3216,16 +3265,30 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                           .filter((entry) => Boolean(entry.thumb))
                         const heroGallery = getListingGallery(item)
                         const hero = heroGallery[0]
-                        const own = String(item.owner || '').trim().toLowerCase() === String(session?.name || '').trim().toLowerCase()
+                        const own = isOwnedByCurrentUser(item)
+                        const isLiked = likedListingIds.includes(String(item.id))
                         return (
                           <article className="market-magazine-page" key={`market-page-${item.id}-${marketMagazineIndex}`}>
                             <div className="market-magazine-feature">
                               <div className="market-magazine-top">
                                 <div className="market-magazine-copy">
                                   <p className="eyebrow">Marketplace</p>
-                                  <h3 className="editorial-title">{item.title || 'Untitled listing'}</h3>
+                                  <div className="editorial-title-row">
+                                    <h3 className="editorial-title">{item.title || 'Untitled listing'}</h3>
+                                    {!own && (
+                                      <button
+                                        className={`editorial-match-btn listing-like-btn listing-like-title ${isLiked ? 'is-liked' : ''}`}
+                                        type="button"
+                                        onClick={() => toggleMarketplaceLike(item.id)}
+                                        title={isLiked ? 'Unlike listing' : 'Like listing'}
+                                        aria-label={isLiked ? 'Unlike listing' : 'Like listing'}
+                                      >
+                                        <LikeIcon liked={isLiked} />
+                                      </button>
+                                    )}
+                                  </div>
                                   <p className="editorial-meta">
-                                    EST. {money(item.estimatedValue)} · {String(item.brand || 'Unknown').toUpperCase()} · {String(item.condition || 'Unknown').toUpperCase()} · {String(item.city || 'Unknown').toUpperCase()}
+                                    EST. {money(item.estimatedValue)} · {String(item.brand || 'Unknown').toUpperCase()} · {String(item.condition || 'Unknown').toUpperCase()} · SIZE {String(item.size || 'N/A').toUpperCase()}
                                   </p>
                                 </div>
                               </div>
@@ -3243,33 +3306,30 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                                     <div className="listing-image-fallback">Image unavailable</div>
                                   )}
                                 </div>
-                                <div className="market-magazine-matches">
-                                  <button
-                                    className="editorial-match-btn"
-                                    type="button"
-                                    onClick={() => openMarketMatches(item)}
-                                    disabled={own}
-                                  >
-                                    {own ? 'YOUR LISTING' : 'MATCHES'}
-                                  </button>
-                                  <div className="market-magazine-match-strip">
-                                    {!own && matchPreviewListings.length > 0 ? (
-                                      matchPreviewListings.slice(0, 3).map(({ candidate, thumb }, idx) => (
+                                {!own && matchPreviewListings.length > 0 && (
+                                  <div className="market-magazine-matches">
+                                    <button
+                                      className="editorial-match-btn"
+                                      type="button"
+                                      onClick={() => openMarketMatches(item)}
+                                    >
+                                      MATCHES
+                                    </button>
+                                    <div className="market-magazine-match-strip">
+                                      {matchPreviewListings.slice(0, 3).map(({ candidate, thumb }, idx) => (
                                         <button
-                                        key={`${item.id}-market-match-${idx}`}
-                                        type="button"
-                                        className="match-thumb-btn"
-                                        onClick={() => openMarketMatches(item)}
-                                        title="Open matches workflow"
-                                      >
-                                        <img src={thumb} alt={candidate?.title || 'Matched item'} className="market-magazine-match-thumb" />
-                                      </button>
-                                      ))
-                                    ) : (
-                                      <span className="match-thumb-empty">{own ? 'N/A' : 'NO MATCHES'}</span>
-                                    )}
+                                          key={`${item.id}-market-match-${idx}`}
+                                          type="button"
+                                          className="match-thumb-btn"
+                                          onClick={() => openMarketMatches(item)}
+                                          title="Open matches workflow"
+                                        >
+                                          <img src={thumb} alt={candidate?.title || 'Matched item'} className="market-magazine-match-thumb" />
+                                        </button>
+                                      ))}
+                                    </div>
                                   </div>
-                                </div>
+                                )}
                               </div>
                             </div>
                           </article>
@@ -3284,6 +3344,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                 ) : (
                   <div className="listing-grid market-listing-grid market-editorial-grid">
                     {filteredListings.map((item) => {
+                      const isOwnListing = isOwnedByCurrentUser(item)
                       const baseValue = Number(item.estimatedValue || 0)
                       const similarMatches = Array.isArray(item.matches) ? item.matches : []
                       const matchPreviewListings = similarMatches
@@ -3302,6 +3363,9 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                           onOpenMatches={openMarketMatches}
                           matchPreviewImages={matchPreviewListings.map((entry) => entry.thumb)}
                           onOpenMagazinePage={openMarketplaceMagazine}
+                          isOwnListing={isOwnListing}
+                          liked={likedListingIds.includes(String(item.id))}
+                          onToggleLike={() => toggleMarketplaceLike(item.id)}
                         />
                       )
                     })}
@@ -3315,7 +3379,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
             <section className="panel">
               <div className="panel-header">
                 <div><p className="eyebrow">New Marketplace</p><h2>Magazine page-flip experience for comparison</h2></div>
-                <div className="market-controls"><input value={marketSearch} onChange={(e) => setMarketSearch(e.target.value)} placeholder="Search brand, category, city, style..." /><label className="toggle"><input type="checkbox" checked={tradeOnly} onChange={(e) => setTradeOnly(e.target.checked)} /><span>Trade only</span></label></div>
+                <div className="market-controls"><input value={marketSearch} onChange={(e) => setMarketSearch(e.target.value)} placeholder="Search brand, category, city, style..." /></div>
               </div>
               {filteredListings.length === 0 ? (
                 <div className="empty-state">
@@ -3338,16 +3402,30 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                         .filter(Boolean)
                       const heroGallery = getListingGallery(item)
                       const hero = heroGallery[0]
-                      const own = String(item.owner || '').trim().toLowerCase() === String(session?.name || '').trim().toLowerCase()
+                      const own = isOwnedByCurrentUser(item)
+                      const isLiked = likedListingIds.includes(String(item.id))
                       return (
                         <article className={`market-magazine-page ${newMarketIsFlipping ? `is-flipping ${newMarketFlipDir}` : ''}`} key={`new-market-page-${item.id}-${newMarketIndex}`}>
                           <div className="market-magazine-feature">
                             <div className="market-magazine-top">
                               <div className="market-magazine-copy">
                                 <p className="eyebrow">Marketplace</p>
-                                <h3 className="editorial-title">{item.title || 'Untitled listing'}</h3>
+                                  <div className="editorial-title-row">
+                                    <h3 className="editorial-title">{item.title || 'Untitled listing'}</h3>
+                                    {!own && (
+                                      <button
+                                        className={`editorial-match-btn listing-like-btn listing-like-title ${isLiked ? 'is-liked' : ''}`}
+                                        type="button"
+                                        onClick={() => toggleMarketplaceLike(item.id)}
+                                        title={isLiked ? 'Unlike listing' : 'Like listing'}
+                                        aria-label={isLiked ? 'Unlike listing' : 'Like listing'}
+                                      >
+                                        <LikeIcon liked={isLiked} />
+                                      </button>
+                                    )}
+                                  </div>
                                 <p className="editorial-meta">
-                                  EST. {money(item.estimatedValue)} · {String(item.brand || 'Unknown').toUpperCase()} · {String(item.condition || 'Unknown').toUpperCase()} · {String(item.city || 'Unknown').toUpperCase()}
+                                  EST. {money(item.estimatedValue)} · {String(item.brand || 'Unknown').toUpperCase()} · {String(item.condition || 'Unknown').toUpperCase()} · SIZE {String(item.size || 'N/A').toUpperCase()}
                                 </p>
                               </div>
                             </div>
@@ -3365,18 +3443,17 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                                   <div className="listing-image-fallback">Image unavailable</div>
                                 )}
                               </div>
-                              <div className="market-magazine-matches">
-                                <button
-                                  className="editorial-match-btn"
-                                  type="button"
-                                  onClick={() => openMarketMatches(item)}
-                                  disabled={own}
-                                >
-                                  {own ? 'YOUR LISTING' : 'MATCHES'}
-                                </button>
-                                <div className="market-magazine-match-strip">
-                                  {!own && matchPreviewListings.length > 0 ? (
-                                    matchPreviewListings.slice(0, 3).map(({ candidate, thumb }, idx) => (
+                              {!own && matchPreviewListings.length > 0 && (
+                                <div className="market-magazine-matches">
+                                  <button
+                                    className="editorial-match-btn"
+                                    type="button"
+                                    onClick={() => openMarketMatches(item)}
+                                  >
+                                    MATCHES
+                                  </button>
+                                  <div className="market-magazine-match-strip">
+                                    {matchPreviewListings.slice(0, 3).map(({ candidate, thumb }, idx) => (
                                       <button
                                         key={`${item.id}-new-market-match-${idx}`}
                                         type="button"
@@ -3386,12 +3463,10 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                                       >
                                         <img src={thumb} alt={candidate?.title || 'Matched item'} className="market-magazine-match-thumb" />
                                       </button>
-                                    ))
-                                  ) : (
-                                    <span className="match-thumb-empty">{own ? 'N/A' : 'NO MATCHES'}</span>
-                                  )}
+                                    ))}
+                                  </div>
                                 </div>
-                              </div>
+                              )}
                             </div>
                           </div>
                         </article>
@@ -3932,7 +4007,22 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   )
 }
 
-function ListingCard({ item, own = false, onEditDraft = null, marketplaceCompact = false, onOpenTrade = null, myTradeCandidates = [], onOpenMatches = null, matchPreviewImages = [], editorialStyle = false, onOpenMagazinePage = null }) {
+function LikeIcon({ liked = false }) {
+  return (
+    <svg className="listing-like-icon" viewBox="0 0 24 24" aria-hidden="true">
+      <path
+        d="M12 21s-6.7-4.35-9.23-7.95C.66 10.09 1.5 6.23 4.93 4.97c2.2-.81 4.2.1 5.53 1.73 1.33-1.63 3.33-2.54 5.53-1.73 3.43 1.26 4.27 5.12 2.16 8.08C18.7 16.65 12 21 12 21Z"
+        fill={liked ? 'currentColor' : 'none'}
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
+
+function ListingCard({ item, own = false, onEditDraft = null, marketplaceCompact = false, onOpenTrade = null, myTradeCandidates = [], onOpenMatches = null, matchPreviewImages = [], editorialStyle = false, onOpenMagazinePage = null, isOwnListing = false, liked = false, onToggleLike = null }) {
   const gallery = Array.isArray(item.images) && item.images.length > 0
     ? item.images
     : [item.image].filter(Boolean)
@@ -3946,8 +4036,10 @@ function ListingCard({ item, own = false, onEditDraft = null, marketplaceCompact
   const brandLabel = String(item.brand || '').trim() || 'Unknown brand'
   const conditionLabel = String(item.condition || '').trim() || 'Unknown condition'
   const cityLabel = String(item.city || '').trim() || 'Unknown city'
+  const sizeLabel = String(item.size || '').trim() || 'N/A'
   const isEditorial = editorialStyle || (marketplaceCompact && !own)
   const isMagazineClickable = typeof onOpenMagazinePage === 'function'
+  const showLikeButton = !own && !isOwnListing && typeof onToggleLike === 'function'
 
   function openMagazinePage() {
     if (!isMagazineClickable) return
@@ -3968,18 +4060,19 @@ function ListingCard({ item, own = false, onEditDraft = null, marketplaceCompact
     window.open(url, '_blank', 'noopener,noreferrer,width=640,height=640')
   }
 
-  async function shareToInstagram(e) {
+  async function shareToPinterest(e) {
     e?.stopPropagation?.()
+    if (typeof window === 'undefined') return
     const caption = buildListingShareCaption(item)
-    try {
-      if (navigator?.clipboard?.writeText) {
-        await navigator.clipboard.writeText(caption)
-      }
-    } catch {}
-    if (typeof window !== 'undefined') {
-      window.open('https://www.instagram.com/', '_blank', 'noopener,noreferrer')
-      window.alert('Listing caption copied. Paste it into your Instagram post.')
-    }
+    const listingId = String(item?.listing_id || item?.id || '').trim()
+    const base = API_DEFAULT.replace(/\/$/, '')
+    const fallbackUrl = typeof window.location?.href === 'string' ? window.location.href : 'https://jouft.com'
+    const shareUrl = listingId
+      ? `${base}/v1/share/listings/${encodeURIComponent(listingId)}`
+      : fallbackUrl
+    const mediaUrl = typeof imageSrc === 'string' && imageSrc.trim() ? imageSrc.trim() : ''
+    const url = `https://www.pinterest.com/pin/create/button/?url=${encodeURIComponent(shareUrl)}&description=${encodeURIComponent(caption)}${mediaUrl ? `&media=${encodeURIComponent(mediaUrl)}` : ''}`
+    window.open(url, '_blank', 'noopener,noreferrer,width=900,height=700')
   }
 
   return (
@@ -4015,14 +4108,30 @@ function ListingCard({ item, own = false, onEditDraft = null, marketplaceCompact
       <div className="listing-body">
         {isEditorial ? (
           <>
-            <h3 className="editorial-title">{item.title || 'Untitled listing'}</h3>
+            <div className="editorial-title-row">
+              <h3 className="editorial-title">{item.title || 'Untitled listing'}</h3>
+              {showLikeButton && (
+                <button
+                  className={`editorial-match-btn listing-like-btn listing-like-title ${liked ? 'is-liked' : ''}`}
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onToggleLike()
+                  }}
+                  title={liked ? 'Unlike listing' : 'Like listing'}
+                  aria-label={liked ? 'Unlike listing' : 'Like listing'}
+                >
+                  <LikeIcon liked={liked} />
+                </button>
+              )}
+            </div>
             <p className="editorial-byline">BY {String(item.owner || 'Unknown seller').toUpperCase()}</p>
             <p className="editorial-meta">
-              EST. {money(item.estimatedValue)} · {brandLabel.toUpperCase()} · {conditionLabel.toUpperCase()} · {cityLabel.toUpperCase()}
+              EST. {money(item.estimatedValue)} · {brandLabel.toUpperCase()} · {conditionLabel.toUpperCase()} · SIZE {sizeLabel.toUpperCase()}
             </p>
             <div className="listing-footer editorial-footer">
               <div className="listing-actions">
-                {!own && (
+                {!own && matchPreviewImages.length > 0 && (
                   <button
                     className="editorial-match-btn"
                     type="button"
@@ -4034,13 +4143,9 @@ function ListingCard({ item, own = false, onEditDraft = null, marketplaceCompact
                   >
                     <span>MATCHES</span>
                     <span className="match-thumb-strip" aria-hidden="true">
-                      {matchPreviewImages.length > 0 ? (
-                        matchPreviewImages.slice(0, 3).map((src, idx) => (
-                          <img key={`${item.id}-match-${idx}`} src={src} alt="" className="match-thumb" />
-                        ))
-                      ) : (
-                        <span className="match-thumb-empty">NO MATCHES</span>
-                      )}
+                      {matchPreviewImages.slice(0, 3).map((src, idx) => (
+                        <img key={`${item.id}-match-${idx}`} src={src} alt="" className="match-thumb" />
+                      ))}
                     </span>
                   </button>
                 )}
@@ -4061,8 +4166,8 @@ function ListingCard({ item, own = false, onEditDraft = null, marketplaceCompact
                     <button className="editorial-match-btn" type="button" onClick={shareToFacebook}>
                       <span>SHARE FACEBOOK</span>
                     </button>
-                    <button className="editorial-match-btn" type="button" onClick={shareToInstagram}>
-                      <span>SHARE INSTAGRAM</span>
+                    <button className="editorial-match-btn" type="button" onClick={shareToPinterest}>
+                      <span>SHARE PINTEREST</span>
                     </button>
                   </div>
                 )}
@@ -4088,7 +4193,7 @@ function ListingCard({ item, own = false, onEditDraft = null, marketplaceCompact
                   <small>{own ? 'Your listing' : `Listed by ${item.owner}`}</small>
                 </div>
                 <div className="listing-actions">
-                  {!own && (
+                  {!own && matchPreviewImages.length > 0 && (
                     <button
                       className="ghost small"
                       type="button"
@@ -4100,14 +4205,24 @@ function ListingCard({ item, own = false, onEditDraft = null, marketplaceCompact
                     >
                       <span>Matches</span>
                       <span className="match-thumb-strip" aria-hidden="true">
-                        {matchPreviewImages.length > 0 ? (
-                          matchPreviewImages.slice(0, 3).map((src, idx) => (
-                            <img key={`${item.id}-match-${idx}`} src={src} alt="" className="match-thumb" />
-                          ))
-                        ) : (
-                          <span className="match-thumb-empty">No matches</span>
-                        )}
+                        {matchPreviewImages.slice(0, 3).map((src, idx) => (
+                          <img key={`${item.id}-match-${idx}`} src={src} alt="" className="match-thumb" />
+                        ))}
                       </span>
+                    </button>
+                  )}
+                  {!own && !isOwnListing && !isEditorial && typeof onToggleLike === 'function' && (
+                    <button
+                      className={`ghost small listing-like-btn ${liked ? 'is-liked' : ''}`}
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        onToggleLike()
+                      }}
+                      title={liked ? 'Unlike listing' : 'Like listing'}
+                      aria-label={liked ? 'Unlike listing' : 'Like listing'}
+                    >
+                      <LikeIcon liked={liked} />
                     </button>
                   )}
                   {own && (
@@ -4125,7 +4240,7 @@ function ListingCard({ item, own = false, onEditDraft = null, marketplaceCompact
                         Edit draft
                       </button>
                       <button className="ghost small" type="button" onClick={shareToFacebook}>Share Facebook</button>
-                      <button className="ghost small" type="button" onClick={shareToInstagram}>Share Instagram</button>
+                      <button className="ghost small" type="button" onClick={shareToPinterest}>Share Pinterest</button>
                     </>
                   )}
                 </div>
