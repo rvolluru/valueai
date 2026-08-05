@@ -36,6 +36,30 @@ variable "container_image" {
   default     = "public.ecr.aws/docker/library/python:3.11-slim"
 }
 
+variable "api_domain_name" {
+  type        = string
+  description = "Public HTTPS hostname for the API."
+  default     = "api.jouft.com"
+}
+
+variable "api_certificate_arn" {
+  type        = string
+  description = "ACM certificate ARN for api_domain_name. Must be in the same region as the ALB."
+  default     = ""
+}
+
+variable "route53_zone_id" {
+  type        = string
+  description = "Optional Route 53 hosted zone ID for creating the API alias record."
+  default     = ""
+}
+
+variable "create_api_dns_record" {
+  type        = bool
+  description = "Whether Terraform should create the Route 53 alias record for api_domain_name."
+  default     = false
+}
+
 variable "create_ecr_repository" {
   type    = bool
   default = true
@@ -83,6 +107,32 @@ variable "gemini_api_key" {
   sensitive = true
 }
 
+variable "photoroom_api_key" {
+  type      = string
+  default   = ""
+  sensitive = true
+}
+
+variable "image_staging_photoroom_enabled" {
+  type    = bool
+  default = true
+}
+
+variable "photoroom_background_color" {
+  type    = string
+  default = "#FFFFFF"
+}
+
+variable "photoroom_output_format" {
+  type    = string
+  default = "jpg"
+}
+
+variable "photoroom_output_size" {
+  type    = string
+  default = "full"
+}
+
 variable "clerk_enabled" {
   type    = bool
   default = false
@@ -106,6 +156,12 @@ variable "clerk_audience" {
 variable "clerk_authorized_parties" {
   type    = string
   default = ""
+}
+
+variable "cors_allow_origins" {
+  type        = string
+  description = "Comma-separated browser origins allowed to call the API."
+  default     = "http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174,http://localhost:5175,http://127.0.0.1:5175"
 }
 
 variable "brand_enable_gpt_vision" {

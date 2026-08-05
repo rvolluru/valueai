@@ -78,7 +78,7 @@ def _verify_clerk_token(token: str, settings: Settings) -> dict[str, Any]:
     if settings.clerk_authorized_parties:
         allowed = {p.strip() for p in settings.clerk_authorized_parties.split(",") if p.strip()}
         azp = claims.get("azp")
-        if allowed and azp not in allowed:
+        if allowed and azp and azp not in allowed:
             raise _forbidden("Token authorized party not allowed")
 
     return claims

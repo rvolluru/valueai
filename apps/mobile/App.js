@@ -4,6 +4,7 @@ import {
   Alert,
   Image,
   Linking,
+  Modal,
   Share,
   ScrollView,
   StyleSheet,
@@ -12,16 +13,28 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
+import * as WebBrowser from 'expo-web-browser';
 import Constants from 'expo-constants';
 import { StatusBar } from 'expo-status-bar';
-import { ClerkProvider, useAuth, useClerk, useSignIn, useSignUp, useUser } from '@clerk/clerk-expo';
+import { ClerkProvider, useAuth, useClerk, useOAuth, useSignIn, useSignUp, useUser } from '@clerk/clerk-expo';
 import { tokenCache } from '@clerk/clerk-expo/token-cache';
+import { FontAwesome, Ionicons } from '@expo/vector-icons';
 import { createMobileApiClient } from './src/lib/apiClient';
 
-const API_DEFAULT = Constants.expoConfig?.extra?.apiBaseUrl || 'http://127.0.0.1:8000';
+WebBrowser.maybeCompleteAuthSession();
+
+const API_DEFAULT = process.env.EXPO_PUBLIC_API_BASE_URL || Constants.expoConfig?.extra?.apiBaseUrl || 'http://127.0.0.1:8000';
 const CLERK_PUBLISHABLE_KEY = Constants.expoConfig?.extra?.clerkPublishableKey || process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY || '';
+const TEMP_SHOW_PROFILE_QUESTIONNAIRE_ON_LOGIN = false;
+const ANALYSIS_FAILED_MESSAGE = 'Analysis failed. Please manually update the listing details.';
+const PRIVACY_POLICY_URL = 'https://jouft.com/privacy';
+const TERMS_URL = 'https://jouft.com/terms';
+const CONTACT_EMAIL = 'admin@jouft.com';
+const CONTACT_ADDRESS_LINES = ['120 Vantis Dr. Suite 300', 'Aliso Viejo, CA 92656', 'US'];
+const CONTACT_MAP_QUERY = '120 Vantis Dr Suite 300, Aliso Viejo, CA 92656, US';
+const CONTACT_DIRECTIONS_URL = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(CONTACT_MAP_QUERY)}`;
 const TABS = ['marketplace', 'closet', 'create', 'inbox', 'profile'];
 const TAB_LABELS = {
   marketplace: 'Market',
@@ -29,6 +42,13 @@ const TAB_LABELS = {
   create: 'Create',
   inbox: 'Inbox',
   profile: 'Profile',
+};
+const TAB_ICONS = {
+  marketplace: 'search-outline',
+  closet: 'shirt-outline',
+  create: 'add-circle-outline',
+  inbox: 'chatbubbles-outline',
+  profile: 'person-outline',
 };
 const OFFER_FILTERS = ['pending', 'accepted', 'declined', 'all'];
 const SUBSCRIPTION_PLANS = [
@@ -41,6 +61,17 @@ const MALE_APPAREL_SIZE_OPTIONS = ['XS', 'S', 'M', 'L', 'XL', 'XXL', 'XXXL'];
 const FEMALE_SHOE_SIZE_OPTIONS = ['US 5', 'US 5.5', 'US 6', 'US 6.5', 'US 7', 'US 7.5', 'US 8', 'US 8.5', 'US 9', 'US 9.5', 'US 10', 'US 10.5', 'US 11', 'US 12'];
 const MALE_SHOE_SIZE_OPTIONS = ['US 6', 'US 6.5', 'US 7', 'US 7.5', 'US 8', 'US 8.5', 'US 9', 'US 9.5', 'US 10', 'US 10.5', 'US 11', 'US 11.5', 'US 12', 'US 13', 'US 14'];
 const PROFILE_CATEGORY_OPTIONS = ['Dresses', 'Jackets', 'Shoes', 'Handbags', 'Skirts', 'Accessories'];
+const STYLE_DESCRIPTOR_OPTIONS = ['Classic', 'Trendy', 'Unique'];
+const JOUFT_GOAL_OPTIONS = [
+  'Refresh My Closet',
+  'Trade Unworn Pieces',
+  'Discover Rare Finds',
+  'Access Luxury Fashion',
+  'Build My Collection',
+  'Sustainable Fashion',
+  'Connect With Fashion Enthusiasts',
+  'Trade Instead of Sell',
+];
 const OFFER_POLL_INTERVAL_MS = 45000;
 
 let DeviceModule = null;
@@ -74,6 +105,17 @@ const theme = {
   success: '#155e4a',
   error: '#a82222',
 };
+const ALERT_CATEGORIES = [
+  { key: 'likes', label: 'Likes' },
+  { key: 'trades', label: 'Trades' },
+  { key: 'shipping', label: 'Shipping' },
+];
+
+const DEFAULT_ALERT_PREFS = {
+  likes: true,
+  trades: true,
+  shipping: true,
+};
 
 function titleCase(input) {
   return String(input || '')
@@ -96,13 +138,66 @@ function buildSuggestedDescriptionFromProfile(profile) {
 
 function normalizeImageUrl(url, apiBaseUrl) {
   if (!url || typeof url !== 'string') return null;
-  if (url.startsWith('http://') || url.startsWith('https://')) return url;
-  if (url.startsWith('/')) return `${String(apiBaseUrl || '').replace(/\/$/, '')}${url}`;
-  return url;
+  const trimmed = url.trim();
+  const baseUrl = String(apiBaseUrl || '').replace(/\/$/, '');
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+    try {
+      const parsed = new URL(trimmed);
+      if (parsed.pathname.startsWith('/v1/images/') && parsed.hostname.endsWith('.elb.amazonaws.com')) {
+        return `${baseUrl}${parsed.pathname}`;
+      }
+    } catch (e) {
+      return trimmed;
+    }
+    return trimmed;
+  }
+  if (trimmed.startsWith('/')) return `${baseUrl}${trimmed}`;
+  return null;
 }
 
-function getMatchPreviewImages(item, apiBaseUrl) {
+function listingOwnerSubject(item) {
+  return String(item?.owner_subject || item?.ownerSubject || '').trim().toLowerCase();
+}
+
+function listingOwnerName(item) {
+  return String(item?.owner_name || item?.owner || '').trim().toLowerCase();
+}
+
+function listingOwnerDisplayName(item, fallback = 'Unknown member') {
+  const ownerNameRaw = String(item?.owner_name || item?.owner || '').trim();
+  const ownerSubjectRaw = String(item?.owner_subject || item?.ownerSubject || '').trim();
+  const ownerNameLooksLikeSubject = ownerNameRaw && (
+    ownerNameRaw === ownerSubjectRaw
+    || /^user_[a-z0-9]+$/i.test(ownerNameRaw)
+  );
+  if (!ownerNameRaw || ownerNameLooksLikeSubject) return fallback;
+  return ownerNameRaw;
+}
+
+function isSameListingOwner(left, right, currentSubject = '') {
+  const normalizedCurrentSubject = String(currentSubject || '').trim().toLowerCase();
+  const leftSubject = String(left?.owner_subject || left?.ownerSubject || '').trim().toLowerCase();
+  const rightSubject = String(right?.owner_subject || right?.ownerSubject || '').trim().toLowerCase();
+  if (leftSubject && rightSubject) return leftSubject === rightSubject;
+  if (normalizedCurrentSubject && leftSubject === normalizedCurrentSubject && rightSubject === normalizedCurrentSubject) return true;
+  const leftOwner = listingOwnerName(left);
+  const rightOwner = listingOwnerName(right);
+  return Boolean(leftOwner && rightOwner && leftOwner === rightOwner);
+}
+
+function getCrossOwnerMatches(item, currentSubject = '') {
+  const normalizedCurrentSubject = String(currentSubject || '').trim().toLowerCase();
+  const itemOwnerSubject = listingOwnerSubject(item);
   const matches = Array.isArray(item?.matches) ? item.matches : [];
+  return matches.filter((match) => {
+    if (isSameListingOwner(item, match, normalizedCurrentSubject)) return false;
+    if (normalizedCurrentSubject && itemOwnerSubject === normalizedCurrentSubject && listingOwnerSubject(match) === normalizedCurrentSubject) return false;
+    return true;
+  });
+}
+
+function getMatchPreviewImages(item, apiBaseUrl, currentSubject = '') {
+  const matches = getCrossOwnerMatches(item, currentSubject);
   return matches
     .map((match) => {
       const raw = Array.isArray(match?.images) && match.images.length > 0 ? match.images[0] : match?.image;
@@ -120,6 +215,74 @@ function listingGallery(listing, apiBaseUrl) {
   return raw.map((url) => normalizeImageUrl(url, apiBaseUrl)).filter(Boolean);
 }
 
+function missingPublishFields(listing) {
+  const missing = [];
+  const gallery = Array.isArray(listing?.images) && listing.images.length > 0
+    ? listing.images.filter(Boolean)
+    : [listing?.image].filter(Boolean);
+  const title = String(listing?.title || '').trim();
+  const category = String(listing?.category || '').trim().toLowerCase();
+  const brand = String(listing?.brand || '').trim();
+  const condition = String(listing?.condition || '').trim();
+  const value = Number(listing?.estimated_value ?? listing?.estimatedValue ?? 0);
+  const size = String(listing?.size || '').trim();
+  const validCategories = new Set(['clothes', 'shoes', 'handbag']);
+  const validConditions = new Set(['New', 'LikeNew']);
+
+  if (gallery.length < 1) missing.push('photos');
+  if (!title || title.toLowerCase() === 'new listing' || title.toLowerCase() === 'untitled listing') missing.push('title');
+  if (!validCategories.has(category)) missing.push('category');
+  if (!brand || ['unknown', 'analyzing...', 'n/a'].includes(brand.toLowerCase())) missing.push('brand');
+  if (!validConditions.has(condition)) missing.push('condition');
+  if (!Number.isFinite(value) || value <= 0) missing.push('AI estimated value');
+  if ((category === 'clothes' || category === 'shoes') && !size) missing.push('size');
+  return missing;
+}
+
+function missingPublishFieldsMessage(listing) {
+  const missing = missingPublishFields(listing);
+  return missing.length > 0
+    ? `Listing missing fields: ${missing.join(', ')}. Please edit the listing and add the missing information before publishing.`
+    : '';
+}
+
+function persistableImageUrl(url) {
+  if (!url || typeof url !== 'string') return '';
+  const trimmed = url.trim();
+  if (!trimmed) return '';
+  try {
+    const parsed = new URL(trimmed);
+    return parsed.pathname.startsWith('/v1/images/') ? parsed.pathname : trimmed;
+  } catch {
+    return trimmed;
+  }
+}
+
+function persistableImageUrls(values) {
+  const seen = new Set();
+  return (Array.isArray(values) ? values : [])
+    .map(persistableImageUrl)
+    .filter((url) => {
+      if (!url || seen.has(url)) return false;
+      seen.add(url);
+      return Boolean(normalizeImageUrl(url, ''));
+    });
+}
+
+function uploadedImageUrlsFromPayload(payload) {
+  const uploaded = Array.isArray(payload?.uploaded_images) ? payload.uploaded_images : [];
+  return uploaded
+    .map((entry) => (typeof entry?.image_url === 'string' ? entry.image_url.trim() : ''))
+    .filter(Boolean);
+}
+
+function sameStringList(left, right) {
+  const a = (Array.isArray(left) ? left : []).map((value) => String(value || '').trim()).filter(Boolean);
+  const b = (Array.isArray(right) ? right : []).map((value) => String(value || '').trim()).filter(Boolean);
+  if (a.length !== b.length) return false;
+  return a.every((value, index) => value === b[index]);
+}
+
 function money(value) {
   const amount = Number(value || 0);
   return `$${Number.isFinite(amount) ? amount.toFixed(0) : '0'}`;
@@ -133,6 +296,13 @@ function makeId(prefix) {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+function isGenericTradeNote(value) {
+  const normalized = String(value || '').trim().toLowerCase().replace(/[.!\s]+$/g, '');
+  return normalized === 'open to similar-value offers'
+    || normalized === 'open to similar value offers'
+    || normalized === 'no description provided';
+}
+
 function listingDescription(listing) {
   const candidates = [
     listing?.description,
@@ -140,7 +310,7 @@ function listingDescription(listing) {
     listing?.notes,
     listing?.trade_notes,
   ];
-  const first = candidates.find((value) => typeof value === 'string' && value.trim());
+  const first = candidates.find((value) => typeof value === 'string' && value.trim() && !isGenericTradeNote(value));
   return first ? first.trim() : '';
 }
 
@@ -219,6 +389,27 @@ function normalizeProfileShippingAddresses(addresses, fallbackProfile = null) {
   }];
 }
 
+function normalizeProfileQuiz(profile) {
+  if (!profile) return null;
+  return {
+    ...profile,
+    first_name: profile?.first_name || '',
+    last_name: profile?.last_name || '',
+    email: profile?.email || '',
+    shipping_email: profile?.shipping_email || profile?.email || '',
+    shipping_phone: profile?.shipping_phone || '',
+    birthday: profile?.birthday || '',
+    gender: profile?.gender || '',
+    tops_size: normalizeMultiSizeValue(profile?.tops_size),
+    dresses_size: normalizeMultiSizeValue(profile?.dresses_size),
+    bottoms_size: normalizeMultiSizeValue(profile?.bottoms_size),
+    shoes_size: normalizeMultiSizeValue(profile?.shoes_size),
+    category_preferences: Array.isArray(profile?.category_preferences) ? profile.category_preferences : [],
+    style_descriptors: Array.isArray(profile?.style_descriptors) ? profile.style_descriptors : [],
+    jouft_goals: Array.isArray(profile?.jouft_goals) ? profile.jouft_goals : [],
+  };
+}
+
 function normalizeMultiSizeValue(value) {
   if (Array.isArray(value)) {
     return value
@@ -236,6 +427,44 @@ function serializeMultiSizeValue(values) {
   const normalized = normalizeMultiSizeValue(values);
   if (normalized.length === 0) return null;
   return normalized.join(', ');
+}
+
+function sizeOptionsForCategory(category) {
+  const normalized = String(category || '').trim().toLowerCase();
+  if (normalized === 'shoes') return ['US 5', 'US 5.5', 'US 6', 'US 6.5', 'US 7', 'US 7.5', 'US 8', 'US 8.5', 'US 9', 'US 9.5', 'US 10', 'US 10.5', 'US 11', 'US 12'];
+  if (normalized === 'clothes') return ['XXS', 'XS', 'S', 'M', 'L', 'XL', 'XXL'];
+  if (normalized === 'handbag') return ['Mini', 'Small', 'Medium', 'Large'];
+  return [];
+}
+
+function brandSizeChartUrl(brand, category) {
+  const name = String(brand || '').trim().toLowerCase();
+  if (!name || name === 'unknown') return null;
+  const key = `${name}:${String(category || '').trim().toLowerCase()}`;
+  const byCategory = {
+    'gucci:shoes': 'https://www.gucci.com/us/en/st/stories/article/women-shoes-size-guide',
+    'gucci:clothes': 'https://www.gucci.com/us/en/st/stories/article/women-ready-to-wear-size-guide',
+    'burberry:shoes': 'https://us.burberry.com/customer-service/size-guide/',
+    'burberry:clothes': 'https://us.burberry.com/customer-service/size-guide/',
+    'jimmy choo:shoes': 'https://us.jimmychoo.com/en/customer-services/size-guide/',
+    'balenciaga:shoes': 'https://www.balenciaga.com/en-us/size-guide',
+    'chanel:shoes': 'https://www.chanel.com/us/fashion/size-guide/',
+    'coach:shoes': 'https://www.coach.com/customer-service-size-guide',
+    'louis vuitton:shoes': 'https://us.louisvuitton.com/eng-us/faq/size-guide',
+    'prada:shoes': 'https://www.prada.com/us/en/customer-service/size-guide.html',
+  };
+  if (byCategory[key]) return byCategory[key];
+  const generic = {
+    gucci: 'https://www.gucci.com/us/en/st/stories/article/size-guide',
+    burberry: 'https://us.burberry.com/customer-service/size-guide/',
+    'jimmy choo': 'https://us.jimmychoo.com/en/customer-services/size-guide/',
+    balenciaga: 'https://www.balenciaga.com/en-us/size-guide',
+    chanel: 'https://www.chanel.com/us/fashion/size-guide/',
+    coach: 'https://www.coach.com/customer-service-size-guide',
+    'louis vuitton': 'https://us.louisvuitton.com/eng-us/faq/size-guide',
+    prada: 'https://www.prada.com/us/en/customer-service/size-guide.html',
+  };
+  return generic[name] || null;
 }
 
 function SectionHeader({ title, subtitle, rightText, onRightPress }) {
@@ -257,8 +486,15 @@ function SectionHeader({ title, subtitle, rightText, onRightPress }) {
 function AppTabButton({ tab, activeTab, onPress }) {
   const active = tab === activeTab;
   const label = TAB_LABELS[tab] || titleCase(tab);
+  const icon = TAB_ICONS[tab] || 'ellipse-outline';
   return (
     <TouchableOpacity style={[styles.tabButton, active && styles.tabButtonActive]} onPress={() => onPress(tab)}>
+      <Ionicons
+        name={icon}
+        size={22}
+        color={active ? '#fff' : '#4a4139'}
+        style={styles.tabButtonIcon}
+      />
       <Text style={[styles.tabButtonText, active && styles.tabButtonTextActive]}>{label}</Text>
     </TouchableOpacity>
   );
@@ -271,31 +507,85 @@ function ListingCard({
   onStartTrade = null,
   startTradeDisabled = false,
   onOpenDetails = null,
+  onEditDraft = null,
+  onPublishListing = null,
+  onRemoveListing = null,
   onShareListing = null,
-  onShareToInstagram = null,
+  onShareToPinterest = null,
   onShareToFacebook = null,
+  liked = false,
+  onToggleLike = null,
+  currentOwnerSubject = '',
+  currentUserDisplayName = '',
+  showStatus = true,
 }) {
-  const imageUrl = normalizeImageUrl(item?.image || item?.images?.[0], apiBaseUrl);
-  const matchPreviewImages = showMatches ? getMatchPreviewImages(item, apiBaseUrl) : [];
-  const hasMatches = Array.isArray(item?.matches) && item.matches.length > 0;
+  const rawImageUrl = item?.image || item?.images?.[0];
+  const [imageFailed, setImageFailed] = useState(false);
+  const imageUrl = imageFailed ? null : normalizeImageUrl(rawImageUrl, apiBaseUrl);
+  useEffect(() => {
+    setImageFailed(false);
+  }, [rawImageUrl, apiBaseUrl]);
+  const matchPreviewImages = showMatches ? getMatchPreviewImages(item, apiBaseUrl, currentOwnerSubject) : [];
+  const hasMatches = getCrossOwnerMatches(item, currentOwnerSubject).length > 0;
+  const statusLabel = String(item?.status || '').trim();
+  const analysisFailed = statusLabel.toLowerCase() === 'analysisfailed';
+  const analyzing = statusLabel.toLowerCase() === 'analyzing';
+  const closetCardDisabled = analyzing && Boolean(onEditDraft || onPublishListing || onRemoveListing);
+  const canPublishListing = typeof onPublishListing === 'function' && !['active', 'analyzing'].includes(statusLabel.toLowerCase());
+  const isCurrentUserListing = Boolean(
+    currentOwnerSubject
+    && listingOwnerSubject(item)
+    && listingOwnerSubject(item) === String(currentOwnerSubject || '').trim().toLowerCase()
+  );
+  const ownerName = listingOwnerDisplayName(item, isCurrentUserListing ? (currentUserDisplayName || 'You') : 'Member');
+  const brandLabel = item?.brand || 'Unknown';
+  const conditionLabel = titleCase(item?.condition || 'unknown');
+  const sizeLabel = item?.size || 'N/A';
   return (
-    <View style={styles.listingCard}>
+    <View style={[styles.listingCard, closetCardDisabled && styles.listingCardDisabled]}>
       {imageUrl ? (
-        <Image source={{ uri: imageUrl }} style={styles.listingImage} />
+        <Image
+          source={{ uri: imageUrl }}
+          style={[styles.listingImage, closetCardDisabled && styles.listingCardContentDisabled]}
+          onError={() => setImageFailed(true)}
+        />
       ) : (
-        <View style={[styles.listingImage, styles.listingImageFallback]}>
-          <Text style={styles.emptyText}>No image</Text>
+        <View style={[styles.listingImage, styles.listingImageFallback, closetCardDisabled && styles.listingCardContentDisabled]}>
+          <Text style={styles.emptyText}>Image unavailable</Text>
         </View>
       )}
-      <View style={styles.listingBody}>
-        <Text style={styles.listingEyebrow}>{titleCase(item?.category || 'listing')}</Text>
-        <Text numberOfLines={2} style={styles.listingTitle}>{item?.title || 'Untitled listing'}</Text>
-        <Text numberOfLines={2} style={styles.listingMeta}>
-          {item?.brand || 'Unknown'} • {titleCase(item?.condition || 'unknown')}
-        </Text>
-        <View style={styles.valueChip}>
-          <Text style={styles.valueChipText}>${Number(item?.estimated_value || 0).toFixed(0)}</Text>
+      <View style={[styles.listingBody, closetCardDisabled && styles.listingCardContentDisabled]}>
+        <View style={styles.listingTitleRow}>
+          <View style={{ flex: 1 }}>
+            <Text numberOfLines={2} style={styles.listingTitle}>{item?.title || 'Untitled listing'}</Text>
+          </View>
+          {onToggleLike ? (
+            <TouchableOpacity
+              style={[styles.likeButton, liked && styles.likeButtonActive]}
+              onPress={() => onToggleLike(item)}
+              accessibilityRole="button"
+              accessibilityLabel={liked ? 'Unlike listing' : 'Like listing'}
+            >
+              <Text style={[styles.likeButtonText, liked && styles.likeButtonTextActive]}>{liked ? '♥' : '♡'}</Text>
+            </TouchableOpacity>
+          ) : null}
         </View>
+        <Text numberOfLines={1} style={styles.listingByline}>
+          BY {ownerName.toUpperCase()}
+        </Text>
+        <Text numberOfLines={2} style={styles.listingMeta}>
+          EST. {money(item?.estimated_value)} · {String(brandLabel).toUpperCase()} · {String(conditionLabel).toUpperCase()} · SIZE {String(sizeLabel).toUpperCase()}
+        </Text>
+        {showStatus && statusLabel ? (
+          <View style={[styles.statusBadge, analysisFailed && styles.statusBadgeFailed]}>
+            <Text style={[styles.statusBadgeText, analysisFailed && styles.statusBadgeTextFailed]}>
+              {titleCase(statusLabel)}
+            </Text>
+          </View>
+        ) : null}
+        {analysisFailed ? (
+          <Text style={styles.analysisFailedText}>{ANALYSIS_FAILED_MESSAGE}</Text>
+        ) : null}
         {showMatches ? (
           <View style={styles.matchesRow}>
             <Text style={styles.matchesLabel}>Matches</Text>
@@ -324,30 +614,81 @@ function ListingCard({
           </TouchableOpacity>
         ) : null}
         {onOpenDetails ? (
-          <TouchableOpacity style={styles.secondaryBtnCompact} onPress={() => onOpenDetails(item)}>
+          <TouchableOpacity
+            style={[styles.secondaryBtnCompact, closetCardDisabled && styles.primaryBtnDisabled]}
+            onPress={() => onOpenDetails(item)}
+            disabled={closetCardDisabled}
+          >
             <Text style={styles.secondaryBtnText}>View Details</Text>
           </TouchableOpacity>
         ) : null}
-        {onShareListing || onShareToInstagram || onShareToFacebook ? (
+        {onEditDraft ? (
+          <TouchableOpacity
+            style={[styles.secondaryBtnCompact, analyzing && styles.primaryBtnDisabled]}
+            onPress={() => onEditDraft(item)}
+            disabled={analyzing}
+          >
+            <Text style={styles.secondaryBtnText}>Edit Listing</Text>
+          </TouchableOpacity>
+        ) : null}
+        {canPublishListing ? (
+          <TouchableOpacity
+            style={styles.secondaryBtnCompact}
+            onPress={() => onPublishListing(item)}
+          >
+            <Text style={styles.secondaryBtnText}>Publish Listing</Text>
+          </TouchableOpacity>
+        ) : null}
+        {onRemoveListing ? (
+          <TouchableOpacity
+            style={[styles.secondaryBtnCompact, styles.dangerBtnCompact, closetCardDisabled && styles.primaryBtnDisabled]}
+            onPress={() => onRemoveListing(item)}
+            disabled={closetCardDisabled}
+          >
+            <Text style={[styles.secondaryBtnText, styles.dangerBtnText]}>Remove Listing</Text>
+          </TouchableOpacity>
+        ) : null}
+        {onShareListing || onShareToPinterest || onShareToFacebook ? (
           <View style={styles.listingActionRow}>
             {onShareListing ? (
-              <TouchableOpacity style={styles.secondaryBtnCompact} onPress={() => onShareListing(item)}>
+              <TouchableOpacity
+                style={[styles.secondaryBtnCompact, closetCardDisabled && styles.primaryBtnDisabled]}
+                onPress={() => onShareListing(item)}
+                disabled={closetCardDisabled}
+              >
                 <Text style={styles.secondaryBtnText}>Share</Text>
               </TouchableOpacity>
             ) : null}
-            {onShareToInstagram ? (
-              <TouchableOpacity style={styles.secondaryBtnCompact} onPress={() => onShareToInstagram(item)}>
-                <Text style={styles.secondaryBtnText}>Instagram</Text>
+            {onShareToPinterest ? (
+              <TouchableOpacity
+                style={[styles.secondaryBtnCompact, styles.shareIconButton, closetCardDisabled && styles.primaryBtnDisabled]}
+                onPress={() => onShareToPinterest(item)}
+                disabled={closetCardDisabled}
+                accessibilityRole="button"
+                accessibilityLabel="Share on Pinterest"
+              >
+                <FontAwesome name="pinterest-p" size={18} color="#4b433a" />
               </TouchableOpacity>
             ) : null}
             {onShareToFacebook ? (
-              <TouchableOpacity style={styles.secondaryBtnCompact} onPress={() => onShareToFacebook(item)}>
-                <Text style={styles.secondaryBtnText}>Facebook</Text>
+              <TouchableOpacity
+                style={[styles.secondaryBtnCompact, styles.shareIconButton, closetCardDisabled && styles.primaryBtnDisabled]}
+                onPress={() => onShareToFacebook(item)}
+                disabled={closetCardDisabled}
+                accessibilityRole="button"
+                accessibilityLabel="Share on Facebook"
+              >
+                <FontAwesome name="facebook" size={18} color="#4b433a" />
               </TouchableOpacity>
             ) : null}
           </View>
         ) : null}
       </View>
+      {closetCardDisabled ? (
+        <View pointerEvents="none" style={styles.pendingReviewOverlay}>
+          <Text style={styles.pendingReviewText}>Pending Review</Text>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -408,9 +749,6 @@ function OfferCard({ offer, apiBaseUrl }) {
 function TopBrandHeader() {
   return (
     <View style={styles.brandWrap}>
-      <View style={styles.brandStrip}>
-        <Text style={styles.brandStripText}>INVITE ONLY COMMUNITY • CURATED MEMBERSHIP ACCESS</Text>
-      </View>
       <View style={styles.brandMainRow}>
         <Text style={styles.brandWordmark}>JOUFT</Text>
         <Text style={styles.brandSubWordmark}>AI LUXURY EXCHANGE</Text>
@@ -419,13 +757,13 @@ function TopBrandHeader() {
   );
 }
 
-function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, clerkUserLabel = '', onSignOut = null }) {
+function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, clerkUserLabel = '', clerkUserProfile = {}, onSignOut = null }) {
   const [apiBaseUrl, setApiBaseUrl] = useState(API_DEFAULT);
   const [authMode, setAuthMode] = useState('api_key');
   const [apiKey, setApiKey] = useState('local-dev-key');
   const [bearerToken, setBearerToken] = useState('');
 
-  const [activeTab, setActiveTab] = useState('marketplace');
+  const [activeTab, setActiveTab] = useState(TEMP_SHOW_PROFILE_QUESTIONNAIRE_ON_LOGIN ? 'profile' : 'marketplace');
   const [offerFilter, setOfferFilter] = useState('pending');
 
   const [marketplaceListings, setMarketplaceListings] = useState([]);
@@ -437,6 +775,8 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
   const [isListingDetailOpen, setIsListingDetailOpen] = useState(false);
   const [selectedListingSource, setSelectedListingSource] = useState(null);
   const [selectedListingIndex, setSelectedListingIndex] = useState(-1);
+  const [selectedGalleryImage, setSelectedGalleryImage] = useState(null);
+  const [failedDetailImages, setFailedDetailImages] = useState({});
   const [tradeComposerTarget, setTradeComposerTarget] = useState(null);
   const [tradeOfferCandidates, setTradeOfferCandidates] = useState([]);
   const [tradeOfferListingIds, setTradeOfferListingIds] = useState([]);
@@ -448,38 +788,69 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
   const [profileQuiz, setProfileQuiz] = useState(null);
   const [profileSaveBusy, setProfileSaveBusy] = useState(false);
   const [profileSaveMsg, setProfileSaveMsg] = useState('');
+  const [profileHydrationRetry, setProfileHydrationRetry] = useState(0);
   const [paymentMethods, setPaymentMethods] = useState([]);
   const [paymentBusy, setPaymentBusy] = useState(false);
   const [paymentMsg, setPaymentMsg] = useState('');
+  const [selectedSubscriptionPaymentMethodId, setSelectedSubscriptionPaymentMethodId] = useState('');
   const [subscriptionPlan, setSubscriptionPlan] = useState('free');
   const [subscriptionCycle, setSubscriptionCycle] = useState('monthly');
   const [selectedAddressByOffer, setSelectedAddressByOffer] = useState({});
   const [shippingLabelsByOffer, setShippingLabelsByOffer] = useState({});
+  const [shippingQuoteByOffer, setShippingQuoteByOffer] = useState({});
+  const [shippingBusyByOffer, setShippingBusyByOffer] = useState({});
+  const [addressSuggestionsById, setAddressSuggestionsById] = useState({});
+  const [addressSuggestBusyById, setAddressSuggestBusyById] = useState({});
   const [pushEnabled, setPushEnabled] = useState(true);
+  const [alertPrefs, setAlertPrefs] = useState(DEFAULT_ALERT_PREFS);
+  const [alertStateHydrated, setAlertStateHydrated] = useState(false);
   const [notificationPermission, setNotificationPermission] = useState('unknown');
   const [pushToken, setPushToken] = useState('');
+  const [likedListingIds, setLikedListingIds] = useState([]);
 
   const [wizardStep, setWizardStep] = useState(1);
+  const [editingListingId, setEditingListingId] = useState('');
+  const [editingListing, setEditingListing] = useState(null);
+  const [selectedHeroImageIndex, setSelectedHeroImageIndex] = useState(0);
+  const [selectedEditHeroImageIndex, setSelectedEditHeroImageIndex] = useState(null);
+  const [profileSection, setProfileSection] = useState('account');
   const [images, setImages] = useState([]);
+  const [editImageUrls, setEditImageUrls] = useState([]);
   const [category, setCategory] = useState('');
   const [itemTitle, setItemTitle] = useState('');
   const [itemDescription, setItemDescription] = useState('');
   const [userCondition, setUserCondition] = useState('');
-  const [askingValue, setAskingValue] = useState('');
+  const [itemSize, setItemSize] = useState('');
   const [tradeNotes, setTradeNotes] = useState('');
   const [analysisResult, setAnalysisResult] = useState(null);
 
   const [loading, setLoading] = useState(false);
+  const [marketplaceLoading, setMarketplaceLoading] = useState(false);
+  const [closetLoading, setClosetLoading] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
 
   const apiClient = useMemo(() => createMobileApiClient({ apiBaseUrl }), [apiBaseUrl]);
+  useEffect(() => {
+    const count = editImageUrls.length + images.length;
+    if (editingListingId) {
+      setSelectedEditHeroImageIndex((idx) => {
+        if (idx === null) return null;
+        return count > 0 ? Math.max(0, Math.min(idx, count - 1)) : null;
+      });
+    } else {
+      setSelectedHeroImageIndex((idx) => (count > 0 ? Math.max(0, Math.min(idx, count - 1)) : 0));
+    }
+  }, [editingListingId, editImageUrls.length, images.length]);
+
   const selectedOffer = useMemo(
     () => incomingOffers.find((offer) => offer?.offer_id === selectedOfferId) || null,
     [incomingOffers, selectedOfferId],
   );
   const initializedOfferStateRef = useRef(false);
   const offerStatusMapRef = useRef(new Map());
+  const initializedShippingStateRef = useRef(false);
+  const shippingStatusMapRef = useRef(new Map());
   const normalizedProfileGender = profileQuiz?.gender === 'male' || profileQuiz?.gender === 'female' || profileQuiz?.gender === 'other'
     ? profileQuiz.gender
     : '';
@@ -489,6 +860,17 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     ? PROFILE_CATEGORY_OPTIONS.filter((item) => item !== 'Dresses')
     : PROFILE_CATEGORY_OPTIONS;
 
+  useEffect(() => {
+    if (paymentMethods.length === 0) {
+      if (selectedSubscriptionPaymentMethodId) setSelectedSubscriptionPaymentMethodId('');
+      return;
+    }
+    const selectedStillExists = paymentMethods.some((method) => method?.payment_method_id === selectedSubscriptionPaymentMethodId);
+    if (selectedStillExists) return;
+    const fallback = paymentMethods.find((method) => method?.is_default) || paymentMethods[0];
+    setSelectedSubscriptionPaymentMethodId(fallback?.payment_method_id || '');
+  }, [paymentMethods, selectedSubscriptionPaymentMethodId]);
+
   function openListingDetails(listing, source) {
     if (!listing) return;
     const list = source === 'closet' ? myListings : marketplaceListings;
@@ -497,6 +879,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     setSelectedListing(listing);
     setSelectedListingSource(source || 'marketplace');
     setSelectedListingIndex(idx);
+    setFailedDetailImages({});
   }
 
   function closeListingDetails() {
@@ -504,16 +887,8 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     setSelectedListing(null);
     setSelectedListingSource(null);
     setSelectedListingIndex(-1);
-  }
-
-  function flipMarketplaceListing(direction) {
-    if (selectedListingSource !== 'marketplace') return;
-    if (!Array.isArray(marketplaceListings) || marketplaceListings.length <= 1) return;
-    const total = marketplaceListings.length;
-    const current = selectedListingIndex >= 0 ? selectedListingIndex : 0;
-    const next = (current + direction + total) % total;
-    setSelectedListingIndex(next);
-    setSelectedListing(marketplaceListings[next] || null);
+    setSelectedGalleryImage(null);
+    setFailedDetailImages({});
   }
 
   function authReady() {
@@ -534,6 +909,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
 
   async function loadMarketplace() {
     setLoading(true);
+    setMarketplaceLoading(true);
     setError('');
     try {
       const payload = await apiClient.listMarketplace(50, await authContext());
@@ -543,11 +919,18 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
       setError(e.message || String(e));
     } finally {
       setLoading(false);
+      setMarketplaceLoading(false);
     }
+  }
+
+  function isOwnMarketplaceListing(item) {
+    const ownerSubject = String(item?.owner_subject || '');
+    return Boolean(ownerSubject && marketplaceActorSubject && ownerSubject === marketplaceActorSubject);
   }
 
   async function loadCloset() {
     setLoading(true);
+    setClosetLoading(true);
     setError('');
     try {
       const payload = await apiClient.listMyListings(100, await authContext());
@@ -556,6 +939,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
       setError(e.message || String(e));
     } finally {
       setLoading(false);
+      setClosetLoading(false);
     }
   }
 
@@ -574,16 +958,17 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
 
   async function loadProfileAddresses() {
     try {
-      const profile = await apiClient.fetchProfileQuiz(await authContext());
-      setProfileQuiz(profile ? {
-        ...profile,
-        gender: profile?.gender || '',
-        tops_size: normalizeMultiSizeValue(profile?.tops_size),
-        dresses_size: normalizeMultiSizeValue(profile?.dresses_size),
-        bottoms_size: normalizeMultiSizeValue(profile?.bottoms_size),
-        shoes_size: normalizeMultiSizeValue(profile?.shoes_size),
-        category_preferences: Array.isArray(profile?.category_preferences) ? profile.category_preferences : [],
-      } : null);
+      const auth = await authContext();
+      if (clerkEnabled && !auth?.bearerToken) throw new Error('Authentication token unavailable.');
+      const profile = await apiClient.fetchProfileQuiz(auth);
+      setProfileQuiz(normalizeProfileQuiz({
+        ...(profile || {}),
+        first_name: profile?.first_name || clerkUserProfile?.firstName || '',
+        last_name: profile?.last_name || clerkUserProfile?.lastName || '',
+        email: profile?.email || clerkUserProfile?.email || '',
+        shipping_email: profile?.shipping_email || profile?.email || clerkUserProfile?.email || '',
+        shipping_phone: profile?.shipping_phone || '',
+      }));
       setSubscriptionPlan(String(profile?.subscription_plan || 'free'));
       setSubscriptionCycle(String(profile?.subscription_billing_cycle || 'monthly'));
       const normalized = normalizeShippingAddresses(profile?.shipping_addresses, profile);
@@ -592,6 +977,9 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
       setProfileShippingAddresses(editable);
       return normalized;
     } catch (e) {
+      if (profileHydrationRetry < 5) {
+        setTimeout(() => setProfileHydrationRetry((count) => count + 1), 750);
+      }
       return [];
     }
   }
@@ -610,6 +998,42 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     const shipments = Array.isArray(payload?.shipments) ? payload.shipments : [];
     setShippingLabelsByOffer((prev) => ({ ...prev, [offerId]: shipments }));
     return shipments;
+  }
+
+  async function loadShippingQuoteForOffer(offerId) {
+    if (!offerId) return null;
+    setShippingBusyByOffer((prev) => ({ ...prev, [offerId]: true }));
+    setError('');
+    try {
+      const quote = await apiClient.fetchShippingQuote(offerId, await authContext());
+      setShippingQuoteByOffer((prev) => ({ ...prev, [offerId]: quote }));
+      return quote;
+    } catch (e) {
+      setError(e.message || 'Failed to load shipping quote.');
+      return null;
+    } finally {
+      setShippingBusyByOffer((prev) => ({ ...prev, [offerId]: false }));
+    }
+  }
+
+  async function createShippingLabelsForOffer(offerId) {
+    if (!offerId) return [];
+    setShippingBusyByOffer((prev) => ({ ...prev, [offerId]: true }));
+    setError('');
+    try {
+      const quote = shippingQuoteByOffer[offerId] || await apiClient.fetchShippingQuote(offerId, await authContext());
+      if (quote) setShippingQuoteByOffer((prev) => ({ ...prev, [offerId]: quote }));
+      const payload = await apiClient.createShippingLabels(offerId, quote?.rate_id || null, await authContext());
+      const shipments = Array.isArray(payload?.shipments) ? payload.shipments : [];
+      setShippingLabelsByOffer((prev) => ({ ...prev, [offerId]: shipments }));
+      setNotice('Shipping label created.');
+      return shipments;
+    } catch (e) {
+      setError(e.message || 'Failed to create shipping label.');
+      return [];
+    } finally {
+      setShippingBusyByOffer((prev) => ({ ...prev, [offerId]: false }));
+    }
   }
 
   async function registerForPushNotifications() {
@@ -644,6 +1068,36 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
       });
     } catch (e) {
       // best effort only
+    }
+  }
+
+  function canSendAlert(category) {
+    return Boolean(pushEnabled && alertPrefs?.[category] && notificationPermission === 'granted');
+  }
+
+  async function sendCategoryAlert(category, title, body) {
+    if (!canSendAlert(category)) return;
+    await sendLocalNotification(title, body);
+  }
+
+  function toggleAlertPreference(category) {
+    if (!category) return;
+    setAlertPrefs((prev) => ({
+      ...prev,
+      [category]: !prev?.[category],
+    }));
+  }
+
+  function toggleLikedListing(item) {
+    const listingId = String(item?.listing_id || item?.id || '');
+    if (!listingId) return;
+    const isLiked = likedListingIds.includes(listingId);
+    setLikedListingIds((prev) => (
+      prev.includes(listingId) ? prev.filter((id) => id !== listingId) : [...prev, listingId]
+    ));
+    if (!isLiked) {
+      const title = item?.title || 'this listing';
+      sendCategoryAlert('likes', 'Listing Liked', `${title} was added to your liked listings.`);
     }
   }
 
@@ -718,6 +1172,65 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     });
   }
 
+  function toggleProfileLimitedArray(field, value, max) {
+    setProfileSaveMsg('');
+    setProfileQuiz((prev) => {
+      const current = Array.isArray(prev?.[field]) ? prev[field] : [];
+      const next = current.includes(value)
+        ? current.filter((entry) => entry !== value)
+        : [...current, value].slice(0, max);
+      return { ...(prev || {}), [field]: next };
+    });
+  }
+
+  async function loadAddressSuggestionsFor(entry) {
+    if (!entry?.id) return;
+    const query = String(entry.address_line1 || '').trim();
+    if (!query) {
+      setProfileSaveMsg('Enter address line 1 before finding suggestions.');
+      return;
+    }
+    setAddressSuggestBusyById((prev) => ({ ...prev, [entry.id]: true }));
+    setProfileSaveMsg('');
+    try {
+      const payload = await apiClient.addressSuggestions(
+        {
+          q: query,
+          city: entry.city || '',
+          state: entry.state || '',
+          postalCode: entry.postal_code || '',
+        },
+        await authContext(),
+      );
+      const suggestions = Array.isArray(payload?.suggestions) ? payload.suggestions.slice(0, 5) : [];
+      setAddressSuggestionsById((prev) => ({ ...prev, [entry.id]: suggestions }));
+      if (suggestions.length === 0) setProfileSaveMsg('No address suggestions found.');
+    } catch (e) {
+      setProfileSaveMsg(e.message || 'Failed to load address suggestions.');
+    } finally {
+      setAddressSuggestBusyById((prev) => ({ ...prev, [entry.id]: false }));
+    }
+  }
+
+  function applyAddressSuggestion(addressId, suggestion) {
+    if (!addressId || !suggestion) return;
+    setProfileSaveMsg('');
+    setProfileShippingAddresses((prev) => prev.map((entry) => (
+      entry.id === addressId
+        ? {
+          ...entry,
+          address_line1: suggestion.street_address || suggestion.address_line1 || entry.address_line1,
+          address_line2: suggestion.address_line2 || entry.address_line2,
+          city: suggestion.city || entry.city,
+          state: suggestion.state || entry.state,
+          postal_code: suggestion.postal_code || entry.postal_code,
+          country: suggestion.country || entry.country || 'US',
+        }
+        : entry
+    )));
+    setAddressSuggestionsById((prev) => ({ ...prev, [addressId]: [] }));
+  }
+
   function buildProfileQuizPayload({ shippingAddressesOverride = null, subscriptionPlanOverride = null, subscriptionCycleOverride = null } = {}) {
     const workingAddresses = Array.isArray(shippingAddressesOverride) ? shippingAddressesOverride : profileShippingAddresses;
     const nextAddresses = workingAddresses
@@ -739,13 +1252,24 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
       is_default: nextAddresses.length > 0 ? (nextAddresses.some((x) => x.is_default) ? entry.is_default : idx === 0) : false,
     }));
     const primary = ensuredDefault[0] || {};
+    const firstName = String(profileQuiz?.first_name || clerkUserProfile?.firstName || '').trim();
+    const lastName = String(profileQuiz?.last_name || clerkUserProfile?.lastName || '').trim();
+    const email = String(profileQuiz?.email || clerkUserProfile?.email || '').trim().toLowerCase();
     return {
+      first_name: firstName,
+      last_name: lastName,
+      email,
+      shipping_email: String(profileQuiz?.shipping_email || email).trim().toLowerCase() || null,
+      shipping_phone: String(profileQuiz?.shipping_phone || '').trim() || null,
+      birthday: profileQuiz?.birthday || null,
       gender: profileQuiz?.gender ? profileQuiz.gender : null,
       tops_size: serializeMultiSizeValue(profileQuiz?.tops_size),
       dresses_size: serializeMultiSizeValue(profileQuiz?.dresses_size),
       bottoms_size: serializeMultiSizeValue(profileQuiz?.bottoms_size),
       shoes_size: serializeMultiSizeValue(profileQuiz?.shoes_size),
       category_preferences: Array.isArray(profileQuiz?.category_preferences) ? profileQuiz.category_preferences : [],
+      style_descriptors: Array.isArray(profileQuiz?.style_descriptors) ? profileQuiz.style_descriptors : [],
+      jouft_goals: Array.isArray(profileQuiz?.jouft_goals) ? profileQuiz.jouft_goals : [],
       shipping_full_name: primary.full_name || null,
       shipping_address_line1: primary.address_line1 || null,
       shipping_address_line2: primary.address_line2 || null,
@@ -773,15 +1297,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     try {
       const payload = buildProfileQuizPayload();
       const saved = await apiClient.saveProfileQuiz(payload, await authContext());
-      setProfileQuiz(saved ? {
-        ...saved,
-        gender: saved?.gender || '',
-        tops_size: normalizeMultiSizeValue(saved?.tops_size),
-        dresses_size: normalizeMultiSizeValue(saved?.dresses_size),
-        bottoms_size: normalizeMultiSizeValue(saved?.bottoms_size),
-        shoes_size: normalizeMultiSizeValue(saved?.shoes_size),
-        category_preferences: Array.isArray(saved?.category_preferences) ? saved.category_preferences : [],
-      } : null);
+      setProfileQuiz(normalizeProfileQuiz(saved));
       setSubscriptionPlan(String(saved?.subscription_plan || 'free'));
       setSubscriptionCycle(String(saved?.subscription_billing_cycle || 'monthly'));
       const normalized = normalizeShippingAddresses(saved?.shipping_addresses, saved);
@@ -809,15 +1325,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
         shippingAddressesOverride: shippingAddresses,
       });
       const saved = await apiClient.saveProfileQuiz(payload, await authContext());
-      setProfileQuiz(saved ? {
-        ...saved,
-        gender: saved?.gender || '',
-        tops_size: normalizeMultiSizeValue(saved?.tops_size),
-        dresses_size: normalizeMultiSizeValue(saved?.dresses_size),
-        bottoms_size: normalizeMultiSizeValue(saved?.bottoms_size),
-        shoes_size: normalizeMultiSizeValue(saved?.shoes_size),
-        category_preferences: Array.isArray(saved?.category_preferences) ? saved.category_preferences : [],
-      } : null);
+      setProfileQuiz(normalizeProfileQuiz(saved));
       setProfileSaveMsg('Style preferences saved.');
     } catch (e) {
       setError(e.message || 'Failed to save style preferences.');
@@ -831,32 +1339,78 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
       setError(clerkEnabled ? 'Sign in is required.' : (authMode === 'bearer' ? 'Bearer token required.' : 'API key required.'));
       return;
     }
+    const selectedPlan = SUBSCRIPTION_PLANS.find((entry) => entry.key === plan);
+    const amount = cycle === 'annual' ? Number(selectedPlan?.annual || 0) : Number(selectedPlan?.monthly || 0);
+    const selectedPaymentMethod = paymentMethods.find((method) => method?.payment_method_id === selectedSubscriptionPaymentMethodId)
+      || paymentMethods.find((method) => method?.is_default)
+      || paymentMethods[0]
+      || null;
+    if (amount > 0 && paymentMethods.length === 0) {
+      setProfileSaveMsg('Add a payment method before activating a paid plan.');
+      setProfileSection('payments');
+      setPaymentMsg('Add a payment method before activating a paid plan.');
+      return;
+    }
+    if (amount > 0) {
+      const confirmed = await confirmSubscriptionActivation({
+        planLabel: selectedPlan?.label || titleCase(plan),
+        amount,
+        cycle,
+        paymentMethod: selectedPaymentMethod,
+      });
+      if (!confirmed) {
+        setProfileSaveMsg('Subscription activation canceled.');
+        return;
+      }
+    }
     setProfileSaveBusy(true);
     setProfileSaveMsg('');
     setError('');
     try {
-      const payload = buildProfileQuizPayload({
-        subscriptionPlanOverride: plan,
-        subscriptionCycleOverride: cycle,
-      });
-      const saved = await apiClient.saveProfileQuiz(payload, await authContext());
-      setProfileQuiz(saved ? {
-        ...saved,
-        gender: saved?.gender || '',
-        tops_size: normalizeMultiSizeValue(saved?.tops_size),
-        dresses_size: normalizeMultiSizeValue(saved?.dresses_size),
-        bottoms_size: normalizeMultiSizeValue(saved?.bottoms_size),
-        shoes_size: normalizeMultiSizeValue(saved?.shoes_size),
-        category_preferences: Array.isArray(saved?.category_preferences) ? saved.category_preferences : [],
-      } : null);
-      setSubscriptionPlan(String(saved?.subscription_plan || plan || 'free'));
-      setSubscriptionCycle(String(saved?.subscription_billing_cycle || cycle || 'monthly'));
-      setProfileSaveMsg('Subscription preferences saved.');
+      const activated = await apiClient.activateSubscription({
+        plan,
+        billing_cycle: cycle,
+        payment_method_id: amount > 0 ? selectedPaymentMethod?.payment_method_id : null,
+      }, await authContext());
+      setProfileQuiz((prev) => normalizeProfileQuiz({
+        ...(prev || {}),
+        owner_subject: activated?.owner_subject || prev?.owner_subject || '',
+        subscription_plan: activated?.plan || plan || 'free',
+        subscription_billing_cycle: activated?.billing_cycle || cycle || 'monthly',
+        subscription_status: activated?.status || null,
+        subscription_renewal_date: activated?.renewal_date || null,
+      }));
+      setSubscriptionPlan(String(activated?.plan || plan || 'free'));
+      setSubscriptionCycle(String(activated?.billing_cycle || cycle || 'monthly'));
+      setProfileSaveMsg(activated?.message || (amount > 0 ? 'Subscription active.' : 'Free plan active.'));
     } catch (e) {
-      setError(e.message || 'Failed to save subscription preferences.');
+      const message = e.message || 'Failed to activate subscription.';
+      if (message.toLowerCase().includes('payment method')) {
+        setProfileSection('payments');
+        setPaymentMsg(message);
+      } else {
+        setError(message);
+      }
     } finally {
       setProfileSaveBusy(false);
     }
+  }
+
+  function confirmSubscriptionActivation({ planLabel, amount, cycle, paymentMethod }) {
+    const paymentLabel = paymentMethod?.label
+      || [paymentMethod?.brand, paymentMethod?.last4 ? `•••• ${paymentMethod.last4}` : ''].filter(Boolean).join(' ')
+      || 'Default payment method';
+    const amountLabel = `$${amount}${cycle === 'annual' ? ' / year' : ' / month'}`;
+    return new Promise((resolve) => {
+      Alert.alert(
+        'Confirm subscription',
+        `Plan: ${planLabel}\nAmount: ${amountLabel}\nPayment: ${paymentLabel}`,
+        [
+          { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
+          { text: 'Activate', style: 'default', onPress: () => resolve(true) },
+        ],
+      );
+    });
   }
 
   async function handleAddPaymentMethod() {
@@ -868,21 +1422,49 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     setPaymentMsg('');
     setError('');
     try {
-      const session = await apiClient.createSetupCheckoutSession(
-        {
-          success_url: 'https://jouft.com/account/payment-success',
-          cancel_url: 'https://jouft.com/account/payment-cancel',
-        },
-        await authContext(),
-      );
-      if (session?.status === 'disabled') {
-        setPaymentMsg(session?.message || 'Stripe is not configured on server.');
-      } else if (session?.checkout_url) {
-        await Linking.openURL(session.checkout_url);
-        setPaymentMsg('Complete setup in Stripe, then tap Sync from Stripe.');
-      } else {
-        setPaymentMsg('Unable to open Stripe setup right now.');
+      const setup = await apiClient.createSetupIntent(await authContext());
+      if (setup?.status === 'disabled') {
+        setPaymentMsg(setup?.message || 'Stripe is not configured on server.');
+        return;
       }
+      const publishableKey = String(setup?.publishable_key || '').trim();
+      const setupIntentClientSecret = String(setup?.client_secret || '').trim();
+      if (!publishableKey || !setupIntentClientSecret) {
+        setPaymentMsg('Unable to start Stripe setup right now.');
+        return;
+      }
+      let stripeNative;
+      try {
+        stripeNative = require('@stripe/stripe-react-native');
+      } catch (stripeLoadError) {
+        throw new Error('Stripe native module is not available in this build. Rebuild the mobile app before adding payment methods in-app.');
+      }
+      const { initStripe, initPaymentSheet, presentPaymentSheet } = stripeNative;
+      await initStripe({
+        publishableKey,
+        merchantIdentifier: 'merchant.com.jouft.app',
+        urlScheme: Constants.expoConfig?.scheme || 'com.jouft.app.dev',
+      });
+      const initResult = await initPaymentSheet({
+        merchantDisplayName: 'JOUFT',
+        setupIntentClientSecret,
+        returnURL: `${Constants.expoConfig?.scheme || 'com.jouft.app.dev'}://stripe-redirect`,
+        allowsDelayedPaymentMethods: false,
+        primaryButtonLabel: 'Save payment method',
+      });
+      if (initResult.error) {
+        throw new Error(initResult.error.message || 'Failed to initialize Stripe payment sheet.');
+      }
+      const presentResult = await presentPaymentSheet();
+      if (presentResult.error) {
+        if (String(presentResult.error.code || '').toLowerCase() === 'canceled') {
+          setPaymentMsg('Payment method setup canceled.');
+          return;
+        }
+        throw new Error(presentResult.error.message || 'Payment method setup failed.');
+      }
+      await handleSyncPaymentMethods();
+      setPaymentMsg('Payment method saved.');
     } catch (e) {
       setError(e.message || 'Failed to start payment method setup.');
     } finally {
@@ -995,6 +1577,15 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     if (!tradeComposerTarget?.listing_id) return;
     if (!tradeOfferListingIds.length) {
       setTradeOfferError('Select at least one listing to offer.');
+      return;
+    }
+    const offeredTotalValue = tradeOfferCandidates
+      .filter((listing) => tradeOfferListingIds.includes(listing?.listing_id))
+      .reduce((sum, listing) => sum + Number(listing?.estimated_value || 0), 0);
+    const targetValue = Number(tradeComposerTarget?.estimated_value || 0);
+    const gapPct = targetValue > 0 ? Math.abs(offeredTotalValue - targetValue) / targetValue : null;
+    if (gapPct === null || gapPct > 0.30) {
+      setTradeOfferError(gapPct === null ? 'Target listing needs a value before sending an offer.' : 'Offer is outside the 30% trade band.');
       return;
     }
     setTradeOfferBusy(true);
@@ -1112,24 +1703,23 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     return { imageUrl, title, caption };
   }
 
-  async function shareListingInstagram(item) {
+  async function shareListingPinterest(item) {
     try {
-      const { imageUrl, title, caption } = buildSharePayload(item);
-      const instagramUrl = 'instagram://app';
-      const canOpenInstagram = await Linking.canOpenURL(instagramUrl);
-      if (canOpenInstagram) {
-        await Share.share(
-          imageUrl ? { message: `${caption}\n${imageUrl}`, url: imageUrl, title } : { message: caption, title },
-          { dialogTitle: 'Share to Instagram' },
-        );
-        return;
+      const { imageUrl, caption } = buildSharePayload(item);
+      if (imageUrl) {
+        const pinterestUrl = `https://www.pinterest.com/pin/create/button/?url=${encodeURIComponent(imageUrl)}&media=${encodeURIComponent(imageUrl)}&description=${encodeURIComponent(caption)}`;
+        const canOpenPinterest = await Linking.canOpenURL(pinterestUrl);
+        if (canOpenPinterest) {
+          await Linking.openURL(pinterestUrl);
+          return;
+        }
       }
-      Alert.alert('Instagram unavailable', 'Instagram app is not installed. Using standard share instead.');
       await Share.share(
-        imageUrl ? { message: `${caption}\n${imageUrl}`, url: imageUrl, title } : { message: caption, title },
+        { message: imageUrl ? `${caption}\n${imageUrl}` : caption },
+        { dialogTitle: 'Share to Pinterest' },
       );
     } catch (e) {
-      setError(e.message || 'Unable to share to Instagram.');
+      setError(e.message || 'Unable to share to Pinterest.');
     }
   }
 
@@ -1176,6 +1766,56 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
   }, [activeTab]);
 
   useEffect(() => {
+    if (!authReady()) return;
+    let cancelled = false;
+    setAlertStateHydrated(false);
+    async function hydrateClientState() {
+      try {
+        const state = await apiClient.fetchClientState(await authContext());
+        if (cancelled) return;
+        setAlertPrefs({ ...DEFAULT_ALERT_PREFS, ...(state?.alert_preferences || {}) });
+        const likedIds = Array.isArray(state?.liked_listing_ids) ? state.liked_listing_ids : [];
+        setLikedListingIds(likedIds.map((id) => String(id)).filter(Boolean));
+      } catch (e) {
+        if (cancelled) return;
+        setAlertPrefs(DEFAULT_ALERT_PREFS);
+        setLikedListingIds([]);
+      } finally {
+        if (!cancelled) setAlertStateHydrated(true);
+      }
+    }
+    hydrateClientState();
+    return () => {
+      cancelled = true;
+    };
+  }, [apiClient, clerkEnabled, authMode, bearerToken, apiKey]);
+
+  useEffect(() => {
+    if (!alertStateHydrated) return;
+    if (!authReady()) return;
+    let cancelled = false;
+    async function saveClientState() {
+      try {
+        const auth = await authContext();
+        if (cancelled) return;
+        await apiClient.saveClientState(
+          {
+            alert_preferences: alertPrefs,
+            liked_listing_ids: likedListingIds,
+          },
+          auth,
+        );
+      } catch (e) {
+        // best effort only
+      }
+    }
+    saveClientState();
+    return () => {
+      cancelled = true;
+    };
+  }, [apiClient, alertPrefs, likedListingIds, alertStateHydrated]);
+
+  useEffect(() => {
     if (!authReady() || !pushEnabled) return;
     registerForPushNotifications().catch(() => {});
   }, [clerkEnabled, authMode, bearerToken, apiKey, pushEnabled]);
@@ -1185,7 +1825,17 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     if (activeTab !== 'inbox' && activeTab !== 'profile') return;
     loadProfileAddresses();
     if (activeTab === 'profile') loadPaymentMethods();
-  }, [activeTab]);
+  }, [
+    activeTab,
+    profileHydrationRetry,
+    clerkEnabled,
+    authMode,
+    bearerToken,
+    apiKey,
+    clerkUserProfile?.firstName,
+    clerkUserProfile?.lastName,
+    clerkUserProfile?.email,
+  ]);
 
   useEffect(() => {
     if (!authReady()) return;
@@ -1240,14 +1890,52 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
           if (!prev) {
             const incoming = offers.find((entry) => String(entry?.offer_id || '') === offerId);
             const title = incoming?.target_listing?.title || incoming?.target_listing_id || 'your listing';
-            sendLocalNotification('New Trade Offer', `You received a new offer for ${title}.`);
+            sendCategoryAlert('trades', 'New Trade Offer', `You received a new offer for ${title}.`);
           } else if (prev !== 'accepted' && status === 'accepted') {
             const incoming = offers.find((entry) => String(entry?.offer_id || '') === offerId);
             const title = incoming?.target_listing?.title || incoming?.target_listing_id || 'your listing';
-            sendLocalNotification('Trade Accepted', `A trade was accepted for ${title}.`);
+            sendCategoryAlert('trades', 'Trade Accepted', `A trade was accepted for ${title}.`);
           }
         }
         offerStatusMapRef.current = nextMap;
+
+        const nextShippingMap = new Map();
+        const acceptedOffers = offers.filter((offer) => String(offer?.status || '').toLowerCase() === 'accepted');
+        for (const offer of acceptedOffers) {
+          const offerId = String(offer?.offer_id || '');
+          if (!offerId) continue;
+          try {
+            const labelPayload = await apiClient.fetchShippingLabels(offerId, await authContext());
+            if (cancelled) return;
+            const shipments = Array.isArray(labelPayload?.shipments) ? labelPayload.shipments : [];
+            if (shipments.length > 0) {
+              setShippingLabelsByOffer((prev) => ({ ...prev, [offerId]: shipments }));
+            }
+            shipments.forEach((shipment) => {
+              const shipmentId = String(shipment?.shipment_id || '');
+              if (!shipmentId) return;
+              const status = String(shipment?.status || 'pending').toLowerCase();
+              const hasLabel = Boolean(String(shipment?.label_url || '').trim());
+              const signature = `${status}:${hasLabel ? 'label' : 'no-label'}:${shipment?.tracking_number || ''}`;
+              const key = `${offerId}:${shipmentId}`;
+              nextShippingMap.set(key, signature);
+              if (!initializedShippingStateRef.current) return;
+              const prevSignature = shippingStatusMapRef.current.get(key);
+              if (!prevSignature) {
+                sendCategoryAlert('shipping', 'Shipping Label Ready', 'A shipping label is available for your accepted trade.');
+                return;
+              }
+              if (prevSignature !== signature) {
+                const alertTitle = hasLabel ? 'Shipping Updated' : 'Shipment Updated';
+                sendCategoryAlert('shipping', alertTitle, `Shipment status is now ${titleCase(status)}.`);
+              }
+            });
+          } catch (e) {
+            // silent polling failure for a single offer
+          }
+        }
+        shippingStatusMapRef.current = nextShippingMap;
+        initializedShippingStateRef.current = true;
       } catch (e) {
         // silent polling failure
       }
@@ -1258,7 +1946,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
       cancelled = true;
       if (timer) clearInterval(timer);
     };
-  }, [apiClient, pushEnabled, notificationPermission, clerkEnabled, authMode, bearerToken, apiKey]);
+  }, [apiClient, pushEnabled, alertPrefs, notificationPermission, clerkEnabled, authMode, bearerToken, apiKey]);
 
   async function pickImages() {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -1266,58 +1954,45 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
       setError('Photo permission is required.');
       return;
     }
+    const existingEditImageCount = editingListingId ? editImageUrls.length + images.length : 0;
+    if (editingListingId && existingEditImageCount >= 6) {
+      setError('Remove an image before adding another. Listings support up to 6 images.');
+      return;
+    }
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'],
       allowsMultipleSelection: true,
       quality: 0.9,
-      selectionLimit: 4,
+      selectionLimit: editingListingId ? Math.max(1, 6 - existingEditImageCount) : 6,
     });
     if (!result.canceled) {
-      setImages(result.assets.slice(0, 4));
+      const selectedAssets = Array.isArray(result.assets) ? result.assets : [];
+      if (editingListingId) {
+        setImages((prev) => {
+          const remaining = Math.max(0, 6 - editImageUrls.length - prev.length);
+          return [...prev, ...selectedAssets.slice(0, remaining)];
+        });
+        setAnalysisResult(null);
+        setWizardStep((step) => Math.min(step, 2));
+      } else {
+        setImages(selectedAssets.slice(0, 6));
+        setSelectedHeroImageIndex(0);
+      }
       setError('');
     }
   }
 
   async function nextStep() {
-    const canNext = wizardStep === 1 ? images.length >= 1 && images.length <= 4 : wizardStep === 2 ? Boolean(userCondition) : true;
+    const isEditing = Boolean(editingListingId);
+    const canNext = wizardStep === 1
+      ? (isEditing ? true : images.length >= 1 && images.length <= 6)
+      : wizardStep === 2 ? Boolean(userCondition) : true;
     if (!canNext) {
-      setError(wizardStep === 1 ? 'Upload 1 to 4 images before continuing.' : 'Condition is required.');
+      setError(wizardStep === 1 ? 'Upload 1 to 6 images before continuing.' : 'Condition is required.');
       return;
     }
     if (!authReady()) {
       setError(clerkEnabled ? 'Sign in is required.' : (authMode === 'bearer' ? 'Bearer token required.' : 'API key required.'));
-      return;
-    }
-
-    if (wizardStep === 1 || wizardStep === 2) {
-      setLoading(true);
-      setError('');
-      try {
-        const payload = await apiClient.analyzeItem(
-          {
-            images,
-            category,
-            userCondition: wizardStep === 1 ? '' : userCondition,
-            itemDescription: itemDescription.trim(),
-            debug: true,
-          },
-          await authContext(),
-        );
-        setAnalysisResult(payload);
-        if (!category && payload?.category) setCategory(payload.category);
-        const gptTitle = payload?.item_profile?.model_identification?.name?.trim?.() || '';
-        const suggestedDesc = buildSuggestedDescriptionFromProfile(payload?.item_profile);
-        if (!itemTitle.trim() && gptTitle) setItemTitle(gptTitle);
-        if (!itemDescription.trim() && suggestedDesc) setItemDescription(suggestedDesc);
-        if (wizardStep === 2 && payload?.valuation?.estimated_value != null) {
-          setAskingValue(String(Math.round(payload.valuation.estimated_value)));
-        }
-        setWizardStep((s) => Math.min(3, s + 1));
-      } catch (e) {
-        setError(e.message || String(e));
-      } finally {
-        setLoading(false);
-      }
       return;
     }
     setWizardStep((s) => Math.min(3, s + 1));
@@ -1328,9 +2003,251 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     setWizardStep((s) => Math.max(1, s - 1));
   }
 
+  function listingIdOf(item) {
+    return String(item?.listing_id || item?.id || '').trim();
+  }
+
+  function resetListingForm() {
+    setWizardStep(1);
+    setEditingListingId('');
+    setEditingListing(null);
+    setSelectedHeroImageIndex(0);
+    setSelectedEditHeroImageIndex(null);
+    setImages([]);
+    setEditImageUrls([]);
+    setCategory('');
+    setItemTitle('');
+    setItemDescription('');
+    setUserCondition('');
+    setItemSize('');
+    setTradeNotes('');
+    setAnalysisResult(null);
+  }
+
+  function moveArrayItemToFront(list, index) {
+    const items = Array.isArray(list) ? list.filter(Boolean) : [];
+    if (items.length < 2) return items;
+    const safeIndex = Math.max(0, Math.min(index, items.length - 1));
+    if (safeIndex === 0) return items;
+    const next = [...items];
+    const [selected] = next.splice(safeIndex, 1);
+    return [selected, ...next];
+  }
+
+  function orderedCreateImagesForSave() {
+    return moveArrayItemToFront(images.slice(0, 6), selectedHeroImageIndex);
+  }
+
+  function orderedEditExistingImagesForSave() {
+    if (selectedEditHeroImageIndex === null || selectedEditHeroImageIndex >= editImageUrls.length) return persistableImageUrls(editImageUrls);
+    return persistableImageUrls(moveArrayItemToFront(editImageUrls, selectedEditHeroImageIndex));
+  }
+
+  function orderedEditPendingImagesForSave() {
+    if (selectedEditHeroImageIndex === null || selectedEditHeroImageIndex < editImageUrls.length) return images;
+    return moveArrayItemToFront(images, selectedEditHeroImageIndex - editImageUrls.length);
+  }
+
+  function cancelEditListing() {
+    resetListingForm();
+    setActiveTab('closet');
+    setNotice('');
+    setError('');
+  }
+
+  function removeEditImageAt(index) {
+    setEditImageUrls((prev) => prev.filter((_, entryIndex) => entryIndex !== index));
+    setSelectedEditHeroImageIndex((idx) => {
+      if (idx === null) return null;
+      if (idx === index) return null;
+      return Math.max(0, idx - (idx > index ? 1 : 0));
+    });
+  }
+
+  function removePendingImageAt(index) {
+    setImages((prev) => prev.filter((_, entryIndex) => entryIndex !== index));
+    if (editingListingId) {
+      setSelectedEditHeroImageIndex((idx) => {
+        const absoluteIndex = editImageUrls.length + index;
+        if (idx === null) return null;
+        if (idx === absoluteIndex) return null;
+        return Math.max(0, idx - (idx > absoluteIndex ? 1 : 0));
+      });
+    } else {
+      setSelectedHeroImageIndex((idx) => Math.max(0, idx - (idx >= index ? 1 : 0)));
+    }
+    setAnalysisResult(null);
+    if (editingListingId) setWizardStep((step) => Math.min(step, 2));
+  }
+
+  function openEditListingDraft(item) {
+    const listingId = listingIdOf(item);
+    if (!listingId || String(item?.status || '').toLowerCase() === 'analyzing') return;
+    const existingImageUrls = listingGallery(item, apiBaseUrl).slice(0, 6);
+    setEditingListingId(listingId);
+    setEditingListing(item);
+    setSelectedEditHeroImageIndex(null);
+    setImages([]);
+    setEditImageUrls(existingImageUrls);
+    setCategory(item?.category || '');
+    setItemTitle(item?.title || '');
+    setItemDescription(listingDescription(item) || '');
+    setUserCondition(item?.condition || '');
+    setItemSize(item?.size || '');
+    setTradeNotes(item?.wants || '');
+    setAnalysisResult(null);
+    setWizardStep(2);
+    setError('');
+    setNotice('Editing listing draft.');
+    setActiveTab('editListing');
+  }
+
+  function handleTabPress(tab) {
+    if (tab === 'create') {
+      resetListingForm();
+      setNotice('');
+      setError('');
+    }
+    setActiveTab(tab);
+  }
+
+  function editSaveRequiresAnalysis() {
+    if (!editingListing) return false;
+    const originalImages = persistableImageUrls(listingGallery(editingListing, apiBaseUrl));
+    const keptImages = orderedEditExistingImagesForSave();
+    const imagesChanged = images.length > 0 || !sameStringList(keptImages, originalImages);
+    const originalCondition = String(editingListing?.condition || 'n/a').trim();
+    const nextCondition = String(userCondition || editingListing?.condition || 'n/a').trim();
+    const originalSize = String(editingListing?.size || '').trim();
+    const nextSize = String(itemSize || '').trim();
+    return imagesChanged || nextCondition !== originalCondition || nextSize !== originalSize;
+  }
+
+  async function waitForUploadedListingImages(imageUrls) {
+    const urls = persistableImageUrls(imageUrls)
+      .map((url) => normalizeImageUrl(url, apiBaseUrl))
+      .filter(Boolean);
+    if (urls.length < 1) return false;
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const results = await Promise.all(urls.map((url) => Image.prefetch(url).catch(() => false)));
+      if (results.every(Boolean)) return true;
+      await new Promise((resolve) => setTimeout(resolve, 350));
+    }
+    return false;
+  }
+
+  function buildListingPayloadForSave({ imageUrls, sourceItemId = null, analysis = null, status = null } = {}) {
+    const resolvedImageUrls = persistableImageUrls(imageUrls || []);
+    if (resolvedImageUrls.length < 1) {
+      throw new Error(editingListingId ? 'Keep existing images or upload new photos before saving.' : 'Upload 1 to 6 images before creating the listing.');
+    }
+    const resolvedAnalysis = analysis || analysisResult || editingListing?.analysis || null;
+    const analysisCategory = resolvedAnalysis?.category || editingListing?.category || category || 'handbag';
+    const analysisBrand = resolvedAnalysis?.brand?.name || editingListing?.brand || 'unknown';
+    const analysisCondition = userCondition || resolvedAnalysis?.user_condition || editingListing?.condition || 'LikeNew';
+    const value = Number(resolvedAnalysis?.valuation?.estimated_value ?? editingListing?.estimated_value ?? 0);
+    const description = itemDescription.trim();
+    return {
+      title: itemTitle.trim() || description || (status === 'Analyzing' ? 'New listing' : `${analysisBrand} ${analysisCategory}`.trim()),
+      mode: 'trade',
+      category: category || analysisCategory,
+      brand: analysisBrand,
+      condition: analysisCondition,
+      size: itemSize || editingListing?.size || null,
+      estimated_value: value,
+      city: editingListing?.city || 'Your area',
+      image: resolvedImageUrls[0] || null,
+      images: resolvedImageUrls,
+      description,
+      wants: tradeNotes.trim() || editingListing?.wants || 'Open to similar-value offers',
+      tags: [analysisCondition, analysisBrand].filter(Boolean),
+      source_item_id: sourceItemId || resolvedAnalysis?.item_id || editingListing?.source_item_id || null,
+      analysis: resolvedAnalysis,
+      status: status || editingListing?.status || 'Review',
+    };
+  }
+
+  async function publishListingToMarketplace(item) {
+    const listingId = listingIdOf(item);
+    if (!listingId) return;
+    const missingMessage = missingPublishFieldsMessage(item);
+    if (missingMessage) {
+      setError(missingMessage);
+      setNotice('');
+      return;
+    }
+    if (String(item?.status || '').toLowerCase() === 'analyzing') {
+      setError('Cannot publish while analysis is running.');
+      setNotice('');
+      return;
+    }
+    setLoading(true);
+    setError('');
+    setNotice('');
+    try {
+      const condition = item?.condition || 'LikeNew';
+      const brand = item?.brand || 'unknown';
+      await apiClient.updateListing(
+        listingId,
+        {
+          ...item,
+          status: 'Active',
+          tags: [condition, brand, 'trade'].filter(Boolean),
+        },
+        await authContext(),
+      );
+      await loadCloset();
+      setNotice('Listing published to Marketplace.');
+    } catch (e) {
+      setError(e.message || String(e));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function removeListingFromCloset(item) {
+    const listingId = listingIdOf(item);
+    if (!listingId) return;
+    Alert.alert(
+      'Remove listing?',
+      `Remove "${item?.title || 'this listing'}" from your closet? This cannot be undone.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: async () => {
+            setLoading(true);
+            setError('');
+            setNotice('');
+            try {
+              await apiClient.deleteListing(listingId, await authContext());
+              setMyListings((prev) => prev.filter((listing) => listingIdOf(listing) !== listingId));
+              setMarketplaceListings((prev) => prev.filter((listing) => listingIdOf(listing) !== listingId));
+              setNotice('Listing removed from your closet.');
+            } catch (e) {
+              setError(e.message || String(e));
+            } finally {
+              setLoading(false);
+            }
+          },
+        },
+      ],
+    );
+  }
+
   async function publishListing() {
-    if (!analysisResult) {
-      setNotice('Run analysis through Step 2 first.');
+    const isEditing = Boolean(editingListingId);
+    const imagesForAnalysis = isEditing
+      ? orderedEditPendingImagesForSave().slice(0, Math.max(0, 6 - editImageUrls.length))
+      : orderedCreateImagesForSave();
+    const existingImages = isEditing ? orderedEditExistingImagesForSave() : [];
+    if (!isEditing && (imagesForAnalysis.length < 1 || imagesForAnalysis.length > 6)) {
+      setError('Upload 1 to 6 images before creating the listing.');
+      return;
+    }
+    if (!userCondition) {
+      setError('Condition is required.');
       return;
     }
     if (!authReady()) {
@@ -1342,24 +2259,51 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     setError('');
     setNotice('');
     try {
-      const payload = {
-        title: itemTitle.trim() || itemDescription.trim() || `${analysisResult.brand?.name || 'Item'} ${analysisResult.category || ''}`.trim(),
-        mode: 'sell_trade',
-        category: analysisResult.category,
-        brand: analysisResult.brand?.name || 'unknown',
-        condition: userCondition || analysisResult.condition?.grade || 'Good',
-        estimated_value: Number(askingValue || analysisResult.valuation?.estimated_value || 0),
-        city: 'Your area',
-        image: images[0]?.uri || null,
-        wants: tradeNotes.trim() || 'Open to similar-value offers',
-        tags: [userCondition || analysisResult.condition?.grade || 'Good', analysisResult.brand?.name || 'unknown'],
-        source_item_id: analysisResult.item_id,
-        analysis: analysisResult,
-      };
-
-      const created = await apiClient.createListing(payload, await authContext());
-      setNotice(`Listing published (${created.listing_id.slice(0, 8)}...)`);
+      const auth = await authContext();
+      const uploaded = imagesForAnalysis.length > 0
+        ? await apiClient.uploadImages({ images: imagesForAnalysis }, auth)
+        : null;
+      const uploadedImageUrls = persistableImageUrls(uploadedImageUrlsFromPayload(uploaded));
+      if (imagesForAnalysis.length > 0 && uploadedImageUrls.length < 1) {
+        throw new Error('Images were uploaded, but no image URLs were returned.');
+      }
+      if (uploadedImageUrls.length > 0) {
+        const uploadedImagesReady = await waitForUploadedListingImages(uploadedImageUrls);
+        if (!uploadedImagesReady) {
+          throw new Error('Images are still processing. Please retry creating the listing in a few seconds.');
+        }
+      }
+      const imageUrls = isEditing
+        ? [...existingImages, ...uploadedImageUrls].slice(0, 6)
+        : uploadedImageUrls;
+      const orderedImageUrls = isEditing && selectedEditHeroImageIndex !== null && selectedEditHeroImageIndex >= editImageUrls.length && uploadedImageUrls.length > 0
+        ? [uploadedImageUrls[0], ...existingImages, ...uploadedImageUrls.slice(1)].slice(0, 6)
+        : imageUrls;
+      if (imageUrls.length < 1) {
+        throw new Error(isEditing ? 'Keep existing images or upload new photos before saving.' : 'Upload 1 to 6 images before creating the listing.');
+      }
+      const shouldRunAnalysis = isEditing ? editSaveRequiresAnalysis() : true;
+      const payload = buildListingPayloadForSave({
+        imageUrls: orderedImageUrls,
+        sourceItemId: uploaded?.item_id || null,
+        analysis: shouldRunAnalysis ? null : undefined,
+        status: shouldRunAnalysis ? 'Analyzing' : undefined,
+      });
+      if (isEditing) {
+        const updated = await apiClient.updateListing(editingListingId, payload, await authContext());
+        setNotice(shouldRunAnalysis ? 'Listing updated. AI analysis is running in the background.' : `Listing updated (${String(updated.listing_id || editingListingId).slice(0, 8)}...)`);
+        if (shouldRunAnalysis) {
+          setTimeout(loadCloset, 4000);
+          setTimeout(loadCloset, 10000);
+        }
+      } else {
+        const created = await apiClient.createListing(payload, auth);
+        setNotice('Listing created. AI analysis is running in the background.');
+        setTimeout(loadCloset, 4000);
+        setTimeout(loadCloset, 10000);
+      }
       await loadCloset();
+      resetListingForm();
       setActiveTab('closet');
     } catch (e) {
       setError(e.message || String(e));
@@ -1368,81 +2312,393 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     }
   }
 
+  function renderListingDetailContent({ asScreen = false } = {}) {
+    if (!selectedListing) return null;
+    const gallery = listingGallery(selectedListing, apiBaseUrl);
+    const hasMatches = getCrossOwnerMatches(selectedListing, marketplaceActorSubject).length > 0;
+    const matchPreviewImages = hasMatches ? getMatchPreviewImages(selectedListing, apiBaseUrl, marketplaceActorSubject) : [];
+    const isOwnListing = selectedListingSource === 'marketplace' && isOwnMarketplaceListing(selectedListing);
+    const canStartTrade = selectedListingSource !== 'marketplace' || !isOwnListing;
+    const description = listingDescription(selectedListing);
+    const selectedListingLiked = likedListingIds.includes(String(selectedListing?.listing_id || selectedListing?.id || ''));
+    const selectedListingAnalysisFailed = String(selectedListing?.status || '').toLowerCase() === 'analysisfailed';
+    const body = (
+      <>
+        <View style={styles.offerDetailPanel}>
+          <Text style={styles.offerLaneLabel}>Details</Text>
+          <Text style={styles.offerDetailItemMeta}>
+            {selectedListing?.brand || 'Unknown'} • {titleCase(selectedListing?.condition || 'unknown')} • {titleCase(selectedListing?.category || 'listing')}
+          </Text>
+          <Text style={styles.offerDetailItemMeta}>
+            {money(selectedListing?.estimated_value)}
+          </Text>
+          {selectedListingAnalysisFailed ? (
+            <Text style={styles.analysisFailedText}>{ANALYSIS_FAILED_MESSAGE}</Text>
+          ) : null}
+          {selectedListingSource === 'marketplace' && !isOwnListing ? (
+            <TouchableOpacity
+              style={[styles.secondaryBtnCompact, selectedListingLiked && styles.likeDetailButtonActive]}
+              onPress={() => toggleLikedListing(selectedListing)}
+            >
+              <Text style={[styles.secondaryBtnText, selectedListingLiked && styles.likeDetailButtonTextActive]}>
+                {selectedListingLiked ? 'Liked' : 'Like Listing'}
+              </Text>
+            </TouchableOpacity>
+          ) : null}
+        </View>
+
+        <View style={styles.offerDetailPanel}>
+          <Text style={styles.offerLaneLabel}>Description</Text>
+          <Text style={styles.offerDetailMessage}>{description || 'No description provided.'}</Text>
+        </View>
+
+        {hasMatches ? (
+          <View style={styles.offerDetailPanel}>
+            <View style={styles.listingDetailMatchRow}>
+              <Text style={styles.offerLaneLabel}>Matched Items</Text>
+              {matchPreviewImages.length > 0 ? (
+                <View style={styles.matchThumbStrip}>
+                  {matchPreviewImages.map((src, idx) => (
+                    <Image
+                      key={`${selectedListing?.listing_id || 'listing'}-matched-${idx}`}
+                      source={{ uri: src }}
+                      style={styles.matchThumb}
+                    />
+                  ))}
+                </View>
+              ) : (
+                <Text style={styles.matchThumbEmpty}>No match images</Text>
+              )}
+            </View>
+          </View>
+        ) : null}
+
+        {canStartTrade && hasMatches ? (
+          <View style={styles.offerDetailPanel}>
+            <TouchableOpacity
+              style={styles.primaryBtn}
+              onPress={() => {
+                closeListingDetails();
+                openTradeComposer(selectedListing);
+              }}
+            >
+              <Text style={styles.primaryBtnText}>Start Trade</Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
+
+        <View style={styles.offerDetailPanel}>
+          <Text style={styles.offerLaneLabel}>Gallery</Text>
+          {gallery.length > 0 ? (
+            <View style={styles.listingDetailGalleryStack}>
+              {gallery.map((src, idx) => {
+                const failed = Boolean(failedDetailImages[src]);
+                return (
+                  <TouchableOpacity
+                    key={`${selectedListing?.listing_id || 'listing'}-image-${idx}`}
+                    activeOpacity={0.88}
+                    onPress={() => setSelectedGalleryImage(src)}
+                    disabled={failed}
+                  >
+                    {failed ? (
+                      <View style={[styles.listingDetailGalleryImageFull, styles.offerImageFallback]}>
+                        <Text style={styles.emptyText}>Image unavailable</Text>
+                      </View>
+                    ) : (
+                      <Image
+                        source={{ uri: src }}
+                        style={styles.listingDetailGalleryImageFull}
+                        onError={() => setFailedDetailImages((prev) => ({ ...prev, [src]: true }))}
+                      />
+                    )}
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          ) : (
+            <View style={[styles.offerDetailHero, styles.offerImageFallback]}>
+              <Text style={styles.emptyText}>No image</Text>
+            </View>
+          )}
+        </View>
+      </>
+    );
+
+    return (
+      <View style={asScreen ? styles.listingDetailScreen : styles.offerDetailShell}>
+        <View style={styles.offerDetailHead}>
+          <View style={styles.offerDetailTitleWrap}>
+            <Text style={styles.sectionEyebrow}>Listing Details</Text>
+            <Text style={styles.offerDetailTitle} numberOfLines={3}>{selectedListing?.title || 'Listing'}</Text>
+          </View>
+          <TouchableOpacity style={[styles.secondaryBtnCompact, styles.offerDetailBackButton]} onPress={closeListingDetails} hitSlop={{ top: 10, right: 10, bottom: 10, left: 10 }}>
+            <Text style={styles.secondaryBtnText}>{asScreen ? 'Back' : 'Close'}</Text>
+          </TouchableOpacity>
+        </View>
+        {asScreen ? (
+          <View style={styles.offerDetailBody}>{body}</View>
+        ) : (
+          <ScrollView contentContainerStyle={styles.offerDetailBody} keyboardShouldPersistTaps="handled">
+            {body}
+          </ScrollView>
+        )}
+      </View>
+    );
+  }
+
+  const matchedMarketplaceListings = marketplaceListings.filter((item) => (
+    String(item?.status || '').trim().toLowerCase() === 'active'
+    && getCrossOwnerMatches(item, marketplaceActorSubject).length > 0
+  ));
+
   return (
-    <View style={styles.root}>
+    <SafeAreaView style={styles.root} edges={['top', 'right', 'bottom', 'left']}>
       <StatusBar style="dark" />
       <ScrollView style={styles.mainScroll} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         <TopBrandHeader />
 
         {!!error && <Text style={styles.error}>{error}</Text>}
         {!!notice && <Text style={styles.notice}>{notice}</Text>}
-        {loading && <ActivityIndicator style={{ marginTop: 8 }} color={theme.brand} />}
+        {loading && !marketplaceLoading && !closetLoading && <ActivityIndicator style={{ marginTop: 8 }} color={theme.brand} />}
 
         {activeTab === 'marketplace' && (
           <View style={styles.section}>
-            <SectionHeader title="Marketplace" subtitle="CURATED MATCHES" rightText="Refresh" onRightPress={refreshActiveTab} />
-            {marketplaceListings.length === 0 ? (
-              <Text style={styles.emptyText}>No listings loaded yet.</Text>
+            {isListingDetailOpen && selectedListingSource === 'marketplace' && selectedListing ? (
+              renderListingDetailContent({ asScreen: true })
             ) : (
-              marketplaceListings.map((item) => {
-                const ownerSubject = String(item?.owner_subject || '');
-                const canStartTrade = !ownerSubject || !marketplaceActorSubject || ownerSubject !== marketplaceActorSubject;
-                return (
-                  <ListingCard
-                    key={item.listing_id}
-                    item={item}
-                    apiBaseUrl={apiBaseUrl}
-                    showMatches
-                    onStartTrade={openTradeComposer}
-                    startTradeDisabled={!canStartTrade}
-                    onOpenDetails={(listing) => openListingDetails(listing, 'marketplace')}
-                  />
-                );
-              })
+              <>
+                <SectionHeader title="Marketplace" subtitle="CURATED MATCHES" rightText="Refresh" onRightPress={refreshActiveTab} />
+                {marketplaceLoading ? (
+                  <View style={styles.loadingState}>
+                    <ActivityIndicator color={theme.brand} />
+                    <Text style={styles.loadingText}>Loading marketplace listings...</Text>
+                  </View>
+                ) : matchedMarketplaceListings.length === 0 ? (
+                  <View style={styles.emptyState}>
+                    <Text style={styles.emptyTitle}>No matched marketplace listings yet</Text>
+                    <Text style={styles.emptyText}>Create or publish a closet listing to see marketplace items that match your closet.</Text>
+                    <TouchableOpacity
+                      style={styles.primaryBtn}
+                      onPress={() => {
+                        resetListingForm();
+                        setActiveTab('create');
+                      }}
+                    >
+                      <Text style={styles.primaryBtnText}>Create Listing</Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : (
+                  matchedMarketplaceListings.map((item) => {
+                    const isOwnListing = isOwnMarketplaceListing(item);
+                    return (
+                      <ListingCard
+                        key={item.listing_id}
+                        item={item}
+                        apiBaseUrl={apiBaseUrl}
+                        showMatches
+                        showStatus={false}
+                        currentOwnerSubject={marketplaceActorSubject}
+                        currentUserDisplayName={clerkUserLabel}
+                        onStartTrade={openTradeComposer}
+                        startTradeDisabled={isOwnListing}
+                        onOpenDetails={(listing) => openListingDetails(listing, 'marketplace')}
+                        liked={likedListingIds.includes(String(item?.listing_id || item?.id || ''))}
+                        onToggleLike={isOwnListing ? null : toggleLikedListing}
+                      />
+                    );
+                  })
+                )}
+              </>
             )}
           </View>
         )}
 
         {activeTab === 'closet' && (
           <View style={styles.section}>
-            <SectionHeader title="My Closet" subtitle="YOUR LISTINGS" rightText="Refresh" onRightPress={refreshActiveTab} />
-            {myListings.length === 0 ? (
-              <Text style={styles.emptyText}>No closet listings yet.</Text>
+            {isListingDetailOpen && selectedListingSource === 'closet' && selectedListing ? (
+              renderListingDetailContent({ asScreen: true })
             ) : (
-              myListings.map((item) => (
-                <ListingCard
-                  key={item.listing_id}
-                  item={item}
-                  apiBaseUrl={apiBaseUrl}
-                  onOpenDetails={(listing) => openListingDetails(listing, 'closet')}
-                  onShareListing={shareListing}
-                  onShareToInstagram={shareListingInstagram}
-                  onShareToFacebook={shareListingFacebook}
-                />
-              ))
+              <>
+                <SectionHeader title="My Closet" subtitle="YOUR LISTINGS" rightText="Refresh" onRightPress={refreshActiveTab} />
+                {closetLoading ? (
+                  <View style={styles.loadingState}>
+                    <ActivityIndicator color={theme.brand} />
+                    <Text style={styles.loadingText}>Loading your closet...</Text>
+                  </View>
+                ) : myListings.length === 0 ? (
+                  <Text style={styles.emptyText}>No closet listings yet.</Text>
+                ) : (
+                  myListings.map((item) => (
+                    <ListingCard
+                      key={item.listing_id}
+                      item={item}
+                      apiBaseUrl={apiBaseUrl}
+                      onOpenDetails={(listing) => openListingDetails(listing, 'closet')}
+                      onEditDraft={openEditListingDraft}
+                      onPublishListing={publishListingToMarketplace}
+                      onRemoveListing={removeListingFromCloset}
+                      onShareListing={shareListing}
+                      onShareToPinterest={shareListingPinterest}
+                      onShareToFacebook={shareListingFacebook}
+                      currentOwnerSubject={marketplaceActorSubject}
+                      currentUserDisplayName={clerkUserLabel}
+                    />
+                  ))
+                )}
+              </>
             )}
           </View>
         )}
 
-        {activeTab === 'create' && (
+        {(activeTab === 'create' || activeTab === 'editListing') && (
           <View style={styles.section}>
-            <SectionHeader title="Create Listing" subtitle="ANALYZE • LIST • MATCH" />
-            <View style={styles.stepRow}>
-              {[1, 2, 3].map((step) => (
-                <View key={step} style={[styles.stepPill, wizardStep === step && styles.stepPillActive]}>
-                  <Text style={[styles.stepPillText, wizardStep === step && styles.stepPillTextActive]}>{step}</Text>
-                </View>
-              ))}
-            </View>
+            <SectionHeader
+              title={editingListingId ? 'Edit Listing' : 'Create Listing'}
+              subtitle={editingListingId ? 'UPDATE • REVIEW • SAVE' : 'UPLOAD • CONDITION • CREATE'}
+              rightText={editingListingId ? 'Cancel Edit' : null}
+              onRightPress={editingListingId ? cancelEditListing : null}
+            />
+            {editingListingId ? (
+              <View style={styles.stepRow}>
+                {[1, 2, 3].map((step) => (
+                  <View key={step} style={[styles.stepPill, wizardStep === step && styles.stepPillActive]}>
+                    <Text style={[styles.stepPillText, wizardStep === step && styles.stepPillTextActive]}>{step}</Text>
+                  </View>
+                ))}
+              </View>
+            ) : null}
 
-            {wizardStep === 1 && (
+            {editingListingId ? (
+              <View style={styles.editImagePanel}>
+                <Text style={styles.label}>Listing Images ({editImageUrls.length + images.length}/6)</Text>
+                <View style={styles.editImageGrid}>
+                  {editImageUrls.map((imageUrl, index) => (
+                    <View key={`${imageUrl}-${index}`} style={[styles.editImageTile, selectedEditHeroImageIndex === index && styles.editImageTileHero]}>
+                      <Image source={{ uri: imageUrl }} style={styles.editImageThumb} resizeMode="cover" />
+                      {selectedEditHeroImageIndex === index ? <Text style={styles.editImageHeroBadge}>Hero</Text> : null}
+                      <TouchableOpacity style={styles.editImageHeroButton} onPress={() => setSelectedEditHeroImageIndex(index)}>
+                        <Text style={styles.editImageHeroButtonText}>{selectedEditHeroImageIndex === index ? 'Hero Image' : 'Set Hero'}</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={styles.editImageRemove} onPress={() => removeEditImageAt(index)}>
+                        <Text style={styles.editImageRemoveText}>Remove</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ))}
+                  {images.map((asset, index) => (
+                    <View key={`${asset?.uri || 'pending'}-${index}`} style={[styles.editImageTile, selectedEditHeroImageIndex === editImageUrls.length + index && styles.editImageTileHero]}>
+                      <Image source={{ uri: asset.uri }} style={styles.editImageThumb} resizeMode="cover" />
+                      <Text style={styles.editImageBadge}>New</Text>
+                      {selectedEditHeroImageIndex === editImageUrls.length + index ? <Text style={styles.editImageHeroBadge}>Hero</Text> : null}
+                      <TouchableOpacity style={styles.editImageHeroButton} onPress={() => setSelectedEditHeroImageIndex(editImageUrls.length + index)}>
+                        <Text style={styles.editImageHeroButtonText}>{selectedEditHeroImageIndex === editImageUrls.length + index ? 'Hero Image' : 'Set Hero'}</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={styles.editImageRemove} onPress={() => removePendingImageAt(index)}>
+                        <Text style={styles.editImageRemoveText}>Remove</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ))}
+                </View>
+                <TouchableOpacity
+                  style={[styles.secondaryBtn, editImageUrls.length + images.length >= 6 && styles.primaryBtnDisabled]}
+                  onPress={pickImages}
+                  disabled={editImageUrls.length + images.length >= 6}
+                >
+                  <Text style={styles.secondaryBtnText}>Add Images</Text>
+                </TouchableOpacity>
+                <Text style={styles.helperText}>New photos are analyzed before saving. Keep at least one image on the listing.</Text>
+              </View>
+            ) : null}
+
+            {!editingListingId && (
               <>
-                <TouchableOpacity style={styles.primaryBtn} onPress={pickImages}><Text style={styles.primaryBtnText}>Choose Photos (1-4)</Text></TouchableOpacity>
+                <TouchableOpacity style={styles.primaryBtn} onPress={pickImages}>
+                  <Text style={styles.primaryBtnText}>Choose Photos (1-6)</Text>
+                </TouchableOpacity>
                 <Text style={styles.helperText}>Selected: {images.length}</Text>
+                {images.length > 0 ? (
+                  <View style={styles.editImageGrid}>
+                    {images.map((asset, index) => (
+                      <View key={`${asset?.uri || 'pending'}-${index}`} style={[styles.editImageTile, selectedHeroImageIndex === index && styles.editImageTileHero]}>
+                        <Image source={{ uri: asset.uri }} style={styles.editImageThumb} resizeMode="cover" />
+                        {selectedHeroImageIndex === index ? <Text style={styles.editImageHeroBadge}>Hero</Text> : null}
+                        <TouchableOpacity style={styles.editImageHeroButton} onPress={() => setSelectedHeroImageIndex(index)}>
+                          <Text style={styles.editImageHeroButtonText}>Set Hero</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity style={styles.editImageRemove} onPress={() => removePendingImageAt(index)}>
+                          <Text style={styles.editImageRemoveText}>Remove</Text>
+                        </TouchableOpacity>
+                      </View>
+                    ))}
+                  </View>
+                ) : null}
+                <Text style={styles.label}>Category</Text>
+                <View style={styles.modeRow}>
+                  {[
+                    { key: 'clothes', label: 'Clothes' },
+                    { key: 'shoes', label: 'Shoes' },
+                    { key: 'handbag', label: 'Handbag' },
+                  ].map((option) => {
+                    const selected = category === option.key;
+                    return (
+                      <TouchableOpacity
+                        key={`create-category-${option.key}`}
+                        style={[styles.modeBtn, selected && styles.modeBtnActive]}
+                        onPress={() => {
+                          setCategory(option.key);
+                          if (itemSize && !sizeOptionsForCategory(option.key).includes(itemSize)) setItemSize('');
+                        }}
+                      >
+                        <Text style={[styles.modeBtnText, selected && styles.modeBtnTextActive]}>{option.label}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+                <Text style={styles.label}>Condition</Text>
+                <View style={styles.modeRow}>
+                  {['New', 'LikeNew'].map((condition) => (
+                    <TouchableOpacity
+                      key={condition}
+                      style={[styles.modeBtn, userCondition === condition && styles.modeBtnActive]}
+                      onPress={() => setUserCondition(condition)}
+                    >
+                      <Text style={[styles.modeBtnText, userCondition === condition && styles.modeBtnTextActive]}>
+                        {condition === 'LikeNew' ? 'Like New' : condition}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+                <Text style={styles.label}>Size</Text>
+                {(() => {
+                  const baseOptions = sizeOptionsForCategory(category);
+                  if (baseOptions.length === 0) {
+                    return <Text style={styles.helperText}>Select category first.</Text>;
+                  }
+                  return (
+                    <View style={styles.tagChipRow}>
+                      {baseOptions.map((size) => {
+                        const selected = itemSize === size;
+                        return (
+                          <TouchableOpacity
+                            key={`create-size-${size}`}
+                            style={[styles.tagChip, selected && styles.tagChipActive]}
+                            onPress={() => setItemSize(size)}
+                          >
+                            <Text style={[styles.tagChipText, selected && styles.tagChipTextActive]}>{size}</Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                      {itemSize ? (
+                        <TouchableOpacity style={styles.tagChip} onPress={() => setItemSize('')}>
+                          <Text style={styles.tagChipText}>Clear</Text>
+                        </TouchableOpacity>
+                      ) : null}
+                    </View>
+                  );
+                })()}
               </>
             )}
 
-            {wizardStep === 2 && (
+            {wizardStep === 2 && editingListingId && (
               <>
                 <Text style={styles.label}>Category</Text>
                 <TextInput value={category} onChangeText={setCategory} style={styles.input} placeholder="clothes / shoes / handbag" />
@@ -1451,33 +2707,91 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                 <Text style={styles.label}>Description</Text>
                 <TextInput value={itemDescription} onChangeText={setItemDescription} style={[styles.input, styles.multiInput]} multiline />
                 <Text style={styles.label}>Condition</Text>
-                <TextInput value={userCondition} onChangeText={setUserCondition} style={styles.input} placeholder="New / LikeNew / Good / Fair / Poor" />
+                <View style={styles.modeRow}>
+                  {['New', 'LikeNew'].map((condition) => (
+                    <TouchableOpacity
+                      key={condition}
+                      style={[styles.modeBtn, userCondition === condition && styles.modeBtnActive]}
+                      onPress={() => setUserCondition(condition)}
+                    >
+                      <Text style={[styles.modeBtnText, userCondition === condition && styles.modeBtnTextActive]}>
+                        {condition === 'LikeNew' ? 'Like New' : condition}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+                <Text style={styles.label}>Size</Text>
+                {(() => {
+                  const categoryForSize = category || editingListing?.analysis?.category || editingListing?.category || '';
+                  const brandForSize = editingListing?.analysis?.brand?.name || editingListing?.brand || analysisResult?.brand?.name || '';
+                  const sizeChartUrl = brandSizeChartUrl(brandForSize, categoryForSize);
+                  const baseOptions = sizeOptionsForCategory(categoryForSize);
+                  const normalizedCurrentSize = String(itemSize || '').trim();
+                  const sizeOptions = normalizedCurrentSize && !baseOptions.includes(normalizedCurrentSize)
+                    ? [...baseOptions, normalizedCurrentSize]
+                    : baseOptions;
+                  if (sizeOptions.length === 0) {
+                    return <Text style={styles.helperText}>Select category first.</Text>;
+                  }
+                  return (
+                    <View style={styles.tagChipRow}>
+                      {sizeOptions.map((size) => {
+                        const selected = itemSize === size;
+                        return (
+                          <TouchableOpacity
+                            key={`listing-size-${size}`}
+                            style={[styles.tagChip, selected && styles.tagChipActive]}
+                            onPress={() => setItemSize(size)}
+                          >
+                            <Text style={[styles.tagChipText, selected && styles.tagChipTextActive]}>{size}</Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                      {itemSize ? (
+                        <TouchableOpacity
+                          style={styles.tagChip}
+                          onPress={() => setItemSize('')}
+                        >
+                          <Text style={styles.tagChipText}>Clear</Text>
+                        </TouchableOpacity>
+                      ) : null}
+                      {sizeChartUrl ? (
+                        <TouchableOpacity
+                          style={[styles.tagChip, styles.sizeChartChip]}
+                          onPress={() => Linking.openURL(sizeChartUrl)}
+                          accessibilityRole="link"
+                          accessibilityLabel={`Open ${brandForSize} size chart`}
+                        >
+                          <Text style={styles.tagChipText}>Size Chart</Text>
+                        </TouchableOpacity>
+                      ) : null}
+                    </View>
+                  );
+                })()}
               </>
             )}
 
-            {wizardStep === 3 && (
+            {wizardStep === 3 && editingListingId && (
               <>
-                <Text style={styles.label}>Target asking value (USD)</Text>
-                <TextInput value={askingValue} onChangeText={setAskingValue} style={styles.input} keyboardType="numeric" />
                 <Text style={styles.label}>Trade notes</Text>
                 <TextInput value={tradeNotes} onChangeText={setTradeNotes} style={styles.input} />
               </>
             )}
 
             <View style={styles.actionRow}>
-              {wizardStep > 1 && (
+              {editingListingId && wizardStep > 1 && (
                 <TouchableOpacity style={styles.secondaryBtn} onPress={prevStep}>
                   <Text style={styles.secondaryBtnText}>Back</Text>
                 </TouchableOpacity>
               )}
-              {wizardStep < 3 && (
+              {editingListingId && wizardStep < 3 && (
                 <TouchableOpacity style={styles.primaryBtn} onPress={nextStep}>
                   <Text style={styles.primaryBtnText}>Next</Text>
                 </TouchableOpacity>
               )}
-              {wizardStep === 3 && (
-                <TouchableOpacity style={styles.primaryBtn} onPress={publishListing}>
-                  <Text style={styles.primaryBtnText}>Publish</Text>
+              {(!editingListingId || wizardStep === 3) && (
+                <TouchableOpacity style={[styles.primaryBtn, loading && styles.primaryBtnDisabled]} onPress={publishListing} disabled={loading}>
+                  <Text style={styles.primaryBtnText}>{editingListingId ? 'Save Changes' : 'Create Listing'}</Text>
                 </TouchableOpacity>
               )}
             </View>
@@ -1513,6 +2827,8 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                 const isAccepted = String(offer?.status || '').toLowerCase() === 'accepted';
                 const selectedAddressId = selectedAddressByOffer[offerId] || shippingAddresses[0]?.id || '';
                 const labels = Array.isArray(shippingLabelsByOffer[offerId]) ? shippingLabelsByOffer[offerId] : [];
+                const quote = shippingQuoteByOffer[offerId] || null;
+                const shippingBusy = Boolean(shippingBusyByOffer[offerId]);
                 return (
                   <View key={offerId} style={styles.offerCardWrap}>
                     <OfferCard offer={offer} apiBaseUrl={apiBaseUrl} />
@@ -1565,8 +2881,29 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                             <Text style={styles.secondaryBtnText}>Refresh Labels</Text>
                           </TouchableOpacity>
                         </View>
+                        {quote ? (
+                          <Text style={styles.helperText}>
+                            Quote: {quote.carrier || 'USPS'} {quote.service_level || ''}{quote.amount ? ` • ${quote.currency || 'USD'} ${quote.amount}` : ''}
+                          </Text>
+                        ) : null}
+                        <View style={styles.actionRow}>
+                          <TouchableOpacity
+                            style={styles.secondaryBtn}
+                            onPress={() => loadShippingQuoteForOffer(offerId)}
+                            disabled={shippingBusy}
+                          >
+                            <Text style={styles.secondaryBtnText}>{shippingBusy ? 'Loading...' : 'Get Shipping Quote'}</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            style={[styles.primaryBtn, shippingBusy && styles.primaryBtnDisabled]}
+                            onPress={() => createShippingLabelsForOffer(offerId)}
+                            disabled={shippingBusy}
+                          >
+                            <Text style={styles.primaryBtnText}>{shippingBusy ? 'Creating...' : 'Create Label'}</Text>
+                          </TouchableOpacity>
+                        </View>
                         {labels.length === 0 ? (
-                          <Text style={styles.helperText}>No labels yet. Tap Refresh Labels.</Text>
+                          <Text style={styles.helperText}>No labels yet. Get a quote, then create a label.</Text>
                         ) : (
                           labels.map((shipment) => (
                             <View key={shipment.shipment_id} style={styles.shipmentCard}>
@@ -1592,8 +2929,6 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
         {activeTab === 'profile' && (
           <View style={styles.section}>
             <SectionHeader title="Profile" subtitle="SETTINGS" />
-            <Text style={styles.label}>API Base URL</Text>
-            <TextInput value={apiBaseUrl} onChangeText={setApiBaseUrl} style={styles.input} autoCapitalize="none" />
 
             {clerkEnabled ? (
               <>
@@ -1605,38 +2940,82 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                   </TouchableOpacity>
                 ) : null}
               </>
-            ) : (
+            ) : null}
+
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>
+              {[
+                { key: 'account', label: 'Account' },
+                { key: 'style', label: 'Style' },
+                { key: 'shipping', label: 'Shipping' },
+                { key: 'subscription', label: 'Plan' },
+                { key: 'payments', label: 'Payments' },
+                { key: 'legal', label: 'Legal' },
+              ].map((section) => {
+                const active = profileSection === section.key;
+                return (
+                  <TouchableOpacity
+                    key={section.key}
+                    style={[styles.filterButton, active && styles.filterButtonActive]}
+                    onPress={() => setProfileSection(section.key)}
+                  >
+                    <Text style={[styles.filterButtonText, active && styles.filterButtonTextActive]}>{section.label}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+
+            {profileSection === 'account' ? (
               <>
-                <View style={styles.modeRow}>
-                  <TouchableOpacity style={[styles.modeBtn, authMode === 'api_key' && styles.modeBtnActive]} onPress={() => setAuthMode('api_key')}>
-                    <Text style={[styles.modeBtnText, authMode === 'api_key' && styles.modeBtnTextActive]}>API Key</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={[styles.modeBtn, authMode === 'bearer' && styles.modeBtnActive]} onPress={() => setAuthMode('bearer')}>
-                    <Text style={[styles.modeBtnText, authMode === 'bearer' && styles.modeBtnTextActive]}>Bearer</Text>
-                  </TouchableOpacity>
-                </View>
-
-                {authMode === 'api_key' ? (
-                  <>
-                    <Text style={styles.label}>API Key</Text>
-                    <TextInput value={apiKey} onChangeText={setApiKey} style={styles.input} autoCapitalize="none" />
-                  </>
-                ) : (
-                  <>
-                    <Text style={styles.label}>Clerk Bearer Token</Text>
-                    <TextInput
-                      value={bearerToken}
-                      onChangeText={setBearerToken}
-                      style={[styles.input, styles.multiInput]}
-                      multiline
-                      autoCapitalize="none"
-                      placeholder="Paste a valid Clerk JWT"
-                    />
-                  </>
-                )}
-              </>
-            )}
-
+            <View style={styles.profileDivider} />
+            <Text style={styles.label}>First Name</Text>
+            <TextInput
+              value={profileQuiz?.first_name || ''}
+              onChangeText={(value) => updateProfileStyleField('first_name', value)}
+              style={styles.input}
+              placeholder="First name"
+              autoCapitalize="words"
+            />
+            <Text style={styles.label}>Last Name</Text>
+            <TextInput
+              value={profileQuiz?.last_name || ''}
+              onChangeText={(value) => updateProfileStyleField('last_name', value)}
+              style={styles.input}
+              placeholder="Last name"
+              autoCapitalize="words"
+            />
+            <Text style={styles.label}>Email Address</Text>
+            <TextInput
+              value={profileQuiz?.email || ''}
+              onChangeText={(value) => updateProfileStyleField('email', value)}
+              style={styles.input}
+              placeholder="email@example.com"
+              autoCapitalize="none"
+              keyboardType="email-address"
+            />
+            <Text style={styles.label}>Phone</Text>
+            <TextInput
+              value={profileQuiz?.shipping_phone || ''}
+              onChangeText={(value) => updateProfileStyleField('shipping_phone', value)}
+              style={styles.input}
+              placeholder="Phone number"
+              keyboardType="phone-pad"
+            />
+            <Text style={styles.label}>Birthday</Text>
+            <TextInput
+              value={profileQuiz?.birthday || ''}
+              onChangeText={(value) => updateProfileStyleField('birthday', value)}
+              style={styles.input}
+              placeholder="YYYY-MM-DD"
+              keyboardType="numbers-and-punctuation"
+            />
+            {!!profileSaveMsg && <Text style={styles.notice}>{profileSaveMsg}</Text>}
+            <TouchableOpacity
+              style={[styles.primaryBtn, profileSaveBusy && styles.primaryBtnDisabled]}
+              onPress={saveStylePreferences}
+              disabled={profileSaveBusy}
+            >
+              <Text style={styles.primaryBtnText}>{profileSaveBusy ? 'Saving...' : 'Save Account'}</Text>
+            </TouchableOpacity>
             <View style={styles.profileDivider} />
             <Text style={styles.label}>Notifications</Text>
             <View style={styles.modeRow}>
@@ -1656,12 +3035,35 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
             <Text style={styles.helperText}>
               Permission: {titleCase(notificationPermission)}{pushToken ? ' • Push token ready' : ''}
             </Text>
+            <View style={styles.alertPreferenceList}>
+              {ALERT_CATEGORIES.map((category) => {
+                const enabled = Boolean(alertPrefs?.[category.key]);
+                return (
+                  <View key={category.key} style={styles.alertPreferenceRow}>
+                    <Text style={styles.alertPreferenceLabel}>{category.label}</Text>
+                    <TouchableOpacity
+                      style={[styles.alertToggle, enabled && styles.alertToggleActive]}
+                      onPress={() => toggleAlertPreference(category.key)}
+                    >
+                      <Text style={[styles.alertToggleText, enabled && styles.alertToggleTextActive]}>
+                        {enabled ? 'On' : 'Off'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                );
+              })}
+            </View>
             <TouchableOpacity
               style={styles.secondaryBtn}
               onPress={() => sendLocalNotification('Jouft Notifications', 'Push alerts are active on this device.')}
             >
               <Text style={styles.secondaryBtnText}>Test Notification</Text>
             </TouchableOpacity>
+              </>
+            ) : null}
+
+            {profileSection === 'style' ? (
+              <>
             <View style={styles.profileDivider} />
             <Text style={styles.label}>Style Preferences</Text>
             <Text style={styles.label}>Gender</Text>
@@ -1774,6 +3176,36 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                 );
               })}
             </View>
+            <Text style={styles.label}>Describe Your Style</Text>
+            <View style={styles.tagChipRow}>
+              {STYLE_DESCRIPTOR_OPTIONS.map((styleOption) => {
+                const selected = Array.isArray(profileQuiz?.style_descriptors) && profileQuiz.style_descriptors.includes(styleOption);
+                return (
+                  <TouchableOpacity
+                    key={`style-${styleOption}`}
+                    style={[styles.tagChip, selected && styles.tagChipActive]}
+                    onPress={() => toggleProfileLimitedArray('style_descriptors', styleOption, 3)}
+                  >
+                    <Text style={[styles.tagChipText, selected && styles.tagChipTextActive]}>{styleOption}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+            <Text style={styles.label}>What Brings You to JOUFT?</Text>
+            <View style={styles.tagChipRow}>
+              {JOUFT_GOAL_OPTIONS.map((goalOption) => {
+                const selected = Array.isArray(profileQuiz?.jouft_goals) && profileQuiz.jouft_goals.includes(goalOption);
+                return (
+                  <TouchableOpacity
+                    key={`goal-${goalOption}`}
+                    style={[styles.tagChip, selected && styles.tagChipActive]}
+                    onPress={() => toggleProfileLimitedArray('jouft_goals', goalOption, 2)}
+                  >
+                    <Text style={[styles.tagChipText, selected && styles.tagChipTextActive]}>{goalOption}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
             <TouchableOpacity
               style={[styles.primaryBtn, profileSaveBusy && styles.primaryBtnDisabled]}
               onPress={saveStylePreferences}
@@ -1781,7 +3213,11 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
             >
               <Text style={styles.primaryBtnText}>{profileSaveBusy ? 'Saving...' : 'Save Style Preferences'}</Text>
             </TouchableOpacity>
+              </>
+            ) : null}
 
+            {profileSection === 'shipping' ? (
+              <>
             <View style={styles.profileDivider} />
             <View style={styles.labelBlockHeader}>
               <Text style={styles.label}>Shipping Addresses</Text>
@@ -1811,6 +3247,30 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                   <TextInput value={entry.full_name} onChangeText={(value) => updateProfileShippingAddress(entry.id, 'full_name', value)} style={styles.input} />
                   <Text style={styles.label}>Address Line 1</Text>
                   <TextInput value={entry.address_line1} onChangeText={(value) => updateProfileShippingAddress(entry.id, 'address_line1', value)} style={styles.input} />
+                  <TouchableOpacity
+                    style={styles.secondaryBtnCompact}
+                    onPress={() => loadAddressSuggestionsFor(entry)}
+                    disabled={Boolean(addressSuggestBusyById[entry.id])}
+                  >
+                    <Text style={styles.secondaryBtnText}>
+                      {addressSuggestBusyById[entry.id] ? 'Finding...' : 'Find Address Suggestions'}
+                    </Text>
+                  </TouchableOpacity>
+                  {Array.isArray(addressSuggestionsById[entry.id]) && addressSuggestionsById[entry.id].length > 0 ? (
+                    <View style={styles.addressSuggestionList}>
+                      {addressSuggestionsById[entry.id].map((suggestion, idx) => (
+                        <TouchableOpacity
+                          key={`${entry.id}-suggestion-${idx}`}
+                          style={styles.addressSuggestionCard}
+                          onPress={() => applyAddressSuggestion(entry.id, suggestion)}
+                        >
+                          <Text style={styles.addressSuggestionText}>
+                            {suggestion.formatted || [suggestion.street_address, suggestion.city, suggestion.state, suggestion.postal_code].filter(Boolean).join(', ')}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  ) : null}
                   <Text style={styles.label}>Address Line 2</Text>
                   <TextInput value={entry.address_line2} onChangeText={(value) => updateProfileShippingAddress(entry.id, 'address_line2', value)} style={styles.input} />
                   <View style={styles.profileAddressRow}>
@@ -1844,20 +3304,35 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
             >
               <Text style={styles.primaryBtnText}>{profileSaveBusy ? 'Saving...' : 'Save Shipping Addresses'}</Text>
             </TouchableOpacity>
+              </>
+            ) : null}
 
+            {profileSection === 'subscription' ? (
+              <>
             <View style={styles.profileDivider} />
             <Text style={styles.label}>Subscription</Text>
             <View style={styles.profilePlanList}>
               {SUBSCRIPTION_PLANS.map((plan) => {
                 const selected = subscriptionPlan === plan.key;
+                const activePlan = String(profileQuiz?.subscription_plan || 'free') === plan.key;
                 const amount = subscriptionCycle === 'annual' ? plan.annual : plan.monthly;
                 return (
                   <TouchableOpacity
                     key={plan.key}
-                    style={[styles.profilePlanCard, selected && styles.profilePlanCardActive]}
-                    onPress={() => setSubscriptionPlan(plan.key)}
+                    style={[
+                      styles.profilePlanCard,
+                      selected && !activePlan && styles.profilePlanCardSelected,
+                      activePlan && styles.profilePlanCardActive,
+                    ]}
+                    onPress={() => {
+                      setSubscriptionPlan(plan.key);
+                      setProfileSaveMsg('');
+                    }}
                   >
-                    <Text style={styles.profilePlanTitle}>{plan.label}</Text>
+                    <View style={styles.profilePlanTitleRow}>
+                      <Text style={styles.profilePlanTitle}>{plan.label}</Text>
+                      {activePlan ? <Text style={styles.profilePlanActiveBadge}>Active</Text> : null}
+                    </View>
                     <Text style={styles.profilePlanPrice}>
                       {amount === 0 ? 'Free' : `$${amount}`} {subscriptionCycle === 'annual' ? '/ year' : '/ month'}
                     </Text>
@@ -1869,25 +3344,74 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
             <View style={styles.modeRow}>
               <TouchableOpacity
                 style={[styles.modeBtn, subscriptionCycle === 'monthly' && styles.modeBtnActive]}
-                onPress={() => setSubscriptionCycle('monthly')}
+                onPress={() => {
+                  setSubscriptionCycle('monthly');
+                  setProfileSaveMsg('');
+                }}
               >
                 <Text style={[styles.modeBtnText, subscriptionCycle === 'monthly' && styles.modeBtnTextActive]}>Monthly</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.modeBtn, subscriptionCycle === 'annual' && styles.modeBtnActive]}
-                onPress={() => setSubscriptionCycle('annual')}
+                onPress={() => {
+                  setSubscriptionCycle('annual');
+                  setProfileSaveMsg('');
+                }}
               >
                 <Text style={[styles.modeBtnText, subscriptionCycle === 'annual' && styles.modeBtnTextActive]}>Annual (10% Off)</Text>
               </TouchableOpacity>
             </View>
+            {(() => {
+              const selectedPlan = SUBSCRIPTION_PLANS.find((plan) => plan.key === subscriptionPlan);
+              const amount = subscriptionCycle === 'annual' ? Number(selectedPlan?.annual || 0) : Number(selectedPlan?.monthly || 0);
+              if (amount <= 0) return null;
+              return (
+                <>
+                  <Text style={styles.label}>Payment Method For This Subscription</Text>
+                  {paymentMethods.length === 0 ? (
+                    <Text style={styles.helperText}>Add a payment method before activating a paid plan.</Text>
+                  ) : (
+                    <View style={styles.profilePlanList}>
+                      {paymentMethods.map((method) => {
+                        const selectedForSubscription = method.payment_method_id === selectedSubscriptionPaymentMethodId;
+                        return (
+                          <TouchableOpacity
+                            key={`subscription-payment-${method.payment_method_id}`}
+                            style={[styles.profilePaymentCard, selectedForSubscription && styles.profilePaymentCardSelected]}
+                            onPress={() => setSelectedSubscriptionPaymentMethodId(method.payment_method_id)}
+                          >
+                            <Text style={styles.offerItemTitle}>
+                              {method.label || method.brand || method.method_type || 'Payment Method'}
+                              {method.is_default ? ' • Default' : ''}
+                            </Text>
+                            <Text style={styles.offerItemMeta}>
+                              {selectedForSubscription ? 'SELECTED FOR SUBSCRIPTION' : 'TAP TO USE FOR SUBSCRIPTION'}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  )}
+                </>
+              );
+            })()}
+            <Text style={styles.helperText}>
+              Current status: {titleCase(profileQuiz?.subscription_status || (subscriptionPlan === 'free' ? 'free' : 'not active'))}
+              {profileQuiz?.subscription_renewal_date ? ` • Renews ${profileQuiz.subscription_renewal_date}` : ''}
+            </Text>
+            {!!profileSaveMsg && <Text style={styles.notice}>{profileSaveMsg}</Text>}
             <TouchableOpacity
               style={[styles.primaryBtn, profileSaveBusy && styles.primaryBtnDisabled]}
               onPress={() => saveSubscriptionSettings(subscriptionPlan, subscriptionCycle)}
               disabled={profileSaveBusy}
             >
-              <Text style={styles.primaryBtnText}>{profileSaveBusy ? 'Saving...' : 'Save Subscription'}</Text>
+              <Text style={styles.primaryBtnText}>{profileSaveBusy ? 'Activating...' : (subscriptionPlan === 'free' ? 'Use Free Plan' : 'Activate Subscription')}</Text>
             </TouchableOpacity>
+              </>
+            ) : null}
 
+            {profileSection === 'payments' ? (
+              <>
             <View style={styles.profileDivider} />
             <View style={styles.labelBlockHeader}>
               <Text style={styles.label}>Payment Methods</Text>
@@ -1934,6 +3458,38 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                 </View>
               ))
             )}
+              </>
+            ) : null}
+
+            {profileSection === 'legal' ? (
+              <>
+            <View style={styles.profileDivider} />
+            <Text style={styles.label}>Legal & Contact</Text>
+            <View style={styles.profileLegalCard}>
+              <Text style={styles.offerLaneLabel}>Company Address</Text>
+              {CONTACT_ADDRESS_LINES.map((line) => (
+                <Text key={line} style={styles.profileLegalText}>{line}</Text>
+              ))}
+              <TouchableOpacity style={styles.secondaryBtnCompact} onPress={() => Linking.openURL(CONTACT_DIRECTIONS_URL)}>
+                <Text style={styles.secondaryBtnText}>Get Directions</Text>
+              </TouchableOpacity>
+            </View>
+            <View style={styles.profileLegalCard}>
+              <Text style={styles.offerLaneLabel}>Contact Email</Text>
+              <TouchableOpacity onPress={() => Linking.openURL(`mailto:${CONTACT_EMAIL}`)}>
+                <Text style={styles.profileLegalLink}>{CONTACT_EMAIL}</Text>
+              </TouchableOpacity>
+            </View>
+            <View style={styles.profileLegalActions}>
+              <TouchableOpacity style={styles.secondaryBtnCompact} onPress={() => Linking.openURL(TERMS_URL)}>
+                <Text style={styles.secondaryBtnText}>Terms</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.secondaryBtnCompact} onPress={() => Linking.openURL(PRIVACY_POLICY_URL)}>
+                <Text style={styles.secondaryBtnText}>Privacy Policy</Text>
+              </TouchableOpacity>
+            </View>
+              </>
+            ) : null}
           </View>
         )}
 
@@ -1944,6 +3500,8 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
           const targetGallery = listingGallery(targetListing, apiBaseUrl);
           const selectedAddressId = selectedAddressByOffer[offerId] || shippingAddresses[0]?.id || '';
           const labels = Array.isArray(shippingLabelsByOffer[offerId]) ? shippingLabelsByOffer[offerId] : [];
+          const quote = shippingQuoteByOffer[offerId] || null;
+          const shippingBusy = Boolean(shippingBusyByOffer[offerId]);
           const isPending = String(selectedOffer?.status || '').toLowerCase() === 'pending';
           const isAccepted = String(selectedOffer?.status || '').toLowerCase() === 'accepted';
           return (
@@ -2059,8 +3617,29 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                           <Text style={styles.secondaryBtnText}>Refresh</Text>
                         </TouchableOpacity>
                       </View>
+                      {quote ? (
+                        <Text style={styles.helperText}>
+                          Quote: {quote.carrier || 'USPS'} {quote.service_level || ''}{quote.amount ? ` • ${quote.currency || 'USD'} ${quote.amount}` : ''}
+                        </Text>
+                      ) : null}
+                      <View style={styles.actionRow}>
+                        <TouchableOpacity
+                          style={styles.secondaryBtn}
+                          onPress={() => loadShippingQuoteForOffer(offerId)}
+                          disabled={shippingBusy}
+                        >
+                          <Text style={styles.secondaryBtnText}>{shippingBusy ? 'Loading...' : 'Get Shipping Quote'}</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={[styles.primaryBtn, shippingBusy && styles.primaryBtnDisabled]}
+                          onPress={() => createShippingLabelsForOffer(offerId)}
+                          disabled={shippingBusy}
+                        >
+                          <Text style={styles.primaryBtnText}>{shippingBusy ? 'Creating...' : 'Create Label'}</Text>
+                        </TouchableOpacity>
+                      </View>
                       {labels.length === 0 ? (
-                        <Text style={styles.helperText}>No labels yet. Tap Refresh.</Text>
+                        <Text style={styles.helperText}>No labels yet. Get a quote, then create a label.</Text>
                       ) : (
                         labels.map((shipment) => (
                           <View key={`${offerId}-${shipment.shipment_id}`} style={styles.shipmentCard}>
@@ -2080,105 +3659,14 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
           );
         })() : null}
 
-        {isListingDetailOpen && selectedListing ? (() => {
-          const gallery = listingGallery(selectedListing, apiBaseUrl);
-          const hasMatches = Array.isArray(selectedListing?.matches) && selectedListing.matches.length > 0;
-          const ownerSubject = String(selectedListing?.owner_subject || '');
-          const canStartTrade = !ownerSubject || !marketplaceActorSubject || ownerSubject !== marketplaceActorSubject;
-          const description = listingDescription(selectedListing);
-          return (
-            <SafeAreaView style={styles.offerDetailOverlay}>
-              <View style={styles.offerDetailShell}>
-                <View style={styles.offerDetailHead}>
-                  <View>
-                    <Text style={styles.sectionEyebrow}>Listing Details</Text>
-                    <Text style={styles.offerDetailTitle}>{selectedListing?.title || 'Listing'}</Text>
-                  </View>
-                  <TouchableOpacity style={styles.secondaryBtnCompact} onPress={closeListingDetails} hitSlop={{ top: 10, right: 10, bottom: 10, left: 10 }}>
-                    <Text style={styles.secondaryBtnText}>Close</Text>
-                  </TouchableOpacity>
-                </View>
-                {selectedListingSource === 'marketplace' && marketplaceListings.length > 1 ? (
-                  <View style={styles.marketFlipRow}>
-                    <TouchableOpacity style={styles.secondaryBtnCompact} onPress={() => flipMarketplaceListing(-1)}>
-                      <Text style={styles.secondaryBtnText}>Prev</Text>
-                    </TouchableOpacity>
-                    <Text style={styles.marketFlipText}>
-                      Page {Math.max(1, selectedListingIndex + 1)} / {marketplaceListings.length}
-                    </Text>
-                    <TouchableOpacity style={styles.secondaryBtnCompact} onPress={() => flipMarketplaceListing(1)}>
-                      <Text style={styles.secondaryBtnText}>Next</Text>
-                    </TouchableOpacity>
-                  </View>
-                ) : null}
-                <ScrollView contentContainerStyle={styles.offerDetailBody} keyboardShouldPersistTaps="handled">
-                  <View style={styles.offerDetailPanel}>
-                    <Text style={styles.offerLaneLabel}>Gallery</Text>
-                    {gallery.length > 0 ? (
-                      <>
-                        <Image source={{ uri: gallery[0] }} style={styles.offerDetailHero} />
-                        {gallery.length > 1 ? (
-                          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.offerDetailThumbRow}>
-                            {gallery.slice(1).map((src, idx) => (
-                              <Image key={`${selectedListing?.listing_id || 'listing'}-extra-${idx}`} source={{ uri: src }} style={styles.offerDetailThumb} />
-                            ))}
-                          </ScrollView>
-                        ) : null}
-                      </>
-                    ) : (
-                      <View style={[styles.offerDetailHero, styles.offerImageFallback]}>
-                        <Text style={styles.emptyText}>No image</Text>
-                      </View>
-                    )}
-                    <Text style={styles.offerDetailItemMeta}>
-                      {selectedListing?.brand || 'Unknown'} • {titleCase(selectedListing?.condition || 'unknown')} • {titleCase(selectedListing?.category || 'listing')}
-                    </Text>
-                    <Text style={styles.offerDetailItemMeta}>
-                      {money(selectedListing?.estimated_value)}
-                    </Text>
-                  </View>
-
-                  <View style={styles.offerDetailPanel}>
-                    <Text style={styles.offerLaneLabel}>Description</Text>
-                    <Text style={styles.offerDetailMessage}>{description || 'No description provided.'}</Text>
-                  </View>
-
-                  {hasMatches ? (
-                    <View style={styles.offerDetailPanel}>
-                      <Text style={styles.offerLaneLabel}>Matched Items</Text>
-                      <View style={styles.matchThumbStrip}>
-                        {getMatchPreviewImages(selectedListing, apiBaseUrl).map((src, idx) => (
-                          <Image
-                            key={`${selectedListing?.listing_id || 'listing'}-matched-${idx}`}
-                            source={{ uri: src }}
-                            style={styles.matchThumb}
-                          />
-                        ))}
-                      </View>
-                    </View>
-                  ) : null}
-
-                  {canStartTrade && hasMatches ? (
-                    <View style={styles.offerDetailPanel}>
-                      <TouchableOpacity
-                        style={styles.primaryBtn}
-                        onPress={() => {
-                          closeListingDetails();
-                          openTradeComposer(selectedListing);
-                        }}
-                      >
-                        <Text style={styles.primaryBtnText}>Start Trade</Text>
-                      </TouchableOpacity>
-                    </View>
-                  ) : null}
-                </ScrollView>
-              </View>
-            </SafeAreaView>
-          );
-        })() : null}
-
         {tradeComposerTarget ? (() => {
           const targetGallery = listingGallery(tradeComposerTarget, apiBaseUrl);
+          const offeredTotalValue = tradeOfferCandidates
+            .filter((listing) => tradeOfferListingIds.includes(listing?.listing_id))
+            .reduce((sum, listing) => sum + Number(listing?.estimated_value || 0), 0);
+          const targetValue = Number(tradeComposerTarget?.estimated_value || 0);
+          const gapPct = targetValue > 0 ? Math.abs(offeredTotalValue - targetValue) / targetValue : null;
+          const withinBand = gapPct !== null ? gapPct <= 0.30 : false;
           return (
             <SafeAreaView style={styles.offerDetailOverlay}>
               <View style={styles.offerDetailShell}>
@@ -2205,6 +3693,16 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                     <Text style={styles.offerDetailItemMeta}>
                       {tradeComposerTarget?.brand || 'Unknown'} • {titleCase(tradeComposerTarget?.condition || 'unknown')} • {money(tradeComposerTarget?.estimated_value)}
                     </Text>
+                    <TouchableOpacity
+                      style={styles.secondaryBtnCompact}
+                      onPress={() => {
+                        const target = tradeComposerTarget;
+                        closeTradeComposer();
+                        openListingDetails(target, 'marketplace');
+                      }}
+                    >
+                      <Text style={styles.secondaryBtnText}>View Details</Text>
+                    </TouchableOpacity>
                   </View>
 
                   <View style={styles.offerDetailPanel}>
@@ -2244,6 +3742,12 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                   </View>
 
                   <View style={styles.offerDetailPanel}>
+                    <Text style={styles.helperText}>
+                      Offered total: {money(offeredTotalValue)} • Target: {money(targetValue)}
+                    </Text>
+                    <Text style={withinBand ? styles.notice : styles.error}>
+                      {gapPct === null ? 'Target listing needs a value before sending an offer.' : (withinBand ? 'Within 30% trade band' : 'Outside 30% trade band')}
+                    </Text>
                     <Text style={styles.label}>Message (optional)</Text>
                     <TextInput
                       value={tradeOfferMessage}
@@ -2258,9 +3762,9 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                         <Text style={styles.secondaryBtnText}>Cancel</Text>
                       </TouchableOpacity>
                       <TouchableOpacity
-                        style={[styles.primaryBtn, tradeOfferBusy && styles.primaryBtnDisabled]}
+                        style={[styles.primaryBtn, (tradeOfferBusy || !withinBand) && styles.primaryBtnDisabled]}
                         onPress={submitTradeOffer}
-                        disabled={tradeOfferBusy}
+                        disabled={tradeOfferBusy || !withinBand}
                       >
                         <Text style={styles.primaryBtnText}>{tradeOfferBusy ? 'Sending...' : 'Send Trade Offer'}</Text>
                       </TouchableOpacity>
@@ -2272,34 +3776,122 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
           );
         })() : null}
       </ScrollView>
+      <Modal
+        visible={Boolean(selectedGalleryImage)}
+        animationType="fade"
+        transparent={false}
+        onRequestClose={() => setSelectedGalleryImage(null)}
+      >
+        <SafeAreaView style={styles.galleryModalRoot}>
+          <View style={styles.galleryModalHeader}>
+            <TouchableOpacity
+              style={[styles.secondaryBtnCompact, styles.galleryModalCloseButton]}
+              onPress={() => setSelectedGalleryImage(null)}
+              hitSlop={{ top: 10, right: 10, bottom: 10, left: 10 }}
+            >
+              <Text style={styles.secondaryBtnText}>Close</Text>
+            </TouchableOpacity>
+          </View>
+          {selectedGalleryImage ? (
+            <Image
+              source={{ uri: selectedGalleryImage }}
+              style={styles.galleryModalImage}
+              resizeMode="contain"
+            />
+          ) : null}
+        </SafeAreaView>
+      </Modal>
       <View style={styles.tabContainer}>
         {TABS.map((tab) => (
-          <AppTabButton key={tab} tab={tab} activeTab={activeTab} onPress={setActiveTab} />
+          <AppTabButton key={tab} tab={tab} activeTab={activeTab === 'editListing' ? 'closet' : activeTab} onPress={handleTabPress} />
         ))}
       </View>
-    </View>
+    </SafeAreaView>
   );
 }
 
 function ClerkAuthScreen() {
+  const [authPanelOpen, setAuthPanelOpen] = useState(false);
   const [mode, setMode] = useState('sign_in');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [verificationCode, setVerificationCode] = useState('');
+  const [pendingSignInVerification, setPendingSignInVerification] = useState(false);
+  const [pendingSignUpVerification, setPendingSignUpVerification] = useState(false);
+  const [pendingPasswordReset, setPendingPasswordReset] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [oauthBusy, setOauthBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const { isLoaded: signInLoaded, signIn, setActive: setSignInActive } = useSignIn();
   const { isLoaded: signUpLoaded, signUp, setActive: setSignUpActive } = useSignUp();
+  const { startOAuthFlow: startFacebookOAuthFlow } = useOAuth({ strategy: 'oauth_facebook' });
 
-  async function submitSignIn() {
+  function clerkErrorMessage(e, fallback) {
+    const message = e?.errors?.[0]?.longMessage || e?.errors?.[0]?.message || e?.message || fallback;
+    if (String(message || '').toLowerCase().includes('verification strategy')) {
+      return `${message} Enable email code verification in Clerk, or change the mobile flow to match the enabled Clerk verification method.`;
+    }
+    return message;
+  }
+
+  function resetAuthFlow(nextMode) {
+    setMode(nextMode);
+    setError('');
+    setNotice('');
+    setVerificationCode('');
+    setPassword('');
+    setPendingSignInVerification(false);
+    setPendingSignUpVerification(false);
+    setPendingPasswordReset(false);
+  }
+
+  function openAuth(nextMode) {
+    resetAuthFlow(nextMode);
+    setAuthPanelOpen(true);
+  }
+
+  async function submitFacebookOAuth() {
+    setOauthBusy(true);
+    setError('');
+    setNotice('');
+    try {
+      const { createdSessionId, setActive } = await startFacebookOAuthFlow();
+      if (createdSessionId && setActive) {
+        await setActive({ session: createdSessionId });
+        return;
+      }
+      setNotice('Facebook sign-in was cancelled or did not complete.');
+    } catch (e) {
+      setError(clerkErrorMessage(e, 'Facebook sign-in failed.'));
+    } finally {
+      setOauthBusy(false);
+    }
+  }
+
+  async function prepareSignInEmailCode(result) {
+    const emailCodeFactor = (result?.supportedFirstFactors || []).find((factor) => factor?.strategy === 'email_code');
+    if (!emailCodeFactor?.emailAddressId) {
+      setError('This account needs a sign-in method that the mobile app does not support yet.');
+      return;
+    }
+    await signIn.prepareFirstFactor({
+      strategy: 'email_code',
+      emailAddressId: emailCodeFactor.emailAddressId,
+    });
+    setPendingSignInVerification(true);
+    setNotice('Enter the sign-in code Clerk sent to your email.');
+  }
+
+  async function submitSignInVerification() {
     if (!signInLoaded) return;
     setBusy(true);
     setError('');
     setNotice('');
     try {
-      const result = await signIn.create({
-        identifier: email.trim(),
-        password,
+      const result = await signIn.attemptFirstFactor({
+        strategy: 'email_code',
+        code: verificationCode.trim(),
       });
       if (result?.status === 'complete' && result?.createdSessionId) {
         await setSignInActive({ session: result.createdSessionId });
@@ -2307,7 +3899,63 @@ function ClerkAuthScreen() {
       }
       setError('Additional sign-in steps are required for this account.');
     } catch (e) {
-      setError(e?.errors?.[0]?.longMessage || e?.errors?.[0]?.message || e.message || 'Sign in failed.');
+      setError(clerkErrorMessage(e, 'Verification failed.'));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function submitSignIn() {
+    if (!signInLoaded) return;
+    if (pendingSignInVerification) {
+      await submitSignInVerification();
+      return;
+    }
+    setBusy(true);
+    setError('');
+    setNotice('');
+    try {
+      const payload = { identifier: email.trim() };
+      if (password.trim()) payload.password = password;
+      const result = await signIn.create(payload);
+      if (result?.status === 'complete' && result?.createdSessionId) {
+        await setSignInActive({ session: result.createdSessionId });
+        return;
+      }
+      await prepareSignInEmailCode(result);
+    } catch (e) {
+      const message = clerkErrorMessage(e, 'Sign in failed.');
+      if (String(message || '').toLowerCase().includes('verification strategy')) {
+        try {
+          const result = await signIn.create({ identifier: email.trim() });
+          await prepareSignInEmailCode(result);
+        } catch (fallbackError) {
+          setError(clerkErrorMessage(fallbackError, 'Sign in failed.'));
+        }
+      } else {
+        setError(message);
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function submitSignUpVerification() {
+    if (!signUpLoaded) return;
+    setBusy(true);
+    setError('');
+    setNotice('');
+    try {
+      const result = await signUp.attemptEmailAddressVerification({
+        code: verificationCode.trim(),
+      });
+      if (result?.status === 'complete' && result?.createdSessionId) {
+        await setSignUpActive({ session: result.createdSessionId });
+        return;
+      }
+      setError('Additional sign-up steps are required for this account.');
+    } catch (e) {
+      setError(clerkErrorMessage(e, 'Verification failed.'));
     } finally {
       setBusy(false);
     }
@@ -2315,6 +3963,10 @@ function ClerkAuthScreen() {
 
   async function submitSignUp() {
     if (!signUpLoaded) return;
+    if (pendingSignUpVerification) {
+      await submitSignUpVerification();
+      return;
+    }
     setBusy(true);
     setError('');
     setNotice('');
@@ -2327,47 +3979,221 @@ function ClerkAuthScreen() {
         await setSignUpActive({ session: result.createdSessionId });
         return;
       }
-      setNotice('Sign-up started. Complete any required verification to finish.');
+      await signUp.prepareEmailAddressVerification({ strategy: 'email_code' });
+      setPendingSignUpVerification(true);
+      setNotice('Enter the verification code Clerk sent to your email.');
     } catch (e) {
-      setError(e?.errors?.[0]?.longMessage || e?.errors?.[0]?.message || e.message || 'Sign up failed.');
+      setError(clerkErrorMessage(e, 'Sign up failed.'));
     } finally {
       setBusy(false);
     }
   }
 
+  async function submitPasswordReset() {
+    if (!signInLoaded) return;
+    const identifier = email.trim();
+    if (!identifier) {
+      setError('Enter your email address to reset your password.');
+      return;
+    }
+    setBusy(true);
+    setError('');
+    setNotice('');
+    try {
+      if (!pendingPasswordReset) {
+        await signIn.create({
+          strategy: 'reset_password_email_code',
+          identifier,
+        });
+        setPendingPasswordReset(true);
+        setNotice('Clerk sent a password reset code to your email.');
+        return;
+      }
+
+      const result = await signIn.attemptFirstFactor({
+        strategy: 'reset_password_email_code',
+        code: verificationCode.trim(),
+        password,
+      });
+      if (result?.status === 'needs_new_password') {
+        const resetResult = await signIn.resetPassword({
+          password,
+          signOutOfOtherSessions: true,
+        });
+        if (resetResult?.status === 'complete' && resetResult?.createdSessionId) {
+          await setSignInActive({ session: resetResult.createdSessionId });
+          return;
+        }
+      }
+      if (result?.status === 'complete' && result?.createdSessionId) {
+        await setSignInActive({ session: result.createdSessionId });
+        return;
+      }
+      setError('Additional password reset steps are required for this account.');
+    } catch (e) {
+      setError(clerkErrorMessage(e, 'Password reset failed.'));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function authTitleForMode() {
+    if (mode === 'reset_password') return 'Reset Password';
+    return mode === 'sign_in' ? 'Sign In' : 'Create Account';
+  }
+
   return (
     <SafeAreaView style={styles.authRoot}>
       <StatusBar style="dark" />
-      <View style={styles.authCard}>
-        <Text style={styles.sectionEyebrow}>Jouft Access</Text>
-        <Text style={styles.authTitle}>{mode === 'sign_in' ? 'Sign In' : 'Create Account'}</Text>
-        <Text style={styles.helperText}>Use your Clerk account to access marketplace, closet, and trade inbox.</Text>
-
-        <View style={styles.modeRow}>
-          <TouchableOpacity style={[styles.modeBtn, mode === 'sign_in' && styles.modeBtnActive]} onPress={() => setMode('sign_in')}>
-            <Text style={[styles.modeBtnText, mode === 'sign_in' && styles.modeBtnTextActive]}>Sign In</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={[styles.modeBtn, mode === 'sign_up' && styles.modeBtnActive]} onPress={() => setMode('sign_up')}>
-            <Text style={[styles.modeBtnText, mode === 'sign_up' && styles.modeBtnTextActive]}>Create Account</Text>
-          </TouchableOpacity>
+      <ScrollView style={styles.authScroll} contentContainerStyle={styles.authScrollContent}>
+        <View style={styles.mobileAuthHero}>
+          <View style={styles.mobileAuthTopbar}>
+            <Text style={styles.mobileAuthLogo}>JOUFT</Text>
+            <Text style={styles.mobileAuthPill}>INVITE ONLY</Text>
+          </View>
+          <Image
+            source={{ uri: 'https://images.unsplash.com/photo-1617038220319-276d3cfab638?auto=format&fit=crop&w=1200&q=80' }}
+            style={styles.mobileAuthHeroImage}
+          />
+          <View style={styles.mobileAuthCopy}>
+            <Text style={styles.sectionEyebrow}>TRADE. ELEVATE. BELONG.</Text>
+            <Text style={styles.mobileAuthTitle}>The Fashion Trading Platform for Collectors</Text>
+            <Text style={styles.mobileAuthText}>
+              Trade authentic fashion with a curated community built around style, value, and trust.
+            </Text>
+            <View style={styles.authHeroActions}>
+              <TouchableOpacity style={styles.primaryBtn} onPress={() => openAuth('sign_up')}>
+                <Text style={styles.primaryBtnText}>Request Access</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.secondaryBtn} onPress={() => openAuth('sign_in')}>
+                <Text style={styles.secondaryBtnText}>Log In</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
         </View>
 
-        <Text style={styles.label}>Email</Text>
-        <TextInput value={email} onChangeText={setEmail} style={styles.input} autoCapitalize="none" keyboardType="email-address" />
-        <Text style={styles.label}>Password</Text>
-        <TextInput value={password} onChangeText={setPassword} style={styles.input} secureTextEntry autoCapitalize="none" />
+        <View style={styles.authValueStrip}>
+          <View style={styles.authValueItem}>
+            <Text style={styles.authValueTitle}>Curated Quality</Text>
+            <Text style={styles.authValueText}>Discover pieces matched by style and value.</Text>
+          </View>
+          <View style={styles.authValueItem}>
+            <Text style={styles.authValueTitle}>Secure Trades</Text>
+            <Text style={styles.authValueText}>Accept offers and manage shipping in one place.</Text>
+          </View>
+          <View style={styles.authValueItem}>
+            <Text style={styles.authValueTitle}>Sustainable Style</Text>
+            <Text style={styles.authValueText}>Extend item life while refreshing your closet.</Text>
+          </View>
+        </View>
 
-        {!!error && <Text style={styles.error}>{error}</Text>}
-        {!!notice && <Text style={styles.notice}>{notice}</Text>}
-
-        <TouchableOpacity
-          style={[styles.primaryBtn, busy && styles.primaryBtnDisabled]}
-          onPress={mode === 'sign_in' ? submitSignIn : submitSignUp}
-          disabled={busy}
+        <Modal
+          visible={authPanelOpen}
+          animationType="slide"
+          transparent
+          onRequestClose={() => setAuthPanelOpen(false)}
         >
-          <Text style={styles.primaryBtnText}>{busy ? 'Please wait...' : (mode === 'sign_in' ? 'Sign In' : 'Create Account')}</Text>
-        </TouchableOpacity>
-      </View>
+          <View style={styles.authModalOverlay}>
+            <ScrollView
+              style={styles.authModalScroll}
+              contentContainerStyle={styles.authModalContent}
+              keyboardShouldPersistTaps="handled"
+            >
+              <View style={[styles.authCard, styles.authModalCard]}>
+                <View style={styles.authPanelHeader}>
+                  <View>
+                    <Text style={styles.sectionEyebrow}>Jouft Access</Text>
+                    <Text style={styles.authTitle}>{authTitleForMode()}</Text>
+                  </View>
+                  <TouchableOpacity style={styles.secondaryBtnCompact} onPress={() => setAuthPanelOpen(false)}>
+                    <Text style={styles.secondaryBtnText}>Close</Text>
+                  </TouchableOpacity>
+                </View>
+
+                <TouchableOpacity
+                  style={[styles.facebookBtn, oauthBusy && styles.primaryBtnDisabled]}
+                  onPress={submitFacebookOAuth}
+                  disabled={oauthBusy}
+                >
+                  <Text style={styles.facebookBtnText}>{oauthBusy ? 'Connecting...' : 'Continue with Facebook'}</Text>
+                </TouchableOpacity>
+
+                <View style={styles.authDivider}>
+                  <View style={styles.authDividerLine} />
+                  <Text style={styles.authDividerText}>or</Text>
+                  <View style={styles.authDividerLine} />
+                </View>
+
+                <View style={styles.modeRow}>
+                  <TouchableOpacity style={[styles.modeBtn, mode === 'sign_in' && styles.modeBtnActive]} onPress={() => resetAuthFlow('sign_in')}>
+                    <Text style={[styles.modeBtnText, mode === 'sign_in' && styles.modeBtnTextActive]}>Sign In</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={[styles.modeBtn, mode === 'sign_up' && styles.modeBtnActive]} onPress={() => resetAuthFlow('sign_up')}>
+                    <Text style={[styles.modeBtnText, mode === 'sign_up' && styles.modeBtnTextActive]}>Create Account</Text>
+                  </TouchableOpacity>
+                </View>
+
+                <Text style={styles.label}>Email</Text>
+                <TextInput
+                  value={email}
+                  onChangeText={setEmail}
+                  style={styles.input}
+                  autoCapitalize="none"
+                  keyboardType="email-address"
+                  editable={!pendingSignInVerification && !pendingSignUpVerification}
+                />
+                {mode === 'reset_password' ? (
+                  <>
+                    {pendingPasswordReset ? (
+                      <>
+                        <Text style={styles.label}>Reset Code</Text>
+                        <TextInput value={verificationCode} onChangeText={setVerificationCode} style={styles.input} autoCapitalize="none" keyboardType="number-pad" />
+                        <Text style={styles.label}>New Password</Text>
+                        <TextInput value={password} onChangeText={setPassword} style={styles.input} secureTextEntry autoCapitalize="none" />
+                      </>
+                    ) : null}
+                  </>
+                ) : !pendingSignInVerification && !pendingSignUpVerification ? (
+                  <>
+                    <Text style={styles.label}>Password</Text>
+                    <TextInput value={password} onChangeText={setPassword} style={styles.input} secureTextEntry autoCapitalize="none" />
+                    {mode === 'sign_in' ? (
+                      <TouchableOpacity style={styles.authLinkButton} onPress={() => resetAuthFlow('reset_password')}>
+                        <Text style={styles.authLinkText}>Forgot password?</Text>
+                      </TouchableOpacity>
+                    ) : null}
+                  </>
+                ) : (
+                  <>
+                    <Text style={styles.label}>Verification Code</Text>
+                    <TextInput value={verificationCode} onChangeText={setVerificationCode} style={styles.input} autoCapitalize="none" keyboardType="number-pad" />
+                  </>
+                )}
+
+                {!!error && <Text style={styles.error}>{error}</Text>}
+                {!!notice && <Text style={styles.notice}>{notice}</Text>}
+
+                <TouchableOpacity
+                  style={[styles.primaryBtn, busy && styles.primaryBtnDisabled]}
+                  onPress={mode === 'reset_password' ? submitPasswordReset : (mode === 'sign_in' ? submitSignIn : submitSignUp)}
+                  disabled={busy}
+                >
+                  <Text style={styles.primaryBtnText}>
+                    {busy ? 'Please wait...' : (mode === 'reset_password' ? (pendingPasswordReset ? 'Reset Password' : 'Send Reset Code') : ((pendingSignInVerification || pendingSignUpVerification) ? 'Verify Email' : (mode === 'sign_in' ? 'Sign In' : 'Create Account')))}
+                  </Text>
+                </TouchableOpacity>
+
+                {mode === 'reset_password' ? (
+                  <TouchableOpacity style={styles.authLinkButton} onPress={() => resetAuthFlow('sign_in')}>
+                    <Text style={styles.authLinkText}>Back to sign in</Text>
+                  </TouchableOpacity>
+                ) : null}
+
+              </View>
+            </ScrollView>
+          </View>
+        </Modal>
+      </ScrollView>
     </SafeAreaView>
   );
 }
@@ -2387,26 +4213,70 @@ function ClerkMobileApp() {
 
   if (!isSignedIn) return <ClerkAuthScreen />;
 
-  const label = user?.primaryEmailAddress?.emailAddress || user?.username || user?.id || 'Authenticated user';
+  const label = user?.fullName || user?.primaryEmailAddress?.emailAddress || user?.username || user?.id || 'Authenticated user';
+  const clerkUserProfile = {
+    firstName: user?.firstName || '',
+    lastName: user?.lastName || '',
+    email: user?.primaryEmailAddress?.emailAddress || '',
+  };
 
   return (
     <MarketplaceMobileApp
       clerkEnabled
       getBearerToken={getToken}
       clerkUserLabel={label}
+      clerkUserProfile={clerkUserProfile}
       onSignOut={() => signOut()}
     />
   );
 }
 
-export default function App() {
-  if (!CLERK_PUBLISHABLE_KEY) {
-    return <MarketplaceMobileApp />;
+class RootErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null };
   }
+
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <SafeAreaProvider>
+          <SafeAreaView style={styles.authRoot}>
+            <View style={styles.rootErrorCard}>
+              <Text style={styles.authTitle}>Unable to Start</Text>
+              <Text style={styles.error}>{this.state.error?.message || String(this.state.error)}</Text>
+            </View>
+          </SafeAreaView>
+        </SafeAreaProvider>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+function AppContent() {
   return (
-    <ClerkProvider publishableKey={CLERK_PUBLISHABLE_KEY} tokenCache={tokenCache}>
-      <ClerkMobileApp />
-    </ClerkProvider>
+    <SafeAreaProvider>
+      {!CLERK_PUBLISHABLE_KEY ? (
+        <MarketplaceMobileApp />
+      ) : (
+        <ClerkProvider publishableKey={CLERK_PUBLISHABLE_KEY} tokenCache={tokenCache}>
+          <ClerkMobileApp />
+        </ClerkProvider>
+      )}
+    </SafeAreaProvider>
+  );
+}
+
+export default function App() {
+  return (
+    <RootErrorBoundary>
+      <AppContent />
+    </RootErrorBoundary>
   );
 }
 
@@ -2417,10 +4287,47 @@ const styles = StyleSheet.create({
   authRoot: {
     flex: 1,
     backgroundColor: theme.bg,
+  },
+  authScroll: {
+    flex: 1,
+  },
+  authScrollContent: {
     paddingHorizontal: 16,
-    justifyContent: 'center',
+    paddingTop: 14,
+    paddingBottom: 28,
+    gap: 12,
   },
   authCard: {
+    borderWidth: 1,
+    borderColor: theme.line,
+    backgroundColor: theme.surface,
+    padding: 14,
+    gap: 8,
+    borderRadius: 12,
+  },
+  authModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(16, 14, 12, 0.48)',
+    justifyContent: 'center',
+  },
+  authModalScroll: {
+    flex: 1,
+  },
+  authModalContent: {
+    flexGrow: 1,
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 26,
+  },
+  authModalCard: {
+    shadowColor: '#000',
+    shadowOpacity: 0.2,
+    shadowRadius: 24,
+    shadowOffset: { width: 0, height: 12 },
+    elevation: 12,
+  },
+  rootErrorCard: {
+    margin: 16,
     borderWidth: 1,
     borderColor: theme.line,
     backgroundColor: theme.surface,
@@ -2433,6 +4340,130 @@ const styles = StyleSheet.create({
     fontSize: 30,
     lineHeight: 34,
     fontFamily: 'Didot',
+  },
+  mobileAuthHero: {
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: theme.line,
+    backgroundColor: '#120d0c',
+    borderRadius: 16,
+  },
+  mobileAuthTopbar: {
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  mobileAuthLogo: {
+    color: '#fffaf5',
+    fontFamily: 'Didot',
+    fontSize: 28,
+    letterSpacing: 1.8,
+  },
+  mobileAuthPill: {
+    color: '#f1e8e1',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.35)',
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    fontSize: 10,
+    letterSpacing: 1,
+    fontWeight: '700',
+  },
+  mobileAuthHeroImage: {
+    width: '100%',
+    height: 250,
+    backgroundColor: '#2d2521',
+  },
+  mobileAuthCopy: {
+    padding: 16,
+    gap: 10,
+  },
+  mobileAuthTitle: {
+    color: '#fffaf5',
+    fontFamily: 'Didot',
+    fontSize: 38,
+    lineHeight: 41,
+  },
+  mobileAuthText: {
+    color: '#eadfd6',
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  authHeroActions: {
+    gap: 9,
+    marginTop: 4,
+  },
+  authValueStrip: {
+    gap: 8,
+  },
+  authValueItem: {
+    borderWidth: 1,
+    borderColor: theme.line,
+    borderRadius: 12,
+    backgroundColor: theme.surface,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  authValueTitle: {
+    color: theme.brand,
+    fontSize: 12,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+  },
+  authValueText: {
+    color: theme.muted,
+    fontSize: 12,
+    lineHeight: 17,
+    marginTop: 2,
+  },
+  authPanelHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  facebookBtn: {
+    backgroundColor: '#1877f2',
+    borderRadius: 10,
+    paddingVertical: 13,
+    paddingHorizontal: 14,
+    alignItems: 'center',
+  },
+  facebookBtnText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  authDivider: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 4,
+  },
+  authDividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: theme.line,
+  },
+  authDividerText: {
+    color: theme.muted,
+    fontSize: 12,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+  },
+  authLinkButton: {
+    alignSelf: 'flex-start',
+    paddingVertical: 6,
+  },
+  authLinkText: {
+    color: theme.brand,
+    fontSize: 13,
+    fontWeight: '800',
+    textDecorationLine: 'underline',
   },
 
   brandWrap: {
@@ -2488,12 +4519,16 @@ const styles = StyleSheet.create({
     borderColor: '#d4c8b6',
     borderRadius: 12,
     paddingHorizontal: 6,
-    paddingVertical: 9,
+    paddingVertical: 7,
     backgroundColor: '#fff',
     alignItems: 'center',
     justifyContent: 'center',
+    minHeight: 54,
   },
   tabButtonActive: { backgroundColor: theme.brand, borderColor: theme.brand },
+  tabButtonIcon: {
+    marginBottom: 2,
+  },
   tabButtonText: { color: '#4a4139', fontSize: 10, letterSpacing: 0.8, fontWeight: '700', textTransform: 'uppercase' },
   tabButtonTextActive: { color: '#fff' },
 
@@ -2513,6 +4548,49 @@ const styles = StyleSheet.create({
     marginTop: 6,
     paddingTop: 8,
   },
+  alertPreferenceList: {
+    gap: 8,
+  },
+  alertPreferenceRow: {
+    borderWidth: 1,
+    borderColor: theme.line,
+    borderRadius: 10,
+    backgroundColor: '#fff',
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  alertPreferenceLabel: {
+    color: '#231c16',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  alertToggle: {
+    minWidth: 54,
+    borderWidth: 1,
+    borderColor: '#d8c8b8',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    alignItems: 'center',
+    backgroundColor: '#fff',
+  },
+  alertToggleActive: {
+    borderColor: theme.brand,
+    backgroundColor: theme.brand,
+  },
+  alertToggleText: {
+    color: theme.brand,
+    fontSize: 11,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+  },
+  alertToggleTextActive: {
+    color: '#fff',
+  },
   profilePlanList: {
     gap: 8,
   },
@@ -2524,15 +4602,37 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     gap: 3,
   },
+  profilePlanCardSelected: {
+    borderColor: '#b8a996',
+    backgroundColor: '#fffaf4',
+  },
   profilePlanCardActive: {
     borderColor: theme.brand,
     backgroundColor: theme.brandSoft,
+  },
+  profilePlanTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
   },
   profilePlanTitle: {
     color: '#231c16',
     fontSize: 14,
     fontWeight: '700',
     letterSpacing: 0.4,
+  },
+  profilePlanActiveBadge: {
+    color: '#fff',
+    backgroundColor: theme.brand,
+    overflow: 'hidden',
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
   },
   profilePlanPrice: {
     color: theme.brand,
@@ -2575,47 +4675,133 @@ const styles = StyleSheet.create({
   headerActionText: { color: theme.brand, fontSize: 11, fontWeight: '700', letterSpacing: 1.1, textTransform: 'uppercase' },
 
   listingCard: {
+    position: 'relative',
     borderWidth: 1,
     borderColor: theme.line,
     borderRadius: 0,
     overflow: 'hidden',
     backgroundColor: '#fff',
   },
+  listingCardDisabled: {
+    borderColor: '#d8cab8',
+  },
+  listingCardContentDisabled: {
+    opacity: 0.3,
+  },
+  pendingReviewOverlay: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 5,
+  },
+  pendingReviewText: {
+    borderWidth: 1,
+    borderColor: 'rgba(90, 18, 27, 0.38)',
+    backgroundColor: 'rgba(255, 255, 255, 0.94)',
+    color: theme.brand,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 1.4,
+    lineHeight: 16,
+    textAlign: 'center',
+    textTransform: 'uppercase',
+  },
   listingImage: { width: '100%', height: 220, backgroundColor: '#ddd4ca' },
   listingImageFallback: { alignItems: 'center', justifyContent: 'center' },
-  listingBody: { padding: 12, gap: 6 },
-  listingEyebrow: { color: '#766d64', fontSize: 11, fontWeight: '600', letterSpacing: 1.3, textTransform: 'uppercase' },
+  listingBody: { padding: 12, gap: 8 },
+  listingTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+  },
   listingTitle: {
     color: '#171511',
-    fontSize: 16,
-    lineHeight: 17.3,
-    minHeight: 34.6,
-    fontWeight: '500',
-    letterSpacing: -0.1,
+    fontSize: 18,
+    lineHeight: 21,
+    fontWeight: '600',
+  },
+  listingByline: {
+    color: '#171511',
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '800',
+    letterSpacing: 2,
+    textTransform: 'uppercase',
+  },
+  likeButton: {
+    width: 38,
+    height: 38,
+    borderWidth: 1,
+    borderColor: '#d8c8b8',
+    borderRadius: 19,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#fff',
+  },
+  likeButtonActive: {
+    borderColor: theme.brand,
+    backgroundColor: theme.brandSoft,
+  },
+  likeButtonText: {
+    color: theme.brand,
+    fontSize: 23,
+    lineHeight: 26,
+  },
+  likeButtonTextActive: {
+    color: theme.brand,
+  },
+  likeDetailButtonActive: {
+    borderColor: theme.brand,
+    backgroundColor: theme.brandSoft,
+  },
+  likeDetailButtonTextActive: {
+    color: theme.brand,
   },
   listingMeta: {
     color: '#55606f',
-    fontSize: 11,
-    lineHeight: 16,
+    fontSize: 12,
+    lineHeight: 17,
     textTransform: 'uppercase',
-    letterSpacing: 0.8,
-    minHeight: 32,
+    letterSpacing: 1.7,
   },
-  valueChip: {
+  statusBadge: {
     alignSelf: 'flex-start',
     borderWidth: 1,
-    borderColor: theme.line,
-    borderRadius: 0,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    backgroundColor: '#fff',
+    borderColor: '#d8c8b8',
+    backgroundColor: '#f7f0e8',
+    paddingHorizontal: 9,
+    paddingVertical: 5,
   },
-  valueChipText: {
-    color: '#1f2937',
-    fontSize: 11,
-    fontWeight: '600',
+  statusBadgeFailed: {
+    borderColor: 'rgba(168,34,34,0.34)',
+    backgroundColor: 'rgba(168,34,34,0.08)',
+  },
+  statusBadgeText: {
+    color: '#4a4139',
+    fontSize: 10,
+    fontWeight: '700',
     letterSpacing: 1,
     textTransform: 'uppercase',
+  },
+  statusBadgeTextFailed: {
+    color: theme.error,
+  },
+  analysisFailedText: {
+    borderWidth: 1,
+    borderColor: 'rgba(168,34,34,0.28)',
+    backgroundColor: 'rgba(168,34,34,0.08)',
+    color: theme.error,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '700',
   },
   matchesRow: {
     marginTop: 4,
@@ -2763,6 +4949,11 @@ const styles = StyleSheet.create({
     backgroundColor: theme.surface,
     overflow: 'hidden',
   },
+  listingDetailScreen: {
+    borderWidth: 1,
+    borderColor: theme.line,
+    backgroundColor: theme.surface,
+  },
   offerDetailHead: {
     flexDirection: 'row',
     alignItems: 'flex-start',
@@ -2774,22 +4965,14 @@ const styles = StyleSheet.create({
     borderBottomColor: theme.line,
     backgroundColor: '#f7f1e8',
   },
-  marketFlipRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: theme.line,
-    backgroundColor: '#fdf8f1',
+  offerDetailTitleWrap: {
+    flex: 1,
+    minWidth: 0,
+    paddingRight: 8,
   },
-  marketFlipText: {
-    color: '#6a6055',
-    fontSize: 11,
-    letterSpacing: 1.2,
-    textTransform: 'uppercase',
-    fontWeight: '600',
+  offerDetailBackButton: {
+    flexShrink: 0,
+    minWidth: 68,
   },
   offerDetailTitle: {
     color: '#1c1713',
@@ -2814,6 +4997,42 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: theme.line,
     backgroundColor: '#ece7df',
+  },
+  listingDetailGalleryStack: {
+    gap: 8,
+  },
+  listingDetailMatchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  listingDetailGalleryImageFull: {
+    width: '100%',
+    height: 260,
+    borderWidth: 1,
+    borderColor: theme.line,
+    backgroundColor: '#ece7df',
+  },
+  galleryModalRoot: {
+    flex: 1,
+    backgroundColor: '#0d0b0a',
+  },
+  galleryModalHeader: {
+    paddingHorizontal: 12,
+    paddingTop: 56,
+    paddingBottom: 10,
+    alignItems: 'flex-end',
+    zIndex: 2,
+  },
+  galleryModalCloseButton: {
+    minWidth: 92,
+    minHeight: 44,
+    justifyContent: 'center',
+  },
+  galleryModalImage: {
+    flex: 1,
+    width: '100%',
   },
   offerDetailThumbRow: {
     gap: 8,
@@ -2879,9 +5098,54 @@ const styles = StyleSheet.create({
     gap: 7,
     backgroundColor: '#fff',
   },
+  profilePaymentCardSelected: {
+    borderColor: theme.brand,
+    backgroundColor: theme.brandSoft,
+  },
+  profileLegalCard: {
+    borderWidth: 1,
+    borderColor: theme.line,
+    borderRadius: 10,
+    padding: 10,
+    gap: 7,
+    backgroundColor: '#fff',
+  },
+  profileLegalText: {
+    color: '#423935',
+    fontSize: 13,
+    lineHeight: 19,
+  },
+  profileLegalLink: {
+    color: theme.brand,
+    fontSize: 13,
+    lineHeight: 19,
+    fontWeight: '700',
+  },
+  profileLegalActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
   profileAddressRow: {
     flexDirection: 'row',
     gap: 8,
+  },
+  addressSuggestionList: {
+    gap: 6,
+  },
+  addressSuggestionCard: {
+    borderWidth: 1,
+    borderColor: theme.line,
+    borderRadius: 8,
+    backgroundColor: '#f7f1e8',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  addressSuggestionText: {
+    color: '#342b24',
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '700',
   },
   addressActionRow: {
     flexDirection: 'row',
@@ -2962,6 +5226,90 @@ const styles = StyleSheet.create({
   stepPillActive: { backgroundColor: theme.brand, borderColor: theme.brand },
   stepPillText: { color: '#524941', fontWeight: '600' },
   stepPillTextActive: { color: '#fff' },
+  editImagePanel: {
+    borderWidth: 1,
+    borderColor: theme.line,
+    borderRadius: 10,
+    padding: 10,
+    gap: 10,
+    backgroundColor: '#fff',
+  },
+  editImageGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  editImageTile: {
+    width: '31%',
+    minWidth: 88,
+    borderWidth: 1,
+    borderColor: theme.line,
+    backgroundColor: '#f5f1ea',
+    overflow: 'hidden',
+  },
+  editImageTileHero: {
+    borderColor: theme.brand,
+    borderWidth: 2,
+  },
+  editImageThumb: {
+    width: '100%',
+    height: 96,
+    backgroundColor: '#ece7df',
+  },
+  editImageRemove: {
+    paddingVertical: 7,
+    alignItems: 'center',
+    borderTopWidth: 1,
+    borderTopColor: theme.line,
+    backgroundColor: '#fff',
+  },
+  editImageRemoveText: {
+    color: '#6b4a36',
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+  },
+  editImageHeroButton: {
+    paddingVertical: 7,
+    alignItems: 'center',
+    borderTopWidth: 1,
+    borderTopColor: theme.line,
+    backgroundColor: '#fffaf4',
+  },
+  editImageHeroButtonText: {
+    color: theme.brand,
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.7,
+    textTransform: 'uppercase',
+  },
+  editImageBadge: {
+    position: 'absolute',
+    top: 5,
+    left: 5,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    backgroundColor: 'rgba(32, 28, 23, 0.78)',
+    color: '#fff',
+    fontSize: 9,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+  },
+  editImageHeroBadge: {
+    position: 'absolute',
+    top: 5,
+    right: 5,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    backgroundColor: theme.brand,
+    color: '#fff',
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+  },
 
   label: { fontSize: 11, color: '#6c6359', fontWeight: '700', letterSpacing: 1, textTransform: 'uppercase' },
   input: {
@@ -3027,11 +5375,23 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: '#fff',
   },
+  dangerBtnCompact: {
+    borderColor: '#b42318',
+  },
+  dangerBtnText: {
+    color: '#b42318',
+  },
   listingActionRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
     marginTop: 6,
+  },
+  shareIconButton: {
+    width: 42,
+    minHeight: 36,
+    justifyContent: 'center',
+    paddingHorizontal: 0,
   },
   secondaryBtnText: { color: '#4b433a', fontWeight: '700', letterSpacing: 1, textTransform: 'uppercase', fontSize: 12 },
   actionRow: { flexDirection: 'row', gap: 8, marginTop: 4 },
@@ -3108,6 +5468,10 @@ const styles = StyleSheet.create({
     borderColor: theme.brand,
     backgroundColor: theme.brandSoft,
   },
+  sizeChartChip: {
+    borderColor: theme.brand,
+    backgroundColor: '#fffaf4',
+  },
   tagChipText: {
     color: '#4d4339',
     fontWeight: '700',
@@ -3120,6 +5484,29 @@ const styles = StyleSheet.create({
   },
 
   helperText: { color: '#756b61' },
+  loadingState: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 28,
+  },
+  loadingText: {
+    color: '#7a7167',
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  emptyState: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    paddingVertical: 28,
+  },
+  emptyTitle: {
+    color: theme.text,
+    fontSize: 18,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
   emptyText: { color: '#7a7167', textAlign: 'center', paddingVertical: 10 },
   error: { color: theme.error, fontWeight: '700', marginHorizontal: 16, marginBottom: 6 },
   notice: { color: theme.success, fontWeight: '700', marginHorizontal: 16, marginBottom: 6 },

@@ -5,7 +5,7 @@ from typing import Any, Literal, TypeAlias
 from pydantic import BaseModel, Field
 
 
-ConditionGrade: TypeAlias = Literal["New", "LikeNew", "Good", "Fair", "Poor"]
+ConditionGrade: TypeAlias = Literal["New", "LikeNew"]
 
 
 class BrandOut(BaseModel):
@@ -47,6 +47,11 @@ class AnalyzeResponse(BaseModel):
     debug: dict[str, Any] | None = None
 
 
+class UploadImagesResponse(BaseModel):
+    item_id: str
+    uploaded_images: list[UploadedImageOut] = Field(default_factory=list)
+
+
 class HealthResponse(BaseModel):
     status: str
 
@@ -68,12 +73,18 @@ class ShippingAddress(BaseModel):
 
 
 class UserProfileQuizUpdateRequest(BaseModel):
+    first_name: str | None = None
+    last_name: str | None = None
+    email: str | None = None
     gender: Literal["female", "male", "other"] | None = None
+    birthday: str | None = None
     tops_size: str | None = None
     dresses_size: str | None = None
     bottoms_size: str | None = None
     shoes_size: str | None = None
     category_preferences: list[str] = Field(default_factory=list)
+    style_descriptors: list[str] = Field(default_factory=list)
+    jouft_goals: list[str] = Field(default_factory=list)
     shipping_full_name: str | None = None
     shipping_address_line1: str | None = None
     shipping_address_line2: str | None = None
@@ -81,6 +92,8 @@ class UserProfileQuizUpdateRequest(BaseModel):
     shipping_state: str | None = None
     shipping_postal_code: str | None = None
     shipping_country: str | None = None
+    shipping_email: str | None = None
+    shipping_phone: str | None = None
     shipping_addresses: list[ShippingAddress] = Field(default_factory=list)
     subscription_plan: str | None = None
     subscription_billing_cycle: Literal["monthly", "annual"] | None = None
@@ -91,6 +104,19 @@ class UserProfileQuizUpdateRequest(BaseModel):
 
 class UserProfileQuizResponse(UserProfileQuizUpdateRequest):
     owner_subject: str
+    created_at: str
+    updated_at: str
+
+
+class ClientStateUpdateRequest(BaseModel):
+    alert_preferences: dict[str, bool] | None = None
+    liked_listing_ids: list[str] | None = None
+
+
+class ClientStateResponse(BaseModel):
+    owner_subject: str
+    alert_preferences: dict[str, bool] = Field(default_factory=dict)
+    liked_listing_ids: list[str] = Field(default_factory=list)
     created_at: str
     updated_at: str
 
@@ -133,6 +159,22 @@ class PaymentMethodListResponse(BaseModel):
     items: list[PaymentMethodResponse] = Field(default_factory=list)
 
 
+class SubscriptionActivateRequest(BaseModel):
+    plan: Literal["free", "starter_15", "pro_25"]
+    billing_cycle: Literal["monthly", "annual"] = "monthly"
+    payment_method_id: str | None = None
+
+
+class SubscriptionActivateResponse(BaseModel):
+    owner_subject: str
+    plan: str
+    billing_cycle: str
+    status: str
+    renewal_date: str | None = None
+    stripe_subscription_id: str | None = None
+    message: str | None = None
+
+
 class StripeSetupIntentResponse(BaseModel):
     provider: str = "stripe"
     client_secret: str | None = None
@@ -167,7 +209,7 @@ class AuthMeResponse(BaseModel):
 
 class ListingCreateRequest(BaseModel):
     title: str
-    mode: Literal["sell", "trade", "sell_trade"] = "sell_trade"
+    mode: Literal["trade"] = "trade"
     category: Literal["clothes", "shoes", "handbag"]
     brand: str
     condition: ConditionGrade
@@ -219,6 +261,39 @@ class OfferWithListingsResponse(OfferResponse):
     target_listing: ListingResponse
     offered_listing: ListingResponse
     offered_listings: list[ListingResponse] = Field(default_factory=list)
+
+
+class TradeMatchResponse(BaseModel):
+    match_id: str
+    viewer_subject: str
+    target_listing_id: str
+    candidate_listing_id: str
+    score: float
+    confidence: float
+    rationale: str
+    risk_flags: list[str] = Field(default_factory=list)
+    status: Literal["suggested", "dismissed", "offered", "expired"] = "suggested"
+    agent_version: str
+    created_at: str
+    updated_at: str
+    target_listing: ListingResponse | None = None
+    candidate_listing: ListingResponse | None = None
+
+
+class TradeMatchRunResponse(BaseModel):
+    status: Literal["ok", "disabled"] = "ok"
+    generated_count: int
+    expired_count: int = 0
+    items: list[TradeMatchResponse] = Field(default_factory=list)
+
+
+class TradeMatchListResponse(BaseModel):
+    count: int
+    items: list[TradeMatchResponse] = Field(default_factory=list)
+
+
+class TradeMatchStatusUpdateRequest(BaseModel):
+    status: Literal["suggested", "dismissed", "offered", "expired"]
 
 
 class OfferActionRequest(BaseModel):

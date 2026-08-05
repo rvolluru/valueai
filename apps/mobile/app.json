@@ -1,7 +1,8 @@
 {
   "expo": {
-    "name": "ValueAI Mobile",
+    "name": "Jouft Testing",
     "slug": "valueai-mobile",
+    "scheme": "com.jouft.app.dev",
     "version": "0.1.0",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
@@ -10,7 +11,15 @@
     ],
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.anonymous.valueai-mobile"
+      "bundleIdentifier": "com.jouft.app.dev",
+      "infoPlist": {
+        "LSApplicationQueriesSchemes": [
+          "fb",
+          "fbapi",
+          "fbauth2",
+          "fbshareextension"
+        ]
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -23,11 +32,19 @@
     "plugins": [
       "expo-image-picker",
       "expo-web-browser",
-      "expo-notifications"
+      "expo-notifications",
+      "expo-font",
+      [
+        "@stripe/stripe-react-native",
+        {
+          "merchantIdentifier": "merchant.com.jouft.app",
+          "enableGooglePay": false
+        }
+      ]
     ],
     "extra": {
-      "apiBaseUrl": "http://127.0.0.1:8000",
-      "clerkPublishableKey": "",
+      "apiBaseUrl": "https://api.jouft.com",
+      "clerkPublishableKey": "pk_test_ZmlybS1taW5rLTM1LmNsZXJrLmFjY291bnRzLmRldiQ",
       "eas": {
         "projectId": "9fea2985-7a8a-477e-ae73-335fdcb4a048"
       }

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from functools import lru_cache
 
 from brand import BrandAnalyzer, BrandConfig
@@ -11,16 +12,16 @@ from .gpt_item_profile import GptItemProfiler
 from .settings import Settings, get_settings
 from .storage import Storage, build_storage
 
+logger = logging.getLogger(__name__)
+
 
 @lru_cache(maxsize=1)
 def get_db() -> Database:
     db = Database(get_settings().database_url)
-    db.initialize()
     try:
-        db.migrate_listing_media_urls_to_http()
-    except Exception:
-        # Non-fatal: API should still start even if migration encounters a bad row.
-        pass
+        db.initialize()
+    except Exception as exc:
+        logger.warning("Database initialization skipped after failure: %s", exc)
     return db
 
 

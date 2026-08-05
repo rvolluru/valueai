@@ -164,7 +164,7 @@ export function createApiClient(options) {
     });
   }
 
-  async function analyzeItem({ images = [], category, userCondition, itemDescription, debug = true }, auth = {}) {
+  async function analyzeItem({ images = [], category, userCondition, itemDescription, itemSize, debug = true }, auth = {}) {
     const resolvedAuth = await resolveAuth(auth);
     const fd = new FormData();
     images.forEach((img, idx) => {
@@ -181,10 +181,66 @@ export function createApiClient(options) {
     if (category) fd.append("category", category);
     if (userCondition) fd.append("user_condition", userCondition);
     if (itemDescription) fd.append("item_description", itemDescription);
+    if (itemSize) fd.append("item_size", itemSize);
     fd.append("debug", String(Boolean(debug)));
     return requestFormData({
       apiBaseUrl,
       path: "/v1/analyze",
+      auth: resolvedAuth,
+      formData: fd,
+      fetchImpl,
+    });
+  }
+
+  async function uploadImages({ images = [], itemId }, auth = {}) {
+    const resolvedAuth = await resolveAuth(auth);
+    const fd = new FormData();
+    images.forEach((img, idx) => {
+      if (img?.uri && !img?.file) {
+        fd.append("images", {
+          uri: img.uri,
+          name: img.fileName || `upload-${idx + 1}.jpg`,
+          type: img.mimeType || "image/jpeg",
+        });
+        return;
+      }
+      fd.append("images", img.file || img);
+    });
+    if (itemId) fd.append("item_id", itemId);
+    return requestFormData({
+      apiBaseUrl,
+      path: "/v1/uploads/images",
+      auth: resolvedAuth,
+      formData: fd,
+      fetchImpl,
+    });
+  }
+
+  async function queueListingAnalysis(
+    { listingId, images = [], category, userCondition, itemDescription, itemSize, debug = true },
+    auth = {},
+  ) {
+    const resolvedAuth = await resolveAuth(auth);
+    const fd = new FormData();
+    images.forEach((img, idx) => {
+      if (img?.uri && !img?.file) {
+        fd.append("images", {
+          uri: img.uri,
+          name: img.fileName || `upload-${idx + 1}.jpg`,
+          type: img.mimeType || "image/jpeg",
+        });
+        return;
+      }
+      fd.append("images", img.file || img);
+    });
+    if (category) fd.append("category", category);
+    if (userCondition) fd.append("user_condition", userCondition);
+    if (itemDescription) fd.append("item_description", itemDescription);
+    if (itemSize) fd.append("item_size", itemSize);
+    fd.append("debug", String(Boolean(debug)));
+    return requestFormData({
+      apiBaseUrl,
+      path: `/v1/listings/${encodeURIComponent(listingId)}/analysis-jobs`,
       auth: resolvedAuth,
       formData: fd,
       fetchImpl,
@@ -198,6 +254,8 @@ export function createApiClient(options) {
     put,
     delete: del,
     analyzeItem,
+    uploadImages,
+    queueListingAnalysis,
     listListings: (params = {}, auth = {}) => {
       const query = new URLSearchParams();
       Object.entries(params).forEach(([k, v]) => {
@@ -208,6 +266,7 @@ export function createApiClient(options) {
     },
     createListing: (payload, auth = {}) => post("/v1/listings", payload, auth),
     updateListing: (listingId, payload, auth = {}) => put(`/v1/listings/${encodeURIComponent(listingId)}`, payload, auth),
+    deleteListing: (listingId, auth = {}) => del(`/v1/listings/${encodeURIComponent(listingId)}`, auth),
     listMyListings: (limit = 100, auth = {}) => get(`/v1/listings?mine=true&limit=${limit}`, auth),
     listMarketplace: (limit = 50, auth = {}) => get(`/v1/listings?limit=${limit}&include_matches=true`, auth),
     listOfferCandidates: (listingId, limit = 100, auth = {}) =>
@@ -218,7 +277,9 @@ export function createApiClient(options) {
     offerAction: (offerId, status, receiveAddress = null, auth = {}) =>
       post(`/v1/offers/${encodeURIComponent(offerId)}/action`, { status, receive_address: receiveAddress }, auth),
     profileQuiz: (auth = {}) => get("/v1/me/profile-quiz", auth),
-    saveProfileQuiz: (payload, auth = {}) => post("/v1/me/profile-quiz", payload, auth),
+    saveProfileQuiz: (payload, auth = {}) => put("/v1/me/profile-quiz", payload, auth),
+    clientState: (auth = {}) => get("/v1/me/client-state", auth),
+    saveClientState: (payload, auth = {}) => put("/v1/me/client-state", payload, auth),
     paymentMethods: (auth = {}) => get("/v1/me/payment-methods", auth),
     createSetupCheckoutSession: ({ successUrl, cancelUrl }, auth = {}) =>
       post("/v1/me/payment-methods/stripe/setup-checkout-session", { success_url: successUrl, cancel_url: cancelUrl }, auth),

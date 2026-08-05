@@ -1,6 +1,6 @@
-# ValueAI Mobile (Expo)
+# Jouft Mobile (Expo)
 
-This is a React Native + Expo scaffold for the ValueAI listing flow.
+This is a React Native + Expo scaffold for the Jouft listing flow.
 
 ## Included
 
@@ -11,7 +11,7 @@ This is a React Native + Expo scaffold for the ValueAI listing flow.
 - Calls existing backend endpoint: `POST /v1/analyze`
 - Publishes listings to backend endpoint: `POST /v1/listings`
 - Auto-fills title/description from GPT `item_profile`
-- Auto-fills target asking value from valuation estimate
+- Uses AI valuation estimate for trade matching
 - Supports both auth modes in-app:
   - `API Key` (`x-api-key`)
   - `Bearer` token (`Authorization: Bearer ...`) for Clerk-backed auth

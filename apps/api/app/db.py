@@ -2,12 +2,82 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import PurePosixPath
+from urllib.parse import urlparse
 
 
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def normalize_public_listing_image_url(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    s = value.strip()
+    if not s:
+        return None
+    if s.startswith("http://") or s.startswith("https://"):
+        parsed = urlparse(s)
+        hostname = (parsed.hostname or "").lower()
+        if parsed.path.startswith("/v1/images/") and (
+            hostname.endswith(".elb.amazonaws.com")
+            or hostname in {"jouft.com", "www.jouft.com", "api.jouft.com"}
+        ):
+            return parsed.path
+        return s
+    if s.startswith("/"):
+        return s
+    return None
+
+
+def listing_image_dedupe_key(value: object) -> str:
+    normalized = normalize_public_listing_image_url(value)
+    return normalized or str(value or "").strip()
+
+
+def is_generic_trade_note(value: object) -> bool:
+    normalized = str(value or "").strip().lower().rstrip(".! ")
+    return normalized in {
+        "open to similar-value offers",
+        "open to similar value offers",
+        "no description provided",
+    }
+
+
+def _image_id_from_api_url(value: object) -> str | None:
+    normalized = normalize_public_listing_image_url(value)
+    if not isinstance(normalized, str):
+        return None
+    marker = "/v1/images/"
+    if marker not in normalized:
+        return None
+    image_id = normalized.split(marker, 1)[1].split("/", 1)[0].strip()
+    return image_id or None
+
+
+def _upload_path_from_public_url(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    s = value.strip()
+    if not s:
+        return None
+    path = urlparse(s).path if s.startswith(("http://", "https://")) else s
+    marker = "/uploads/"
+    if marker not in path:
+        return None
+    rel = path.split(marker, 1)[1].strip("/")
+    return f".data/uploads/{rel}" if rel else None
+
+
+def _image_id_from_upload_path(value: object) -> str | None:
+    storage_uri = _upload_path_from_public_url(value)
+    if not storage_uri:
+        return None
+    stem = PurePosixPath(storage_uri).stem.strip()
+    return stem or None
 
 
 @dataclass(slots=True)
@@ -17,12 +87,14 @@ class PersistedImage:
     storage_uri: str
     filename: str
     role_hint: str | None
+    content_hash: str | None = None
 
 
 class Database:
     def __init__(self, url: str):
         self.url = url
         self._sqlite_conn: sqlite3.Connection | None = None
+        self._sqlite_lock = threading.RLock()
         self._pg = None
         if url.startswith("sqlite:///"):
             path = url.replace("sqlite:///", "", 1)
@@ -40,7 +112,17 @@ class Database:
             import psycopg
         except Exception as exc:  # pragma: no cover
             raise RuntimeError("psycopg is required for PostgreSQL DATABASE_URL") from exc
-        self._pg = psycopg.connect(self.url)
+        self._pg = psycopg.connect(self.url, connect_timeout=5)
+        cur = self._pg.cursor()
+        try:
+            cur.execute("SET lock_timeout = '1500ms'")
+            cur.execute("SET statement_timeout = '5000ms'")
+            self._pg.commit()
+        except Exception:
+            self._pg.rollback()
+            raise
+        finally:
+            cur.close()
 
     def _ensure_pg_connection(self):
         if self._sqlite_conn is not None:
@@ -72,6 +154,7 @@ class Database:
               filename TEXT NOT NULL,
               role_hint TEXT,
               storage_uri TEXT NOT NULL,
+              content_hash TEXT,
               created_at TEXT NOT NULL
             )
             """,
@@ -131,18 +214,25 @@ class Database:
               source_item_id TEXT,
               analysis_json TEXT,
               status TEXT NOT NULL DEFAULT 'Review',
-              created_at TEXT NOT NULL
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL
             )
             """,
             """
             CREATE TABLE IF NOT EXISTS user_profiles (
               owner_subject TEXT PRIMARY KEY,
+              first_name TEXT,
+              last_name TEXT,
+              email TEXT,
               gender TEXT,
+              birthday TEXT,
               tops_size TEXT,
               dresses_size TEXT,
               bottoms_size TEXT,
               shoes_size TEXT,
               category_preferences_json TEXT NOT NULL DEFAULT '[]',
+              style_descriptors_json TEXT NOT NULL DEFAULT '[]',
+              jouft_goals_json TEXT NOT NULL DEFAULT '[]',
               shipping_full_name TEXT,
               shipping_address_line1 TEXT,
               shipping_address_line2 TEXT,
@@ -181,6 +271,23 @@ class Database:
             )
             """,
             """
+            CREATE TABLE IF NOT EXISTS trade_matches (
+              match_id TEXT PRIMARY KEY,
+              viewer_subject TEXT NOT NULL,
+              target_listing_id TEXT NOT NULL,
+              candidate_listing_id TEXT NOT NULL,
+              score REAL NOT NULL,
+              confidence REAL NOT NULL,
+              rationale TEXT NOT NULL,
+              risk_flags_json TEXT NOT NULL DEFAULT '[]',
+              status TEXT NOT NULL DEFAULT 'suggested',
+              agent_version TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL,
+              UNIQUE(viewer_subject, target_listing_id, candidate_listing_id)
+            )
+            """,
+            """
             CREATE TABLE IF NOT EXISTS user_payment_methods (
               payment_method_id TEXT PRIMARY KEY,
               owner_subject TEXT NOT NULL,
@@ -199,9 +306,23 @@ class Database:
             )
             """,
             """
+            CREATE TABLE IF NOT EXISTS user_client_state (
+              owner_subject TEXT PRIMARY KEY,
+              alert_preferences_json TEXT NOT NULL DEFAULT '{}',
+              liked_listing_ids_json TEXT NOT NULL DEFAULT '[]',
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            )
+            """,
+            """
             CREATE TABLE IF NOT EXISTS user_billing_profiles (
               owner_subject TEXT PRIMARY KEY,
               stripe_customer_id TEXT,
+              stripe_subscription_id TEXT,
+              subscription_plan TEXT,
+              subscription_billing_cycle TEXT,
+              subscription_status TEXT,
+              subscription_renewal_date TEXT,
               created_at TEXT NOT NULL,
               updated_at TEXT NOT NULL
             )
@@ -245,11 +366,19 @@ class Database:
         # failure cannot roll back newly created tables.
         self.commit()
         for alter in (
+            "ALTER TABLE images ADD COLUMN content_hash TEXT",
             "ALTER TABLE listings ADD COLUMN images_json TEXT NOT NULL DEFAULT '[]'",
             "ALTER TABLE listings ADD COLUMN status TEXT NOT NULL DEFAULT 'Review'",
             "ALTER TABLE listings ADD COLUMN size TEXT",
             "ALTER TABLE listings ADD COLUMN description TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE listings ADD COLUMN updated_at TEXT",
             "ALTER TABLE user_profiles ADD COLUMN gender TEXT",
+            "ALTER TABLE user_profiles ADD COLUMN first_name TEXT",
+            "ALTER TABLE user_profiles ADD COLUMN last_name TEXT",
+            "ALTER TABLE user_profiles ADD COLUMN email TEXT",
+            "ALTER TABLE user_profiles ADD COLUMN birthday TEXT",
+            "ALTER TABLE user_profiles ADD COLUMN style_descriptors_json TEXT NOT NULL DEFAULT '[]'",
+            "ALTER TABLE user_profiles ADD COLUMN jouft_goals_json TEXT NOT NULL DEFAULT '[]'",
             "ALTER TABLE user_profiles ADD COLUMN shipping_full_name TEXT",
             "ALTER TABLE user_profiles ADD COLUMN shipping_address_line1 TEXT",
             "ALTER TABLE user_profiles ADD COLUMN shipping_address_line2 TEXT",
@@ -271,6 +400,14 @@ class Database:
             "ALTER TABLE trade_offers ADD COLUMN from_receive_address_json TEXT",
             "ALTER TABLE trade_offers ADD COLUMN to_receive_address_json TEXT",
             "ALTER TABLE user_payment_methods ADD COLUMN email TEXT",
+            "ALTER TABLE user_billing_profiles ADD COLUMN stripe_subscription_id TEXT",
+            "ALTER TABLE user_billing_profiles ADD COLUMN subscription_plan TEXT",
+            "ALTER TABLE user_billing_profiles ADD COLUMN subscription_billing_cycle TEXT",
+            "ALTER TABLE user_billing_profiles ADD COLUMN subscription_status TEXT",
+            "ALTER TABLE user_billing_profiles ADD COLUMN subscription_renewal_date TEXT",
+            "ALTER TABLE trade_shipments ADD COLUMN shipped_at TEXT",
+            "ALTER TABLE trade_shipments ADD COLUMN last_ship_reminder_at TEXT",
+            "ALTER TABLE trade_shipments ADD COLUMN ship_reminder_count INTEGER NOT NULL DEFAULT 0",
         ):
             try:
                 self.execute(alter)
@@ -305,11 +442,12 @@ class Database:
     def get_listing_by_id(self, listing_id: str) -> dict | None:
         query = (
             f"SELECT listing_id, owner_subject, owner_name, title, mode, category, brand, condition, "
-            f"size, estimated_value, city, image, images_json, description, wants, tags_json, source_item_id, analysis_json, status, created_at "
+            f"size, estimated_value, city, image, images_json, description, wants, tags_json, source_item_id, analysis_json, status, created_at, COALESCE(updated_at, created_at) AS updated_at "
             f"FROM listings WHERE listing_id = {self.param} LIMIT 1"
         )
         if self._sqlite_conn is not None:
-            row = self._sqlite_conn.execute(query, (listing_id,)).fetchone()
+            with self._sqlite_lock:
+                row = self._sqlite_conn.execute(query, (listing_id,)).fetchone()
         else:
             cur = self._pg_cursor()
             cur.execute(query, (listing_id,))
@@ -326,12 +464,13 @@ class Database:
         placeholders = ", ".join([self.param] * len(unique_ids))
         query = (
             f"SELECT listing_id, owner_subject, owner_name, title, mode, category, brand, condition, "
-            f"size, estimated_value, city, image, images_json, description, wants, tags_json, source_item_id, analysis_json, status, created_at "
+            f"size, estimated_value, city, image, images_json, description, wants, tags_json, source_item_id, analysis_json, status, created_at, COALESCE(updated_at, created_at) AS updated_at "
             f"FROM listings WHERE listing_id IN ({placeholders})"
         )
         params = tuple(unique_ids)
         if self._sqlite_conn is not None:
-            rows = self._sqlite_conn.execute(query, params).fetchall()
+            with self._sqlite_lock:
+                rows = self._sqlite_conn.execute(query, params).fetchall()
         else:
             cur = self._pg_cursor()
             cur.execute(query, params)
@@ -342,6 +481,147 @@ class Database:
             listing = self._listing_row_to_dict(row)
             out[str(listing["listing_id"])] = listing
         return out
+
+    def expire_suggested_trade_matches(self, viewer_subject: str) -> int:
+        now = utc_now_iso()
+        sql = (
+            f"UPDATE trade_matches SET status = {self.param}, updated_at = {self.param} "
+            f"WHERE viewer_subject = {self.param} AND status = {self.param}"
+        )
+        params = ("expired", now, viewer_subject, "suggested")
+        if self._sqlite_conn is not None:
+            with self._sqlite_lock:
+                self._sqlite_conn.execute(sql, params)
+                changed_row = self._sqlite_conn.execute("SELECT changes() AS n").fetchone()
+            changed = int(changed_row["n"] if isinstance(changed_row, sqlite3.Row) else changed_row[0])
+        else:
+            cur = self._pg_cursor()
+            try:
+                cur.execute(sql, params)
+                changed = int(cur.rowcount or 0)
+            except Exception:
+                self._pg.rollback()
+                raise
+            finally:
+                cur.close()
+        self.commit()
+        return changed
+
+    def upsert_trade_matches(self, records: list[dict]) -> list[dict]:
+        if not records:
+            return []
+        now = utc_now_iso()
+        viewer_subject = str(records[0].get("viewer_subject") or "")
+        sql = (
+            f"INSERT INTO trade_matches "
+            f"(match_id, viewer_subject, target_listing_id, candidate_listing_id, score, confidence, rationale, risk_flags_json, status, agent_version, created_at, updated_at) "
+            f"VALUES ({self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}) "
+            f"ON CONFLICT(viewer_subject, target_listing_id, candidate_listing_id) DO UPDATE SET "
+            f"score = excluded.score, confidence = excluded.confidence, rationale = excluded.rationale, "
+            f"risk_flags_json = excluded.risk_flags_json, status = excluded.status, agent_version = excluded.agent_version, updated_at = excluded.updated_at"
+        )
+        for record in records:
+            match_id = str(record.get("match_id") or "")
+            if not match_id:
+                continue
+            self.execute(
+                sql,
+                (
+                    match_id,
+                    record["viewer_subject"],
+                    record["target_listing_id"],
+                    record["candidate_listing_id"],
+                    float(record["score"]),
+                    float(record["confidence"]),
+                    record.get("rationale") or "",
+                    json.dumps(record.get("risk_flags") or []),
+                    record.get("status") or "suggested",
+                    record.get("agent_version") or "trade-match-agent-mvp-1",
+                    record.get("created_at") or now,
+                    now,
+                ),
+            )
+        self.commit()
+        if not viewer_subject:
+            return []
+        return self.list_trade_matches(viewer_subject, limit=len(records), status="suggested")
+
+    def list_trade_matches_by_ids(self, match_ids: list[str]) -> list[dict]:
+        unique_ids = [x for x in dict.fromkeys(match_ids) if isinstance(x, str) and x.strip()]
+        if not unique_ids:
+            return []
+        placeholders = ", ".join([self.param] * len(unique_ids))
+        query = (
+            f"SELECT match_id, viewer_subject, target_listing_id, candidate_listing_id, score, confidence, rationale, "
+            f"risk_flags_json, status, agent_version, created_at, updated_at "
+            f"FROM trade_matches WHERE match_id IN ({placeholders}) ORDER BY score DESC, updated_at DESC"
+        )
+        params = tuple(unique_ids)
+        if self._sqlite_conn is not None:
+            with self._sqlite_lock:
+                rows = self._sqlite_conn.execute(query, params).fetchall()
+        else:
+            cur = self._pg_cursor()
+            cur.execute(query, params)
+            rows = cur.fetchall()
+            cur.close()
+        return [self._trade_match_row_to_dict(row) for row in rows]
+
+    def list_trade_matches(self, viewer_subject: str, limit: int = 50, status: str | None = "suggested") -> list[dict]:
+        safe_limit = max(1, min(int(limit), 200))
+        if status:
+            query = (
+                f"SELECT match_id, viewer_subject, target_listing_id, candidate_listing_id, score, confidence, rationale, "
+                f"risk_flags_json, status, agent_version, created_at, updated_at "
+                f"FROM trade_matches WHERE viewer_subject = {self.param} AND status = {self.param} "
+                f"ORDER BY score DESC, updated_at DESC LIMIT {self.param}"
+            )
+            params = (viewer_subject, status, safe_limit)
+        else:
+            query = (
+                f"SELECT match_id, viewer_subject, target_listing_id, candidate_listing_id, score, confidence, rationale, "
+                f"risk_flags_json, status, agent_version, created_at, updated_at "
+                f"FROM trade_matches WHERE viewer_subject = {self.param} "
+                f"ORDER BY score DESC, updated_at DESC LIMIT {self.param}"
+            )
+            params = (viewer_subject, safe_limit)
+        if self._sqlite_conn is not None:
+            with self._sqlite_lock:
+                rows = self._sqlite_conn.execute(query, params).fetchall()
+        else:
+            cur = self._pg_cursor()
+            cur.execute(query, params)
+            rows = cur.fetchall()
+            cur.close()
+        return [self._trade_match_row_to_dict(row) for row in rows]
+
+    def set_trade_match_status(self, *, match_id: str, viewer_subject: str, status: str) -> dict | None:
+        now = utc_now_iso()
+        sql = (
+            f"UPDATE trade_matches SET status = {self.param}, updated_at = {self.param} "
+            f"WHERE match_id = {self.param} AND viewer_subject = {self.param}"
+        )
+        params = (status, now, match_id, viewer_subject)
+        if self._sqlite_conn is not None:
+            with self._sqlite_lock:
+                self._sqlite_conn.execute(sql, params)
+                changed_row = self._sqlite_conn.execute("SELECT changes() AS n").fetchone()
+            changed = int(changed_row["n"] if isinstance(changed_row, sqlite3.Row) else changed_row[0]) > 0
+        else:
+            cur = self._pg_cursor()
+            try:
+                cur.execute(sql, params)
+                changed = int(cur.rowcount or 0) > 0
+            except Exception:
+                self._pg.rollback()
+                raise
+            finally:
+                cur.close()
+        if not changed:
+            return None
+        self.commit()
+        matches = self.list_trade_matches_by_ids([match_id])
+        return matches[0] if matches else None
 
     def create_trade_offer(
         self,
@@ -459,6 +739,46 @@ class Database:
             "from_receive_address": from_receive,
             "to_receive_address": to_receive,
             "message": data.get("message") or "",
+            "created_at": data.get("created_at"),
+            "updated_at": data.get("updated_at"),
+        }
+
+    def _trade_match_row_to_dict(self, row) -> dict:
+        if isinstance(row, sqlite3.Row):
+            data = dict(row)
+        else:
+            keys = [
+                "match_id",
+                "viewer_subject",
+                "target_listing_id",
+                "candidate_listing_id",
+                "score",
+                "confidence",
+                "rationale",
+                "risk_flags_json",
+                "status",
+                "agent_version",
+                "created_at",
+                "updated_at",
+            ]
+            data = {k: row[idx] for idx, k in enumerate(keys)}
+        try:
+            risk_flags = json.loads(data.get("risk_flags_json") or "[]")
+            if not isinstance(risk_flags, list):
+                risk_flags = []
+        except Exception:
+            risk_flags = []
+        return {
+            "match_id": data.get("match_id"),
+            "viewer_subject": data.get("viewer_subject"),
+            "target_listing_id": data.get("target_listing_id"),
+            "candidate_listing_id": data.get("candidate_listing_id"),
+            "score": float(data.get("score") or 0),
+            "confidence": float(data.get("confidence") or 0),
+            "rationale": data.get("rationale") or "",
+            "risk_flags": [str(x) for x in risk_flags if isinstance(x, str) and x.strip()],
+            "status": data.get("status") or "suggested",
+            "agent_version": data.get("agent_version") or "trade-match-agent-mvp-1",
             "created_at": data.get("created_at"),
             "updated_at": data.get("updated_at"),
         }
@@ -626,7 +946,8 @@ class Database:
 
     def execute(self, sql: str, params: tuple = ()) -> None:
         if self._sqlite_conn is not None:
-            self._sqlite_conn.execute(sql, params)
+            with self._sqlite_lock:
+                self._sqlite_conn.execute(sql, params)
             return
         cur = self._pg_cursor()
         try:
@@ -639,7 +960,8 @@ class Database:
 
     def commit(self) -> None:
         if self._sqlite_conn is not None:
-            self._sqlite_conn.commit()
+            with self._sqlite_lock:
+                self._sqlite_conn.commit()
         else:
             conn = self._ensure_pg_connection()
             conn.commit()
@@ -656,14 +978,15 @@ class Database:
     def insert_image(self, record: PersistedImage) -> None:
         self.execute(
             f"""INSERT INTO images
-            (image_id, item_id, filename, role_hint, storage_uri, created_at)
-            VALUES ({self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param})""",
+            (image_id, item_id, filename, role_hint, storage_uri, content_hash, created_at)
+            VALUES ({self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param})""",
             (
                 record.image_id,
                 record.item_id,
                 record.filename,
                 record.role_hint,
                 record.storage_uri,
+                record.content_hash,
                 utc_now_iso(),
             ),
         )
@@ -749,7 +1072,8 @@ class Database:
             f"ORDER BY created_at DESC LIMIT {self.param}"
         )
         if self._sqlite_conn is not None:
-            rows = self._sqlite_conn.execute(query, (limit,)).fetchall()
+            with self._sqlite_lock:
+                rows = self._sqlite_conn.execute(query, (limit,)).fetchall()
             return [self._analysis_row_to_dict(row) for row in rows]
         cur = self._pg_cursor()
         cur.execute(query, (limit,))
@@ -760,7 +1084,8 @@ class Database:
     def get_image_storage_uri(self, image_id: str) -> str | None:
         query = f"SELECT storage_uri FROM images WHERE image_id = {self.param} LIMIT 1"
         if self._sqlite_conn is not None:
-            row = self._sqlite_conn.execute(query, (image_id,)).fetchone()
+            with self._sqlite_lock:
+                row = self._sqlite_conn.execute(query, (image_id,)).fetchone()
             if not row:
                 return None
             return row["storage_uri"] if isinstance(row, sqlite3.Row) else row[0]
@@ -775,7 +1100,8 @@ class Database:
     def get_image_id_by_storage_uri(self, storage_uri: str) -> str | None:
         query = f"SELECT image_id FROM images WHERE storage_uri = {self.param} ORDER BY created_at ASC LIMIT 1"
         if self._sqlite_conn is not None:
-            row = self._sqlite_conn.execute(query, (storage_uri,)).fetchone()
+            with self._sqlite_lock:
+                row = self._sqlite_conn.execute(query, (storage_uri,)).fetchone()
             if not row:
                 return None
             return row["image_id"] if isinstance(row, sqlite3.Row) else row[0]
@@ -787,13 +1113,86 @@ class Database:
             return None
         return row[0]
 
+    def get_image_id_by_public_url(self, value: object, source_item_id: str | None = None) -> str | None:
+        api_image_id = _image_id_from_api_url(value)
+        if api_image_id:
+            return api_image_id
+
+        storage_uri = _upload_path_from_public_url(value)
+        if storage_uri:
+            image_id = self.get_image_id_by_storage_uri(storage_uri)
+            if image_id:
+                return image_id
+
+        upload_image_id = _image_id_from_upload_path(value)
+        if not upload_image_id:
+            return None
+        if source_item_id:
+            query = (
+                f"SELECT image_id FROM images WHERE image_id = {self.param} AND item_id = {self.param} LIMIT 1"
+            )
+            params = (upload_image_id, source_item_id)
+        else:
+            query = f"SELECT image_id FROM images WHERE image_id = {self.param} LIMIT 1"
+            params = (upload_image_id,)
+        if self._sqlite_conn is not None:
+            with self._sqlite_lock:
+                row = self._sqlite_conn.execute(query, params).fetchone()
+            if not row:
+                return None
+            return row["image_id"] if isinstance(row, sqlite3.Row) else row[0]
+        cur = self._pg_cursor()
+        cur.execute(query, params)
+        row = cur.fetchone()
+        cur.close()
+        if not row:
+            return None
+        return row[0]
+
+    def _canonical_listing_image_url(self, value: object, source_item_id: str | None = None) -> str | None:
+        image_id = self.get_image_id_by_public_url(value, source_item_id)
+        if image_id:
+            return f"/v1/images/{image_id}"
+        if isinstance(value, str) and value.strip().startswith("s3://"):
+            image_id = self.get_image_id_by_storage_uri(value.strip())
+            if image_id:
+                return f"/v1/images/{image_id}"
+            return None
+        return normalize_public_listing_image_url(value)
+
+    def _canonical_listing_images(
+        self,
+        *,
+        image: object,
+        images: list[object] | None,
+        source_item_id: str | None,
+    ) -> tuple[str | None, list[str]]:
+        normalized_images: list[str] = []
+        seen: set[str] = set()
+        for value in images or []:
+            normalized = self._canonical_listing_image_url(value, source_item_id)
+            key = listing_image_dedupe_key(normalized)
+            if normalized and key not in seen:
+                normalized_images.append(normalized)
+                seen.add(key)
+
+        normalized_image = self._canonical_listing_image_url(image, source_item_id)
+        key = listing_image_dedupe_key(normalized_image)
+        if normalized_image and key not in seen:
+            normalized_images.insert(0, normalized_image)
+            seen.add(key)
+        if not normalized_image and normalized_images:
+            normalized_image = normalized_images[0]
+        return normalized_image, normalized_images
+
     def get_first_image_id_for_item(self, item_id: str) -> str | None:
         query = (
             f"SELECT image_id FROM images WHERE item_id = {self.param} "
             f"ORDER BY created_at ASC LIMIT 1"
         )
         if self._sqlite_conn is not None:
-            row = self._sqlite_conn.execute(query, (item_id,)).fetchone()
+            with self._sqlite_lock:
+                row = self._sqlite_conn.execute(query, (item_id,)).fetchone()
             if not row:
                 return None
             return row["image_id"] if isinstance(row, sqlite3.Row) else row[0]
@@ -812,7 +1211,8 @@ class Database:
             f"ORDER BY created_at ASC LIMIT {self.param}"
         )
         if self._sqlite_conn is not None:
-            rows = self._sqlite_conn.execute(query, (item_id, safe_limit)).fetchall()
+            with self._sqlite_lock:
+                rows = self._sqlite_conn.execute(query, (item_id, safe_limit)).fetchall()
             result: list[str] = []
             for row in rows:
                 image_id = row["image_id"] if isinstance(row, sqlite3.Row) else row[0]
@@ -829,6 +1229,62 @@ class Database:
             if isinstance(image_id, str) and image_id.strip():
                 result.append(image_id)
         return result
+
+    def list_image_records_for_item(self, item_id: str, limit: int = 20) -> list[dict]:
+        safe_limit = max(1, min(int(limit), 20))
+        query = (
+            f"SELECT image_id, item_id, filename, role_hint, storage_uri, content_hash, created_at "
+            f"FROM images WHERE item_id = {self.param} ORDER BY created_at ASC LIMIT {self.param}"
+        )
+        if self._sqlite_conn is not None:
+            with self._sqlite_lock:
+                rows = self._sqlite_conn.execute(query, (item_id, safe_limit)).fetchall()
+            return [dict(row) if isinstance(row, sqlite3.Row) else {
+                "image_id": row[0],
+                "item_id": row[1],
+                "filename": row[2],
+                "role_hint": row[3],
+                "storage_uri": row[4],
+                "content_hash": row[5],
+                "created_at": row[6],
+            } for row in rows]
+        cur = self._pg_cursor()
+        cur.execute(query, (item_id, safe_limit))
+        rows = cur.fetchall()
+        cur.close()
+        return [
+            {
+                "image_id": row[0],
+                "item_id": row[1],
+                "filename": row[2],
+                "role_hint": row[3],
+                "storage_uri": row[4],
+                "content_hash": row[5],
+                "created_at": row[6],
+            }
+            for row in rows
+        ]
+
+    def list_image_content_hashes_for_item(self, item_id: str, limit: int = 20) -> list[str]:
+        hashes: list[str] = []
+        for record in self.list_image_records_for_item(item_id, limit=limit):
+            value = record.get("content_hash")
+            if isinstance(value, str) and value.strip():
+                hashes.append(value.strip())
+        return hashes
+
+    def find_recent_analysis_by_image_hashes(self, hashes: list[str], limit: int = 50) -> dict | None:
+        target = sorted(h.strip() for h in hashes if isinstance(h, str) and h.strip())
+        if not target:
+            return None
+        for analysis in self.list_recent_analyses(limit=limit):
+            item_id = str(analysis.get("item_id") or "").strip()
+            if not item_id:
+                continue
+            candidate = sorted(self.list_image_content_hashes_for_item(item_id, limit=20))
+            if candidate and candidate == target:
+                return analysis
+        return None
 
     def insert_listing(
         self,
@@ -854,12 +1310,18 @@ class Database:
         status: str,
     ) -> str:
         created_at = utc_now_iso()
+        updated_at = created_at
+        image, images = self._canonical_listing_images(
+            image=image,
+            images=images,
+            source_item_id=source_item_id,
+        )
         self.execute(
             f"""INSERT INTO listings
             (listing_id, owner_subject, owner_name, title, mode, category, brand, condition, size,
-             estimated_value, city, image, images_json, description, wants, tags_json, source_item_id, analysis_json, status, created_at)
+             estimated_value, city, image, images_json, description, wants, tags_json, source_item_id, analysis_json, status, created_at, updated_at)
             VALUES ({self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param},
-                    {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param})""",
+                    {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param})""",
             (
                 listing_id,
                 owner_subject,
@@ -881,6 +1343,7 @@ class Database:
                 json.dumps(analysis) if analysis is not None else None,
                 status,
                 created_at,
+                updated_at,
             ),
         )
         self.commit()
@@ -891,17 +1354,20 @@ class Database:
         limit: int = 50,
         include_analysis: bool = True,
         include_media: bool = True,
+        active_only: bool = False,
     ) -> list[dict]:
         analysis_select = "analysis_json" if include_analysis else "NULL AS analysis_json"
         image_select = "image" if include_media else "NULL AS image"
         images_select = "images_json" if include_media else "'[]' AS images_json"
+        where_clause = "WHERE LOWER(status) = 'active'" if active_only else ""
         query = (
             f"SELECT listing_id, owner_subject, owner_name, title, mode, category, brand, condition, "
-            f"size, estimated_value, city, {image_select}, {images_select}, description, wants, tags_json, source_item_id, {analysis_select}, status, created_at "
-            f"FROM listings ORDER BY created_at DESC LIMIT {self.param}"
+            f"size, estimated_value, city, {image_select}, {images_select}, description, wants, tags_json, source_item_id, {analysis_select}, status, created_at, COALESCE(updated_at, created_at) AS updated_at "
+            f"FROM listings {where_clause} ORDER BY created_at DESC LIMIT {self.param}"
         )
         if self._sqlite_conn is not None:
-            rows = self._sqlite_conn.execute(query, (limit,)).fetchall()
+            with self._sqlite_lock:
+                rows = self._sqlite_conn.execute(query, (limit,)).fetchall()
             return [self._listing_row_to_dict(row) for row in rows]
         cur = self._pg_cursor()
         cur.execute(query, (limit,))
@@ -912,11 +1378,12 @@ class Database:
     def list_owner_listings(self, owner_subject: str, limit: int = 50) -> list[dict]:
         query = (
             f"SELECT listing_id, owner_subject, owner_name, title, mode, category, brand, condition, "
-            f"size, estimated_value, city, image, images_json, description, wants, tags_json, source_item_id, analysis_json, status, created_at "
+            f"size, estimated_value, city, image, images_json, description, wants, tags_json, source_item_id, analysis_json, status, created_at, COALESCE(updated_at, created_at) AS updated_at "
             f"FROM listings WHERE owner_subject = {self.param} ORDER BY created_at DESC LIMIT {self.param}"
         )
         if self._sqlite_conn is not None:
-            rows = self._sqlite_conn.execute(query, (owner_subject, limit)).fetchall()
+            with self._sqlite_lock:
+                rows = self._sqlite_conn.execute(query, (owner_subject, limit)).fetchall()
             return [self._listing_row_to_dict(row) for row in rows]
         cur = self._pg_cursor()
         cur.execute(query, (owner_subject, limit))
@@ -946,6 +1413,12 @@ class Database:
         analysis: dict | None,
         status: str,
     ) -> bool:
+        updated_at = utc_now_iso()
+        image, images = self._canonical_listing_images(
+            image=image,
+            images=images,
+            source_item_id=source_item_id,
+        )
         sql = f"""UPDATE listings
             SET title = {self.param},
                 mode = {self.param},
@@ -962,7 +1435,8 @@ class Database:
                 tags_json = {self.param},
                 source_item_id = {self.param},
                 analysis_json = {self.param},
-                status = {self.param}
+                status = {self.param},
+                updated_at = {self.param}
             WHERE listing_id = {self.param} AND owner_subject = {self.param}"""
         params = (
             title,
@@ -981,17 +1455,107 @@ class Database:
             source_item_id,
             json.dumps(analysis) if analysis is not None else None,
             status,
+            updated_at,
             listing_id,
             owner_subject,
         )
         if self._sqlite_conn is not None:
-            self._sqlite_conn.execute(sql, params)
-            changed_row = self._sqlite_conn.execute("SELECT changes() AS n").fetchone()
+            with self._sqlite_lock:
+                self._sqlite_conn.execute(sql, params)
+                changed_row = self._sqlite_conn.execute("SELECT changes() AS n").fetchone()
             changed = int(changed_row["n"] if isinstance(changed_row, sqlite3.Row) else changed_row[0]) > 0
         else:
             cur = self._pg_cursor()
             try:
                 cur.execute(sql, params)
+                changed = int(cur.rowcount or 0) > 0
+            except Exception:
+                self._pg.rollback()
+                raise
+            finally:
+                cur.close()
+        self.commit()
+        return changed
+
+    def mark_stale_analyzing_listings_failed(self, cutoff_updated_at: str) -> int:
+        sql = (
+            f"UPDATE listings SET status = {self.param}, tags_json = {self.param} "
+            f"WHERE LOWER(status) = {self.param} AND COALESCE(updated_at, created_at) < {self.param}"
+        )
+        params = ("AnalysisFailed", json.dumps(["Analysis failed"]), "analyzing", cutoff_updated_at)
+        if self._sqlite_conn is not None:
+            with self._sqlite_lock:
+                self._sqlite_conn.execute(sql, params)
+                changed_row = self._sqlite_conn.execute("SELECT changes() AS n").fetchone()
+            changed = int(changed_row["n"] if isinstance(changed_row, sqlite3.Row) else changed_row[0])
+        else:
+            cur = self._pg_cursor()
+            try:
+                cur.execute(sql, params)
+                changed = int(cur.rowcount or 0)
+            except Exception:
+                self._pg.rollback()
+                raise
+            finally:
+                cur.close()
+        self.commit()
+        return changed
+
+    def list_trade_offers_for_listing(self, listing_id: str, active_only: bool = False) -> list[dict]:
+        listing_id = str(listing_id or "").strip()
+        if not listing_id:
+            return []
+        statuses = ("pending", "accepted", "countered") if active_only else None
+        like_value = f"%{listing_id}%"
+        base_query = (
+            f"SELECT offer_id, target_listing_id, offered_listing_id, from_subject, to_subject, status, accepted_by_from, accepted_by_to, from_receive_address_json, to_receive_address_json, message, created_at, updated_at, offered_listing_ids_json "
+            f"FROM trade_offers WHERE (target_listing_id = {self.param} OR offered_listing_id = {self.param} OR offered_listing_ids_json LIKE {self.param})"
+        )
+        params: tuple = (listing_id, listing_id, like_value)
+        if statuses:
+            placeholders = ", ".join([self.param] * len(statuses))
+            base_query = f"{base_query} AND status IN ({placeholders})"
+            params = (*params, *statuses)
+        query = f"{base_query} ORDER BY updated_at DESC"
+        if self._sqlite_conn is not None:
+            with self._sqlite_lock:
+                rows = self._sqlite_conn.execute(query, params).fetchall()
+        else:
+            cur = self._pg_cursor()
+            cur.execute(query, params)
+            rows = cur.fetchall()
+            cur.close()
+        offers = [self._trade_offer_row_to_dict(row) for row in rows]
+        return [
+            offer for offer in offers
+            if listing_id == str(offer.get("target_listing_id") or "")
+            or listing_id == str(offer.get("offered_listing_id") or "")
+            or listing_id in [str(x) for x in (offer.get("offered_listing_ids") or [])]
+        ]
+
+    def listing_has_active_trade(self, listing_id: str) -> bool:
+        return bool(self.list_trade_offers_for_listing(listing_id, active_only=True))
+
+    def delete_listing(self, *, listing_id: str, owner_subject: str) -> bool:
+        listing = self.get_listing_by_id(listing_id)
+        if not listing or str(listing.get("owner_subject") or "") != str(owner_subject or ""):
+            return False
+        if self.listing_has_active_trade(listing_id):
+            return False
+        self.execute(
+            f"DELETE FROM trade_matches WHERE target_listing_id = {self.param} OR candidate_listing_id = {self.param}",
+            (listing_id, listing_id),
+        )
+        sql = f"DELETE FROM listings WHERE listing_id = {self.param} AND owner_subject = {self.param}"
+        if self._sqlite_conn is not None:
+            with self._sqlite_lock:
+                self._sqlite_conn.execute(sql, (listing_id, owner_subject))
+                changed_row = self._sqlite_conn.execute("SELECT changes() AS n").fetchone()
+            changed = int(changed_row["n"] if isinstance(changed_row, sqlite3.Row) else changed_row[0]) > 0
+        else:
+            cur = self._pg_cursor()
+            try:
+                cur.execute(sql, (listing_id, owner_subject))
                 changed = int(cur.rowcount or 0) > 0
             except Exception:
                 self._pg.rollback()
@@ -1015,16 +1579,7 @@ class Database:
         def resolve(url: object, source_item_id: str | None) -> str | None:
             if not isinstance(url, str):
                 return None
-            s = url.strip()
-            if not s or s.startswith("blob:") or s.startswith("data:"):
-                return None
-            if s.startswith("http://") or s.startswith("https://") or s.startswith("/"):
-                return s
-            if s.startswith("s3://"):
-                image_id = self.get_image_id_by_storage_uri(s)
-                if isinstance(image_id, str) and image_id.strip():
-                    return f"/v1/images/{image_id}"
-            return None
+            return self._canonical_listing_image_url(url, source_item_id)
 
         changed = 0
         for row in rows:
@@ -1045,24 +1600,31 @@ class Database:
                 images = []
             if not isinstance(images, list):
                 images = []
+            try:
+                analysis = json.loads(analysis_json) if analysis_json else None
+            except Exception:
+                analysis = None
+
+            analysis_uploaded_images = self._image_urls_from_analysis_uploads(analysis)
 
             normalized_images: list[str] = []
-            for url in images:
+            seen_image_keys: set[str] = set()
+            for url in [*images, *analysis_uploaded_images]:
                 resolved = resolve(url, source_item_id)
-                if resolved:
+                key = listing_image_dedupe_key(resolved)
+                if resolved and key not in seen_image_keys:
                     normalized_images.append(resolved)
+                    seen_image_keys.add(key)
             normalized_image = resolve(image, source_item_id)
             if not normalized_images and normalized_image:
                 normalized_images = [normalized_image]
+            if not normalized_images and isinstance(source_item_id, str) and source_item_id.strip():
+                normalized_images = [f"/v1/images/{image_id}" for image_id in self.list_image_ids_for_item(source_item_id, limit=20)]
             if not normalized_image and normalized_images:
                 normalized_image = normalized_images[0]
 
             normalized_description = (description or "").strip() if isinstance(description, str) else ""
             if not normalized_description and analysis_json:
-                try:
-                    analysis = json.loads(analysis_json)
-                except Exception:
-                    analysis = None
                 if isinstance(analysis, dict):
                     profile = analysis.get("item_profile")
                     if isinstance(profile, dict):
@@ -1080,7 +1642,7 @@ class Database:
                             if parts:
                                 normalized_description = ". ".join(parts).replace("..", ".")
             wants_text = wants.strip() if isinstance(wants, str) else ""
-            if not normalized_description and wants_text and wants_text != "No description provided.":
+            if not normalized_description and wants_text and not is_generic_trade_note(wants_text):
                 normalized_description = wants_text
 
             old_images = images if isinstance(images, list) else []
@@ -1097,6 +1659,49 @@ class Database:
         if changed:
             self.commit()
         return changed
+
+    def _image_urls_from_analysis_uploads(self, analysis: object) -> list[str]:
+        if not isinstance(analysis, dict):
+            return []
+        entries: list[object] = []
+        uploaded_images = analysis.get("uploaded_images")
+        if isinstance(uploaded_images, list):
+            entries.extend(uploaded_images)
+        debug = analysis.get("debug")
+        if isinstance(debug, dict) and isinstance(debug.get("uploads"), list):
+            entries.extend(debug.get("uploads") or [])
+
+        urls: list[str] = []
+        seen: set[str] = set()
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            url = entry.get("image_url")
+            if isinstance(url, str) and url.strip():
+                normalized = self._canonical_listing_image_url(url)
+                if normalized:
+                    key = listing_image_dedupe_key(normalized)
+                    if key not in seen:
+                        urls.append(normalized)
+                        seen.add(key)
+                    continue
+            image_id = entry.get("image_id")
+            if isinstance(image_id, str) and image_id.strip():
+                normalized = f"/v1/images/{image_id.strip()}"
+                key = listing_image_dedupe_key(normalized)
+                if key not in seen:
+                    urls.append(normalized)
+                    seen.add(key)
+                continue
+            storage_uri = entry.get("storage_uri")
+            if isinstance(storage_uri, str) and storage_uri.strip():
+                normalized = self._canonical_listing_image_url(storage_uri.strip())
+                if normalized:
+                    key = listing_image_dedupe_key(normalized)
+                    if key not in seen:
+                        urls.append(normalized)
+                        seen.add(key)
+        return urls
 
     def _analysis_row_to_dict(self, row) -> dict:
         analysis_id = row["analysis_id"] if isinstance(row, sqlite3.Row) else row[0]
@@ -1136,30 +1741,30 @@ class Database:
                 "analysis_json",
                 "status",
                 "created_at",
+                "updated_at",
             ]
             data = {k: row[idx] for idx, k in enumerate(keys)}
-        image_raw = data["image"]
-        image = image_raw if isinstance(image_raw, str) else None
-        if image and (image.startswith("data:") or image.startswith("blob:")):
-            image = None
+        source_item_id = data.get("source_item_id")
+        image = self._canonical_listing_image_url(data["image"], source_item_id)
 
         try:
             images = json.loads(data.get("images_json") or "[]")
         except Exception:
             images = []
         safe_images = []
+        seen_image_keys: set[str] = set()
         for value in images:
-            if not isinstance(value, str):
-                continue
-            if value.startswith("data:") or value.startswith("blob:"):
-                continue
-            safe_images.append(value)
+            normalized = self._canonical_listing_image_url(value, source_item_id)
+            key = listing_image_dedupe_key(normalized)
+            if normalized and key not in seen_image_keys:
+                safe_images.append(normalized)
+                seen_image_keys.add(key)
 
         description = (data.get("description") or "").strip() if isinstance(data.get("description"), str) else ""
         wants = data["wants"]
         if not description and isinstance(wants, str):
             wants_text = wants.strip()
-            if wants_text and wants_text != "No description provided.":
+            if wants_text and not is_generic_trade_note(wants_text):
                 description = wants_text
 
         try:
@@ -1176,13 +1781,19 @@ class Database:
             analysis = json.loads(data["analysis_json"]) if data.get("analysis_json") else None
         except Exception:
             analysis = None
+        if not safe_images:
+            safe_images = self._image_urls_from_analysis_uploads(analysis)
+        if not safe_images and isinstance(source_item_id, str) and source_item_id.strip():
+            safe_images = [f"/v1/images/{image_id}" for image_id in self.list_image_ids_for_item(source_item_id, limit=20)]
+        if not image and safe_images:
+            image = safe_images[0]
 
         return {
             "listing_id": data["listing_id"],
             "owner_subject": data["owner_subject"],
             "owner_name": data["owner_name"],
             "title": data["title"],
-            "mode": data["mode"],
+            "mode": "trade",
             "category": data["category"],
             "brand": data["brand"],
             "condition": data["condition"],
@@ -1194,23 +1805,25 @@ class Database:
             "description": description,
             "wants": wants,
             "tags": tags,
-            "source_item_id": data["source_item_id"],
+            "source_item_id": source_item_id,
             "analysis": analysis,
             "status": data.get("status") or "Review",
             "created_at": data["created_at"],
+            "updated_at": data.get("updated_at") or data["created_at"],
         }
 
     def get_user_profile_quiz(self, owner_subject: str) -> dict | None:
         query = (
-            f"SELECT owner_subject, gender, tops_size, dresses_size, bottoms_size, shoes_size, "
-            f"category_preferences_json, shipping_full_name, shipping_address_line1, shipping_address_line2, "
+            f"SELECT owner_subject, first_name, last_name, email, gender, birthday, tops_size, dresses_size, bottoms_size, shoes_size, "
+            f"category_preferences_json, style_descriptors_json, jouft_goals_json, shipping_full_name, shipping_address_line1, shipping_address_line2, "
             f"shipping_city, shipping_state, shipping_postal_code, shipping_country, shipping_email, shipping_phone, shipping_addresses_json, "
             f"subscription_plan, subscription_billing_cycle, subscription_status, subscription_renewal_date, payment_methods_json, "
             f"created_at, updated_at "
             f"FROM user_profiles WHERE owner_subject = {self.param} LIMIT 1"
         )
         if self._sqlite_conn is not None:
-            row = self._sqlite_conn.execute(query, (owner_subject,)).fetchone()
+            with self._sqlite_lock:
+                row = self._sqlite_conn.execute(query, (owner_subject,)).fetchone()
         else:
             cur = self._pg_cursor()
             cur.execute(query, (owner_subject,))
@@ -1222,8 +1835,8 @@ class Database:
             data = dict(row)
         else:
             keys = [
-                "owner_subject", "gender", "tops_size", "dresses_size", "bottoms_size", "shoes_size",
-                "category_preferences_json", "shipping_full_name", "shipping_address_line1", "shipping_address_line2",
+                "owner_subject", "first_name", "last_name", "email", "gender", "birthday", "tops_size", "dresses_size", "bottoms_size", "shoes_size",
+                "category_preferences_json", "style_descriptors_json", "jouft_goals_json", "shipping_full_name", "shipping_address_line1", "shipping_address_line2",
                 "shipping_city", "shipping_state", "shipping_postal_code", "shipping_country",
                 "shipping_email", "shipping_phone", "shipping_addresses_json",
                 "subscription_plan", "subscription_billing_cycle", "subscription_status", "subscription_renewal_date", "payment_methods_json",
@@ -1236,6 +1849,18 @@ class Database:
                 prefs = []
         except Exception:
             prefs = []
+        try:
+            style_descriptors = json.loads(data.get("style_descriptors_json") or "[]")
+            if not isinstance(style_descriptors, list):
+                style_descriptors = []
+        except Exception:
+            style_descriptors = []
+        try:
+            jouft_goals = json.loads(data.get("jouft_goals_json") or "[]")
+            if not isinstance(jouft_goals, list):
+                jouft_goals = []
+        except Exception:
+            jouft_goals = []
         try:
             payment_methods = json.loads(data.get("payment_methods_json") or "[]")
             if not isinstance(payment_methods, list):
@@ -1267,12 +1892,18 @@ class Database:
         primary_address = shipping_addresses[0] if shipping_addresses else {}
         return {
             "owner_subject": data["owner_subject"],
+            "first_name": data.get("first_name"),
+            "last_name": data.get("last_name"),
+            "email": data.get("email"),
             "gender": data.get("gender"),
+            "birthday": data.get("birthday"),
             "tops_size": data.get("tops_size"),
             "dresses_size": data.get("dresses_size"),
             "bottoms_size": data.get("bottoms_size"),
             "shoes_size": data.get("shoes_size"),
             "category_preferences": [p for p in prefs if isinstance(p, str)],
+            "style_descriptors": [p for p in style_descriptors if isinstance(p, str)],
+            "jouft_goals": [p for p in jouft_goals if isinstance(p, str)],
             "shipping_full_name": primary_address.get("full_name") or data.get("shipping_full_name"),
             "shipping_address_line1": primary_address.get("address_line1") or data.get("shipping_address_line1"),
             "shipping_address_line2": primary_address.get("address_line2") or data.get("shipping_address_line2"),
@@ -1296,12 +1927,18 @@ class Database:
         self,
         *,
         owner_subject: str,
+        first_name: str | None,
+        last_name: str | None,
+        email: str | None,
         gender: str | None,
+        birthday: str | None,
         tops_size: str | None,
         dresses_size: str | None,
         bottoms_size: str | None,
         shoes_size: str | None,
         category_preferences: list[str],
+        style_descriptors: list[str],
+        jouft_goals: list[str],
         shipping_full_name: str | None,
         shipping_address_line1: str | None,
         shipping_address_line2: str | None,
@@ -1320,20 +1957,29 @@ class Database:
     ) -> dict:
         now = utc_now_iso()
         cats = json.dumps([c for c in category_preferences if isinstance(c, str)])
+        styles = json.dumps([s for s in style_descriptors if isinstance(s, str) and s.strip()])
+        goals = json.dumps([g for g in jouft_goals if isinstance(g, str) and g.strip()])
         payment_methods_json = json.dumps([m for m in payment_methods if isinstance(m, str) and m.strip()])
         shipping_addresses_json = json.dumps(self._normalize_shipping_addresses(shipping_addresses))
         if self._sqlite_conn is not None:
-            self._sqlite_conn.execute(
-                """INSERT INTO user_profiles
-                (owner_subject, gender, tops_size, dresses_size, bottoms_size, shoes_size, category_preferences_json, shipping_full_name, shipping_address_line1, shipping_address_line2, shipping_city, shipping_state, shipping_postal_code, shipping_country, shipping_email, shipping_phone, shipping_addresses_json, subscription_plan, subscription_billing_cycle, subscription_status, subscription_renewal_date, payment_methods_json, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(owner_subject) DO UPDATE SET
-                  gender=excluded.gender,
-                  tops_size=excluded.tops_size,
-                  dresses_size=excluded.dresses_size,
-                  bottoms_size=excluded.bottoms_size,
-                  shoes_size=excluded.shoes_size,
-                  category_preferences_json=excluded.category_preferences_json,
+            with self._sqlite_lock:
+                self._sqlite_conn.execute(
+                    """INSERT INTO user_profiles
+                    (owner_subject, first_name, last_name, email, gender, birthday, tops_size, dresses_size, bottoms_size, shoes_size, category_preferences_json, style_descriptors_json, jouft_goals_json, shipping_full_name, shipping_address_line1, shipping_address_line2, shipping_city, shipping_state, shipping_postal_code, shipping_country, shipping_email, shipping_phone, shipping_addresses_json, subscription_plan, subscription_billing_cycle, subscription_status, subscription_renewal_date, payment_methods_json, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(owner_subject) DO UPDATE SET
+                      first_name=excluded.first_name,
+                      last_name=excluded.last_name,
+                      email=excluded.email,
+                      gender=excluded.gender,
+                      birthday=excluded.birthday,
+                      tops_size=excluded.tops_size,
+                      dresses_size=excluded.dresses_size,
+                      bottoms_size=excluded.bottoms_size,
+                      shoes_size=excluded.shoes_size,
+                      category_preferences_json=excluded.category_preferences_json,
+                      style_descriptors_json=excluded.style_descriptors_json,
+                  jouft_goals_json=excluded.jouft_goals_json,
                   shipping_full_name=excluded.shipping_full_name,
                   shipping_address_line1=excluded.shipping_address_line1,
                   shipping_address_line2=excluded.shipping_address_line2,
@@ -1352,26 +1998,32 @@ class Database:
                   updated_at=excluded.updated_at
                 """,
                 (
-                    owner_subject, gender, tops_size, dresses_size, bottoms_size, shoes_size, cats,
+                    owner_subject, first_name, last_name, email, gender, birthday, tops_size, dresses_size, bottoms_size, shoes_size, cats, styles, goals,
                     shipping_full_name, shipping_address_line1, shipping_address_line2, shipping_city, shipping_state,
                     shipping_postal_code, shipping_country, shipping_email, shipping_phone, shipping_addresses_json, subscription_plan, subscription_billing_cycle, subscription_status, subscription_renewal_date,
                     payment_methods_json, now, now,
                 ),
             )
-            self._sqlite_conn.commit()
+                self._sqlite_conn.commit()
         else:
             cur = self._pg_cursor()
             cur.execute(
                 f"""INSERT INTO user_profiles
-                (owner_subject, gender, tops_size, dresses_size, bottoms_size, shoes_size, category_preferences_json, shipping_full_name, shipping_address_line1, shipping_address_line2, shipping_city, shipping_state, shipping_postal_code, shipping_country, shipping_email, shipping_phone, shipping_addresses_json, subscription_plan, subscription_billing_cycle, subscription_status, subscription_renewal_date, payment_methods_json, created_at, updated_at)
-                VALUES ({self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param})
+                (owner_subject, first_name, last_name, email, gender, birthday, tops_size, dresses_size, bottoms_size, shoes_size, category_preferences_json, style_descriptors_json, jouft_goals_json, shipping_full_name, shipping_address_line1, shipping_address_line2, shipping_city, shipping_state, shipping_postal_code, shipping_country, shipping_email, shipping_phone, shipping_addresses_json, subscription_plan, subscription_billing_cycle, subscription_status, subscription_renewal_date, payment_methods_json, created_at, updated_at)
+                VALUES ({self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param})
                 ON CONFLICT (owner_subject) DO UPDATE SET
+                  first_name=EXCLUDED.first_name,
+                  last_name=EXCLUDED.last_name,
+                  email=EXCLUDED.email,
                   gender=EXCLUDED.gender,
+                  birthday=EXCLUDED.birthday,
                   tops_size=EXCLUDED.tops_size,
                   dresses_size=EXCLUDED.dresses_size,
                   bottoms_size=EXCLUDED.bottoms_size,
                   shoes_size=EXCLUDED.shoes_size,
                   category_preferences_json=EXCLUDED.category_preferences_json,
+                  style_descriptors_json=EXCLUDED.style_descriptors_json,
+                  jouft_goals_json=EXCLUDED.jouft_goals_json,
                   shipping_full_name=EXCLUDED.shipping_full_name,
                   shipping_address_line1=EXCLUDED.shipping_address_line1,
                   shipping_address_line2=EXCLUDED.shipping_address_line2,
@@ -1390,7 +2042,7 @@ class Database:
                   updated_at=EXCLUDED.updated_at
                 """,
                 (
-                    owner_subject, gender, tops_size, dresses_size, bottoms_size, shoes_size, cats,
+                    owner_subject, first_name, last_name, email, gender, birthday, tops_size, dresses_size, bottoms_size, shoes_size, cats, styles, goals,
                     shipping_full_name, shipping_address_line1, shipping_address_line2, shipping_city, shipping_state,
                     shipping_postal_code, shipping_country, shipping_email, shipping_phone, shipping_addresses_json, subscription_plan, subscription_billing_cycle, subscription_status, subscription_renewal_date,
                     payment_methods_json, now, now,
@@ -1400,12 +2052,18 @@ class Database:
             self._pg.commit()
         return self.get_user_profile_quiz(owner_subject) or {
             "owner_subject": owner_subject,
+            "first_name": first_name,
+            "last_name": last_name,
+            "email": email,
             "gender": gender,
+            "birthday": birthday,
             "tops_size": tops_size,
             "dresses_size": dresses_size,
             "bottoms_size": bottoms_size,
             "shoes_size": shoes_size,
             "category_preferences": category_preferences,
+            "style_descriptors": [s for s in style_descriptors if isinstance(s, str) and s.strip()],
+            "jouft_goals": [g for g in jouft_goals if isinstance(g, str) and g.strip()],
             "shipping_full_name": shipping_full_name,
             "shipping_address_line1": shipping_address_line1,
             "shipping_address_line2": shipping_address_line2,
@@ -1425,13 +2083,120 @@ class Database:
             "updated_at": now,
         }
 
+    @staticmethod
+    def _normalize_alert_preferences(raw: object) -> dict[str, bool]:
+        if not isinstance(raw, dict):
+            return {}
+        return {
+            str(key): bool(value)
+            for key, value in raw.items()
+            if isinstance(key, str) and key.strip()
+        }
+
+    @staticmethod
+    def _normalize_liked_listing_ids(raw: object) -> list[str]:
+        if not isinstance(raw, list):
+            return []
+        seen: set[str] = set()
+        out: list[str] = []
+        for entry in raw:
+            listing_id = str(entry or "").strip()
+            if not listing_id or listing_id in seen:
+                continue
+            seen.add(listing_id)
+            out.append(listing_id)
+        return out
+
+    def get_user_client_state(self, owner_subject: str) -> dict | None:
+        query = (
+            f"SELECT owner_subject, alert_preferences_json, liked_listing_ids_json, created_at, updated_at "
+            f"FROM user_client_state WHERE owner_subject = {self.param} LIMIT 1"
+        )
+        if self._sqlite_conn is not None:
+            row = self._sqlite_conn.execute(query, (owner_subject,)).fetchone()
+        else:
+            cur = self._pg_cursor()
+            cur.execute(query, (owner_subject,))
+            row = cur.fetchone()
+            cur.close()
+        if not row:
+            return None
+        if isinstance(row, sqlite3.Row):
+            data = dict(row)
+        else:
+            keys = ["owner_subject", "alert_preferences_json", "liked_listing_ids_json", "created_at", "updated_at"]
+            data = {k: row[idx] for idx, k in enumerate(keys)}
+        try:
+            alert_preferences = self._normalize_alert_preferences(json.loads(data.get("alert_preferences_json") or "{}"))
+        except Exception:
+            alert_preferences = {}
+        try:
+            liked_listing_ids = self._normalize_liked_listing_ids(json.loads(data.get("liked_listing_ids_json") or "[]"))
+        except Exception:
+            liked_listing_ids = []
+        return {
+            "owner_subject": data["owner_subject"],
+            "alert_preferences": alert_preferences,
+            "liked_listing_ids": liked_listing_ids,
+            "created_at": data["created_at"],
+            "updated_at": data["updated_at"],
+        }
+
+    def upsert_user_client_state(
+        self,
+        *,
+        owner_subject: str,
+        alert_preferences: dict[str, bool],
+        liked_listing_ids: list[str],
+    ) -> dict:
+        now = utc_now_iso()
+        alert_preferences_json = json.dumps(self._normalize_alert_preferences(alert_preferences))
+        liked_listing_ids_json = json.dumps(self._normalize_liked_listing_ids(liked_listing_ids))
+        if self._sqlite_conn is not None:
+            with self._sqlite_lock:
+                self._sqlite_conn.execute(
+                    """INSERT INTO user_client_state
+                    (owner_subject, alert_preferences_json, liked_listing_ids_json, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(owner_subject) DO UPDATE SET
+                      alert_preferences_json=excluded.alert_preferences_json,
+                      liked_listing_ids_json=excluded.liked_listing_ids_json,
+                      updated_at=excluded.updated_at
+                    """,
+                    (owner_subject, alert_preferences_json, liked_listing_ids_json, now, now),
+                )
+                self._sqlite_conn.commit()
+        else:
+            cur = self._pg_cursor()
+            cur.execute(
+                f"""INSERT INTO user_client_state
+                (owner_subject, alert_preferences_json, liked_listing_ids_json, created_at, updated_at)
+                VALUES ({self.param}, {self.param}, {self.param}, {self.param}, {self.param})
+                ON CONFLICT (owner_subject) DO UPDATE SET
+                  alert_preferences_json=EXCLUDED.alert_preferences_json,
+                  liked_listing_ids_json=EXCLUDED.liked_listing_ids_json,
+                  updated_at=EXCLUDED.updated_at
+                """,
+                (owner_subject, alert_preferences_json, liked_listing_ids_json, now, now),
+            )
+            cur.close()
+            self._pg.commit()
+        return self.get_user_client_state(owner_subject) or {
+            "owner_subject": owner_subject,
+            "alert_preferences": self._normalize_alert_preferences(alert_preferences),
+            "liked_listing_ids": self._normalize_liked_listing_ids(liked_listing_ids),
+            "created_at": now,
+            "updated_at": now,
+        }
+
     def list_payment_methods(self, owner_subject: str) -> list[dict]:
         query = (
             f"SELECT payment_method_id, owner_subject, provider, method_type, label, last4, brand, exp_month, exp_year, email, is_default, created_at, updated_at "
             f"FROM user_payment_methods WHERE owner_subject = {self.param} ORDER BY is_default DESC, created_at DESC"
         )
         if self._sqlite_conn is not None:
-            rows = self._sqlite_conn.execute(query, (owner_subject,)).fetchall()
+            with self._sqlite_lock:
+                rows = self._sqlite_conn.execute(query, (owner_subject,)).fetchall()
         else:
             cur = self._pg_cursor()
             cur.execute(query, (owner_subject,))
@@ -1510,9 +2275,10 @@ class Database:
     def delete_payment_method(self, owner_subject: str, payment_method_id: str) -> bool:
         query = f"DELETE FROM user_payment_methods WHERE owner_subject = {self.param} AND payment_method_id = {self.param}"
         if self._sqlite_conn is not None:
-            cur = self._sqlite_conn.execute(query, (owner_subject, payment_method_id))
-            deleted = cur.rowcount > 0
-            self._sqlite_conn.commit()
+            with self._sqlite_lock:
+                cur = self._sqlite_conn.execute(query, (owner_subject, payment_method_id))
+                deleted = cur.rowcount > 0
+                self._sqlite_conn.commit()
             return deleted
         cur = self._pg_cursor()
         cur.execute(query, (owner_subject, payment_method_id))
@@ -1527,7 +2293,8 @@ class Database:
             f"FROM user_payment_methods WHERE owner_subject = {self.param} AND payment_method_id = {self.param} LIMIT 1"
         )
         if self._sqlite_conn is not None:
-            row = self._sqlite_conn.execute(query, (owner_subject, payment_method_id)).fetchone()
+            with self._sqlite_lock:
+                row = self._sqlite_conn.execute(query, (owner_subject, payment_method_id)).fetchone()
         else:
             cur = self._pg_cursor()
             cur.execute(query, (owner_subject, payment_method_id))
@@ -1579,7 +2346,8 @@ class Database:
             f"SELECT stripe_customer_id FROM user_billing_profiles WHERE owner_subject = {self.param} LIMIT 1"
         )
         if self._sqlite_conn is not None:
-            row = self._sqlite_conn.execute(query, (owner_subject,)).fetchone()
+            with self._sqlite_lock:
+                row = self._sqlite_conn.execute(query, (owner_subject,)).fetchone()
         else:
             cur = self._pg_cursor()
             cur.execute(query, (owner_subject,))
@@ -1594,16 +2362,17 @@ class Database:
     def set_stripe_customer_id(self, owner_subject: str, stripe_customer_id: str) -> None:
         now = utc_now_iso()
         if self._sqlite_conn is not None:
-            self._sqlite_conn.execute(
-                """INSERT INTO user_billing_profiles (owner_subject, stripe_customer_id, created_at, updated_at)
-                VALUES (?, ?, ?, ?)
-                ON CONFLICT(owner_subject) DO UPDATE SET
-                  stripe_customer_id=excluded.stripe_customer_id,
-                  updated_at=excluded.updated_at
-                """,
-                (owner_subject, stripe_customer_id, now, now),
-            )
-            self._sqlite_conn.commit()
+            with self._sqlite_lock:
+                self._sqlite_conn.execute(
+                    """INSERT INTO user_billing_profiles (owner_subject, stripe_customer_id, created_at, updated_at)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(owner_subject) DO UPDATE SET
+                      stripe_customer_id=excluded.stripe_customer_id,
+                      updated_at=excluded.updated_at
+                    """,
+                    (owner_subject, stripe_customer_id, now, now),
+                )
+                self._sqlite_conn.commit()
             return
         cur = self._pg_cursor()
         cur.execute(
@@ -1618,19 +2387,157 @@ class Database:
         cur.close()
         self._pg.commit()
 
+    def get_billing_profile(self, owner_subject: str) -> dict | None:
+        query = (
+            f"SELECT owner_subject, stripe_customer_id, stripe_subscription_id, subscription_plan, "
+            f"subscription_billing_cycle, subscription_status, subscription_renewal_date, created_at, updated_at "
+            f"FROM user_billing_profiles WHERE owner_subject = {self.param} LIMIT 1"
+        )
+        if self._sqlite_conn is not None:
+            with self._sqlite_lock:
+                row = self._sqlite_conn.execute(query, (owner_subject,)).fetchone()
+        else:
+            cur = self._pg_cursor()
+            cur.execute(query, (owner_subject,))
+            row = cur.fetchone()
+            cur.close()
+        if not row:
+            return None
+        keys = [
+            "owner_subject", "stripe_customer_id", "stripe_subscription_id", "subscription_plan",
+            "subscription_billing_cycle", "subscription_status", "subscription_renewal_date",
+            "created_at", "updated_at",
+        ]
+        data = dict(row) if isinstance(row, sqlite3.Row) else {k: row[idx] for idx, k in enumerate(keys)}
+        return {
+            "owner_subject": data.get("owner_subject"),
+            "stripe_customer_id": data.get("stripe_customer_id"),
+            "stripe_subscription_id": data.get("stripe_subscription_id"),
+            "subscription_plan": data.get("subscription_plan"),
+            "subscription_billing_cycle": data.get("subscription_billing_cycle"),
+            "subscription_status": data.get("subscription_status"),
+            "subscription_renewal_date": data.get("subscription_renewal_date"),
+            "created_at": data.get("created_at"),
+            "updated_at": data.get("updated_at"),
+        }
+
+    def set_billing_subscription(
+        self,
+        owner_subject: str,
+        *,
+        stripe_subscription_id: str | None,
+        subscription_plan: str | None,
+        subscription_billing_cycle: str | None,
+        subscription_status: str | None,
+        subscription_renewal_date: str | None,
+    ) -> None:
+        now = utc_now_iso()
+        if self._sqlite_conn is not None:
+            with self._sqlite_lock:
+                self._sqlite_conn.execute(
+                    """INSERT INTO user_billing_profiles
+                    (owner_subject, stripe_subscription_id, subscription_plan, subscription_billing_cycle, subscription_status, subscription_renewal_date, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(owner_subject) DO UPDATE SET
+                      stripe_subscription_id=excluded.stripe_subscription_id,
+                      subscription_plan=excluded.subscription_plan,
+                      subscription_billing_cycle=excluded.subscription_billing_cycle,
+                      subscription_status=excluded.subscription_status,
+                      subscription_renewal_date=excluded.subscription_renewal_date,
+                      updated_at=excluded.updated_at
+                    """,
+                    (
+                        owner_subject, stripe_subscription_id, subscription_plan, subscription_billing_cycle,
+                        subscription_status, subscription_renewal_date, now, now,
+                    ),
+                )
+                self._sqlite_conn.commit()
+            return
+        cur = self._pg_cursor()
+        cur.execute(
+            f"""INSERT INTO user_billing_profiles
+            (owner_subject, stripe_subscription_id, subscription_plan, subscription_billing_cycle, subscription_status, subscription_renewal_date, created_at, updated_at)
+            VALUES ({self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param})
+            ON CONFLICT (owner_subject) DO UPDATE SET
+              stripe_subscription_id=EXCLUDED.stripe_subscription_id,
+              subscription_plan=EXCLUDED.subscription_plan,
+              subscription_billing_cycle=EXCLUDED.subscription_billing_cycle,
+              subscription_status=EXCLUDED.subscription_status,
+              subscription_renewal_date=EXCLUDED.subscription_renewal_date,
+              updated_at=EXCLUDED.updated_at
+            """,
+            (
+                owner_subject, stripe_subscription_id, subscription_plan, subscription_billing_cycle,
+                subscription_status, subscription_renewal_date, now, now,
+            ),
+        )
+        cur.close()
+        self._pg.commit()
+
+    def update_profile_subscription(
+        self,
+        owner_subject: str,
+        *,
+        subscription_plan: str | None,
+        subscription_billing_cycle: str | None,
+        subscription_status: str | None,
+        subscription_renewal_date: str | None,
+    ) -> dict:
+        now = utc_now_iso()
+        if self._sqlite_conn is not None:
+            with self._sqlite_lock:
+                self._sqlite_conn.execute(
+                    """INSERT INTO user_profiles
+                    (owner_subject, subscription_plan, subscription_billing_cycle, subscription_status, subscription_renewal_date, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(owner_subject) DO UPDATE SET
+                      subscription_plan=excluded.subscription_plan,
+                      subscription_billing_cycle=excluded.subscription_billing_cycle,
+                      subscription_status=excluded.subscription_status,
+                      subscription_renewal_date=excluded.subscription_renewal_date,
+                      updated_at=excluded.updated_at
+                    """,
+                    (
+                        owner_subject, subscription_plan, subscription_billing_cycle,
+                        subscription_status, subscription_renewal_date, now, now,
+                    ),
+                )
+                self._sqlite_conn.commit()
+        else:
+            cur = self._pg_cursor()
+            cur.execute(
+                f"""INSERT INTO user_profiles
+                (owner_subject, subscription_plan, subscription_billing_cycle, subscription_status, subscription_renewal_date, created_at, updated_at)
+                VALUES ({self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param})
+                ON CONFLICT (owner_subject) DO UPDATE SET
+                  subscription_plan=EXCLUDED.subscription_plan,
+                  subscription_billing_cycle=EXCLUDED.subscription_billing_cycle,
+                  subscription_status=EXCLUDED.subscription_status,
+                  subscription_renewal_date=EXCLUDED.subscription_renewal_date,
+                  updated_at=EXCLUDED.updated_at
+                """,
+                (
+                    owner_subject, subscription_plan, subscription_billing_cycle,
+                    subscription_status, subscription_renewal_date, now, now,
+                ),
+            )
+            cur.close()
+            self._pg.commit()
+        return self.get_user_profile_quiz(owner_subject) or {}
+
     def list_shipments_for_offer(self, offer_id: str) -> list[dict]:
         query = (
             f"SELECT shipment_id, offer_id, from_subject, to_subject, from_listing_id, to_listing_id, "
             f"from_name, from_address_line1, from_address_line2, from_city, from_state, from_postal_code, from_country, "
             f"to_name, to_address_line1, to_address_line2, to_city, to_state, to_postal_code, to_country, "
-            f"carrier, service_level, tracking_number, label_url, status, created_at, updated_at "
+            f"carrier, service_level, tracking_number, label_url, status, shipped_at, last_ship_reminder_at, ship_reminder_count, created_at, updated_at "
             f"FROM trade_shipments WHERE offer_id = {self.param} ORDER BY created_at ASC"
         )
         keys = [
             "shipment_id", "offer_id", "from_subject", "to_subject", "from_listing_id", "to_listing_id",
             "from_name", "from_address_line1", "from_address_line2", "from_city", "from_state", "from_postal_code", "from_country",
             "to_name", "to_address_line1", "to_address_line2", "to_city", "to_state", "to_postal_code", "to_country",
-            "carrier", "service_level", "tracking_number", "label_url", "status", "created_at", "updated_at",
+            "carrier", "service_level", "tracking_number", "label_url", "status", "shipped_at", "last_ship_reminder_at", "ship_reminder_count", "created_at", "updated_at",
         ]
         if self._sqlite_conn is not None:
             rows = self._sqlite_conn.execute(query, (offer_id,)).fetchall()
@@ -1649,14 +2556,14 @@ class Database:
             f"SELECT shipment_id, offer_id, from_subject, to_subject, from_listing_id, to_listing_id, "
             f"from_name, from_address_line1, from_address_line2, from_city, from_state, from_postal_code, from_country, "
             f"to_name, to_address_line1, to_address_line2, to_city, to_state, to_postal_code, to_country, "
-            f"carrier, service_level, tracking_number, label_url, status, created_at, updated_at "
+            f"carrier, service_level, tracking_number, label_url, status, shipped_at, last_ship_reminder_at, ship_reminder_count, created_at, updated_at "
             f"FROM trade_shipments WHERE shipment_id = {self.param} LIMIT 1"
         )
         keys = [
             "shipment_id", "offer_id", "from_subject", "to_subject", "from_listing_id", "to_listing_id",
             "from_name", "from_address_line1", "from_address_line2", "from_city", "from_state", "from_postal_code", "from_country",
             "to_name", "to_address_line1", "to_address_line2", "to_city", "to_state", "to_postal_code", "to_country",
-            "carrier", "service_level", "tracking_number", "label_url", "status", "created_at", "updated_at",
+            "carrier", "service_level", "tracking_number", "label_url", "status", "shipped_at", "last_ship_reminder_at", "ship_reminder_count", "created_at", "updated_at",
         ]
         if self._sqlite_conn is not None:
             row = self._sqlite_conn.execute(query, (shipment_id,)).fetchone()
@@ -1695,6 +2602,63 @@ class Database:
         )
         self.commit()
         return self.get_trade_shipment_by_id(shipment_id)
+
+    def update_trade_shipment_status(self, *, shipment_id: str, status: str, shipped_at: str | None = None) -> dict | None:
+        shipment = self.get_trade_shipment_by_id(shipment_id)
+        if not shipment:
+            return None
+        next_shipped_at = shipped_at
+        if next_shipped_at is None and str(status or "").lower() in {"shipped", "delivered"}:
+            next_shipped_at = str(shipment.get("shipped_at") or "") or utc_now_iso()
+        if next_shipped_at is None:
+            next_shipped_at = shipment.get("shipped_at")
+        self.execute(
+            f"""UPDATE trade_shipments
+            SET status = {self.param}, shipped_at = {self.param}, updated_at = {self.param}
+            WHERE shipment_id = {self.param}""",
+            (status, next_shipped_at, utc_now_iso(), shipment_id),
+        )
+        self.commit()
+        return self.get_trade_shipment_by_id(shipment_id)
+
+    def mark_shipment_reminder_sent(self, shipment_id: str) -> dict | None:
+        shipment = self.get_trade_shipment_by_id(shipment_id)
+        if not shipment:
+            return None
+        current_count = int(shipment.get("ship_reminder_count") or 0)
+        now = utc_now_iso()
+        self.execute(
+            f"""UPDATE trade_shipments
+            SET last_ship_reminder_at = {self.param}, ship_reminder_count = {self.param}, updated_at = {self.param}
+            WHERE shipment_id = {self.param}""",
+            (now, current_count + 1, now, shipment_id),
+        )
+        self.commit()
+        return self.get_trade_shipment_by_id(shipment_id)
+
+    def list_shipments_pending_reminder(self) -> list[dict]:
+        query = (
+            f"SELECT shipment_id, offer_id, from_subject, to_subject, tracking_number, label_url, status, "
+            f"carrier, service_level, created_at, shipped_at, last_ship_reminder_at, ship_reminder_count "
+            f"FROM trade_shipments "
+            f"WHERE COALESCE(label_url, '') <> '' "
+            f"AND LOWER(COALESCE(status, '')) NOT IN ('shipped', 'delivered', 'cancelled')"
+        )
+        keys = [
+            "shipment_id", "offer_id", "from_subject", "to_subject", "tracking_number", "label_url", "status",
+            "carrier", "service_level", "created_at", "shipped_at", "last_ship_reminder_at", "ship_reminder_count",
+        ]
+        if self._sqlite_conn is not None:
+            rows = self._sqlite_conn.execute(query).fetchall()
+        else:
+            cur = self._pg_cursor()
+            cur.execute(query)
+            rows = cur.fetchall()
+            cur.close()
+        out: list[dict] = []
+        for row in rows:
+            out.append(dict(row) if isinstance(row, sqlite3.Row) else {k: row[idx] for idx, k in enumerate(keys)})
+        return out
 
     def insert_trade_shipment(
         self,
@@ -1764,6 +2728,9 @@ class Database:
             "tracking_number": tracking_number,
             "label_url": label_url,
             "status": status,
+            "shipped_at": None,
+            "last_ship_reminder_at": None,
+            "ship_reminder_count": 0,
             "created_at": now,
             "updated_at": now,
         }

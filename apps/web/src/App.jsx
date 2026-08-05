@@ -1,4 +1,4 @@
-import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import {
   SignIn,
   SignUp,
@@ -7,6 +7,8 @@ import {
   useClerk,
   useUser,
 } from '@clerk/clerk-react'
+import { FaFacebookF, FaPinterestP } from 'react-icons/fa'
+import { FiTrash2 } from 'react-icons/fi'
 import { createWebApiClient } from './lib/apiClient'
 
 const API_DEFAULT =
@@ -14,7 +16,8 @@ const API_DEFAULT =
   (typeof window !== 'undefined' ? window.location.origin : 'http://127.0.0.1:8000')
 const CLERK_ENABLED = Boolean(import.meta.env.VITE_CLERK_PUBLISHABLE_KEY)
 const IS_PROD = Boolean(import.meta.env.PROD)
-const VALID_TABS = new Set(['market', 'portfolio', 'inbox', 'profile', 'market_new', 'admin', 'trade', 'upload'])
+const VALID_TABS = new Set(['market', 'portfolio', 'inbox', 'profile', 'profile_setup', 'admin', 'trade', 'edit_listing'])
+const TEMP_SHOW_PROFILE_QUESTIONNAIRE_ON_LOGIN = false
 
 function tabFromLocation() {
   if (typeof window === 'undefined') return 'market'
@@ -23,22 +26,29 @@ function tabFromLocation() {
   return VALID_TABS.has(tab) ? tab : 'market'
 }
 
+function hasExplicitTabInLocation() {
+  if (typeof window === 'undefined') return false
+  const params = new URLSearchParams(window.location.search)
+  const tab = String(params.get('tab') || '').trim().toLowerCase()
+  return VALID_TABS.has(tab)
+}
+
 function tabHref(tab) {
   return `/?tab=${encodeURIComponent(tab)}`
 }
 
 const seedListings = [
   {
-    id: 'seed-1', owner: 'Mara', title: 'Louis Vuitton Neverfull MM Monogram Tote', mode: 'trade', category: 'handbag', brand: 'Louis Vuitton', condition: 'Good', estimatedValue: 960, city: 'New York, NY', image: 'https://images.unsplash.com/photo-1584917865442-de89df76afd3?auto=format&fit=crop&w=800&q=80', wants: 'Designer tote or shoulder bag in the $850-$1,100 range', tags: ['authenticated', 'monogram', 'trade-only'],
+    id: 'seed-1', owner: 'Mara', title: 'Louis Vuitton Neverfull MM Monogram Tote', mode: 'trade', category: 'handbag', brand: 'Louis Vuitton', condition: 'LikeNew', estimatedValue: 960, city: 'New York, NY', image: 'https://images.unsplash.com/photo-1584917865442-de89df76afd3?auto=format&fit=crop&w=800&q=80', wants: 'Designer tote or shoulder bag in the $850-$1,100 range', tags: ['authenticated', 'monogram', 'trade-only'],
   },
   {
-    id: 'seed-2', owner: 'Eli', title: 'Nike Dunk Low Panda (US 10)', mode: 'sell', category: 'shoes', brand: 'Nike', condition: 'LikeNew', estimatedValue: 110, city: 'Austin, TX', image: 'https://images.unsplash.com/photo-1542291026-7eec264c27ff?auto=format&fit=crop&w=800&q=80', wants: 'Open to trades around sneakers / streetwear', tags: ['sneakers', 'size-10', 'verified-receipt'],
+    id: 'seed-2', owner: 'Eli', title: 'Nike Dunk Low Panda (US 10)', mode: 'trade', category: 'shoes', brand: 'Nike', condition: 'LikeNew', estimatedValue: 110, city: 'Austin, TX', image: 'https://images.unsplash.com/photo-1542291026-7eec264c27ff?auto=format&fit=crop&w=800&q=80', wants: 'Open to sneaker or streetwear trades', tags: ['sneakers', 'size-10', 'verified-receipt'],
   },
   {
-    id: 'seed-3', owner: 'Nina', title: 'Burberry Nova Check Wool Scarf', mode: 'trade', category: 'clothes', brand: 'Burberry', condition: 'Good', estimatedValue: 170, city: 'Seattle, WA', image: 'https://images.unsplash.com/photo-1520903920243-00d872a2d1c9?auto=format&fit=crop&w=800&q=80', wants: 'Trade for premium sneakers or a small leather good', tags: ['accessory', 'winter', 'trade'],
+    id: 'seed-3', owner: 'Nina', title: 'Burberry Nova Check Wool Scarf', mode: 'trade', category: 'clothes', brand: 'Burberry', condition: 'LikeNew', estimatedValue: 170, city: 'Seattle, WA', image: 'https://images.unsplash.com/photo-1520903920243-00d872a2d1c9?auto=format&fit=crop&w=800&q=80', wants: 'Trade for premium sneakers or a small leather good', tags: ['accessory', 'winter', 'trade'],
   },
   {
-    id: 'seed-4', owner: 'Jordan', title: 'Coach Tabby Shoulder Bag 26', mode: 'sell_trade', category: 'handbag', brand: 'Coach', condition: 'LikeNew', estimatedValue: 280, city: 'Chicago, IL', image: 'https://images.unsplash.com/photo-1594223274512-ad4803739b7c?auto=format&fit=crop&w=800&q=80', wants: 'Cash preferred, open to equal-value trade', tags: ['shoulder-bag', 'neutral', 'modern'],
+    id: 'seed-4', owner: 'Jordan', title: 'Coach Tabby Shoulder Bag 26', mode: 'trade', category: 'handbag', brand: 'Coach', condition: 'LikeNew', estimatedValue: 280, city: 'Chicago, IL', image: 'https://images.unsplash.com/photo-1594223274512-ad4803739b7c?auto=format&fit=crop&w=800&q=80', wants: 'Open to equal-value trade', tags: ['shoulder-bag', 'neutral', 'modern'],
   },
 ]
 
@@ -47,10 +57,8 @@ function money(value) {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(Number(value))
 }
 
-function normalizeMode(mode) {
-  if (mode === 'sell_trade') return 'Sell / Trade'
-  if (mode === 'trade') return 'Trade'
-  return 'Sell'
+function normalizeMode() {
+  return 'Trade'
 }
 
 function confidenceLabel(value) {
@@ -150,14 +158,118 @@ function buildSuggestedDescriptionFromProfile(profile) {
   return `${modelName}. Key details: ${attrs.join(', ')}.`
 }
 
+function isGenericTradeNote(value) {
+  const normalized = String(value || '').trim().toLowerCase().replace(/[.!\s]+$/g, '')
+  return normalized === 'open to similar-value offers'
+    || normalized === 'open to similar value offers'
+    || normalized === 'no description provided'
+}
+
+function meaningfulDescription(value) {
+  const text = String(value || '').trim()
+  return text && !isGenericTradeNote(text) ? text : ''
+}
+
+function cleanupParagraphBreaks(value) {
+  return String(value || '')
+    .replace(/\r\n/g, '\n')
+    .split('\n')
+    .map((line) => line.trim())
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
+function sentenceChunks(value) {
+  return String(value || '')
+    .match(/[^.!?]+[.!?]+(?:["')\]]+)?|[^.!?]+$/g)
+    ?.map((sentence) => sentence.trim())
+    .filter(Boolean) || []
+}
+
+function splitCommaDetails(value) {
+  const normalized = String(value || '').replace(/\s+/g, ' ').trim()
+  if (normalized.length < 140) return [normalized].filter(Boolean)
+  const parts = normalized
+    .split(/,\s+(?=(?:and\s+)?(?:a|an|the|small|large|stacked|single|double|gold|silver|black|white|beige|brown|red|blue|green|pink|leather|canvas|suede|wool|cotton|silk|chain|logo|hardware|strap|heel|toe|zip|pocket|closure|handle|shoulder|silhouette)\b)/i)
+    .map((part) => part.trim())
+    .filter(Boolean)
+  if (parts.length < 3) return [normalized]
+  const grouped = []
+  for (let i = 0; i < parts.length; i += 2) grouped.push(parts.slice(i, i + 2).join(', '))
+  return grouped
+}
+
+function organizeDescriptionParagraphs(value) {
+  const existing = cleanupParagraphBreaks(value)
+  if (!existing) return ''
+
+  const normalized = existing.replace(/\s*\n\s*/g, ' ').replace(/\s+/g, ' ').trim()
+  const paragraphs = []
+  const labeledPattern = /\b(Key details|Condition|Wear|Flaws|Measurements|Size|Material|Materials|Color|Hardware|Authenticity|Notes|Trade notes):/gi
+  const labeledMatches = [...normalized.matchAll(labeledPattern)]
+
+  if (labeledMatches.length > 0) {
+    const firstLabel = labeledMatches[0]
+    const intro = normalized.slice(0, firstLabel.index).trim()
+    if (intro) paragraphs.push(...sentenceChunks(intro).slice(0, 2))
+
+    labeledMatches.forEach((match, index) => {
+      const start = match.index
+      const end = index + 1 < labeledMatches.length ? labeledMatches[index + 1].index : normalized.length
+      const section = normalized.slice(start, end).trim()
+      if (!section) return
+      const [labelPart, ...bodyParts] = section.split(':')
+      const label = labelPart.trim()
+      const body = bodyParts.join(':').trim()
+      if (!body) {
+        paragraphs.push(section)
+        return
+      }
+      const bodySentences = sentenceChunks(body)
+      if (label.toLowerCase() === 'key details' && bodySentences.length <= 1) {
+        const detailParagraphs = splitCommaDetails(body)
+        paragraphs.push(`${label}: ${detailParagraphs.shift()}`)
+        paragraphs.push(...detailParagraphs)
+        return
+      }
+      paragraphs.push(`${label}: ${bodySentences.shift() || body}`)
+      paragraphs.push(...bodySentences)
+    })
+  } else {
+    const sentences = sentenceChunks(normalized)
+    if (sentences.length <= 2) return normalized
+    paragraphs.push(sentences.shift())
+    while (sentences.length > 0) paragraphs.push(sentences.splice(0, 2).join(' '))
+  }
+
+  return cleanupParagraphBreaks(paragraphs.filter(Boolean).join('\n\n'))
+}
+
 function getListingDescription(item) {
   if (!item) return ''
   const profile = item.analysis?.item_profile
   const suggested = buildSuggestedDescriptionFromProfile(profile)
   if (suggested) return suggested
-  if (typeof item.description === 'string' && item.description.trim()) return item.description.trim()
-  if (typeof item.wants === 'string' && item.wants.trim()) return item.wants.trim()
+  const description = meaningfulDescription(item.description)
+  if (description) return description
+  const wants = meaningfulDescription(item.wants)
+  if (wants) return wants
   return ''
+}
+
+function ListingDescriptionParagraphs({ item, fallback = 'No description provided.', className = 'listing-description-paragraphs' }) {
+  const description = organizeDescriptionParagraphs(getListingDescription(item))
+  if (!description) return <p className="listing-notes">{fallback}</p>
+  return (
+    <div className={className}>
+      {description.split(/\n{2,}/).map((paragraph, idx) => (
+        <p key={`${item?.id || item?.listing_id || 'listing'}-description-${idx}`} className="listing-notes">
+          {paragraph}
+        </p>
+      ))}
+    </div>
+  )
 }
 
 function getListingGallery(item) {
@@ -166,11 +278,92 @@ function getListingGallery(item) {
   return [item.image].filter(Boolean)
 }
 
+function missingPublishFields(listing) {
+  const missing = []
+  const gallery = getListingGallery(listing)
+  const title = String(listing?.title || '').trim()
+  const category = String(listing?.category || '').trim().toLowerCase()
+  const brand = String(listing?.brand || '').trim()
+  const condition = String(listing?.condition || '').trim()
+  const value = Number(listing?.estimatedValue || 0)
+  const size = String(listing?.size || '').trim()
+  const validCategories = new Set(['clothes', 'shoes', 'handbag'])
+  const validConditions = new Set(['New', 'LikeNew'])
+
+  if (gallery.length < 1) missing.push('photos')
+  if (!title || title.toLowerCase() === 'new listing' || title.toLowerCase() === 'untitled listing') missing.push('title')
+  if (!validCategories.has(category)) missing.push('category')
+  if (!brand || ['unknown', 'analyzing...', 'n/a'].includes(brand.toLowerCase())) missing.push('brand')
+  if (!validConditions.has(condition)) missing.push('condition')
+  if (!Number.isFinite(value) || value <= 0) missing.push('AI estimated value')
+  if ((category === 'clothes' || category === 'shoes') && !size) missing.push('size')
+  return missing
+}
+
+function missingPublishFieldsMessage(listing) {
+  const missing = missingPublishFields(listing)
+  if (missing.length < 1) return ''
+  return `Listing missing fields: ${missing.join(', ')}. Please edit the listing and add the missing information before publishing.`
+}
+
 function getUploadedImageUrlsFromAnalysis(analysis) {
   if (!analysis || !Array.isArray(analysis.uploaded_images)) return []
   return analysis.uploaded_images
     .map((u) => (typeof u?.image_url === 'string' ? u.image_url.trim() : ''))
-    .filter((u) => Boolean(u) && !u.startsWith('data:') && !u.startsWith('blob:'))
+    .filter(isPersistableImageUrl)
+}
+
+function isPersistableImageUrl(value) {
+  if (typeof value !== 'string') return false
+  const trimmed = value.trim()
+  return /^https?:\/\//i.test(trimmed) || trimmed.startsWith('/')
+}
+
+function persistableImageUrls(values) {
+  const list = Array.isArray(values) ? values : [values]
+  return Array.from(new Set(list.map((value) => (typeof value === 'string' ? value.trim() : '')).filter(isPersistableImageUrl)))
+}
+
+function shouldRenderListingImageAsBlob(value) {
+  if (typeof value !== 'string') return false
+  const trimmed = value.trim()
+  if (!trimmed) return false
+  if (trimmed.startsWith('/v1/images/')) return true
+  try {
+    return new URL(trimmed, typeof window !== 'undefined' ? window.location.origin : 'http://localhost').pathname.startsWith('/v1/images/')
+  } catch {
+    return false
+  }
+}
+
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+async function fetchListingImageBlobUrl(src, signal) {
+  let lastError = null
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
+    try {
+      const resp = await fetch(src, { signal, cache: 'force-cache' })
+      if (!resp.ok) throw new Error(`Image request failed with ${resp.status}`)
+      const blob = await resp.blob()
+      if (!blob || blob.size < 1) throw new Error('Image response was empty.')
+      return URL.createObjectURL(blob)
+    } catch (err) {
+      if (err?.name === 'AbortError') throw err
+      lastError = err
+      await wait(250 * (attempt + 1))
+    }
+  }
+  throw lastError || new Error('Image request failed.')
+}
+
+function sameStringList(left, right) {
+  const a = Array.isArray(left) ? left.map((value) => String(value || '').trim()) : []
+  const b = Array.isArray(right) ? right.map((value) => String(value || '').trim()) : []
+  if (a.length !== b.length) return false
+  return a.every((value, index) => value === b[index])
 }
 
 function buildListingShareCaption(item) {
@@ -196,6 +389,22 @@ const MALE_APPAREL_SIZE_OPTIONS = ['XS', 'S', 'M', 'L', 'XL', 'XXL', 'XXXL']
 const FEMALE_SHOE_SIZE_OPTIONS = ['US 5', 'US 5.5', 'US 6', 'US 6.5', 'US 7', 'US 7.5', 'US 8', 'US 8.5', 'US 9', 'US 9.5', 'US 10', 'US 10.5', 'US 11', 'US 12']
 const MALE_SHOE_SIZE_OPTIONS = ['US 6', 'US 6.5', 'US 7', 'US 7.5', 'US 8', 'US 8.5', 'US 9', 'US 9.5', 'US 10', 'US 10.5', 'US 11', 'US 11.5', 'US 12', 'US 13', 'US 14']
 const PROFILE_CATEGORY_OPTIONS = ['Dresses', 'Jackets', 'Shoes', 'Handbags', 'Skirts', 'Accessories']
+const STYLE_DESCRIPTOR_OPTIONS = [
+  { value: 'Classic', className: 'classic', description: 'Tailored staples, polish, refined neutrals' },
+  { value: 'Trendy', className: 'trendy', description: 'Current silhouettes, bold accents, high rotation' },
+  { value: 'Unique', className: 'unique', description: 'Statement finds, unexpected texture, rare details' },
+]
+const JOUFT_GOAL_OPTIONS = [
+  'Refresh My Closet',
+  'Trade Unworn Pieces',
+  'Discover Rare Finds',
+  'Access Luxury Fashion',
+  'Build My Collection',
+  'Sustainable Fashion',
+  'Connect With Fashion Enthusiasts',
+  'Trade Instead of Sell',
+]
+const PROFILE_SETUP_TOTAL_STEPS = 4
 const SUBSCRIPTION_PLANS = [
   { id: 'free', name: 'Free Tier', monthlyPrice: 0, listingsPerMonth: 3, description: '3 listings per month' },
   { id: 'starter', name: 'Starter', monthlyPrice: 15, listingsPerMonth: 25, description: 'Up to 25 listings per month' },
@@ -225,8 +434,25 @@ function normalizeSubscriptionPlanId(plan) {
   return 'free'
 }
 
+function subscriptionPlanIdForApi(plan) {
+  const normalized = normalizeSubscriptionPlanId(plan)
+  if (normalized === 'starter') return 'starter_15'
+  if (normalized === 'pro') return 'pro_25'
+  return 'free'
+}
+
 function normalizeBillingCycle(cycle) {
   return String(cycle || '').toLowerCase() === 'annual' ? 'annual' : 'monthly'
+}
+
+function resolveSignupFullName(session, profileData) {
+  const profileParts = [profileData?.firstName, profileData?.lastName]
+    .map((part) => (typeof part === 'string' ? part.trim() : ''))
+    .filter(Boolean)
+  if (profileParts.length > 0) return profileParts.join(' ')
+  const profileName = typeof profileData?.name === 'string' ? profileData.name.trim() : ''
+  if (profileName) return profileName
+  return typeof session?.name === 'string' ? session.name.trim() : ''
 }
 
 function brandSizeChartUrl(brand, category) {
@@ -292,7 +518,7 @@ function loadStripeJs() {
   return stripeJsPromise
 }
 
-async function analyzeItem({ apiBaseUrl, apiKey, bearerToken, images, category, userCondition, itemDescription, debug }) {
+async function analyzeItem({ apiBaseUrl, apiKey, bearerToken, images, category, userCondition, itemDescription, itemSize, debug }) {
   const { client, authContext } = createWebApiClient({ apiBaseUrl, apiKey })
   return client.analyzeItem(
     {
@@ -300,6 +526,31 @@ async function analyzeItem({ apiBaseUrl, apiKey, bearerToken, images, category, 
       category,
       userCondition,
       itemDescription,
+      itemSize,
+      debug,
+    },
+    authContext(bearerToken),
+  )
+}
+
+async function uploadListingImages({ apiBaseUrl, apiKey, bearerToken, images }) {
+  const { client, authContext } = createWebApiClient({ apiBaseUrl, apiKey })
+  return client.uploadImages(
+    { images: (images || []).map((file) => ({ file })) },
+    authContext(bearerToken),
+  )
+}
+
+async function queueListingAnalysisJob({ apiBaseUrl, apiKey, bearerToken, listingId, images, category, userCondition, itemDescription, itemSize, debug }) {
+  const { client, authContext } = createWebApiClient({ apiBaseUrl, apiKey })
+  return client.queueListingAnalysis(
+    {
+      listingId,
+      images: (images || []).map((file) => ({ file })),
+      category,
+      userCondition,
+      itemDescription,
+      itemSize,
       debug,
     },
     authContext(bearerToken),
@@ -353,6 +604,11 @@ async function updateListingRemote({ apiBaseUrl, apiKey, bearerToken, listingId,
   return client.updateListing(listingId, payload, authContext(bearerToken))
 }
 
+async function deleteListingRemote({ apiBaseUrl, apiKey, bearerToken, listingId }) {
+  const { client, authContext } = createWebApiClient({ apiBaseUrl, apiKey })
+  return client.deleteListing(listingId, authContext(bearerToken))
+}
+
 async function fetchProfileQuizRemote({ apiBaseUrl, apiKey, bearerToken }) {
   const { client, authContext } = createWebApiClient({ apiBaseUrl, apiKey })
   return client.profileQuiz(authContext(bearerToken))
@@ -365,6 +621,16 @@ async function saveProfileQuizRemote({ apiBaseUrl, apiKey, bearerToken, payload 
   }
   const { client, authContext } = createWebApiClient({ apiBaseUrl, apiKey })
   return client.put('/v1/me/profile-quiz', normalizedPayload, authContext(bearerToken))
+}
+
+async function fetchClientStateRemote({ apiBaseUrl, apiKey, bearerToken }) {
+  const { client, authContext } = createWebApiClient({ apiBaseUrl, apiKey })
+  return client.clientState(authContext(bearerToken))
+}
+
+async function saveClientStateRemote({ apiBaseUrl, apiKey, bearerToken, payload }) {
+  const { client, authContext } = createWebApiClient({ apiBaseUrl, apiKey })
+  return client.saveClientState(payload, authContext(bearerToken))
 }
 
 async function fetchUspsAddressSuggestionsRemote({ apiBaseUrl, apiKey, bearerToken, q, city, state, postalCode }) {
@@ -418,6 +684,19 @@ async function createStripeSetupIntentRemote({ apiBaseUrl, apiKey, bearerToken }
   return client.post('/v1/me/payment-methods/stripe/setup-intent', {}, authContext(bearerToken))
 }
 
+async function activateSubscriptionRemote({ apiBaseUrl, apiKey, bearerToken, plan, billingCycle, paymentMethodId = '' }) {
+  const { client, authContext } = createWebApiClient({ apiBaseUrl, apiKey })
+  return client.post(
+    '/v1/me/subscription/activate',
+    {
+      plan: subscriptionPlanIdForApi(plan),
+      billing_cycle: normalizeBillingCycle(billingCycle),
+      payment_method_id: paymentMethodId || null,
+    },
+    authContext(bearerToken),
+  )
+}
+
 async function createOfferRemote({ apiBaseUrl, apiKey, bearerToken, payload }) {
   const { client, authContext } = createWebApiClient({ apiBaseUrl, apiKey })
   return client.createOffer(payload, authContext(bearerToken))
@@ -458,8 +737,328 @@ async function fetchShippingLabelDocumentRemote({ apiBaseUrl, apiKey, bearerToke
 }
 
 export default function App() {
+  if (typeof window !== 'undefined' && window.location.pathname === '/terms') {
+    return <TermsPage />
+  }
+  if (typeof window !== 'undefined' && window.location.pathname === '/privacy') {
+    return <PrivacyPolicyPage />
+  }
   if (CLERK_ENABLED) return <ClerkMarketplaceApp />
   return <LocalMarketplaceApp />
+}
+
+const TERMS_SECTIONS = [
+  {
+    title: '1. Overview',
+    body: [
+      'JOUFT is a platform that enables users to trade clothing and accessories with other users.',
+      'JOUFT facilitates trades but does not own, inspect, or guarantee any listed items.',
+    ],
+  },
+  {
+    title: '2. Eligibility and Accounts',
+    body: ['You are responsible for all activity under your account.'],
+    items: [
+      'Be at least 18 years old',
+      'Provide accurate information',
+      'Maintain the security of your account',
+    ],
+  },
+  {
+    title: '3. Listings',
+    body: ['By listing an item, you agree that:', 'JOUFT may remove listings at its discretion.'],
+    items: [
+      'You own the item',
+      'The item is authentic',
+      'The description and images are accurate',
+      'The item complies with platform rules',
+    ],
+  },
+  {
+    title: '4. Trades (Binding Agreement)',
+    body: ['Trades are binding once accepted.', 'By confirming a trade, you agree to:', 'Failure to complete a trade will result in penalties.'],
+    items: [
+      'Ship your item',
+      'Pay all applicable fees',
+      'Complete the transaction in good faith',
+    ],
+  },
+  {
+    title: '5. Shipping (Required)',
+    body: [
+      'Shipping is required for all trades.',
+      'You agree to:',
+      'Shipping fees may include both carrier costs and a service fee.',
+      'You may not complete trades outside the platform.',
+    ],
+    items: [
+      'Use JOUFT-provided shipping labels',
+      'Pay a shipping fee',
+      'Ship within 72 hours',
+    ],
+  },
+  {
+    title: '6. Fees',
+    body: ['You may be charged:', 'Fees may vary during promotional or beta periods.', 'All fees are disclosed before confirmation.'],
+    items: [
+      'Shipping fee (mandatory)',
+      'Trade fee (may apply, including during beta periods)',
+      'Membership fee (if applicable)',
+      'Optional services (authentication, promotions)',
+    ],
+  },
+  {
+    title: '7. Authorization of Charges',
+    body: [
+      'By using JOUFT and confirming a trade, you authorize JOUFT to charge your payment method for:',
+      'Failure to maintain a valid payment method may result in account suspension.',
+    ],
+    items: [
+      'Shipping fees',
+      'Trade fees',
+      'Membership fees',
+      'Penalty fees',
+    ],
+  },
+  {
+    title: '8. Non-Shipment Penalty',
+    body: ['If you confirm a trade and fail to ship within the required timeframe:', 'Repeated violations will result in suspension or permanent removal.'],
+    items: [
+      'A non-shipment penalty fee will be automatically charged',
+      'The trade will be canceled',
+      'The penalty amount will be determined based on the value band of the item',
+      'All or a portion of the penalty may be used to compensate the affected user',
+    ],
+  },
+  {
+    title: '9. Value Bands',
+    body: ['Items may be grouped into value ranges ("value bands") to:', 'Value bands are estimates and do not guarantee market value.'],
+    items: [
+      'Facilitate trade matching',
+      'Determine penalty amounts',
+    ],
+  },
+  {
+    title: '10. Authentication (Optional)',
+    body: ['Authentication services may be offered:'],
+    items: [
+      'Additional fees apply',
+      'Results are not guaranteed',
+    ],
+  },
+  {
+    title: '11. Item Misrepresentation',
+    body: ['If an item is materially different from its description:', 'JOUFT determines outcomes at its discretion.'],
+    items: [
+      'JOUFT may cancel or reverse the trade',
+      'The responsible user may be penalized',
+      'The affected user may be compensated',
+    ],
+  },
+  {
+    title: '12. Counterfeit Items',
+    body: ['If an item is determined to be counterfeit:'],
+    items: [
+      'The trade will be canceled',
+      'The listing user may be permanently banned',
+      'Fees may be forfeited',
+    ],
+  },
+  {
+    title: '13. Shipping Issues',
+    items: [
+      'Responsibility transfers once the package is scanned by the carrier',
+      'JOUFT is not responsible for shipping delays, loss, or damage',
+      'Users agree to cooperate with carrier claims',
+    ],
+  },
+  {
+    title: '14. Disputes Between Users',
+    body: ['If a dispute arises:', 'All decisions made by JOUFT are final and binding.'],
+    items: [
+      'Users must provide requested evidence',
+      'JOUFT may review and resolve disputes',
+    ],
+  },
+  {
+    title: '15. User Conduct',
+    body: ['You may not:', 'Violations may result in suspension or removal.'],
+    items: [
+      'Misrepresent items',
+      'List counterfeit goods',
+      'Fail to complete trades',
+      'Attempt to bypass the platform',
+    ],
+  },
+  {
+    title: '16. Data Use and Platform Insights',
+    body: [
+      'JOUFT may use aggregated and anonymized data derived from user activity to:',
+      'This data does not identify individual users.',
+    ],
+    items: [
+      'Improve the platform',
+      'Develop insights and analytics',
+      'Support partnerships, including with brands and advertisers',
+    ],
+  },
+  {
+    title: '17. Payments',
+    body: [
+      'Payments are processed through third-party providers.',
+      'All fees are non-refundable unless required by law.',
+    ],
+  },
+  {
+    title: '18. Limitation of Liability',
+    body: ['JOUFT is not liable for:'],
+    items: [
+      'Lost or damaged items',
+      'Failed trades',
+      'User actions',
+      'Indirect damages',
+    ],
+  },
+  {
+    title: '19. Dispute Resolution (Legal)',
+    body: ['All disputes shall be resolved through binding arbitration.', 'You waive:', 'Arbitration will take place in CA.'],
+    items: [
+      'Jury trial',
+      'Class actions',
+    ],
+  },
+  {
+    title: '20. Changes to Terms',
+    body: [
+      'JOUFT may update these Terms at any time.',
+      'Continued use constitutes acceptance.',
+    ],
+  },
+  {
+    title: '21. Contact',
+    contact: 'Email: JOUFTllc@gmail.com',
+  },
+]
+
+const PRIVACY_POLICY_SECTIONS = [
+  {
+    title: '1. Information We Collect',
+    items: [
+      'Account information (name, email, preferences)',
+      'Transaction data (listings, trades, shipping)',
+      'Device and usage data',
+    ],
+  },
+  {
+    title: '2. How We Use Information',
+    body: [
+      'We use information to operate the platform, process trades and payments, improve user experience, and prevent fraud.',
+      'We may also use aggregated and anonymized data to generate insights and analytics, including for brand and advertising partnerships.',
+    ],
+  },
+  {
+    title: '3. Sharing of Information',
+    body: [
+      'We may share data with shipping providers, payment processors, and authentication partners.',
+      'We may share aggregated and anonymized insights with partners.',
+      'We do not sell personal data.',
+    ],
+  },
+  {
+    title: '4. Data Security',
+    body: ['We take reasonable measures to protect your data but cannot guarantee absolute security.'],
+  },
+  {
+    title: '5. Your Rights (California Residents)',
+    body: ['You may request access or request deletion.'],
+    contact: 'Contact: JOUFTllc@gmail.com',
+  },
+  {
+    title: '6. Cookies',
+    body: ['We use cookies to improve functionality and analyze usage.'],
+  },
+  {
+    title: '7. Updates',
+    body: ['We may update this policy at any time.'],
+  },
+  {
+    title: '8. Contact',
+    contact: 'Email: admin@jouft.com',
+  },
+]
+
+const CONTACT_DETAILS = [
+  {
+    title: 'Company Address',
+    body: [
+      '120 Vantis Dr. Suite 300',
+      'Aliso Viejo, CA 92656',
+      'US',
+    ],
+  },
+  {
+    title: 'Contact Email',
+    contact: 'admin@jouft.com',
+  },
+]
+const CONTACT_MAP_QUERY = '120 Vantis Dr Suite 300, Aliso Viejo, CA 92656, US'
+const CONTACT_MAP_EMBED_URL = `https://maps.google.com/maps?q=${encodeURIComponent(CONTACT_MAP_QUERY)}&output=embed`
+const CONTACT_DIRECTIONS_URL = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(CONTACT_MAP_QUERY)}`
+
+function PrivacyPolicyPage() {
+  return (
+    <main className="legal-page">
+      <header className="legal-header">
+        <a className="legal-wordmark" href="/">JOUFT</a>
+        <a className="legal-back-link" href="/">Back to Jouft</a>
+      </header>
+      <section className="legal-card">
+        <p className="eyebrow">Legal</p>
+        <h1>Privacy Policy</h1>
+        <div className="legal-divider" />
+        {PRIVACY_POLICY_SECTIONS.map((section) => (
+          <section className="legal-section" key={section.title}>
+            <h2>{section.title}</h2>
+            {section.items ? (
+              <ul>
+                {section.items.map((item) => <li key={item}>{item}</li>)}
+              </ul>
+            ) : null}
+            {section.body?.map((paragraph) => <p key={paragraph}>{paragraph}</p>)}
+            {section.contact ? <p className="legal-contact">{section.contact}</p> : null}
+          </section>
+        ))}
+      </section>
+    </main>
+  )
+}
+
+function TermsPage() {
+  return (
+    <main className="legal-page">
+      <header className="legal-header">
+        <a className="legal-wordmark" href="/">JOUFT</a>
+        <a className="legal-back-link" href="/">Back to Jouft</a>
+      </header>
+      <section className="legal-card">
+        <p className="eyebrow">Legal</p>
+        <h1>Terms</h1>
+        <div className="legal-divider" />
+        {TERMS_SECTIONS.map((section) => (
+          <section className="legal-section" key={section.title}>
+            <h2>{section.title}</h2>
+            {section.body?.map((paragraph) => <p key={paragraph}>{paragraph}</p>)}
+            {section.items ? (
+              <ul>
+                {section.items.map((item) => <li key={item}>{item}</li>)}
+              </ul>
+            ) : null}
+            {section.contact ? <p className="legal-contact">{section.contact}</p> : null}
+          </section>
+        ))}
+      </section>
+    </main>
+  )
 }
 
 function ClerkMarketplaceApp() {
@@ -468,6 +1067,8 @@ function ClerkMarketplaceApp() {
   const { user } = useUser()
   const [authMode, setAuthMode] = useState('login')
   const [authPanelOpen, setAuthPanelOpen] = useState(false)
+  const getBearerToken = useCallback(() => getToken(), [getToken])
+  const handleLogout = useCallback(() => signOut({ redirectUrl: '/' }), [signOut])
 
   if (!isLoaded) return <LoadingShell message="Loading authentication..." />
 
@@ -520,11 +1121,11 @@ function ClerkMarketplaceApp() {
 
   return (
     <MarketplaceWorkspace
-      session={session}
-      profileData={profileData}
-      onLogout={() => signOut({ redirectUrl: '/' })}
-      clerkEnabled
-      getBearerToken={() => getToken()}
+	      session={session}
+	      profileData={profileData}
+	      onLogout={handleLogout}
+	      clerkEnabled
+	      getBearerToken={getBearerToken}
       userMenu={(
         <UserButton afterSignOutUrl="/">
           <UserButton.MenuItems>
@@ -545,6 +1146,7 @@ function LocalMarketplaceApp() {
   const [authPassword, setAuthPassword] = useState('')
   const [authName, setAuthName] = useState('')
   const [authError, setAuthError] = useState('')
+  const handleLogout = useCallback(() => setSession(null), [])
 
   function handleAuthSubmit(e) {
     e.preventDefault()
@@ -609,7 +1211,7 @@ function LocalMarketplaceApp() {
     )
   }
 
-  return <MarketplaceWorkspace session={session} onLogout={() => setSession(null)} />
+  return <MarketplaceWorkspace session={session} onLogout={handleLogout} />
 }
 
 function AuthShell({ children, actions = null }) {
@@ -636,10 +1238,10 @@ function AuthShell({ children, actions = null }) {
           </div>
           <div className="auth-marquee" aria-label="Site sections">
             <span>TRADING</span>
-            <span>CLOSET</span>
+            <a href="#closet">CLOSET</a>
             <span>DISCOVER</span>
-            <span>HOW IT WORKS</span>
-            <span>JOURNAL</span>
+            <a href="#how-it-works">HOW IT WORKS</a>
+            <a href="#contact">CONTACT US</a>
           </div>
           {actions}
         </div>
@@ -655,7 +1257,7 @@ function AuthShell({ children, actions = null }) {
             </p>
             <div className="auth-hero-actions">
               <button className="primary" type="button">Request Access</button>
-              <button className="ghost arrow" type="button">How It Works</button>
+              <a className="ghost arrow" href="#how-it-works">How It Works</a>
             </div>
             <p className="auth-social-proof">Join 2,800+ members shaping the future of fashion.</p>
           </div>
@@ -677,7 +1279,7 @@ function AuthShell({ children, actions = null }) {
           <span><strong>SMART MATCHING</strong>We match you by style, value, and preferences.</span>
           <span><strong>SUSTAINABLE IMPACT</strong>Extend item life, reduce waste, elevate style.</span>
         </div>
-        <section className="auth-closet-section">
+        <section className="auth-closet-section" id="closet">
           <div className="auth-section-head">
             <h2>BROWSE THE CLOSET</h2>
             <button className="ghost arrow" type="button">View All Categories</button>
@@ -714,7 +1316,7 @@ function AuthShell({ children, actions = null }) {
             <button className="ghost arrow" type="button">Watch Now</button>
           </div>
         </section>
-        <section className="auth-how-section">
+        <section className="auth-how-section" id="how-it-works">
           <div className="auth-section-head">
             <h2>HOW JOUFT WORKS</h2>
             <button className="ghost arrow" type="button">Learn More</button>
@@ -734,10 +1336,37 @@ function AuthShell({ children, actions = null }) {
             </div>
           </div>
         </section>
+        <section className="auth-contact-section" id="contact">
+          <div className="auth-section-head">
+            <h2>CONTACT US</h2>
+          </div>
+          <div className="auth-contact-grid">
+            <div className="auth-contact-details">
+              {CONTACT_DETAILS.map((section) => (
+                <div className="auth-contact-block" key={section.title}>
+                  <h3>{section.title}</h3>
+                  {section.body?.map((paragraph) => <p key={paragraph}>{paragraph}</p>)}
+                  {section.contact ? <a href={`mailto:${section.contact}`}>{section.contact}</a> : null}
+                </div>
+              ))}
+              <a className="contact-directions-link" href={CONTACT_DIRECTIONS_URL} target="_blank" rel="noreferrer">
+                Get Directions
+              </a>
+            </div>
+            <div className="contact-map-frame auth-contact-map">
+              <iframe
+                title="JOUFT office map"
+                src={CONTACT_MAP_EMBED_URL}
+                loading="lazy"
+                referrerPolicy="no-referrer-when-downgrade"
+              />
+            </div>
+          </div>
+        </section>
         <footer className="auth-site-footer">
           <strong>JOUFT</strong>
           <div className="auth-footer-links">
-            <span>ABOUT</span><span>JOURNAL</span><span>FAQ</span><span>TERMS</span><span>PRIVACY</span>
+            <span>ABOUT</span><a href="#contact">CONTACT US</a><span>FAQ</span><a href="/terms">TERMS</a><a href="/privacy">PRIVACY</a>
           </div>
           <small>© 2026 JOUFT. ALL RIGHTS RESERVED.</small>
         </footer>
@@ -757,19 +1386,21 @@ function LoadingShell({ message }) {
 }
 
 function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnabled = false, getBearerToken, userMenu = null, onOpenProfile = null }) {
+  const signupFullName = resolveSignupFullName(session, profileData)
+  const shouldAutoOpenProfileSetupRef = useRef(TEMP_SHOW_PROFILE_QUESTIONNAIRE_ON_LOGIN && !hasExplicitTabInLocation())
   const [apiBaseUrl] = useState(API_DEFAULT)
   const [apiKey, setApiKey] = useState('local-dev-key')
   const [myListings, setMyListings] = useState([])
   const [marketListings, setMarketListings] = useState([])
-  const [activeTab, setActiveTab] = useState(() => tabFromLocation())
+  const [myListingsLoading, setMyListingsLoading] = useState(false)
+  const [marketListingsLoading, setMarketListingsLoading] = useState(false)
+  const [activeTab, setActiveTab] = useState(() => (shouldAutoOpenProfileSetupRef.current ? 'profile_setup' : tabFromLocation()))
   const [marketSearch, setMarketSearch] = useState('')
-  const [listingMode, setListingMode] = useState('sell_trade')
   const [itemTitle, setItemTitle] = useState('')
   const [category, setCategory] = useState('')
   const [userCondition, setUserCondition] = useState('')
   const [itemDescription, setItemDescription] = useState('')
   const [itemSize, setItemSize] = useState('')
-  const [askingValue, setAskingValue] = useState('')
   const [tradeNotes, setTradeNotes] = useState('')
   const [images, setImages] = useState([])
   const [previewUrls, setPreviewUrls] = useState([])
@@ -781,6 +1412,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   const [adminError, setAdminError] = useState('')
   const [adminSearch, setAdminSearch] = useState('')
   const [analysisLoading, setAnalysisLoading] = useState(false)
+  const [createListingBusy, setCreateListingBusy] = useState(false)
   const [analysisError, setAnalysisError] = useState('')
   const [analysisResult, setAnalysisResult] = useState(null)
   const [receiptPromptPending, setReceiptPromptPending] = useState(false)
@@ -790,22 +1422,28 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   const [listingModalMode, setListingModalMode] = useState('create')
   const [modalEditingListing, setModalEditingListing] = useState(null)
   const [savedListingNotice, setSavedListingNotice] = useState('')
-  const [wizardStep, setWizardStep] = useState(1)
   const [profileQuiz, setProfileQuiz] = useState({
-    gender: '', tops_size: [], dresses_size: [], bottoms_size: [], shoes_size: [], category_preferences: [],
+    first_name: profileData?.firstName || '', last_name: profileData?.lastName || '', email: profileData?.email || session?.email || '',
+    gender: '', birthday: '', tops_size: [], dresses_size: [], bottoms_size: [], shoes_size: [], category_preferences: [],
+    style_descriptors: [], jouft_goals: [],
     shipping_full_name: '', shipping_address_line1: '', shipping_address_line2: '', shipping_city: '', shipping_state: '', shipping_postal_code: '', shipping_country: '',
+    shipping_email: profileData?.email || session?.email || '', shipping_phone: profileData?.phone || '',
     shipping_addresses: [emptyShippingAddress()],
     subscription_plan: 'free', subscription_billing_cycle: 'monthly', subscription_status: '', subscription_renewal_date: '', payment_methods: [],
   })
+  const [profileSetupStep, setProfileSetupStep] = useState(1)
   const [activeShippingAddressIdx, setActiveShippingAddressIdx] = useState(0)
   const [addressSuggestions, setAddressSuggestions] = useState([])
   const [profileSaveMsg, setProfileSaveMsg] = useState('')
+  const [profileHydrationRetry, setProfileHydrationRetry] = useState(0)
   const [paymentMethods, setPaymentMethods] = useState([])
+  const [profileHydrationError, setProfileHydrationError] = useState('')
   const [paymentBusy, setPaymentBusy] = useState(false)
   const [paymentSyncBusy, setPaymentSyncBusy] = useState(false)
   const [paymentLoadError, setPaymentLoadError] = useState('')
   const [paymentActionMsg, setPaymentActionMsg] = useState('')
   const [paymentDeleteBusyId, setPaymentDeleteBusyId] = useState('')
+  const [selectedSubscriptionPaymentMethodId, setSelectedSubscriptionPaymentMethodId] = useState('')
   const [showStripePaymentModal, setShowStripePaymentModal] = useState(false)
   const [stripeUiBusy, setStripeUiBusy] = useState(false)
   const [stripeUiError, setStripeUiError] = useState('')
@@ -818,6 +1456,10 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   const [offersActorSubject, setOffersActorSubject] = useState('')
   const [tradeComposerTarget, setTradeComposerTarget] = useState(null)
   const [marketMatchesTargetId, setMarketMatchesTargetId] = useState(null)
+  const [selectedMarketImageIndex, setSelectedMarketImageIndex] = useState(0)
+  const [selectedCreateImageIndex, setSelectedCreateImageIndex] = useState(0)
+  const [selectedEditImageIndex, setSelectedEditImageIndex] = useState(0)
+  const [selectedEditHeroImageIndex, setSelectedEditHeroImageIndex] = useState(null)
   const [tradeOfferCandidates, setTradeOfferCandidates] = useState([])
   const [tradeOfferListingIds, setTradeOfferListingIds] = useState([])
   const [tradeOfferMessage, setTradeOfferMessage] = useState('')
@@ -826,20 +1468,22 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   const [tradeDetailListing, setTradeDetailListing] = useState(null)
   const [offerStatusFilter, setOfferStatusFilter] = useState('all')
   const [closetFilter, setClosetFilter] = useState('all')
-  const [profileSection, setProfileSection] = useState('general')
+  const [profileSection, setProfileSection] = useState(TEMP_SHOW_PROFILE_QUESTIONNAIRE_ON_LOGIN ? 'style' : 'general')
   const [shippingLabelsByOffer, setShippingLabelsByOffer] = useState({})
   const [offerReceiveAddressById, setOfferReceiveAddressById] = useState({})
   const [shippingQuoteByOffer, setShippingQuoteByOffer] = useState({})
-  const [marketMagazineIndex, setMarketMagazineIndex] = useState(null)
-  const [newMarketIndex, setNewMarketIndex] = useState(0)
-  const [newMarketFlipDir, setNewMarketFlipDir] = useState('next')
-  const [newMarketIsFlipping, setNewMarketIsFlipping] = useState(false)
+  const [selectedMarketListingIndex, setSelectedMarketListingIndex] = useState(null)
   const [likedListingIds, setLikedListingIds] = useState([])
+  const [clientStateHydrated, setClientStateHydrated] = useState(false)
   const forcedLogoutRef = useRef(false)
-  const likesStorageKey = useMemo(
-    () => `jouft:marketplace:likes:${String(session?.id || session?.name || 'anon')}`,
-    [session?.id, session?.name],
-  )
+  const profileSetupAutoOpenedRef = useRef(false)
+  const profileQuizHydrationStartedRef = useRef('')
+  const profileSetupDirtyRef = useRef(false)
+  const activeTabRef = useRef(activeTab)
+
+  useEffect(() => {
+    activeTabRef.current = activeTab
+  }, [activeTab])
 
   useEffect(() => {
     if (typeof window === 'undefined' || typeof onLogout !== 'function') return undefined
@@ -876,61 +1520,155 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     return Boolean(ownerName && currentName && ownerName === currentName)
   }
 
+  function isSameListingOwner(left, right) {
+    const leftSubject = String(left?.ownerSubject || left?.owner_subject || '').trim().toLowerCase()
+    const rightSubject = String(right?.ownerSubject || right?.owner_subject || '').trim().toLowerCase()
+    if (leftSubject && rightSubject) return leftSubject === rightSubject
+    if (isOwnedByCurrentUser(left) && isOwnedByCurrentUser(right)) return true
+    const leftOwner = String(left?.owner || left?.owner_name || '').trim().toLowerCase()
+    const rightOwner = String(right?.owner || right?.owner_name || '').trim().toLowerCase()
+    const currentName = String(session?.name || '').trim().toLowerCase()
+    if (currentName && isOwnedByCurrentUser(left) && rightOwner === currentName) return true
+    if (currentName && isOwnedByCurrentUser(right) && leftOwner === currentName) return true
+    return Boolean(leftOwner && rightOwner && leftOwner === rightOwner)
+  }
+
+  function getCrossOwnerMatches(listing) {
+    const matches = Array.isArray(listing?.matches) ? listing.matches : []
+    return matches.filter((candidate) => !isSameListingOwner(listing, candidate))
+  }
+
   useEffect(() => {
-    if (typeof window === 'undefined') return
-    try {
-      const raw = window.localStorage.getItem(likesStorageKey)
-      const parsed = JSON.parse(raw || '[]')
-      if (Array.isArray(parsed)) {
-        setLikedListingIds(parsed.map((id) => String(id)).filter(Boolean))
-      } else {
-        setLikedListingIds([])
+    let cancelled = false
+    setClientStateHydrated(false)
+    ;(async () => {
+      try {
+        const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
+        const data = await fetchClientStateRemote({ apiBaseUrl, apiKey: clerkEnabled ? '' : apiKey.trim(), bearerToken })
+        if (!cancelled) {
+          const likedIds = Array.isArray(data?.liked_listing_ids) ? data.liked_listing_ids : []
+          setLikedListingIds(likedIds.map((id) => String(id)).filter(Boolean))
+        }
+      } catch {
+        if (!cancelled) setLikedListingIds([])
+      } finally {
+        if (!cancelled) setClientStateHydrated(true)
       }
-    } catch {
-      setLikedListingIds([])
-    }
-  }, [likesStorageKey])
+    })()
+    return () => { cancelled = true }
+  }, [apiBaseUrl, apiKey, clerkEnabled, getBearerToken, session?.id])
 
   useEffect(() => {
-    if (typeof window === 'undefined') return
-    window.localStorage.setItem(likesStorageKey, JSON.stringify(likedListingIds))
-  }, [likesStorageKey, likedListingIds])
-
-  useEffect(() => {
+    if (!clientStateHydrated) return
     let cancelled = false
     ;(async () => {
       try {
         const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
-        const data = await fetchProfileQuizRemote({ apiBaseUrl, apiKey: clerkEnabled ? '' : apiKey.trim(), bearerToken })
-        if (!cancelled) {
-          const shippingAddresses = normalizeShippingAddresses(data?.shipping_addresses, data)
-          setProfileQuiz({
-            gender: data?.gender || '',
-            tops_size: normalizeMultiSizeValue(data?.tops_size),
-            dresses_size: normalizeMultiSizeValue(data?.dresses_size),
-            bottoms_size: normalizeMultiSizeValue(data?.bottoms_size),
-            shoes_size: normalizeMultiSizeValue(data?.shoes_size),
-            category_preferences: Array.isArray(data?.category_preferences) ? data.category_preferences : [],
-            shipping_full_name: shippingAddresses[0]?.full_name || '',
-            shipping_address_line1: shippingAddresses[0]?.address_line1 || '',
-            shipping_address_line2: shippingAddresses[0]?.address_line2 || '',
-            shipping_city: shippingAddresses[0]?.city || '',
-            shipping_state: shippingAddresses[0]?.state || '',
-            shipping_postal_code: shippingAddresses[0]?.postal_code || '',
-            shipping_country: shippingAddresses[0]?.country || '',
-            shipping_addresses: shippingAddresses,
-            subscription_plan: normalizeSubscriptionPlanId(data?.subscription_plan),
-            subscription_billing_cycle: normalizeBillingCycle(data?.subscription_billing_cycle),
-            subscription_status: data?.subscription_status || '',
-            subscription_renewal_date: data?.subscription_renewal_date || '',
-            payment_methods: Array.isArray(data?.payment_methods) ? data.payment_methods : [],
-          })
-          setActiveShippingAddressIdx(0)
-        }
+        if (cancelled) return
+        await saveClientStateRemote({
+          apiBaseUrl,
+          apiKey: clerkEnabled ? '' : apiKey.trim(),
+          bearerToken,
+          payload: {
+            liked_listing_ids: likedListingIds,
+          },
+        })
       } catch {}
     })()
     return () => { cancelled = true }
-  }, [apiBaseUrl, apiKey, clerkEnabled, getBearerToken])
+  }, [apiBaseUrl, apiKey, clerkEnabled, clientStateHydrated, getBearerToken, likedListingIds])
+
+  async function loadProfileQuizIntoState({ force = false } = {}) {
+    const hydrationKey = String(session?.id || session?.email || 'anonymous')
+    if (!force && profileQuizHydrationStartedRef.current === hydrationKey) return null
+    profileQuizHydrationStartedRef.current = hydrationKey
+    const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
+    if (clerkEnabled && !bearerToken) throw new Error('Authentication token unavailable.')
+    const data = await fetchProfileQuizRemote({ apiBaseUrl, apiKey: clerkEnabled ? '' : apiKey.trim(), bearerToken })
+    const shippingAddresses = normalizeShippingAddresses(data?.shipping_addresses, data)
+    const hydratedShippingAddresses = shippingAddresses.map((address, idx) => (
+      idx === 0 && !address.full_name && signupFullName
+        ? { ...address, full_name: signupFullName }
+        : address
+    ))
+    const primaryShippingAddress = hydratedShippingAddresses[0] || emptyShippingAddress()
+    if (!(profileSetupDirtyRef.current && activeTabRef.current === 'profile_setup')) {
+      setProfileQuiz({
+        first_name: data?.first_name || profileData?.firstName || '',
+        last_name: data?.last_name || profileData?.lastName || '',
+        email: data?.email || profileData?.email || session?.email || '',
+        shipping_email: data?.shipping_email || profileData?.email || session?.email || '',
+        shipping_phone: data?.shipping_phone || profileData?.phone || '',
+        gender: data?.gender || '',
+        birthday: data?.birthday || '',
+        tops_size: normalizeMultiSizeValue(data?.tops_size),
+        dresses_size: normalizeMultiSizeValue(data?.dresses_size),
+        bottoms_size: normalizeMultiSizeValue(data?.bottoms_size),
+        shoes_size: normalizeMultiSizeValue(data?.shoes_size),
+        category_preferences: Array.isArray(data?.category_preferences) ? data.category_preferences : [],
+        style_descriptors: Array.isArray(data?.style_descriptors) ? data.style_descriptors : [],
+        jouft_goals: Array.isArray(data?.jouft_goals) ? data.jouft_goals : [],
+        shipping_full_name: primaryShippingAddress.full_name || '',
+        shipping_address_line1: primaryShippingAddress.address_line1 || '',
+        shipping_address_line2: primaryShippingAddress.address_line2 || '',
+        shipping_city: primaryShippingAddress.city || '',
+        shipping_state: primaryShippingAddress.state || '',
+        shipping_postal_code: primaryShippingAddress.postal_code || '',
+        shipping_country: primaryShippingAddress.country || '',
+        shipping_addresses: hydratedShippingAddresses,
+        subscription_plan: normalizeSubscriptionPlanId(data?.subscription_plan),
+        subscription_billing_cycle: normalizeBillingCycle(data?.subscription_billing_cycle),
+        subscription_status: data?.subscription_status || '',
+        subscription_renewal_date: data?.subscription_renewal_date || '',
+        payment_methods: Array.isArray(data?.payment_methods) ? data.payment_methods : [],
+      })
+      setActiveShippingAddressIdx(0)
+    }
+    setProfileHydrationError('')
+    return data
+  }
+
+  useEffect(() => {
+    let cancelled = false
+    let retryTimer = null
+    ;(async () => {
+      try {
+        const data = await loadProfileQuizIntoState()
+        if (!cancelled) {
+          if (shouldAutoOpenProfileSetupRef.current && !profileSetupAutoOpenedRef.current) {
+            profileSetupAutoOpenedRef.current = true
+            setActiveTab('profile_setup')
+          }
+        }
+      } catch {
+        profileQuizHydrationStartedRef.current = ''
+        if (!cancelled) setProfileHydrationError('Profile data could not be loaded yet.')
+        if (!cancelled && profileHydrationRetry < 5) {
+          retryTimer = window.setTimeout(() => {
+            if (!cancelled) setProfileHydrationRetry((count) => count + 1)
+          }, 750)
+        }
+      }
+    })()
+    return () => {
+      cancelled = true
+      if (retryTimer) window.clearTimeout(retryTimer)
+    }
+  }, [apiBaseUrl, apiKey, clerkEnabled, getBearerToken, session?.email, session?.id, signupFullName, profileData?.firstName, profileData?.lastName, profileData?.email, profileHydrationRetry])
+
+  useEffect(() => {
+    if (activeTab !== 'profile' && activeTab !== 'profile_setup') return undefined
+    let cancelled = false
+    const timer = window.setTimeout(() => {
+      loadProfileQuizIntoState({ force: true }).catch((err) => {
+        if (!cancelled) setProfileHydrationError(err.message || 'Profile data could not be loaded.')
+      })
+    }, 150)
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [activeTab, apiBaseUrl, apiKey, clerkEnabled, getBearerToken, session?.email, session?.id, signupFullName, profileData?.firstName, profileData?.lastName, profileData?.email])
 
   useEffect(() => {
     let cancelled = false
@@ -962,6 +1700,17 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     })()
     return () => { cancelled = true }
   }, [profileSection, subscriptionStripeAutoSynced, paymentSyncBusy, apiBaseUrl, apiKey, clerkEnabled, getBearerToken])
+
+  useEffect(() => {
+    if (paymentMethods.length === 0) {
+      if (selectedSubscriptionPaymentMethodId) setSelectedSubscriptionPaymentMethodId('')
+      return
+    }
+    const selectedStillExists = paymentMethods.some((method) => method.payment_method_id === selectedSubscriptionPaymentMethodId)
+    if (selectedStillExists) return
+    const fallback = paymentMethods.find((method) => method.is_default) || paymentMethods[0]
+    setSelectedSubscriptionPaymentMethodId(fallback?.payment_method_id || '')
+  }, [paymentMethods, selectedSubscriptionPaymentMethodId])
 
   useEffect(() => {
     let cancelled = false
@@ -1054,9 +1803,22 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     return () => { cancelled = true }
   }, [apiBaseUrl, apiKey, clerkEnabled, getBearerToken])
 
+  const normalizedProfileGender = profileQuiz.gender === 'male' || profileQuiz.gender === 'female' || profileQuiz.gender === 'other'
+    ? profileQuiz.gender
+    : ''
+  const profileApparelSizeOptions = normalizedProfileGender === 'male' ? MALE_APPAREL_SIZE_OPTIONS : FEMALE_APPAREL_SIZE_OPTIONS
+  const profileShoeSizeOptions = normalizedProfileGender === 'male' ? MALE_SHOE_SIZE_OPTIONS : FEMALE_SHOE_SIZE_OPTIONS
+  const profileCategoryOptions = normalizedProfileGender === 'male'
+    ? PROFILE_CATEGORY_OPTIONS.filter((c) => c !== 'Dresses')
+    : PROFILE_CATEGORY_OPTIONS
+  const selectedSubscriptionPlanId = normalizeSubscriptionPlanId(profileQuiz.subscription_plan)
+  const selectedBillingCycle = normalizeBillingCycle(profileQuiz.subscription_billing_cycle)
+  const shippingAddresses = normalizeShippingAddresses(profileQuiz.shipping_addresses, profileQuiz)
+  const primaryShippingAddressId = shippingAddresses[0]?.id || ''
+
   useEffect(() => {
+    if (activeTab !== 'inbox') return undefined
     let cancelled = false
-    let timer = null
     async function refreshOffers() {
       try {
         const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
@@ -1071,44 +1833,31 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
           const items = Array.isArray(payload?.items) ? payload.items : []
           setIncomingOffers(items)
           setOffersActorSubject(typeof payload?.actor?.subject === 'string' ? payload.actor.subject : '')
-          setOfferReceiveAddressById((prev) => {
-            const next = { ...prev }
-            items.forEach((offer) => {
-              if (!next[offer.offer_id]) {
-                next[offer.offer_id] = (shippingAddresses[0]?.id || '')
-              }
-            })
-            return next
-          })
+	          setOfferReceiveAddressById((prev) => {
+	            const next = { ...prev }
+	            items.forEach((offer) => {
+	              if (!next[offer.offer_id]) {
+	                next[offer.offer_id] = primaryShippingAddressId
+	              }
+	            })
+	            return next
+	          })
         }
       } catch {
         if (!cancelled) {
           setIncomingOffers([])
           setOffersActorSubject('')
         }
-      } finally {
-        if (!cancelled) timer = setTimeout(refreshOffers, 15000)
       }
     }
     refreshOffers()
     return () => {
       cancelled = true
-      if (timer) clearTimeout(timer)
     }
-  }, [apiBaseUrl, apiKey, clerkEnabled, getBearerToken, offerStatusFilter, profileQuiz.shipping_addresses])
-  const normalizedProfileGender = profileQuiz.gender === 'male' || profileQuiz.gender === 'female' || profileQuiz.gender === 'other'
-    ? profileQuiz.gender
-    : ''
-  const profileApparelSizeOptions = normalizedProfileGender === 'male' ? MALE_APPAREL_SIZE_OPTIONS : FEMALE_APPAREL_SIZE_OPTIONS
-  const profileShoeSizeOptions = normalizedProfileGender === 'male' ? MALE_SHOE_SIZE_OPTIONS : FEMALE_SHOE_SIZE_OPTIONS
-  const profileCategoryOptions = normalizedProfileGender === 'male'
-    ? PROFILE_CATEGORY_OPTIONS.filter((c) => c !== 'Dresses')
-    : PROFILE_CATEGORY_OPTIONS
-  const selectedSubscriptionPlanId = normalizeSubscriptionPlanId(profileQuiz.subscription_plan)
-  const selectedBillingCycle = normalizeBillingCycle(profileQuiz.subscription_billing_cycle)
-  const shippingAddresses = normalizeShippingAddresses(profileQuiz.shipping_addresses, profileQuiz)
+  }, [activeTab, apiBaseUrl, apiKey, clerkEnabled, getBearerToken, offerStatusFilter, primaryShippingAddressId])
   const safeActiveShippingAddressIdx = Math.max(0, Math.min(activeShippingAddressIdx, shippingAddresses.length - 1))
   const activeShippingAddress = shippingAddresses[safeActiveShippingAddressIdx] || shippingAddresses[0] || emptyShippingAddress()
+  const primaryProfileAddress = shippingAddresses[0] || emptyShippingAddress()
 
   function updateActiveShippingAddress(patch) {
     setProfileQuiz((prev) => {
@@ -1117,6 +1866,176 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
       nextAddresses[idx] = { ...nextAddresses[idx], ...patch }
       return { ...prev, shipping_addresses: nextAddresses }
     })
+  }
+
+  function updatePrimaryShippingAddress(patch) {
+    profileSetupDirtyRef.current = true
+    setProfileQuiz((prev) => {
+      const nextAddresses = normalizeShippingAddresses(prev.shipping_addresses, prev)
+      nextAddresses[0] = { ...nextAddresses[0], ...patch, is_default: true }
+      return {
+        ...prev,
+        shipping_addresses: nextAddresses,
+        shipping_full_name: nextAddresses[0].full_name || '',
+        shipping_address_line1: nextAddresses[0].address_line1 || '',
+        shipping_address_line2: nextAddresses[0].address_line2 || '',
+        shipping_city: nextAddresses[0].city || '',
+        shipping_state: nextAddresses[0].state || '',
+        shipping_postal_code: nextAddresses[0].postal_code || '',
+        shipping_country: nextAddresses[0].country || '',
+      }
+    })
+  }
+
+  function toggleProfileArrayField(field, value, max = null) {
+    profileSetupDirtyRef.current = true
+    setProfileQuiz((prev) => {
+      const current = Array.isArray(prev[field]) ? prev[field] : []
+      const selected = current.includes(value)
+      const next = selected
+        ? current.filter((x) => x !== value)
+        : (max && current.length >= max ? current : [...current, value])
+      return { ...prev, [field]: next }
+    })
+  }
+
+  function profilePayloadForSave() {
+    const normalizedAddresses = normalizeShippingAddresses(profileQuiz.shipping_addresses, profileQuiz)
+    const primaryAddress = normalizedAddresses[0] || emptyShippingAddress()
+    return {
+      ...profileQuiz,
+      first_name: String(profileQuiz.first_name || profileData?.firstName || '').trim(),
+      last_name: String(profileQuiz.last_name || profileData?.lastName || '').trim(),
+      email: String(profileQuiz.email || profileData?.email || session?.email || '').trim().toLowerCase(),
+      shipping_email: String(profileQuiz.shipping_email || profileQuiz.email || profileData?.email || session?.email || '').trim().toLowerCase() || null,
+      shipping_phone: String(profileQuiz.shipping_phone || '').trim() || null,
+      birthday: profileQuiz.birthday || null,
+      tops_size: serializeMultiSizeValue(profileQuiz.tops_size),
+      dresses_size: serializeMultiSizeValue(profileQuiz.dresses_size),
+      bottoms_size: serializeMultiSizeValue(profileQuiz.bottoms_size),
+      shoes_size: serializeMultiSizeValue(profileQuiz.shoes_size),
+      category_preferences: Array.isArray(profileQuiz.category_preferences) ? profileQuiz.category_preferences : [],
+      style_descriptors: Array.isArray(profileQuiz.style_descriptors) ? profileQuiz.style_descriptors : [],
+      jouft_goals: Array.isArray(profileQuiz.jouft_goals) ? profileQuiz.jouft_goals : [],
+      subscription_plan: selectedSubscriptionPlanId,
+      subscription_billing_cycle: selectedBillingCycle,
+      shipping_addresses: normalizedAddresses.map((address, idx) => ({
+        label: address.label || null,
+        full_name: address.full_name || null,
+        address_line1: address.address_line1 || null,
+        address_line2: address.address_line2 || null,
+        city: address.city || null,
+        state: address.state || null,
+        postal_code: address.postal_code || null,
+        country: address.country || null,
+        is_default: idx === 0,
+      })),
+      shipping_full_name: primaryAddress.full_name || null,
+      shipping_address_line1: primaryAddress.address_line1 || null,
+      shipping_address_line2: primaryAddress.address_line2 || null,
+      shipping_city: primaryAddress.city || null,
+      shipping_state: primaryAddress.state || null,
+      shipping_postal_code: primaryAddress.postal_code || null,
+      shipping_country: primaryAddress.country || null,
+      payment_methods: paymentMethods
+        .map((m) => (typeof m?.label === 'string' ? m.label.trim() : ''))
+        .filter(Boolean),
+    }
+  }
+
+  function applySavedProfileQuiz(saved) {
+    profileSetupDirtyRef.current = false
+    const savedShippingAddresses = normalizeShippingAddresses(saved?.shipping_addresses, saved)
+    setProfileQuiz({
+      first_name: saved?.first_name || profileData?.firstName || '',
+      last_name: saved?.last_name || profileData?.lastName || '',
+      email: saved?.email || profileData?.email || session?.email || '',
+      shipping_email: saved?.shipping_email || profileData?.email || session?.email || '',
+      shipping_phone: saved?.shipping_phone || profileData?.phone || '',
+      gender: saved?.gender || '',
+      birthday: saved?.birthday || '',
+      tops_size: normalizeMultiSizeValue(saved?.tops_size),
+      dresses_size: normalizeMultiSizeValue(saved?.dresses_size),
+      bottoms_size: normalizeMultiSizeValue(saved?.bottoms_size),
+      shoes_size: normalizeMultiSizeValue(saved?.shoes_size),
+      category_preferences: Array.isArray(saved?.category_preferences) ? saved.category_preferences : [],
+      style_descriptors: Array.isArray(saved?.style_descriptors) ? saved.style_descriptors : [],
+      jouft_goals: Array.isArray(saved?.jouft_goals) ? saved.jouft_goals : [],
+      shipping_full_name: savedShippingAddresses[0]?.full_name || '',
+      shipping_address_line1: savedShippingAddresses[0]?.address_line1 || '',
+      shipping_address_line2: savedShippingAddresses[0]?.address_line2 || '',
+      shipping_city: savedShippingAddresses[0]?.city || '',
+      shipping_state: savedShippingAddresses[0]?.state || '',
+      shipping_postal_code: savedShippingAddresses[0]?.postal_code || '',
+      shipping_country: savedShippingAddresses[0]?.country || '',
+      shipping_addresses: savedShippingAddresses,
+      subscription_plan: normalizeSubscriptionPlanId(saved?.subscription_plan),
+      subscription_billing_cycle: normalizeBillingCycle(saved?.subscription_billing_cycle),
+      subscription_status: saved?.subscription_status || '',
+      subscription_renewal_date: saved?.subscription_renewal_date || '',
+      payment_methods: Array.isArray(saved?.payment_methods) ? saved.payment_methods : [],
+    })
+    setActiveShippingAddressIdx(0)
+  }
+
+  async function saveProfileQuiz() {
+    const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
+    const saved = await saveProfileQuizRemote({
+      apiBaseUrl,
+      apiKey: clerkEnabled ? '' : apiKey.trim(),
+      bearerToken,
+      payload: profilePayloadForSave(),
+    })
+    applySavedProfileQuiz(saved)
+    setProfileSaveMsg('Profile saved.')
+    return saved
+  }
+
+  async function activateSelectedSubscription() {
+    const selectedPlan = SUBSCRIPTION_PLANS.find((plan) => plan.id === selectedSubscriptionPlanId) || SUBSCRIPTION_PLANS[0]
+    const billingCycle = selectedBillingCycle
+    const annualTotal = selectedPlan.monthlyPrice > 0 ? Math.round(selectedPlan.monthlyPrice * 12 * 0.9) : 0
+    const amount = billingCycle === 'annual' ? annualTotal : selectedPlan.monthlyPrice
+    const selectedPaymentMethod = paymentMethods.find((method) => method.payment_method_id === selectedSubscriptionPaymentMethodId)
+      || paymentMethods.find((method) => method.is_default)
+      || paymentMethods[0]
+
+    if (amount > 0 && !selectedPaymentMethod) {
+      setProfileSaveMsg('Add a payment method before activating a paid plan.')
+      return null
+    }
+
+    if (amount > 0) {
+      const paymentLabel = selectedPaymentMethod?.label
+        || [selectedPaymentMethod?.brand, selectedPaymentMethod?.last4 ? `•••• ${selectedPaymentMethod.last4}` : ''].filter(Boolean).join(' ')
+        || 'Selected payment method'
+      const confirmed = window.confirm(
+        `Confirm subscription\n\nPlan: ${selectedPlan.name}\nAmount: $${amount}${billingCycle === 'annual' ? ' / year' : ' / month'}\nPayment: ${paymentLabel}`,
+      )
+      if (!confirmed) {
+        setProfileSaveMsg('Subscription activation canceled.')
+        return null
+      }
+    }
+
+    const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
+    const activated = await activateSubscriptionRemote({
+      apiBaseUrl,
+      apiKey: clerkEnabled ? '' : apiKey.trim(),
+      bearerToken,
+      plan: selectedSubscriptionPlanId,
+      billingCycle,
+      paymentMethodId: amount > 0 ? selectedPaymentMethod?.payment_method_id : '',
+    })
+    setProfileQuiz((prev) => ({
+      ...prev,
+      subscription_plan: normalizeSubscriptionPlanId(activated?.plan || selectedSubscriptionPlanId),
+      subscription_billing_cycle: normalizeBillingCycle(activated?.billing_cycle || billingCycle),
+      subscription_status: activated?.status || prev.subscription_status || '',
+      subscription_renewal_date: activated?.renewal_date || '',
+    }))
+    setProfileSaveMsg(activated?.message || (amount > 0 ? 'Subscription active.' : 'Free plan active.'))
+    return activated
   }
 
   function addShippingAddress() {
@@ -1202,9 +2121,21 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
       : ownerNameRaw
     const resolveUrl = (url) => {
       if (!url || typeof url !== 'string') return null
-      if (url.startsWith('blob:')) return null
-      if (url.startsWith('/')) return `${apiBaseUrl.replace(/\/$/, '')}${url}`
-      return url
+      const trimmed = url.trim()
+      const baseUrl = apiBaseUrl.replace(/\/$/, '')
+      if (/^https?:\/\//i.test(trimmed)) {
+        try {
+          const parsed = new URL(trimmed)
+          if (parsed.pathname.startsWith('/v1/images/') && parsed.hostname.endsWith('.elb.amazonaws.com')) {
+            return `${baseUrl}${parsed.pathname}`
+          }
+        } catch (err) {
+          return trimmed
+        }
+        return trimmed
+      }
+      if (trimmed.startsWith('/')) return `${baseUrl}${trimmed}`
+      return null
     }
     const listedImages = Array.isArray(item.images)
       ? item.images.map(resolveUrl).filter(Boolean)
@@ -1228,7 +2159,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
       owner: displayOwnerName,
       ownerSubject: ownerSubjectRaw || null,
       title: item.title || 'Untitled listing',
-      mode: item.mode || 'sell_trade',
+      mode: 'trade',
       category: item.category || 'unknown',
       brand: item.brand || 'unknown',
       condition: item.condition || 'n/a',
@@ -1253,24 +2184,27 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
 
   function toRemoteListingPayload(listing) {
     const allowedCategories = ['clothes', 'shoes', 'handbag']
-    const allowedConditions = ['New', 'LikeNew', 'Good', 'Fair', 'Poor']
+    const allowedConditions = ['New', 'LikeNew']
+    const uploadedImageUrls = getUploadedImageUrlsFromAnalysis(listing.analysis)
+    const listingImageUrls = persistableImageUrls([...(Array.isArray(listing.images) ? listing.images : []), listing.image])
+    const imageUrls = listingImageUrls.length > 0 ? listingImageUrls : uploadedImageUrls
     const normalizedCategory = allowedCategories.includes(listing.category)
       ? listing.category
       : (allowedCategories.includes(listing.analysis?.category) ? listing.analysis.category : 'handbag')
     const normalizedCondition = allowedConditions.includes(listing.condition)
       ? listing.condition
-      : 'Good'
+      : 'LikeNew'
     return {
       title: listing.title || 'Untitled listing',
-      mode: listing.mode || 'sell_trade',
+      mode: 'trade',
       category: normalizedCategory,
       brand: listing.brand || 'unknown',
       condition: normalizedCondition,
       size: listing.size || null,
       estimated_value: Number(listing.estimatedValue || 0),
       city: listing.city || 'Your area',
-      image: listing.image || null,
-      images: Array.isArray(listing.images) ? listing.images : [],
+      image: imageUrls[0] || null,
+      images: imageUrls,
       wants: listing.wants || 'Open to similar-value offers',
       tags: Array.isArray(listing.tags) ? listing.tags : [],
       source_item_id: listing.sourceItemId || null,
@@ -1280,9 +2214,49 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     }
   }
 
+  const loadListings = useCallback(async ({ showLoading = true } = {}) => {
+    const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
+    if (showLoading) {
+      setMyListingsLoading(true)
+      setMarketListingsLoading(true)
+    }
+    try {
+      const [myItems, marketItems] = await Promise.all([
+        fetchMyListings({
+          apiBaseUrl,
+          apiKey: clerkEnabled ? '' : apiKey.trim(),
+          bearerToken,
+          limit: 100,
+        }),
+        fetchMarketplaceListings({
+          apiBaseUrl,
+          apiKey: clerkEnabled ? '' : apiKey.trim(),
+          bearerToken,
+          limit: 50,
+        }),
+      ])
+      setMyListings(myItems.map(fromRemoteListing).filter(Boolean))
+      setMarketListings(marketItems.map(fromRemoteListing).filter(Boolean))
+    } catch {
+      // Keep current listings visible if a background refresh fails.
+    } finally {
+      if (showLoading) {
+        setMyListingsLoading(false)
+        setMarketListingsLoading(false)
+      }
+    }
+  }, [apiBaseUrl, apiKey, clerkEnabled, getBearerToken])
+
+  function scheduleListingRefreshes() {
+    if (typeof window === 'undefined') return
+    window.setTimeout(() => { void loadListings({ showLoading: false }) }, 4000)
+    window.setTimeout(() => { void loadListings({ showLoading: false }) }, 10000)
+  }
+
   useEffect(() => {
     let cancelled = false
     ;(async () => {
+      setMyListingsLoading(true)
       try {
         const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
         const items = await fetchMyListings({
@@ -1294,6 +2268,8 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
         if (!cancelled) setMyListings(items.map(fromRemoteListing).filter(Boolean))
       } catch {
         // Keep local state fallback if API fetch fails.
+      } finally {
+        if (!cancelled) setMyListingsLoading(false)
       }
     })()
     return () => {
@@ -1304,6 +2280,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   useEffect(() => {
     let cancelled = false
     ;(async () => {
+      setMarketListingsLoading(true)
       try {
         const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
         const items = await fetchMarketplaceListings({
@@ -1315,6 +2292,8 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
         if (!cancelled) setMarketListings(items.map(fromRemoteListing).filter(Boolean))
       } catch {
         // Keep local state fallback if API fetch fails.
+      } finally {
+        if (!cancelled) setMarketListingsLoading(false)
       }
     })()
     return () => {
@@ -1341,12 +2320,165 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     }
   }, [images])
 
-  const displayedPreviewUrls = images.length > 0
-    ? previewUrls
-    : (editingListingId ? editPreviewUrls : previewUrls)
   const modalPreviewUrls = listingModalMode === 'edit'
-    ? [...editPreviewUrls, ...previewUrls].slice(0, 4)
-    : previewUrls.slice(0, 4)
+    ? [...editPreviewUrls, ...previewUrls].slice(0, 6)
+    : previewUrls.slice(0, 6)
+
+  function moveArrayItemToFront(list, index) {
+    const items = Array.isArray(list) ? list.filter(Boolean) : []
+    if (items.length < 2) return items
+    const safeIndex = Math.max(0, Math.min(index, items.length - 1))
+    if (safeIndex === 0) return items
+    const next = [...items]
+    const [selected] = next.splice(safeIndex, 1)
+    return [selected, ...next]
+  }
+
+  function orderedCreateImagesForSave() {
+    return moveArrayItemToFront(images.slice(0, 6), selectedCreateImageIndex)
+  }
+
+  function orderedEditExistingImageUrlsForSave() {
+    const existingCount = editPreviewUrls.length
+    if (selectedEditHeroImageIndex === null || selectedEditHeroImageIndex >= existingCount) return persistableImageUrls(editPreviewUrls)
+    return persistableImageUrls(moveArrayItemToFront(editPreviewUrls, selectedEditHeroImageIndex))
+  }
+
+  function orderedEditNewImagesForSave() {
+    const existingCount = editPreviewUrls.length
+    if (selectedEditHeroImageIndex === null || selectedEditHeroImageIndex < existingCount) return images
+    return moveArrayItemToFront(images, selectedEditHeroImageIndex - existingCount)
+  }
+
+  useEffect(() => {
+    if (listingModalMode !== 'edit') return
+    setSelectedEditImageIndex((idx) => {
+      if (modalPreviewUrls.length <= 0) return 0
+      return Math.max(0, Math.min(idx, modalPreviewUrls.length - 1))
+    })
+    setSelectedEditHeroImageIndex((idx) => {
+      if (idx === null) return null
+      if (modalPreviewUrls.length <= 0) return null
+      return Math.max(0, Math.min(idx, modalPreviewUrls.length - 1))
+    })
+  }, [listingModalMode, modalPreviewUrls.length])
+
+  useEffect(() => {
+    setSelectedCreateImageIndex((idx) => {
+      if (previewUrls.length <= 0) return 0
+      return Math.max(0, Math.min(idx, previewUrls.length - 1))
+    })
+  }, [previewUrls.length])
+
+  function originalListingImageUrls(listing) {
+    return persistableImageUrls(Array.isArray(listing?.images) && listing.images.length > 0
+      ? listing.images
+      : [listing?.image].filter(Boolean))
+  }
+
+  function resolveListingImageUrl(url) {
+    const raw = String(url || '').trim()
+    if (!raw) return ''
+    if (/^https?:\/\//i.test(raw)) return raw
+    if (raw.startsWith('/')) return `${apiBaseUrl.replace(/\/$/, '')}${raw}`
+    return raw
+  }
+
+  function waitForImageUrl(url) {
+    const resolved = resolveListingImageUrl(url)
+    if (!resolved || typeof window === 'undefined') return Promise.resolve(false)
+    return new Promise((resolve) => {
+      const img = new window.Image()
+      const timer = window.setTimeout(() => resolve(false), 5000)
+      img.onload = () => {
+        window.clearTimeout(timer)
+        resolve(true)
+      }
+      img.onerror = () => {
+        window.clearTimeout(timer)
+        resolve(false)
+      }
+      img.src = resolved
+    })
+  }
+
+  async function waitForUploadedListingImages(imageUrls) {
+    const urls = persistableImageUrls(imageUrls)
+    if (urls.length < 1) return false
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const results = await Promise.all(urls.map((url) => waitForImageUrl(url)))
+      if (results.every(Boolean)) return true
+      await new Promise((resolve) => window.setTimeout(resolve, 350))
+    }
+    return false
+  }
+
+  async function listingImageUrlToFile(url, index) {
+    const resolved = resolveListingImageUrl(url)
+    const resp = await fetch(resolved)
+    if (!resp.ok) throw new Error(`Could not load existing listing image ${index + 1} for analysis.`)
+    const blob = await resp.blob()
+    const contentType = blob.type || 'image/jpeg'
+    const ext = contentType.includes('png') ? 'png' : contentType.includes('webp') ? 'webp' : 'jpg'
+    return new File([blob], `listing-image-${index + 1}.${ext}`, { type: contentType })
+  }
+
+  function mergedEditImageUrlsForSave(existingImageUrls, uploadedImageUrls) {
+    const existing = persistableImageUrls(existingImageUrls)
+    const uploaded = persistableImageUrls(uploadedImageUrls)
+    if (selectedEditHeroImageIndex !== null && selectedEditHeroImageIndex >= editPreviewUrls.length && uploaded.length > 0) {
+      return persistableImageUrls([uploaded[0], ...existing, ...uploaded.slice(1)]).slice(0, 6)
+    }
+    return persistableImageUrls([...existing, ...uploaded]).slice(0, 6)
+  }
+
+  async function analysisFilesForEdit(existingImageUrls, newImages = images) {
+    const keptFiles = await Promise.all(existingImageUrls.map((url, index) => listingImageUrlToFile(url, index)))
+    if (selectedEditHeroImageIndex !== null && selectedEditHeroImageIndex >= editPreviewUrls.length && newImages.length > 0) {
+      const safeNewIndex = Math.max(0, Math.min(selectedEditHeroImageIndex - editPreviewUrls.length, newImages.length - 1))
+      const remainingNewImages = newImages.filter((_, idx) => idx !== safeNewIndex)
+      return [newImages[safeNewIndex], ...keptFiles, ...remainingNewImages].slice(0, 6)
+    }
+    return [...keptFiles, ...newImages].slice(0, 6)
+  }
+
+  function editPublishRequiresAnalysis(listing) {
+    if (!listing) return false
+    const originalImages = originalListingImageUrls(listing)
+    const keptImages = orderedEditExistingImageUrlsForSave()
+    const imagesChanged = images.length > 0 || !sameStringList(keptImages, originalImages)
+    const originalCondition = String(listing.condition || 'n/a').trim()
+    const nextCondition = String(userCondition || listing.condition || 'n/a').trim()
+    const originalSize = String(listing.size || '').trim()
+    const nextSize = String(itemSize || '').trim()
+    return imagesChanged || nextCondition !== originalCondition || nextSize !== originalSize
+  }
+
+  function buildEditedListingPayload(listing, overrides = {}) {
+    if (!listing) return null
+    const imageUrls = persistableImageUrls(
+      overrides.images || (editPreviewUrls.length > 0 || images.length > 0 ? orderedEditExistingImageUrlsForSave() : originalListingImageUrls(listing)),
+    )
+    const nextCondition = userCondition || listing.condition || 'n/a'
+    const nextBrand = overrides.brand || listing.brand || 'unknown'
+    const nextMode = 'trade'
+    return {
+      ...listing,
+      ...overrides,
+      title: (itemTitle || '').trim() || overrides.title || listing.title,
+      description: (itemDescription || '').trim() || meaningfulDescription(overrides.description) || meaningfulDescription(listing.description) || '',
+      wants: (tradeNotes || '').trim() || overrides.wants || listing.wants || 'Open to similar-value offers',
+      category: category || overrides.category || listing.category || 'unknown',
+      condition: overrides.condition || nextCondition,
+      size: itemSize || overrides.size || listing.size || null,
+      estimatedValue: Number(overrides.estimatedValue ?? listing.estimatedValue ?? 0),
+      image: imageUrls[0] || overrides.image || listing.image || null,
+      images: imageUrls.length > 0 ? imageUrls : (Array.isArray(overrides.images) ? overrides.images : listing.images || []),
+      brand: nextBrand,
+      mode: nextMode,
+      tags: overrides.tags || [overrides.condition || nextCondition, nextBrand, String(nextMode || '').replace('_', '/')].filter(Boolean),
+    }
+  }
 
   function shouldPromptForReceipt(payload) {
     const expected = payload?.item_profile?.expected_auth_docs?.usually_provided
@@ -1368,12 +2500,16 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     return allListings.filter((item) => {
       const status = typeof item.status === 'string' ? item.status.toLowerCase() : ''
       if (status !== 'active') return false
+      if (getCrossOwnerMatches(item).length === 0) return false
       if (!q) return true
       return `${item.title} ${item.brand} ${item.category} ${item.city} ${item.wants}`.toLowerCase().includes(q)
     })
   }, [allListings, deferredMarketSearch])
   const marketplaceNavCount = useMemo(
-    () => allListings.filter((item) => String(item?.status || '').toLowerCase() === 'active').length,
+    () => allListings.filter((item) => (
+      String(item?.status || '').toLowerCase() === 'active'
+      && getCrossOwnerMatches(item).length > 0
+    )).length,
     [allListings],
   )
   const marketMatchesTarget = useMemo(
@@ -1382,7 +2518,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   )
   const similarListingsForTarget = useMemo(() => {
     if (!marketMatchesTarget) return []
-    return Array.isArray(marketMatchesTarget.matches) ? marketMatchesTarget.matches : []
+    return getCrossOwnerMatches(marketMatchesTarget)
   }, [marketMatchesTarget])
   useEffect(() => {
     if (!marketMatchesTarget) return
@@ -1401,59 +2537,22 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
 
   useEffect(() => {
     if (filteredListings.length === 0) {
-      setMarketMagazineIndex(null)
+      setSelectedMarketListingIndex(null)
       return
     }
-    if (marketMagazineIndex == null) return
-    setMarketMagazineIndex((prev) => {
+    if (selectedMarketListingIndex == null) return
+    setSelectedMarketListingIndex((prev) => {
       if (prev == null) return null
       return Math.max(0, Math.min(prev, filteredListings.length - 1))
     })
-  }, [filteredListings, marketMagazineIndex])
+  }, [filteredListings, selectedMarketListingIndex])
 
-  useEffect(() => {
-    if (filteredListings.length === 0) {
-      setNewMarketIndex(0)
-      return
-    }
-    setNewMarketIndex((prev) => Math.min(prev, filteredListings.length - 1))
-  }, [filteredListings])
-
-  function flipToNewMarketplaceIndex(nextIndex, direction) {
-    if (filteredListings.length === 0) return
-    setNewMarketFlipDir(direction)
-    setNewMarketIsFlipping(true)
-    setTimeout(() => {
-      setNewMarketIndex(nextIndex)
-      setNewMarketIsFlipping(false)
-    }, 180)
-  }
-
-  function flipNewMarketplaceNext() {
-    if (filteredListings.length <= 1) return
-    const next = (newMarketIndex + 1) % filteredListings.length
-    flipToNewMarketplaceIndex(next, 'next')
-  }
-
-  function flipNewMarketplacePrev() {
-    if (filteredListings.length <= 1) return
-    const prev = (newMarketIndex - 1 + filteredListings.length) % filteredListings.length
-    flipToNewMarketplaceIndex(prev, 'prev')
-  }
-
-  function openMarketplaceMagazine(item) {
+  function openMarketplaceListingDetails(item) {
     const idx = filteredListings.findIndex((entry) => entry?.id === item?.id)
-    if (idx >= 0) setMarketMagazineIndex(idx)
-  }
-
-  function flipMarketplaceMagazineNext() {
-    if (filteredListings.length <= 1 || marketMagazineIndex == null) return
-    setMarketMagazineIndex((marketMagazineIndex + 1) % filteredListings.length)
-  }
-
-  function flipMarketplaceMagazinePrev() {
-    if (filteredListings.length <= 1 || marketMagazineIndex == null) return
-    setMarketMagazineIndex((marketMagazineIndex - 1 + filteredListings.length) % filteredListings.length)
+    if (idx >= 0) {
+      setSelectedMarketListingIndex(idx)
+      setSelectedMarketImageIndex(0)
+    }
   }
 
   function toggleMarketplaceLike(listingId) {
@@ -1467,14 +2566,13 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   }
 
   const suggestedTrades = useMemo(() => {
-    const target = Number(askingValue || analysisResult?.valuation?.estimated_value || 0)
+    const target = Number(analysisResult?.valuation?.estimated_value || 0)
     if (!target) return []
     return allListings
-      .filter((item) => item.mode !== 'sell')
       .map((item) => ({ ...item, valueGap: Math.abs(item.estimatedValue - target) }))
       .sort((a, b) => a.valueGap - b.valueGap)
       .slice(0, 6)
-  }, [allListings, askingValue, analysisResult])
+  }, [allListings, analysisResult])
 
   const adminFiltered = useMemo(() => {
     const q = adminSearch.trim().toLowerCase()
@@ -1797,7 +2895,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   const composerGapPct = composerTargetValue > 0 ? Math.abs(offeredTotalValue - composerTargetValue) / composerTargetValue : null
   const composerWithinBand = composerGapPct !== null ? composerGapPct <= 0.30 : false
 
-  async function analyzeUploadedPhotosForWizard() {
+  async function analyzeUploadedPhotosForWizard({ analysisImages = images } = {}) {
     if (!clerkEnabled && !apiKey.trim()) {
       setAnalysisError('API key is required.')
       return { ok: false, needsReceiptPrompt: false, payload: null }
@@ -1811,10 +2909,11 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
         apiBaseUrl,
         apiKey: clerkEnabled ? '' : apiKey.trim(),
         bearerToken,
-        images,
+        images: analysisImages,
         category,
         userCondition,
         itemDescription: itemDescription.trim(),
+        itemSize,
         debug: debugMode,
       })
       setAnalysisResult(payload)
@@ -1834,121 +2933,19 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     }
   }
 
-  async function goToNextWizardStep() {
-    if (wizardStep === 1 && (images.length < 1 || images.length > 4)) {
-      setAnalysisError('Upload 1 to 4 images before continuing.')
-      return
-    }
-    if (wizardStep === 1 && !userCondition) {
-      setAnalysisError('Select item condition before continuing.')
-      return
-    }
-    if (wizardStep === 1) {
-      const result = await analyzeUploadedPhotosForWizard()
-      if (!result.ok) return
-      if (result.needsReceiptPrompt && !receiptPromptDismissed) {
-        setAnalysisError('This brand/model is often sold with authenticity receipt or proof of purchase. Upload it if available for better valuation.')
-        setWizardStep(1)
-        return
-      }
-    }
-    setAnalysisError('')
-    setWizardStep((prev) => Math.min(prev + 1, 2))
-  }
-
-  function goToPrevWizardStep() {
-    setAnalysisError('')
-    setWizardStep((prev) => Math.max(prev - 1, 1))
-  }
-
-  async function saveListingDraft() {
-    if (!analysisResult) return setSavedListingNotice('Run analysis first before publishing your listing.')
-    const value = Number(askingValue || analysisResult?.valuation?.estimated_value || 0)
-    const listing = {
-      id: editingListingId || makeId('listing'),
-      owner: session.name || 'You',
-      title: itemTitle.trim() || itemDescription.trim() || `${analysisResult.brand.name} ${analysisResult.category}`,
-      mode: listingMode,
-      category: analysisResult.category,
-      brand: analysisResult.brand.name,
-      condition: analysisResult.user_condition || analysisResult.condition.grade,
-      size: itemSize || null,
-      estimatedValue: value || 0,
-      city: 'Your area',
-      image: previewUrls[0] || 'https://images.unsplash.com/photo-1483985988355-763728e1935b?auto=format&fit=crop&w=800&q=80',
-      images: previewUrls.length > 0 ? [...previewUrls] : ['https://images.unsplash.com/photo-1483985988355-763728e1935b?auto=format&fit=crop&w=800&q=80'],
-      description: itemDescription.trim(),
-      wants: itemDescription.trim() || 'No description provided.',
-      tags: [(analysisResult.user_condition || analysisResult.condition.grade), analysisResult.brand.name, listingMode.replace('_', '/')],
-      sourceItemId: analysisResult.item_id,
-      analysis: analysisResult,
-      status: 'Review',
-    }
-    try {
-      const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
-      if (editingListingId) {
-        const updated = await updateListingRemote({
-          apiBaseUrl,
-          apiKey: clerkEnabled ? '' : apiKey.trim(),
-          bearerToken,
-          listingId: editingListingId,
-          payload: toRemoteListingPayload(listing),
-        })
-        setMyListings((prev) => prev.map((item) => (item.id === editingListingId ? fromRemoteListing(updated) : item)))
-      } else {
-        const created = await createListingRemote({
-          apiBaseUrl,
-          apiKey: clerkEnabled ? '' : apiKey.trim(),
-          bearerToken,
-          payload: toRemoteListingPayload(listing),
-        })
-        setMyListings((prev) => [fromRemoteListing(created), ...prev])
-      }
-    } catch (err) {
-      setAnalysisError(err.message || String(err))
-      return
-    }
-    setActiveTab('portfolio')
-    setSavedListingNotice(editingListingId ? 'Listing updated.' : 'Listing published to your portfolio. Browse trade matches below.')
-    setEditingListingId(null)
-  }
-
-  function openEditListing(listing) {
-    setActiveTab('upload')
-    setWizardStep(2)
-    setEditingListingId(listing.id)
-    setItemTitle(listing.title || '')
-    setCategory(listing.category && listing.category !== 'unknown' ? listing.category : '')
-    setUserCondition(listing.condition && listing.condition !== 'n/a' ? listing.condition : '')
-    setItemSize(typeof listing.size === 'string' ? listing.size : '')
-    setAskingValue(Number.isFinite(Number(listing.estimatedValue)) ? String(Math.round(Number(listing.estimatedValue))) : '')
-    setTradeNotes(listing.wants || '')
-    setItemDescription(listing.analysis?.item_profile ? buildSuggestedDescriptionFromProfile(listing.analysis.item_profile) : '')
-    setAnalysisResult(listing.analysis || null)
-    const existingImages = Array.isArray(listing.images) && listing.images.length > 0
-      ? listing.images
-      : [listing.image].filter(Boolean)
-    setEditImageCount(existingImages.length)
-    setEditPreviewUrls(existingImages)
-    setImages([])
-    setAnalysisError('')
-    setSavedListingNotice('Editing listing draft.')
-    setReceiptPromptPending(false)
-    setReceiptPromptDismissed(false)
-  }
-
   function resetDraft() {
-    setWizardStep(1)
     setItemTitle('')
     setCategory('')
     setUserCondition('')
     setItemDescription('')
     setItemSize('')
-    setAskingValue('')
     setTradeNotes('')
     setImages([])
     setEditPreviewUrls([])
     setEditImageCount(0)
+    setSelectedCreateImageIndex(0)
+    setSelectedEditImageIndex(0)
+    setSelectedEditHeroImageIndex(null)
     setAnalysisResult(null)
     setEditingListingId(null)
     setReceiptPromptPending(false)
@@ -1958,124 +2955,123 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   }
 
   async function createListingAndRunAsyncAnalysis() {
-    const draftListing = {
-      id: makeId('listing'),
-      owner: session.name || 'You',
-      title: itemTitle.trim() || itemDescription.trim() || 'New listing',
-      mode: listingMode,
-      category: category || 'unknown',
-      brand: 'Analyzing...',
-      condition: userCondition || 'n/a',
-      size: itemSize || null,
-      estimatedValue: 0,
-      city: 'Your area',
-      image: previewUrls[0] || 'https://images.unsplash.com/photo-1483985988355-763728e1935b?auto=format&fit=crop&w=800&q=80',
-      images: previewUrls.length > 0 ? [...previewUrls] : ['https://images.unsplash.com/photo-1483985988355-763728e1935b?auto=format&fit=crop&w=800&q=80'],
-      description: itemDescription.trim(),
-      wants: itemDescription.trim() || 'No description provided.',
-      tags: ['Analyzing'],
-      sourceItemId: null,
-      analysis: null,
-      status: 'Analyzing',
+    if (!clerkEnabled && !apiKey.trim()) {
+      setAnalysisError('API key is required.')
+      return false
     }
-    let persistedListing = null
+    const imagesForAnalysis = orderedCreateImagesForSave()
+    if (imagesForAnalysis.length < 1 || imagesForAnalysis.length > 6) {
+      setAnalysisError('Upload 1 to 6 images before continuing.')
+      return false
+    }
+    if (!userCondition) {
+      setAnalysisError('Select item condition before continuing.')
+      return false
+    }
+    setCreateListingBusy(true)
+    setAnalysisError('')
+    setSavedListingNotice('')
     try {
       const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
-      persistedListing = await createListingRemote({
+      const uploaded = await uploadListingImages({
+        apiBaseUrl,
+        apiKey: clerkEnabled ? '' : apiKey.trim(),
+        bearerToken,
+        images: imagesForAnalysis,
+      })
+      const uploadedImageUrls = persistableImageUrls((uploaded?.uploaded_images || []).map((entry) => entry?.image_url))
+      if (uploadedImageUrls.length < 1) {
+        throw new Error('Images were uploaded, but no image URLs were returned.')
+      }
+      const uploadedImagesReady = await waitForUploadedListingImages(uploadedImageUrls)
+      if (!uploadedImagesReady) {
+        throw new Error('Images are still processing. Please retry creating the listing in a few seconds.')
+      }
+      const draftDescription = (itemDescription || '').trim()
+      const draftCondition = userCondition || 'LikeNew'
+      const draftListing = {
+        id: makeId('listing'),
+        owner: session.name || 'You',
+        title: itemTitle.trim() || draftDescription || 'New listing',
+        mode: 'trade',
+        category: category || 'handbag',
+        brand: 'unknown',
+        condition: draftCondition,
+        size: itemSize || null,
+        estimatedValue: 0,
+        city: 'Your area',
+        image: uploadedImageUrls[0],
+        images: uploadedImageUrls,
+        description: draftDescription,
+        wants: draftDescription || 'Open to similar-value offers',
+        tags: ['Analyzing'],
+        sourceItemId: uploaded?.item_id || null,
+        analysis: null,
+        status: 'Analyzing',
+      }
+      const created = await createListingRemote({
         apiBaseUrl,
         apiKey: clerkEnabled ? '' : apiKey.trim(),
         bearerToken,
         payload: toRemoteListingPayload(draftListing),
       })
+      const normalized = fromRemoteListing(created)
+      setMyListings((prev) => [normalized, ...prev])
+      setActiveTab('portfolio')
+      setAnalysisError('')
+      setSavedListingNotice('Listing created. AI analysis is running in the background.')
+      setShowCreateListingModal(false)
+      scheduleListingRefreshes()
+      return true
     } catch (err) {
       setAnalysisError(err.message || String(err))
+      setSavedListingNotice('Listing creation failed. Please retry creating the listing.')
+      return false
+    } finally {
+      setCreateListingBusy(false)
+    }
+  }
+
+  async function updateListingAndRunAsyncAnalysis(listing, { finalStatus = 'Review', publishAfterAnalysis = false } = {}) {
+    if (!listing) return
+    const existingImageUrls = persistableImageUrls(editPreviewUrls.length > 0 || images.length > 0
+      ? orderedEditExistingImageUrlsForSave()
+      : originalListingImageUrls(listing))
+    const newImagesForUpload = orderedEditNewImagesForSave()
+    if (existingImageUrls.length < 1 && images.length < 1) {
+      setAnalysisError('Upload 1 to 6 images before continuing.')
       return
     }
-    const listingId = persistedListing.listing_id
-    setMyListings((prev) => [fromRemoteListing(persistedListing), ...prev])
-    setActiveTab('portfolio')
-    setAnalysisError('')
-    setSavedListingNotice('Listing created. AI analysis is running in the background.')
 
-    ;(async () => {
-      const result = await analyzeUploadedPhotosForWizard()
-      if (!result.ok) {
-        try {
-          const current = myListings.find((x) => x.id === listingId) || draftListing
-          const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
-          const failed = await updateListingRemote({
-            apiBaseUrl,
-            apiKey: clerkEnabled ? '' : apiKey.trim(),
-            bearerToken,
-            listingId,
-            payload: toRemoteListingPayload({ ...current, status: 'AnalysisFailed', tags: ['Analysis failed'] }),
-          })
-          setMyListings((prev) => prev.map((item) => (item.id === listingId ? fromRemoteListing(failed) : item)))
-        } catch {}
-        return
-      }
-      const payload = result.payload || null
-      try {
-        const current = (myListings.find((x) => x.id === listingId) || fromRemoteListing(persistedListing) || draftListing)
-        const resolved = payload || current.analysis
-        const profileDescription = buildSuggestedDescriptionFromProfile(resolved?.item_profile)
-        const resolvedCondition = resolved?.user_condition || resolved?.condition?.grade || current.condition
-        const resolvedBrand = resolved?.brand?.name || current.brand
-        const resolvedCategory = resolved?.category || current.category
-        const resolvedValue = Number(askingValue || resolved?.valuation?.estimated_value || current.estimatedValue || 0)
-        const resolvedImageUrls = getUploadedImageUrlsFromAnalysis(resolved)
-        const updatedPayload = {
-          ...current,
-          title: itemTitle.trim() || itemDescription.trim() || resolved?.item_profile?.model_identification?.name || current.title,
-          description: (itemDescription || '').trim() || current.description || profileDescription || '',
-          image: resolvedImageUrls[0] || current.image || null,
-          images: resolvedImageUrls.length > 0 ? resolvedImageUrls : (Array.isArray(current.images) ? current.images : [current.image].filter(Boolean)),
-          brand: resolvedBrand,
-          category: resolvedCategory,
-          condition: resolvedCondition,
-          estimatedValue: resolvedValue,
-          sourceItemId: resolved?.item_id || current.sourceItemId,
-          analysis: resolved || current.analysis,
-          tags: [resolvedCondition, resolvedBrand, listingMode.replace('_', '/')].filter(Boolean),
-          status: 'Review',
-        }
-        const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
-        const updated = await updateListingRemote({
+    setAnalysisError('')
+    setSavedListingNotice('')
+    try {
+      const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
+      let uploadedImageUrls = []
+      if (newImagesForUpload.length > 0) {
+        const uploaded = await uploadListingImages({
           apiBaseUrl,
           apiKey: clerkEnabled ? '' : apiKey.trim(),
           bearerToken,
-          listingId,
-          payload: toRemoteListingPayload(updatedPayload),
+          images: newImagesForUpload,
         })
-        setMyListings((prev) => prev.map((item) => (item.id === listingId ? fromRemoteListing(updated) : item)))
-      } catch {}
-      if (result.needsReceiptPrompt && !receiptPromptDismissed) {
-        setMyListings((prev) => prev.map((item) => item.id === listingId ? { ...item, tags: [...(item.tags || []), 'Receipt requested'] } : item))
+        uploadedImageUrls = persistableImageUrls((uploaded?.uploaded_images || []).map((entry) => entry?.image_url))
+        if (uploadedImageUrls.length !== newImagesForUpload.length) {
+          throw new Error('Images were uploaded, but not all image URLs were returned.')
+        }
       }
-    })()
-  }
-
-  async function updateListingAndRunAsyncAnalysis(listing) {
-    if (!listing) return
-    const existingImages = Array.isArray(listing.images) && listing.images.length > 0
-      ? listing.images
-      : [listing.image].filter(Boolean)
-    const chosenImages = previewUrls.length > 0 ? [...previewUrls] : existingImages
-    const coverImage = chosenImages[0] || 'https://images.unsplash.com/photo-1483985988355-763728e1935b?auto=format&fit=crop&w=800&q=80'
-
-    const pending = {
-      ...listing,
-      image: coverImage,
-      images: chosenImages.length > 0 ? chosenImages : [coverImage],
-      condition: userCondition || listing.condition || 'n/a',
-      size: itemSize || listing.size || null,
-      category: category || listing.category || 'unknown',
-      description: (itemDescription || '').trim() || listing.description || '',
-      status: 'Analyzing',
-      tags: ['Analyzing'],
-    }
-    try {
-      const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
+      const imageUrls = mergedEditImageUrlsForSave(existingImageUrls, uploadedImageUrls)
+      if (imageUrls.length < 1) throw new Error('Could not resolve listing image URLs.')
+      const pending = {
+        ...buildEditedListingPayload(listing, {
+          image: imageUrls[0],
+          images: imageUrls,
+          status: 'Analyzing',
+          tags: ['Analyzing'],
+        }),
+        status: 'Analyzing',
+        tags: ['Analyzing'],
+      }
       const updated = await updateListingRemote({
         apiBaseUrl,
         apiKey: clerkEnabled ? '' : apiKey.trim(),
@@ -2084,81 +3080,67 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
         payload: toRemoteListingPayload(pending),
       })
       setMyListings((prev) => prev.map((item) => item.id === listing.id ? fromRemoteListing(updated) : item))
+      setEditingListingId(null)
+      setModalEditingListing(null)
+      setShowCreateListingModal(false)
+      setActiveTab('portfolio')
+      setSavedListingNotice(publishAfterAnalysis
+        ? 'Listing changes saved. AI analysis is running before publishing.'
+        : 'Listing updated. AI analysis is running in the background.')
+      scheduleListingRefreshes()
     } catch (err) {
       setAnalysisError(err.message || String(err))
-      return
+      setSavedListingNotice('Listing update failed. Please retry saving the listing.')
     }
-    setActiveTab('portfolio')
-    setAnalysisError('')
-    setSavedListingNotice('Listing updated. AI analysis is running in the background.')
-
-    ;(async () => {
-      const result = await analyzeUploadedPhotosForWizard()
-      if (!result.ok) {
-        try {
-          const failed = await updateListingRemote({
-            apiBaseUrl,
-            apiKey: clerkEnabled ? '' : apiKey.trim(),
-            bearerToken: clerkEnabled && getBearerToken ? await getBearerToken() : null,
-            listingId: listing.id,
-            payload: toRemoteListingPayload({ ...pending, status: 'AnalysisFailed', tags: ['Analysis failed'] }),
-          })
-          setMyListings((prev) => prev.map((item) => item.id === listing.id ? fromRemoteListing(failed) : item))
-        } catch {}
-        return
-      }
-      const payload = result.payload || null
-      try {
-        const current = myListings.find((x) => x.id === listing.id) || pending
-        const resolved = payload || current.analysis
-        const profileDescription = buildSuggestedDescriptionFromProfile(resolved?.item_profile)
-        const resolvedCondition = resolved?.user_condition || resolved?.condition?.grade || userCondition || current.condition
-        const resolvedBrand = resolved?.brand?.name || current.brand
-        const resolvedCategory = resolved?.category || category || current.category
-        const resolvedValue = Number(askingValue || resolved?.valuation?.estimated_value || current.estimatedValue || 0)
-        const resolvedImageUrls = getUploadedImageUrlsFromAnalysis(resolved)
-        const updatedPayload = {
-          ...current,
-          title: (itemTitle || '').trim() || (itemDescription || '').trim() || resolved?.item_profile?.model_identification?.name || current.title,
-          description: (itemDescription || '').trim() || current.description || profileDescription || '',
-          image: resolvedImageUrls[0] || current.image || null,
-          images: resolvedImageUrls.length > 0 ? resolvedImageUrls : (Array.isArray(current.images) ? current.images : [current.image].filter(Boolean)),
-          brand: resolvedBrand,
-          category: resolvedCategory,
-          condition: resolvedCondition,
-          size: itemSize || current.size || null,
-          estimatedValue: resolvedValue,
-          sourceItemId: resolved?.item_id || current.sourceItemId,
-          analysis: resolved || current.analysis,
-          tags: [resolvedCondition, resolvedBrand, (current.mode || listingMode).replace('_', '/')].filter(Boolean),
-          status: 'Review',
-        }
-        const updated = await updateListingRemote({
-          apiBaseUrl,
-          apiKey: clerkEnabled ? '' : apiKey.trim(),
-          bearerToken: clerkEnabled && getBearerToken ? await getBearerToken() : null,
-          listingId: listing.id,
-          payload: toRemoteListingPayload(updatedPayload),
-        })
-        setMyListings((prev) => prev.map((item) => item.id === listing.id ? fromRemoteListing(updated) : item))
-      } catch {}
-    })()
   }
 
-  async function publishListingActive(listing) {
+  async function saveListingEdits(listing) {
     if (!listing) return
+    const finalStatus = String(listing.status || 'Review')
+    if (editPublishRequiresAnalysis(listing)) {
+      updateListingAndRunAsyncAnalysis(listing, { finalStatus, publishAfterAnalysis: false })
+      setShowCreateListingModal(false)
+      return
+    }
+    const next = {
+      ...buildEditedListingPayload(listing),
+      status: finalStatus,
+    }
+    try {
+      const updated = await updateListingRemote({
+        apiBaseUrl,
+        apiKey: clerkEnabled ? '' : apiKey.trim(),
+        bearerToken: clerkEnabled && getBearerToken ? await getBearerToken() : null,
+        listingId: listing.id,
+        payload: toRemoteListingPayload(next),
+      })
+      setMyListings((prev) => prev.map((item) => item.id === listing.id ? fromRemoteListing(updated) : item))
+      setEditingListingId(null)
+      setModalEditingListing(null)
+      setShowCreateListingModal(false)
+      setActiveTab('portfolio')
+      setSavedListingNotice('Listing changes saved.')
+    } catch (err) {
+      setAnalysisError(err.message || String(err))
+    }
+  }
+
+  async function publishListingToMarketplace(listing) {
+    if (!listing) return
+    const missingMessage = missingPublishFieldsMessage(listing)
+    if (missingMessage) {
+      setAnalysisError(missingMessage)
+      setSavedListingNotice('')
+      return
+    }
+    setAnalysisError('')
     const next = {
       ...listing,
-      title: (itemTitle || '').trim() || listing.title,
-      description: (itemDescription || '').trim() || listing.description || '',
-      category: category || listing.category || 'unknown',
-      condition: userCondition || listing.condition || 'n/a',
-      size: itemSize || listing.size || null,
       status: 'Active',
       tags: [
-        userCondition || listing.condition || 'n/a',
+        listing.condition || 'LikeNew',
         listing.brand || 'unknown',
-        (listing.mode || listingMode).replace('_', '/'),
+        'trade',
       ].filter(Boolean),
     }
     try {
@@ -2170,12 +3152,34 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
         payload: toRemoteListingPayload(next),
       })
       setMyListings((prev) => prev.map((item) => item.id === listing.id ? fromRemoteListing(updated) : item))
+      setActiveTab('portfolio')
+      setSavedListingNotice('Listing published to Marketplace.')
     } catch (err) {
       setAnalysisError(err.message || String(err))
-      return
     }
-    setActiveTab('portfolio')
-    setSavedListingNotice('Listing published and set to Active.')
+  }
+
+  async function removeListingFromCloset(listing) {
+    if (!listing?.id) return
+    if (typeof window !== 'undefined') {
+      const confirmed = window.confirm(`Remove "${listing.title || 'this listing'}" from your closet? This cannot be undone.`)
+      if (!confirmed) return
+    }
+    setAnalysisError('')
+    setSavedListingNotice('')
+    try {
+      await deleteListingRemote({
+        apiBaseUrl,
+        apiKey: clerkEnabled ? '' : apiKey.trim(),
+        bearerToken: clerkEnabled && getBearerToken ? await getBearerToken() : null,
+        listingId: listing.id,
+      })
+      setMyListings((prev) => prev.filter((item) => item.id !== listing.id))
+      setMarketListings((prev) => prev.filter((item) => item.id !== listing.id))
+      setSavedListingNotice('Listing removed from your closet.')
+    } catch (err) {
+      setAnalysisError(err.message || String(err))
+    }
   }
 
   function openCreateListingModal() {
@@ -2183,6 +3187,11 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     setListingModalMode('create')
     setModalEditingListing(null)
     setShowCreateListingModal(true)
+  }
+
+  function openCreateListingFromCloset() {
+    setActiveTab('portfolio')
+    openCreateListingModal()
   }
 
   function openEditListingModal(listing) {
@@ -2196,18 +3205,41 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     setCategory(listing.category && listing.category !== 'unknown' ? listing.category : '')
     setUserCondition(listing.condition && listing.condition !== 'n/a' ? listing.condition : '')
     setItemSize(typeof listing.size === 'string' ? listing.size : '')
-    setAskingValue(Number.isFinite(Number(listing.estimatedValue)) ? String(Math.round(Number(listing.estimatedValue))) : '')
     setTradeNotes(listing.wants || '')
-    setItemDescription(listing.analysis?.item_profile ? buildSuggestedDescriptionFromProfile(listing.analysis.item_profile) : '')
+    setItemDescription(organizeDescriptionParagraphs(
+      meaningfulDescription(listing.description) || buildSuggestedDescriptionFromProfile(listing.analysis?.item_profile) || '',
+    ))
     setAnalysisResult(listing.analysis || null)
     setImages([])
     setEditImageCount(existingImages.length)
     setEditPreviewUrls(existingImages)
+    setSelectedEditImageIndex(0)
+    setSelectedEditHeroImageIndex(null)
     setReceiptPromptPending(false)
     setReceiptPromptDismissed(false)
     setAnalysisError('')
     setSavedListingNotice('')
-    setShowCreateListingModal(true)
+    setShowCreateListingModal(false)
+    setActiveTab('edit_listing')
+  }
+
+  function removeEditListingImageAtIndex(imageIndex) {
+    if (imageIndex < editPreviewUrls.length) {
+      setEditPreviewUrls((prev) => {
+        const next = prev.filter((_, idx) => idx !== imageIndex)
+        setEditImageCount(next.length)
+        return next
+      })
+    } else {
+      const newImageIndex = imageIndex - editPreviewUrls.length
+      setImages((prev) => prev.filter((_, idx) => idx !== newImageIndex))
+    }
+    setSelectedEditImageIndex((idx) => Math.max(0, idx - (idx >= imageIndex ? 1 : 0)))
+    setSelectedEditHeroImageIndex((idx) => {
+      if (idx === null) return null
+      if (idx === imageIndex) return null
+      return Math.max(0, idx - (idx > imageIndex ? 1 : 0))
+    })
   }
 
   return (
@@ -2226,7 +3258,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
               <a href={tabHref('market')} className={activeTab === 'market' ? 'app-brand-link active' : 'app-brand-link'}>Marketplace</a>
               <a href={tabHref('portfolio')} className={activeTab === 'portfolio' ? 'app-brand-link active' : 'app-brand-link'}>My Closet</a>
               <a href={tabHref('inbox')} className={activeTab === 'inbox' ? 'app-brand-link active' : 'app-brand-link'}>Trade Inbox</a>
-              <a href={tabHref('profile')} className={activeTab === 'profile' ? 'app-brand-link active' : 'app-brand-link'}>Profile</a>
+              <a href={tabHref('profile')} className={activeTab === 'profile' || activeTab === 'profile_setup' ? 'app-brand-link active' : 'app-brand-link'}>Profile</a>
             </div>
           </div>
         </div>
@@ -2241,7 +3273,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
         </div>
       </div>
 
-      {showFreshListingsStrip && activeTab !== 'profile' && latestActiveListings.length > 0 && (
+      {showFreshListingsStrip && activeTab !== 'profile' && activeTab !== 'profile_setup' && latestActiveListings.length > 0 && (
       <section className="panel latest-hero">
         <div className="panel-header" style={{ marginBottom: 8 }}>
           <div>
@@ -2266,7 +3298,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                 </div>
                 <div className="latest-meta">
                   <h3 className="editorial-title latest-title">{item.title || 'Untitled listing'}</h3>
-                  <p className="editorial-byline">BY {String(item.owner || 'Unknown seller').toUpperCase()}</p>
+                  <p className="editorial-byline">BY {String(item.owner || 'Unknown member').toUpperCase()}</p>
                   <p className="editorial-meta">
                     EST. {money(item.estimatedValue)}
                   </p>
@@ -2278,12 +3310,270 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
       </section>
       )}
 
+      {activeTab === 'profile_setup' && (
+        <main className="content profile-setup-page" style={{ marginTop: 12 }}>
+          <section className="profile-setup-shell">
+            <div className="profile-setup-head">
+              <div>
+                <p className="eyebrow">Profile setup</p>
+                <h3 id="profile-setup-title">
+                  {profileSetupStep === 1 && 'Step 1 - Address'}
+                  {profileSetupStep === 2 && 'Your Browse Profile'}
+                  {profileSetupStep === 3 && 'Describe Your Style'}
+                  {profileSetupStep === 4 && 'What Brings You to JOUFT?'}
+                </h3>
+              </div>
+              <div className="profile-setup-progress">
+                {Array.from({ length: PROFILE_SETUP_TOTAL_STEPS }, (_, idx) => (
+                  <span key={`profile-setup-step-${idx + 1}`} className={profileSetupStep >= idx + 1 ? 'active' : ''} />
+                ))}
+              </div>
+            </div>
+
+            {profileSetupStep === 1 && (
+              <div className="profile-setup-body">
+                <div className="field-grid two">
+                  <label>
+                    <span>First Name</span>
+                    <input
+                      value={profileQuiz.first_name || ''}
+                      onChange={(e) => {
+                        profileSetupDirtyRef.current = true
+                        setProfileQuiz((p) => ({ ...p, first_name: e.target.value }))
+                      }}
+                      required
+                    />
+                  </label>
+                  <label>
+                    <span>Last Name</span>
+                    <input
+                      value={profileQuiz.last_name || ''}
+                      onChange={(e) => {
+                        profileSetupDirtyRef.current = true
+                        setProfileQuiz((p) => ({ ...p, last_name: e.target.value }))
+                      }}
+                      required
+                    />
+                  </label>
+                  <label>
+                    <span>Email Address</span>
+                    <input
+                      type="email"
+                      value={profileQuiz.email || ''}
+                      onChange={(e) => {
+                        profileSetupDirtyRef.current = true
+                        setProfileQuiz((p) => ({ ...p, email: e.target.value }))
+                      }}
+                      required
+                    />
+                  </label>
+                  <label>
+                    <span>Shipping Full Name</span>
+                    <input value={primaryProfileAddress.full_name || ''} onChange={(e) => updatePrimaryShippingAddress({ full_name: e.target.value })} />
+                  </label>
+                  <label>
+                    <span>Birthday</span>
+                    <input
+                      type="date"
+                      value={profileQuiz.birthday || ''}
+                      onChange={(e) => {
+                        profileSetupDirtyRef.current = true
+                        setProfileQuiz((p) => ({ ...p, birthday: e.target.value }))
+                      }}
+                    />
+                  </label>
+                  <label>
+                    <span>Address Line 1</span>
+                    <input value={primaryProfileAddress.address_line1 || ''} onChange={(e) => updatePrimaryShippingAddress({ address_line1: e.target.value })} />
+                  </label>
+                  <label>
+                    <span>Address Line 2</span>
+                    <input value={primaryProfileAddress.address_line2 || ''} onChange={(e) => updatePrimaryShippingAddress({ address_line2: e.target.value })} />
+                  </label>
+                  <label>
+                    <span>City</span>
+                    <input value={primaryProfileAddress.city || ''} onChange={(e) => updatePrimaryShippingAddress({ city: e.target.value })} />
+                  </label>
+                  <label>
+                    <span>State</span>
+                    <input value={primaryProfileAddress.state || ''} onChange={(e) => updatePrimaryShippingAddress({ state: e.target.value })} />
+                  </label>
+                  <label>
+                    <span>Postal Code</span>
+                    <input value={primaryProfileAddress.postal_code || ''} onChange={(e) => updatePrimaryShippingAddress({ postal_code: e.target.value })} />
+                  </label>
+                  <label>
+                    <span>Country</span>
+                    <input value={primaryProfileAddress.country || ''} onChange={(e) => updatePrimaryShippingAddress({ country: e.target.value })} />
+                  </label>
+                  <label>
+                    <span>Gender</span>
+                    <select
+                      value={profileQuiz.gender || ''}
+                      onChange={(e) => {
+                        profileSetupDirtyRef.current = true
+                        const nextGender = e.target.value
+                        setProfileQuiz((p) => ({
+                          ...p,
+                          gender: nextGender,
+                          dresses_size: nextGender === 'male' ? [] : p.dresses_size,
+                          category_preferences: nextGender === 'male'
+                            ? p.category_preferences.filter((x) => x !== 'Dresses')
+                            : p.category_preferences,
+                        }))
+                      }}
+                    >
+                      <option value="">Select gender</option>
+                      <option value="female">Female</option>
+                      <option value="male">Male</option>
+                      <option value="other">Other</option>
+                    </select>
+                  </label>
+                </div>
+              </div>
+            )}
+
+            {profileSetupStep === 2 && (
+              <div className="profile-setup-body">
+                <div className="profile-setup-size-grid">
+                  <div>
+                    <span className="tiny-note">Tops Size</span>
+                    <div className="tag-row">
+                      {profileApparelSizeOptions.map((s) => {
+                        const selected = Array.isArray(profileQuiz.tops_size) && profileQuiz.tops_size.includes(s)
+                        return <button key={`setup-tops-${s}`} type="button" className={selected ? 'pill' : 'ghost small'} onClick={() => toggleProfileArrayField('tops_size', s)}>{s}</button>
+                      })}
+                    </div>
+                  </div>
+                  {normalizedProfileGender !== 'male' && (
+                    <div>
+                      <span className="tiny-note">Dresses Size</span>
+                      <div className="tag-row">
+                        {profileApparelSizeOptions.map((s) => {
+                          const selected = Array.isArray(profileQuiz.dresses_size) && profileQuiz.dresses_size.includes(s)
+                          return <button key={`setup-dresses-${s}`} type="button" className={selected ? 'pill' : 'ghost small'} onClick={() => toggleProfileArrayField('dresses_size', s)}>{s}</button>
+                        })}
+                      </div>
+                    </div>
+                  )}
+                  <div>
+                    <span className="tiny-note">Bottoms Size</span>
+                    <div className="tag-row">
+                      {profileApparelSizeOptions.map((s) => {
+                        const selected = Array.isArray(profileQuiz.bottoms_size) && profileQuiz.bottoms_size.includes(s)
+                        return <button key={`setup-bottoms-${s}`} type="button" className={selected ? 'pill' : 'ghost small'} onClick={() => toggleProfileArrayField('bottoms_size', s)}>{s}</button>
+                      })}
+                    </div>
+                  </div>
+                  <div>
+                    <span className="tiny-note">Shoes Size</span>
+                    <div className="tag-row">
+                      {profileShoeSizeOptions.map((s) => {
+                        const selected = Array.isArray(profileQuiz.shoes_size) && profileQuiz.shoes_size.includes(s)
+                        return <button key={`setup-shoes-${s}`} type="button" className={selected ? 'pill' : 'ghost small'} onClick={() => toggleProfileArrayField('shoes_size', s)}>{s}</button>
+                      })}
+                    </div>
+                  </div>
+                  <div>
+                    <span className="tiny-note">Browse Categories</span>
+                    <div className="tag-row">
+                      {profileCategoryOptions.map((c) => {
+                        const selected = profileQuiz.category_preferences.includes(c)
+                        return <button key={`setup-category-${c}`} type="button" className={selected ? 'pill' : 'ghost small'} onClick={() => toggleProfileArrayField('category_preferences', c)}>{c}</button>
+                      })}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {profileSetupStep === 3 && (
+              <div className="profile-setup-body">
+                <p className="tiny-note">Choose up to 3.</p>
+                <div className="profile-style-card-grid">
+                  {STYLE_DESCRIPTOR_OPTIONS.map((style) => {
+                    const selected = profileQuiz.style_descriptors.includes(style.value)
+                    return (
+                      <button
+                        key={style.value}
+                        type="button"
+                        className={selected ? 'profile-style-card active' : 'profile-style-card'}
+                        onClick={() => toggleProfileArrayField('style_descriptors', style.value, 3)}
+                      >
+                        <span className={`profile-style-visual ${style.className}`} aria-hidden="true" />
+                        <strong>{style.value}</strong>
+                        <span>{style.description}</span>
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+
+            {profileSetupStep === 4 && (
+              <div className="profile-setup-body">
+                <p className="tiny-note">Choose up to 2.</p>
+                <div className="profile-goal-grid">
+                  {JOUFT_GOAL_OPTIONS.map((goal) => {
+                    const selected = profileQuiz.jouft_goals.includes(goal)
+                    return (
+                      <button
+                        key={goal}
+                        type="button"
+                        className={selected ? 'pill' : 'ghost small'}
+                        onClick={() => toggleProfileArrayField('jouft_goals', goal, 2)}
+                      >
+                        {goal}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+
+            <div className="profile-setup-actions">
+              <button
+                className="ghost small"
+                type="button"
+                onClick={() => {
+                  setActiveTab('market')
+                }}
+              >
+                Skip for now
+              </button>
+              <div className="button-row" style={{ margin: 0 }}>
+                <button className="ghost small" type="button" disabled={profileSetupStep === 1} onClick={() => setProfileSetupStep((step) => Math.max(1, step - 1))}>Back</button>
+                {profileSetupStep < PROFILE_SETUP_TOTAL_STEPS ? (
+                  <button className="primary" type="button" onClick={() => setProfileSetupStep((step) => Math.min(PROFILE_SETUP_TOTAL_STEPS, step + 1))}>Next</button>
+                ) : (
+                  <button
+                    className="primary"
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        await saveProfileQuiz()
+                        setActiveTab('market')
+                      } catch (err) {
+                        setProfileSaveMsg(err.message || 'Failed to save profile.')
+                      }
+                    }}
+                  >
+                    Finish
+                  </button>
+                )}
+              </div>
+            </div>
+            {profileSaveMsg && <span className="tiny-note">{profileSaveMsg}</span>}
+          </section>
+        </main>
+      )}
+
       {activeTab === 'profile' ? (
         <main className="content" style={{ marginTop: 12 }}>
           <section className="panel">
             <div style={{ maxWidth: 980 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-                <h3 style={{ margin: 0 }}>Profile</h3>
+	                <h3 className="profile-tab-heading">Profile</h3>
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: '220px 1fr', gap: 16 }}>
                 <aside className="profile-nav" style={{ border: '1px solid var(--line)', borderRadius: 12, padding: 10, alignSelf: 'start' }}>
@@ -2292,14 +3582,44 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                   <button className={profileSection === 'subscription' ? 'nav-item active' : 'nav-item'} type="button" onClick={() => setProfileSection('subscription')}>Subscription</button>
                   <button className={profileSection === 'shipping' ? 'nav-item active' : 'nav-item'} type="button" onClick={() => setProfileSection('shipping')}>Shipping</button>
                 </aside>
-                <div>
-                  {profileSection === 'general' && (
-                    <div className="metric-grid">
-                      <div><span>Name</span><strong>{profileData?.name || session?.name || 'n/a'}</strong></div>
-                      <div><span>First Name</span><strong>{profileData?.firstName || 'n/a'}</strong></div>
-                      <div><span>Last Name</span><strong>{profileData?.lastName || 'n/a'}</strong></div>
-                      <div><span>Email</span><strong>{profileData?.email || session?.email || 'n/a'}</strong></div>
-                      <div><span>Phone</span><strong>{profileData?.phone || 'n/a'}</strong></div>
+	                <div>
+                  {profileHydrationError && <p className="error-text">{profileHydrationError}</p>}
+	                  {profileSection === 'general' && (
+                    <div className="field-grid two">
+                      <label>
+                        <span>First Name</span>
+                        <input
+                          value={profileQuiz.first_name || ''}
+                          onChange={(e) => setProfileQuiz((p) => ({ ...p, first_name: e.target.value }))}
+                          placeholder="First name"
+                        />
+                      </label>
+                      <label>
+                        <span>Last Name</span>
+                        <input
+                          value={profileQuiz.last_name || ''}
+                          onChange={(e) => setProfileQuiz((p) => ({ ...p, last_name: e.target.value }))}
+                          placeholder="Last name"
+                        />
+                      </label>
+                      <label>
+                        <span>Email</span>
+                        <input
+                          type="email"
+                          value={profileQuiz.email || ''}
+                          onChange={(e) => setProfileQuiz((p) => ({ ...p, email: e.target.value }))}
+                          placeholder="email@example.com"
+                        />
+                      </label>
+                      <label>
+                        <span>Phone</span>
+                        <input
+                          type="tel"
+                          value={profileQuiz.shipping_phone || ''}
+                          onChange={(e) => setProfileQuiz((p) => ({ ...p, shipping_phone: e.target.value }))}
+                          placeholder="Phone number"
+                        />
+                      </label>
                     </div>
                   )}
                   {profileSection === 'style' && (
@@ -2509,11 +3829,32 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                             <option value="canceled">Canceled</option>
                           </select>
                         </label>
-                        <label>
-                          <span>Renewal Date</span>
-                          <input type="date" value={profileQuiz.subscription_renewal_date || ''} onChange={(e) => setProfileQuiz((p) => ({ ...p, subscription_renewal_date: e.target.value }))} />
-                        </label>
                       </div>
+                      {(() => {
+                        const selectedPlan = SUBSCRIPTION_PLANS.find((plan) => plan.id === selectedSubscriptionPlanId) || SUBSCRIPTION_PLANS[0]
+                        if (!selectedPlan || selectedPlan.monthlyPrice <= 0) return null
+                        return (
+                          <div className="field-grid two" style={{ marginTop: 12 }}>
+                            <label>
+                              <span>Payment method for this subscription</span>
+                              <select
+                                value={selectedSubscriptionPaymentMethodId}
+                                onChange={(e) => setSelectedSubscriptionPaymentMethodId(e.target.value)}
+                              >
+                                {paymentMethods.length === 0 ? (
+                                  <option value="">Add a payment method first</option>
+                                ) : (
+                                  paymentMethods.map((method) => (
+                                    <option key={method.payment_method_id} value={method.payment_method_id}>
+                                      {method.label || method.method_type || 'Payment method'}{method.is_default ? ' (default)' : ''}
+                                    </option>
+                                  ))
+                                )}
+                              </select>
+                            </label>
+                          </div>
+                        )
+                      })()}
                       <div style={{ marginTop: 14 }}>
                         <p className="eyebrow" style={{ marginBottom: 8 }}>Payment Methods ({paymentMethods.length})</p>
                         <span className="tiny-note">Payments are fully managed by Stripe. No raw card data is collected or stored by this app.</span>
@@ -2526,16 +3867,29 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                           {paymentActionMsg && <span className="tiny-note" style={{ color: '#067647' }}>{paymentActionMsg}</span>}
                           {paymentLoadError && <span className="tiny-note" style={{ color: '#b42318' }}>{paymentLoadError}</span>}
                           {paymentMethods.length === 0 && <span className="tiny-note">No payment methods added yet.</span>}
-                          {paymentMethods.map((method) => (
-                            <div key={method.payment_method_id} style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', border: '1px solid var(--line)', borderRadius: 10, padding: '8px 10px' }}>
+                          {paymentMethods.map((method) => {
+                            const selectedForSubscription = method.payment_method_id === selectedSubscriptionPaymentMethodId
+                            return (
+                            <div key={method.payment_method_id} style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', border: selectedForSubscription ? '1px solid var(--ink)' : '1px solid var(--line)', borderRadius: 10, padding: '8px 10px' }}>
                               <div>
                                 <strong>{method.label || method.method_type}</strong>
-                                <div className="tiny-note">{method.provider}{method.is_default ? ' • Default' : ''}</div>
+                                <div className="tiny-note">
+                                  {method.provider}{method.is_default ? ' • Default' : ''}{selectedForSubscription ? ' • Subscription' : ''}
+                                </div>
                                 {(method.last4 || method.email) && (
                                   <div className="tiny-note">{method.last4 ? `•••• ${method.last4}` : method.email}</div>
                                 )}
                               </div>
                               <div className="button-row">
+                                {!selectedForSubscription && (
+                                  <button
+                                    className="ghost small"
+                                    type="button"
+                                    onClick={() => setSelectedSubscriptionPaymentMethodId(method.payment_method_id)}
+                                  >
+                                    Use for Subscription
+                                  </button>
+                                )}
                                 {!method.is_default && (
                                   <button
                                     className="ghost small"
@@ -2609,7 +3963,8 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                                 </button>
                               </div>
                             </div>
-                          ))}
+                            )
+                          })}
                         </div>
                       </div>
                     </div>
@@ -2704,7 +4059,16 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                 <button
                   className="ghost small"
                   type="button"
-                  onClick={() => setActiveTab('portfolio')}
+                  onClick={async () => {
+                    setProfileSaveMsg('')
+                    setProfileHydrationError('')
+                    try {
+                      profileSetupDirtyRef.current = false
+                      await loadProfileQuizIntoState({ force: true })
+                    } catch (err) {
+                      setProfileHydrationError(err.message || 'Profile data could not be loaded.')
+                    }
+                  }}
                 >
                   Cancel
                 </button>
@@ -2713,75 +4077,17 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                   type="button"
                   onClick={async () => {
                     try {
-                      const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
-                      const normalizedAddresses = normalizeShippingAddresses(profileQuiz.shipping_addresses, profileQuiz)
-                      const primaryAddress = normalizedAddresses[0] || emptyShippingAddress()
-                      const payload = {
-                        ...profileQuiz,
-                        tops_size: serializeMultiSizeValue(profileQuiz.tops_size),
-                        dresses_size: serializeMultiSizeValue(profileQuiz.dresses_size),
-                        bottoms_size: serializeMultiSizeValue(profileQuiz.bottoms_size),
-                        shoes_size: serializeMultiSizeValue(profileQuiz.shoes_size),
-                        subscription_plan: selectedSubscriptionPlanId,
-                        subscription_billing_cycle: selectedBillingCycle,
-                        shipping_addresses: normalizedAddresses.map((address, idx) => ({
-                          label: address.label || null,
-                          full_name: address.full_name || null,
-                          address_line1: address.address_line1 || null,
-                          address_line2: address.address_line2 || null,
-                          city: address.city || null,
-                          state: address.state || null,
-                          postal_code: address.postal_code || null,
-                          country: address.country || null,
-                          is_default: idx === 0,
-                        })),
-                        shipping_full_name: primaryAddress.full_name || null,
-                        shipping_address_line1: primaryAddress.address_line1 || null,
-                        shipping_address_line2: primaryAddress.address_line2 || null,
-                        shipping_city: primaryAddress.city || null,
-                        shipping_state: primaryAddress.state || null,
-                        shipping_postal_code: primaryAddress.postal_code || null,
-                        shipping_country: primaryAddress.country || null,
-                        payment_methods: paymentMethods
-                          .map((m) => (typeof m?.label === 'string' ? m.label.trim() : ''))
-                          .filter(Boolean),
+                      if (profileSection === 'subscription') {
+                        await activateSelectedSubscription()
+                      } else {
+                        await saveProfileQuiz()
                       }
-                      const saved = await saveProfileQuizRemote({
-                        apiBaseUrl,
-                        apiKey: clerkEnabled ? '' : apiKey.trim(),
-                        bearerToken,
-                        payload,
-                      })
-                      const savedShippingAddresses = normalizeShippingAddresses(saved?.shipping_addresses, saved)
-                      setProfileQuiz({
-                        gender: saved?.gender || '',
-                        tops_size: normalizeMultiSizeValue(saved?.tops_size),
-                        dresses_size: normalizeMultiSizeValue(saved?.dresses_size),
-                        bottoms_size: normalizeMultiSizeValue(saved?.bottoms_size),
-                        shoes_size: normalizeMultiSizeValue(saved?.shoes_size),
-                        category_preferences: Array.isArray(saved?.category_preferences) ? saved.category_preferences : [],
-                        shipping_full_name: savedShippingAddresses[0]?.full_name || '',
-                        shipping_address_line1: savedShippingAddresses[0]?.address_line1 || '',
-                        shipping_address_line2: savedShippingAddresses[0]?.address_line2 || '',
-                        shipping_city: savedShippingAddresses[0]?.city || '',
-                        shipping_state: savedShippingAddresses[0]?.state || '',
-                        shipping_postal_code: savedShippingAddresses[0]?.postal_code || '',
-                        shipping_country: savedShippingAddresses[0]?.country || '',
-                        shipping_addresses: savedShippingAddresses,
-                        subscription_plan: normalizeSubscriptionPlanId(saved?.subscription_plan),
-                        subscription_billing_cycle: normalizeBillingCycle(saved?.subscription_billing_cycle),
-                        subscription_status: saved?.subscription_status || '',
-                        subscription_renewal_date: saved?.subscription_renewal_date || '',
-                        payment_methods: Array.isArray(saved?.payment_methods) ? saved.payment_methods : [],
-                      })
-                      setActiveShippingAddressIdx(0)
-                      setProfileSaveMsg('Profile saved.')
                     } catch (err) {
                       setProfileSaveMsg(err.message || 'Failed to save profile.')
                     }
                   }}
                 >
-                  Save Profile
+                  {profileSection === 'subscription' ? 'Activate Subscription' : 'Save Profile'}
                 </button>
                 {profileSaveMsg && <span className="tiny-note">{profileSaveMsg}</span>}
               </div>
@@ -2790,52 +4096,137 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
         </main>
       ) : (
       <main className="content">
-          {activeTab === 'upload' && (
-            <section className="panel">
+          {activeTab === 'edit_listing' && (
+            <section className="panel listing-edit-page">
               <div className="panel-header">
                 <div>
-                  <p className="eyebrow">Analyze + Publish</p>
-                  <h2>{editingListingId ? 'Edit listing' : 'Create a sell/trade listing'}</h2>
+                  <p className="eyebrow">Edit Listing</p>
                 </div>
                 <div className="header-actions">
-                  <button className="ghost" onClick={resetDraft}>Reset draft</button>
-                  <label className="toggle"><input type="checkbox" checked={debugMode} onChange={(e) => setDebugMode(e.target.checked)} /><span>Debug</span></label>
+                  <button
+                    className="ghost"
+                    type="button"
+                    onClick={() => {
+                      setActiveTab('portfolio')
+                      setEditingListingId(null)
+                      setModalEditingListing(null)
+                      setImages([])
+                      setEditPreviewUrls([])
+                      setSelectedEditHeroImageIndex(null)
+                      setAnalysisError('')
+                    }}
+                    disabled={analysisLoading || createListingBusy}
+                  >
+                    Back to Closet
+                  </button>
                 </div>
               </div>
 
-              <div className="upload-layout">
-                <form className="upload-form" onSubmit={(e) => e.preventDefault()}>
-                  <div className="wizard-steps" aria-label="Listing wizard steps">
-                    {['Upload Images', 'Item Details & Review'].map((label, idx) => {
-                      const stepNum = idx + 1
-                      const state = wizardStep === stepNum ? 'active' : wizardStep > stepNum ? 'done' : ''
-                      return (
-                        <div key={label} className={`wizard-step ${state}`.trim()}>
-                          <span>{stepNum}</span>
-                          <strong>{label}</strong>
-                        </div>
-                      )
-                    })}
-                  </div>
+              {!modalEditingListing ? (
+                <div className="empty-state">
+                  <h3>No listing selected</h3>
+                  <p>Select a listing from your closet to edit it.</p>
+                  <button className="primary" type="button" onClick={() => setActiveTab('portfolio')}>Go to Closet</button>
+                </div>
+              ) : (
+                <div className="listing-edit-layout">
+                  <aside className="listing-edit-gallery-panel">
+                    <p className="listing-modal-label"><strong>Images (1-6)</strong></p>
+                    <input
+                      id="edit-listing-page-image-input"
+                      type="file"
+                      accept="image/*"
+                      multiple
+                      style={{ display: 'none' }}
+                      onChange={(e) => {
+                        const selected = Array.from(e.target.files || [])
+                        const maxNew = Math.max(0, 6 - editPreviewUrls.length)
+                        setImages((prev) => {
+                          const room = Math.max(0, maxNew - prev.length)
+                          return room > 0 ? [...prev, ...selected.slice(0, room)] : prev
+                        })
+                        setReceiptPromptPending(false)
+                        setReceiptPromptDismissed(false)
+                        e.target.value = ''
+                      }}
+                    />
+                    <div className="listing-edit-gallery market-selected-gallery">
+                      <div className="listing-edit-main-image market-selected-main-image">
+                        {modalPreviewUrls.length > 0 ? (
+                          <>
+                            <img
+                              src={modalPreviewUrls[Math.min(selectedEditImageIndex, modalPreviewUrls.length - 1)]}
+                              alt={`Listing image ${Math.min(selectedEditImageIndex, modalPreviewUrls.length - 1) + 1}`}
+                            />
+                            {selectedEditHeroImageIndex === Math.min(selectedEditImageIndex, modalPreviewUrls.length - 1) && (
+                              <span className="listing-hero-badge listing-edit-hero-badge">Hero</span>
+                            )}
+                            {Math.min(selectedEditImageIndex, modalPreviewUrls.length - 1) >= editPreviewUrls.length && (
+                              <span className="listing-modal-new-badge listing-edit-main-badge">New</span>
+                            )}
+                            <button
+                              className="listing-modal-set-hero listing-edit-main-set-hero"
+                              type="button"
+                              onClick={() => setSelectedEditHeroImageIndex(Math.min(selectedEditImageIndex, modalPreviewUrls.length - 1))}
+                              disabled={selectedEditHeroImageIndex === Math.min(selectedEditImageIndex, modalPreviewUrls.length - 1)}
+                            >
+                              {selectedEditHeroImageIndex === Math.min(selectedEditImageIndex, modalPreviewUrls.length - 1) ? 'Hero Image' : 'Set Hero'}
+                            </button>
+                            <button
+                              className="listing-modal-remove-image listing-edit-main-remove"
+                              type="button"
+                              onClick={() => removeEditListingImageAtIndex(Math.min(selectedEditImageIndex, modalPreviewUrls.length - 1))}
+                            >
+                              Remove
+                            </button>
+                          </>
+                        ) : (
+                          <label htmlFor="edit-listing-page-image-input" className="listing-edit-empty-main">
+                            <span>+</span>
+                            <strong>Add images</strong>
+                          </label>
+                        )}
+                      </div>
 
-                  {wizardStep === 1 && (
-                    <div className="wizard-pane">
-                      <p className="wizard-title">Step 1: Upload images + condition</p>
+                      <div className="market-selected-thumbnails listing-edit-thumbnails" aria-label="Listing image thumbnails">
+                        {modalPreviewUrls.map((url, idx) => (
+                          <button
+                            key={`edit-page-thumb-${url}-${idx}`}
+                            className={idx === Math.min(selectedEditImageIndex, modalPreviewUrls.length - 1) ? 'active' : ''}
+                            type="button"
+                            onClick={() => setSelectedEditImageIndex(idx)}
+                            aria-label={`Show image ${idx + 1}`}
+                          >
+                            <img src={url} alt="" />
+                            {idx === selectedEditHeroImageIndex && <span className="listing-edit-thumb-badge hero">Hero</span>}
+                            {idx >= editPreviewUrls.length && <span className="listing-edit-thumb-badge new">New</span>}
+                          </button>
+                        ))}
+                        {modalPreviewUrls.length < 6 && (
+                          <label htmlFor="edit-listing-page-image-input" className="listing-modal-add-image listing-edit-thumb-add" title="Add image">
+                            +
+                          </label>
+                        )}
+                      </div>
+                    </div>
+                  </aside>
+
+                  <div className="listing-edit-details">
+                  <form className="listing-edit-form" onSubmit={(e) => e.preventDefault()}>
+                    {createListingBusy && <p className="ok-text">Saving listing...</p>}
+                    {analysisLoading && <p className="ok-text">Analyzing photos...</p>}
+                    {analysisError && <p className="error-text">{analysisError}</p>}
+                    {savedListingNotice && !analysisLoading && !createListingBusy && <p className="ok-text">{savedListingNotice}</p>}
+
+                    <div className="field-grid">
                       <label>
-                        <span>Photos (1-4)</span>
-                        <input
-                          type="file"
-                          accept="image/*"
-                          multiple
-                          onChange={(e) => {
-                            const next = Array.from(e.target.files || []).slice(0, 4)
-                            setImages(next)
-                            setEditImageCount(next.length)
-                            setEditPreviewUrls([])
-                            setReceiptPromptPending(false)
-                            setReceiptPromptDismissed(false)
-                          }}
-                        />
+                        <span>Category</span>
+                        <select value={category} onChange={(e) => setCategory(e.target.value)}>
+                          <option value="">Auto detect</option>
+                          <option value="clothes">Clothes</option>
+                          <option value="shoes">Shoes</option>
+                          <option value="handbag">Handbag</option>
+                        </select>
                       </label>
                       <label>
                         <span>Your condition assessment</span>
@@ -2845,210 +4236,120 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                           <option value="LikeNew">Like New</option>
                         </select>
                       </label>
-                      {receiptPromptPending && (
-                        <div className="warning-list">
-                          <p>This brand/model is often sold with authenticity receipt or proof of purchase. Upload a receipt image if available to improve valuation confidence.</p>
-                          <button
-                            className="ghost"
-                            type="button"
-                            onClick={() => {
-                              setReceiptPromptDismissed(true)
-                              setAnalysisError('')
-                              setWizardStep(2)
-                            }}
-                          >
-                            Continue without receipt
-                          </button>
-                        </div>
-                      )}
-                      <p className="tiny-note">When you click Next, images are analyzed to infer brand and item profile before continuing.</p>
-                    </div>
-                  )}
-
-                  {wizardStep === 2 && (
-                    <div className="wizard-pane">
-                      <p className="wizard-title">Step 2: Item details + review</p>
-                      {(() => {
-                        const categoryForSize = category || analysisResult?.category || ''
-                        const brandForSize = analysisResult?.brand?.name || ''
-                        const sizeChartUrl = brandSizeChartUrl(brandForSize, categoryForSize)
-                        if (!brandForSize || brandForSize === 'unknown') return null
-                        return (
-                          <div className="request-list">
-                            <span>Brand size chart:</span>
-                            {sizeChartUrl ? (
-                              <a href={sizeChartUrl} target="_blank" rel="noreferrer">
-                                {brandForSize} size chart
-                              </a>
-                            ) : (
-                              <code>No chart available for this brand</code>
-                            )}
-                          </div>
-                        )
-                      })()}
                       <label>
                         <span>Size</span>
-                        <select
-                          value={itemSize}
-                          onChange={(e) => setItemSize(e.target.value)}
-                          required
-                        >
+                        <select value={itemSize} onChange={(e) => setItemSize(e.target.value)}>
                           {(() => {
-                            const categoryForSize = category || analysisResult?.category || ''
+                            const categoryForSize = category || modalEditingListing?.analysis?.category || modalEditingListing?.category || ''
                             const options = sizeOptionsForCategory(categoryForSize)
                             return (
                               <>
                                 <option value="">{options.length ? 'Select size' : 'Select category first'}</option>
-                                {options.map((opt) => (
-                                  <option key={opt} value={opt}>{opt}</option>
-                                ))}
+                                {options.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
                               </>
                             )
                           })()}
                         </select>
                       </label>
-                      <div className="field-grid">
-                        <label>
-                          <span>Category (optional)</span>
-                          <select value={category} onChange={(e) => { setCategory(e.target.value) }}>
-                            <option value="">Auto detect</option><option value="clothes">Clothes</option><option value="shoes">Shoes</option><option value="handbag">Handbag</option>
-                          </select>
-                        </label>
-                      </div>
-
-                      <label>
-                        <span>Title</span>
-                        <textarea
-                          value={itemTitle}
-                          onChange={(e) => setItemTitle(e.target.value)}
-                          rows={2}
-                          placeholder="e.g. Jimmy Choo Rosalia 50 Slingback Pump"
-                        />
-                      </label>
-
-                      <label>
-                        <span>Item description</span>
-                        <textarea
-                          value={itemDescription}
-                          onChange={(e) => setItemDescription(e.target.value)}
-                          rows={4}
-                          placeholder="Describe materials, color, hardware, wear, and notable details."
-                        />
-                      </label>
-
-                      <div className="gpt-profile-block">
-                        <p className="gpt-profile-title">GPT Item Profile Details</p>
-                        {analysisResult?.item_profile ? (
-                          <pre>{JSON.stringify(analysisResult.item_profile, null, 2)}</pre>
-                        ) : (
-                          <p className="tiny-note">No GPT item profile was returned from Step 1 image analysis.</p>
-                        )}
-                      </div>
-                      <div className="wizard-review">
-                        <span><strong>Title:</strong> {itemTitle || 'n/a'}</span>
-                        <span><strong>Images:</strong> {images.length || editImageCount}</span>
-                        <span><strong>Category:</strong> {category || 'Auto detect'}</span>
-                        <span><strong>Condition:</strong> {userCondition || 'n/a'}</span>
-                        <span><strong>Size:</strong> {itemSize || 'n/a'}</span>
-                      </div>
                     </div>
-                  )}
 
-                  {analysisError && <p className="error-text">{analysisError}</p>}
-                  {savedListingNotice && <p className="ok-text">{savedListingNotice}</p>}
-                  <div className="button-row">
-                    {wizardStep > 1 && <button className="ghost" type="button" onClick={goToPrevWizardStep}>Back</button>}
-                    {wizardStep < 2 && (
-                      <button className="primary" type="button" onClick={goToNextWizardStep} disabled={analysisLoading}>
-                        {wizardStep === 1 && analysisLoading ? 'Analyzing photos...' : 'Next'}
+                    <label>
+                      <span>Title</span>
+                      <textarea
+                        value={itemTitle}
+                        onChange={(e) => setItemTitle(e.target.value)}
+                        rows={2}
+                        placeholder="e.g. Jimmy Choo Rosalia 50 Slingback Pump"
+                      />
+                    </label>
+
+                    <label>
+                      <span>Item description</span>
+                      <textarea
+                        value={itemDescription}
+                        onChange={(e) => setItemDescription(e.target.value)}
+                        onBlur={() => setItemDescription((current) => organizeDescriptionParagraphs(current))}
+                        rows={8}
+                        placeholder="Describe materials, color, hardware, wear, and notable details."
+                      />
+                    </label>
+
+                    <label>
+                      <span>Trade notes</span>
+                      <textarea
+                        value={tradeNotes}
+                        onChange={(e) => setTradeNotes(e.target.value)}
+                        rows={3}
+                        placeholder="What you want in exchange"
+                      />
+                    </label>
+
+                    <div className="button-row listing-modal-actions">
+                      <button
+                        className="ghost"
+                        type="button"
+                        onClick={() => {
+                          setActiveTab('portfolio')
+                          setEditingListingId(null)
+                          setModalEditingListing(null)
+                          setImages([])
+                          setEditPreviewUrls([])
+                          setAnalysisError('')
+                        }}
+                        disabled={analysisLoading || createListingBusy}
+                      >
+                        Cancel
                       </button>
-                    )}
-                    {wizardStep === 2 && (
-                      <>
-                        <button
-                          className="primary"
-                          type="button"
-                          onClick={() => {
-                            if (!itemSize) {
-                              setAnalysisError('Select item size before publishing.')
-                              return
-                            }
-                            saveListingDraft()
-                          }}
-                        >
-                          {editingListingId ? 'Update Listing' : 'Publish Listing'}
-                        </button>
-                      </>
-                    )}
-                  </div>
-                </form>
-
-                <div className="preview-column">
-                  <div className="preview-grid">
-                    {displayedPreviewUrls.length === 0 && <div className="empty-preview">Upload 1-4 photos. Recommended: tag/logo close-up + defect close-up.</div>}
-                    {displayedPreviewUrls.map((url, idx) => (
-                      <figure key={url} className="preview-card"><img src={url} alt={`Upload ${idx + 1}`} /><figcaption>{idx === 0 ? 'Full item' : `Close-up ${idx}`}</figcaption></figure>
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              {analysisResult && wizardStep === 2 && (
-                <div className="analysis-panels">
-                  <article className="result-card feature">
-                    <p className="eyebrow">AI Analysis</p>
-                    <h3>{analysisResult.brand.name === 'unknown' ? 'Brand unknown' : analysisResult.brand.name}</h3>
-                    <div className="metric-grid">
-                      <div><span>Category</span><strong>{analysisResult.category}</strong></div>
-                      <div><span>Brand confidence</span><strong>{confidenceLabel(analysisResult.brand.confidence)}</strong></div>
-                      <div><span>Condition</span><strong>{analysisResult.condition.grade}</strong></div>
-                      <div><span>Condition confidence</span><strong>{confidenceLabel(analysisResult.condition.confidence)}</strong></div>
+                      <button
+                        className="primary"
+                        type="button"
+                        disabled={analysisLoading || createListingBusy}
+                        onClick={() => {
+                          const currentImageCount = modalPreviewUrls.length
+                          if (currentImageCount < 1 || currentImageCount > 6) {
+                            setAnalysisError('Upload 1 to 6 images before continuing.')
+                            return
+                          }
+                          if (!userCondition) {
+                            setAnalysisError('Select item condition before continuing.')
+                            return
+                          }
+                          saveListingEdits(modalEditingListing)
+                        }}
+                      >
+                        Save Changes
+                      </button>
                     </div>
-                    {analysisResult.user_condition && (
-                      <div className="request-list">
-                        <span>User condition:</span>
-                        <code>{analysisResult.user_condition}</code>
-                      </div>
-                    )}
-                    {analysisResult.warnings?.length > 0 && (
-                      <div className="warning-list">
-                        {analysisResult.warnings.map((warning) => (
-                          <p key={warning}>{warning}</p>
-                        ))}
-                      </div>
-                    )}
-                    {analysisResult.item_profile?.model_identification?.name && !(IS_PROD && wizardStep === 1) && (
-                      <div className="request-list">
-                        <span>GPT item profile:</span>
-                        <code>{analysisResult.item_profile.model_identification.name}</code>
-                      </div>
-                    )}
-                    {analysisResult.valuation ? (
-                      <div className="valuation-band">
-                        <div><span>Estimated value</span><strong>{money(analysisResult.valuation.estimated_value)}</strong></div>
-                        <div><span>Range</span><strong>{money(analysisResult.valuation.range_low)} - {money(analysisResult.valuation.range_high)}</strong></div>
-                        <div><span>Valuation confidence</span><strong>{confidenceLabel(analysisResult.valuation.confidence)}</strong></div>
-                      </div>
-                    ) : <p className="muted-text">No valuation returned yet (unknown brand or no comps).</p>}
-                    {analysisResult.requested_photos?.length > 0 && (
-                      <div className="request-list"><span>Requested photos:</span>{analysisResult.requested_photos.map((r) => <code key={r}>{r}</code>)}</div>
-                    )}
-                  </article>
+                  </form>
 
-                  <article className="result-card">
-                    <p className="eyebrow">Suggested Trades</p>
-                    <h3>Similar-value matches</h3>
-                    {suggestedTrades.length === 0 && <p className="muted-text">Set a target asking value or run valuation to generate matches.</p>}
-                    <div className="trade-list">
-                      {suggestedTrades.map((item) => (
-                        <div key={item.id} className="trade-row">
-                          <img src={item.image} alt={item.title} />
-                          <div><strong>{item.title}</strong><p>{item.brand} • {item.condition} • {item.city}</p><small>{normalizeMode(item.mode)} • Gap {money(item.valueGap)}</small></div>
-                          <div className="pill">{money(item.estimatedValue)}</div>
+                    {modalEditingListing?.analysis && (
+                      <section className="listing-edit-analysis">
+                      <article className="result-card feature">
+                        <p className="eyebrow">AI Analysis</p>
+                        <h3>{modalEditingListing.analysis.brand?.name === 'unknown' ? 'Brand unknown' : (modalEditingListing.analysis.brand?.name || 'Unknown')}</h3>
+                        <div className="metric-grid">
+                          <div><span>Category</span><strong>{modalEditingListing.analysis.category || 'unknown'}</strong></div>
+                          <div><span>Brand confidence</span><strong>{confidenceLabel(modalEditingListing.analysis.brand?.confidence)}</strong></div>
+                          <div><span>Condition</span><strong>{modalEditingListing.analysis.condition?.grade || modalEditingListing.condition || 'n/a'}</strong></div>
+                          <div><span>Condition confidence</span><strong>{confidenceLabel(modalEditingListing.analysis.condition?.confidence)}</strong></div>
                         </div>
-                      ))}
-                    </div>
-                  </article>
+                        {modalEditingListing.analysis.item_profile?.model_identification?.name && (
+                          <div className="request-list">
+                            <span>GPT item profile:</span>
+                            <code>{modalEditingListing.analysis.item_profile.model_identification.name}</code>
+                          </div>
+                        )}
+                        {modalEditingListing.analysis.valuation ? (
+                          <div className="valuation-band">
+                            <div><span>Estimated value</span><strong>{money(modalEditingListing.analysis.valuation.estimated_value)}</strong></div>
+                            <div><span>Range</span><strong>{money(modalEditingListing.analysis.valuation.range_low)} - {money(modalEditingListing.analysis.valuation.range_high)}</strong></div>
+                            <div><span>Valuation confidence</span><strong>{confidenceLabel(modalEditingListing.analysis.valuation.confidence)}</strong></div>
+                          </div>
+                        ) : <p className="muted-text">No valuation returned yet.</p>}
+                      </article>
+                      </section>
+                    )}
+                  </div>
                 </div>
               )}
             </section>
@@ -3056,11 +4357,10 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
 
           {activeTab === 'portfolio' && (
             <section className="panel">
-              <div className="panel-header">
-                <div>
-                  <p className="eyebrow">Portfolio</p>
-                  <h2>Your active listings</h2>
-                  <div className="button-row" style={{ marginTop: 6 }}>
+	              <div className="panel-header">
+	                <div>
+	                  <p className="eyebrow">Portfolio</p>
+	                  <div className="button-row" style={{ marginTop: 6 }}>
                     <button className={closetFilter === 'all' ? 'primary' : 'ghost small'} type="button" onClick={() => setClosetFilter('all')}>All ({myListings.length})</button>
                     <button className={closetFilter === 'active' ? 'primary' : 'ghost small'} type="button" onClick={() => setClosetFilter('active')}>Active ({closetBreakdown.active})</button>
                     <button className={closetFilter === 'draft' ? 'primary' : 'ghost small'} type="button" onClick={() => setClosetFilter('draft')}>Draft ({closetBreakdown.draft})</button>
@@ -3069,19 +4369,31 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                   </div>
                 </div>
                 <div className="header-actions">
-                  <button className="primary" onClick={openCreateListingModal}>Create Listing</button>
+                  <button className="primary" type="button" onClick={openCreateListingModal}>Create Listing</button>
                 </div>
               </div>
-              {filteredClosetListings.length === 0 ? (
-                <div className="empty-state"><h3>No listings yet</h3><p>Analyze an item and publish your first listing to start selling or trading.</p><button className="primary" onClick={() => setActiveTab('upload')}>Create first listing</button></div>
-              ) : <div className="listing-grid market-editorial-grid">{filteredClosetListings.map((item) => <ListingCard key={item.id} item={item} own onEditDraft={openEditListingModal} editorialStyle />)}</div>}
+              {myListingsLoading ? (
+                <div className="empty-state loading-state" role="status" aria-live="polite">
+                  <span className="loading-dot" aria-hidden="true" />
+                  <h3>Loading your closet...</h3>
+                  <p>We are getting your listings ready.</p>
+                </div>
+              ) : filteredClosetListings.length === 0 ? (
+                <div className="empty-state"><h3>No listings yet</h3><p>Analyze an item and publish your first listing to start trading.</p><button className="primary" type="button" onClick={openCreateListingModal}>Create first listing</button></div>
+              ) : (
+                <>
+                  {analysisError && <p className="error-text">{analysisError}</p>}
+                  {savedListingNotice && <p className="ok-text">{savedListingNotice}</p>}
+                  <div className="listing-grid closet-listing-grid">{filteredClosetListings.map((item) => <ListingCard key={item.id} item={item} own onEditDraft={openEditListingModal} onPublishListing={publishListingToMarketplace} onRemoveListing={removeListingFromCloset} editorialStyle />)}</div>
+                </>
+              )}
             </section>
           )}
 
           {activeTab === 'inbox' && (
             <section className="panel">
-              <div className="panel-header">
-                <div><p className="eyebrow">Trade Inbox</p><h2>Incoming offers</h2></div>
+	              <div className="panel-header">
+	                <div><p className="eyebrow">Trade Inbox</p></div>
                 <div className="market-controls">
                   <button className={offerStatusFilter === 'all' ? 'primary' : 'ghost small'} type="button" onClick={() => setOfferStatusFilter('all')}>All</button>
                   <button className={offerStatusFilter === 'pending' ? 'primary' : 'ghost small'} type="button" onClick={() => setOfferStatusFilter('pending')}>Pending</button>
@@ -3244,109 +4556,144 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
           {activeTab === 'market' && (
             <section className="panel">
               <div className="panel-header">
-                <div><p className="eyebrow">Marketplace</p><h2>Find trade opportunities near your value target</h2></div>
-                <div className="market-controls">
-                  <input value={marketSearch} onChange={(e) => setMarketSearch(e.target.value)} placeholder="Search brand, category, city, style..." />
-                  {marketMagazineIndex !== null ? (
-                    <button className="ghost small" type="button" onClick={() => setMarketMagazineIndex(null)}>Back to Regular View</button>
-                  ) : null}
-                </div>
+	                <div><p className="eyebrow">Marketplace</p></div>
+	                <div className="market-controls">
+	                  <input value={marketSearch} onChange={(e) => setMarketSearch(e.target.value)} placeholder="Search brand, category, city, style..." />
+	                </div>
               </div>
               <div className="market-layout">
-                {marketMagazineIndex !== null && filteredListings[marketMagazineIndex] ? (
-                  <div className="market-magazine-shell">
-                    <button className="market-magazine-nav" type="button" onClick={flipMarketplaceMagazinePrev} aria-label="Previous listing page">&#8249;</button>
-                    <div className="market-magazine-viewport">
-                      {(() => {
-                        const item = filteredListings[marketMagazineIndex]
-                        const similarMatches = Array.isArray(item.matches) ? item.matches : []
-                        const matchPreviewListings = similarMatches
-                          .map((candidate) => ({ candidate, thumb: getListingGallery(candidate)[0] }))
-                          .filter((entry) => Boolean(entry.thumb))
-                        const heroGallery = getListingGallery(item)
-                        const hero = heroGallery[0]
-                        const own = isOwnedByCurrentUser(item)
-                        const isLiked = likedListingIds.includes(String(item.id))
-                        return (
-                          <article className="market-magazine-page" key={`market-page-${item.id}-${marketMagazineIndex}`}>
-                            <div className="market-magazine-feature">
-                              <div className="market-magazine-top">
-                                <div className="market-magazine-copy">
-                                  <p className="eyebrow">Marketplace</p>
-                                  <div className="editorial-title-row">
-                                    <h3 className="editorial-title">{item.title || 'Untitled listing'}</h3>
-                                    {!own && (
-                                      <button
-                                        className={`editorial-match-btn listing-like-btn listing-like-title ${isLiked ? 'is-liked' : ''}`}
-                                        type="button"
-                                        onClick={() => toggleMarketplaceLike(item.id)}
-                                        title={isLiked ? 'Unlike listing' : 'Like listing'}
-                                        aria-label={isLiked ? 'Unlike listing' : 'Like listing'}
-                                      >
-                                        <LikeIcon liked={isLiked} />
-                                      </button>
-                                    )}
-                                  </div>
-                                  <p className="editorial-meta">
-                                    EST. {money(item.estimatedValue)} · {String(item.brand || 'Unknown').toUpperCase()} · {String(item.condition || 'Unknown').toUpperCase()} · SIZE {String(item.size || 'N/A').toUpperCase()}
-                                  </p>
-                                </div>
+                {marketListingsLoading ? (
+                  <div className="empty-state loading-state" role="status" aria-live="polite">
+                    <span className="loading-dot" aria-hidden="true" />
+                    <h3>Loading marketplace listings...</h3>
+                    <p>We are finding the latest active listings.</p>
+                  </div>
+                ) : selectedMarketListingIndex !== null && filteredListings[selectedMarketListingIndex] ? (
+                  (() => {
+                    const item = filteredListings[selectedMarketListingIndex]
+                    const gallery = getListingGallery(item)
+                    const own = isOwnedByCurrentUser(item)
+                    const isLiked = likedListingIds.includes(String(item.id))
+                    const similarMatches = getCrossOwnerMatches(item)
+                    const matchPreviewListings = similarMatches
+                      .map((candidate) => ({ candidate, thumb: getListingGallery(candidate)[0] }))
+                    const selectedImageIdx = gallery.length > 0 ? Math.min(selectedMarketImageIndex, gallery.length - 1) : 0
+                    const selectedImage = gallery[selectedImageIdx]
+                    return (
+                      <article className="market-selected-detail" key={`market-selected-${item.id}`}>
+                        <div className="market-selected-viewer">
+                          <div className="market-selected-gallery" aria-label={`${item.title || 'Listing'} images`}>
+                            <div className="market-selected-main-image">
+                              {selectedImage ? (
+                                <img src={selectedImage} alt={`${item.title || 'Listing'} image ${selectedImageIdx + 1}`} />
+                              ) : (
+                                <div className="listing-image-fallback">Image unavailable</div>
+                              )}
+                            </div>
+                            {gallery.length > 1 && (
+                              <div className="market-selected-thumbnails" aria-label="Listing image thumbnails">
+                                {gallery.map((src, idx) => (
+                                  <button
+                                    key={`${item.id}-selected-gallery-thumb-${idx}`}
+                                    type="button"
+                                    className={idx === selectedImageIdx ? 'active' : ''}
+                                    onClick={() => setSelectedMarketImageIndex(idx)}
+                                    aria-label={`Show image ${idx + 1}`}
+                                    aria-current={idx === selectedImageIdx ? 'true' : undefined}
+                                  >
+                                    <img src={src} alt="" />
+                                  </button>
+                                ))}
                               </div>
-                              <div className="market-magazine-media-row">
-                                <div className="market-magazine-image-wrap">
-                                  {heroGallery.length > 1 ? (
-                                    <div className="market-magazine-image-grid" role="img" aria-label={`${item.title || 'Listing'} images`}>
-                                      {heroGallery.map((src, idx) => (
-                                        <img key={`${item.id}-hero-${idx}`} src={src} alt={`${item.title || 'Listing'} image ${idx + 1}`} />
-                                      ))}
-                                    </div>
-                                  ) : hero ? (
-                                    <img src={hero} alt={item.title || 'Listing'} />
-                                  ) : (
-                                    <div className="listing-image-fallback">Image unavailable</div>
-                                  )}
-                                </div>
-                                {!own && matchPreviewListings.length > 0 && (
-                                  <div className="market-magazine-matches">
-                                    <button
-                                      className="editorial-match-btn"
-                                      type="button"
-                                      onClick={() => openMarketMatches(item)}
-                                    >
-                                      MATCHES
-                                    </button>
-                                    <div className="market-magazine-match-strip">
-                                      {matchPreviewListings.slice(0, 3).map(({ candidate, thumb }, idx) => (
-                                        <button
-                                          key={`${item.id}-market-match-${idx}`}
-                                          type="button"
-                                          className="match-thumb-btn"
-                                          onClick={() => openMarketMatches(item)}
-                                          title="Open matches workflow"
-                                        >
-                                          <img src={thumb} alt={candidate?.title || 'Matched item'} className="market-magazine-match-thumb" />
-                                        </button>
-                                      ))}
-                                    </div>
-                                  </div>
+                            )}
+                          </div>
+
+                          <div className="market-selected-details">
+                            <div className="market-selected-head">
+                              <div>
+                                <h3>{item.title || 'Untitled listing'}</h3>
+                                <p className="editorial-meta">
+                                  EST. {money(item.estimatedValue)} · {String(item.brand || 'Unknown').toUpperCase()} · {String(item.condition || 'Unknown').toUpperCase()} · SIZE {String(item.size || 'N/A').toUpperCase()}
+                                </p>
+                              </div>
+                              <div className="market-selected-actions">
+                                {!own && (
+                                  <button
+                                    className={`ghost small listing-like-btn ${isLiked ? 'is-liked' : ''}`}
+                                    type="button"
+                                    onClick={() => toggleMarketplaceLike(item.id)}
+                                    title={isLiked ? 'Unlike listing' : 'Like listing'}
+                                    aria-label={isLiked ? 'Unlike listing' : 'Like listing'}
+                                  >
+                                    <LikeIcon liked={isLiked} />
+                                  </button>
                                 )}
+                                <button className="ghost small" type="button" onClick={() => setSelectedMarketListingIndex(null)}>Back</button>
                               </div>
                             </div>
-                          </article>
-                        )
-                      })()}
-                    </div>
-                    <button className="market-magazine-nav" type="button" onClick={flipMarketplaceMagazineNext} aria-label="Next listing page">&#8250;</button>
-                    <div className="market-magazine-meta">
-                      <span>PAGE {marketMagazineIndex + 1} / {filteredListings.length}</span>
-                    </div>
+
+                            <div className="market-selected-info">
+                              <div>
+                                <span>Listed by</span>
+                                <strong>{item.owner || 'Member'}</strong>
+                              </div>
+                              <div>
+                                <span>Category</span>
+                                <strong>{item.category || 'Listing'}</strong>
+                              </div>
+                              <div>
+                                <span>Location</span>
+                                <strong>{item.city || 'Your area'}</strong>
+                              </div>
+                            </div>
+
+                            <ListingDescriptionParagraphs item={item} className="market-selected-description" />
+
+                            {similarMatches.length > 0 ? (
+                              <div className="market-selected-matches">
+                                <span className="market-selected-matches-label">Matched Items</span>
+                                <span className="match-thumb-strip" aria-hidden="true">
+                                  {matchPreviewListings.slice(0, 3).map(({ candidate, thumb }, idx) => (
+                                    thumb ? (
+                                      <img
+                                        key={`${item.id}-selected-match-${idx}`}
+                                        src={thumb}
+                                        alt=""
+                                        className="match-thumb"
+                                      />
+                                    ) : (
+                                      <span key={`${item.id}-selected-match-${idx}`} className="match-thumb market-selected-match-placeholder">
+                                        Match
+                                      </span>
+                                    )
+                                  ))}
+                                </span>
+                                <button className="ghost small" type="button" onClick={() => openMarketMatches(item)}>View Matches</button>
+                              </div>
+                            ) : null}
+
+                            <div className="button-row">
+                              {!own ? (
+                                <button type="button" onClick={() => openTradeComposer(item)}>Start Trade</button>
+                              ) : null}
+                            </div>
+                          </div>
+                        </div>
+                      </article>
+                    )
+                  })()
+                ) : filteredListings.length === 0 ? (
+                  <div className="empty-state">
+                    <h3>No matched marketplace listings yet</h3>
+                    <p>Create or publish a closet listing to see marketplace items that match your closet.</p>
+                    <button className="primary" type="button" onClick={openCreateListingFromCloset}>Create Listing</button>
                   </div>
                 ) : (
                   <div className="listing-grid market-listing-grid market-editorial-grid">
                     {filteredListings.map((item) => {
                       const isOwnListing = isOwnedByCurrentUser(item)
                       const baseValue = Number(item.estimatedValue || 0)
-                      const similarMatches = Array.isArray(item.matches) ? item.matches : []
+                      const similarMatches = getCrossOwnerMatches(item)
                       const matchPreviewListings = similarMatches
                         .map((candidate) => ({ candidate, thumb: getListingGallery(candidate)[0] }))
                         .filter((entry) => Boolean(entry.thumb))
@@ -3362,7 +4709,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                           myTradeCandidates={myTradeCandidates}
                           onOpenMatches={openMarketMatches}
                           matchPreviewImages={matchPreviewListings.map((entry) => entry.thumb)}
-                          onOpenMagazinePage={openMarketplaceMagazine}
+                          onOpenDetails={openMarketplaceListingDetails}
                           isOwnListing={isOwnListing}
                           liked={likedListingIds.includes(String(item.id))}
                           onToggleLike={() => toggleMarketplaceLike(item.id)}
@@ -3375,120 +4722,12 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
             </section>
           )}
 
-          {activeTab === 'market_new' && (
-            <section className="panel">
-              <div className="panel-header">
-                <div><p className="eyebrow">New Marketplace</p><h2>Magazine page-flip experience for comparison</h2></div>
-                <div className="market-controls"><input value={marketSearch} onChange={(e) => setMarketSearch(e.target.value)} placeholder="Search brand, category, city, style..." /></div>
-              </div>
-              {filteredListings.length === 0 ? (
-                <div className="empty-state">
-                  <h3>No listings match this filter</h3>
-                  <p>Try broadening your search terms or turn off trade-only mode.</p>
-                </div>
-              ) : (
-                <div className="market-magazine-shell">
-                  <button className="market-magazine-nav" type="button" onClick={flipNewMarketplacePrev} aria-label="Previous listing page">&#8249;</button>
-                  <div className="market-magazine-viewport">
-                    <div className="market-magazine-stack" aria-hidden="true">
-                      <span />
-                      <span />
-                    </div>
-                    {(() => {
-                      const item = filteredListings[newMarketIndex]
-                      const similarMatches = Array.isArray(item.matches) ? item.matches : []
-                      const matchPreviewImages = similarMatches
-                        .map((candidate) => getListingGallery(candidate)[0])
-                        .filter(Boolean)
-                      const heroGallery = getListingGallery(item)
-                      const hero = heroGallery[0]
-                      const own = isOwnedByCurrentUser(item)
-                      const isLiked = likedListingIds.includes(String(item.id))
-                      return (
-                        <article className={`market-magazine-page ${newMarketIsFlipping ? `is-flipping ${newMarketFlipDir}` : ''}`} key={`new-market-page-${item.id}-${newMarketIndex}`}>
-                          <div className="market-magazine-feature">
-                            <div className="market-magazine-top">
-                              <div className="market-magazine-copy">
-                                <p className="eyebrow">Marketplace</p>
-                                  <div className="editorial-title-row">
-                                    <h3 className="editorial-title">{item.title || 'Untitled listing'}</h3>
-                                    {!own && (
-                                      <button
-                                        className={`editorial-match-btn listing-like-btn listing-like-title ${isLiked ? 'is-liked' : ''}`}
-                                        type="button"
-                                        onClick={() => toggleMarketplaceLike(item.id)}
-                                        title={isLiked ? 'Unlike listing' : 'Like listing'}
-                                        aria-label={isLiked ? 'Unlike listing' : 'Like listing'}
-                                      >
-                                        <LikeIcon liked={isLiked} />
-                                      </button>
-                                    )}
-                                  </div>
-                                <p className="editorial-meta">
-                                  EST. {money(item.estimatedValue)} · {String(item.brand || 'Unknown').toUpperCase()} · {String(item.condition || 'Unknown').toUpperCase()} · SIZE {String(item.size || 'N/A').toUpperCase()}
-                                </p>
-                              </div>
-                            </div>
-                            <div className="market-magazine-media-row">
-                              <div className="market-magazine-image-wrap">
-                                {heroGallery.length > 1 ? (
-                                  <div className="market-magazine-image-grid" role="img" aria-label={`${item.title || 'Listing'} images`}>
-                                    {heroGallery.map((src, idx) => (
-                                      <img key={`${item.id}-hero-${idx}`} src={src} alt={`${item.title || 'Listing'} image ${idx + 1}`} />
-                                    ))}
-                                  </div>
-                                ) : hero ? (
-                                  <img src={hero} alt={item.title || 'Listing'} />
-                                ) : (
-                                  <div className="listing-image-fallback">Image unavailable</div>
-                                )}
-                              </div>
-                              {!own && matchPreviewListings.length > 0 && (
-                                <div className="market-magazine-matches">
-                                  <button
-                                    className="editorial-match-btn"
-                                    type="button"
-                                    onClick={() => openMarketMatches(item)}
-                                  >
-                                    MATCHES
-                                  </button>
-                                  <div className="market-magazine-match-strip">
-                                    {matchPreviewListings.slice(0, 3).map(({ candidate, thumb }, idx) => (
-                                      <button
-                                        key={`${item.id}-new-market-match-${idx}`}
-                                        type="button"
-                                        className="match-thumb-btn"
-                                        onClick={() => openMarketMatches(item)}
-                                        title="Open matches workflow"
-                                      >
-                                        <img src={thumb} alt={candidate?.title || 'Matched item'} className="market-magazine-match-thumb" />
-                                      </button>
-                                    ))}
-                                  </div>
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        </article>
-                      )
-                    })()}
-                  </div>
-                  <button className="market-magazine-nav" type="button" onClick={flipNewMarketplaceNext} aria-label="Next listing page">&#8250;</button>
-                  <div className="market-magazine-meta">
-                    <span>PAGE {newMarketIndex + 1} / {filteredListings.length}</span>
-                  </div>
-                </div>
-              )}
-            </section>
-          )}
-
           {activeTab === 'trade' && (
             <section className="panel trade-page trade-editorial">
-              <div className="panel-header">
-                <div>
-                  <p className="eyebrow">Trade Offer</p>
-                  <h2>{tradeComposerTarget ? 'Build and send your offer' : 'Select a target listing first'}</h2>
-                </div>
+	              <div className="panel-header">
+	                <div>
+	                  <p className="eyebrow">Trade Offer</p>
+	                </div>
                 <div className="header-actions">
                   <button className="ghost" type="button" onClick={() => setActiveTab('market')}>Back to Marketplace</button>
                 </div>
@@ -3583,8 +4822,8 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
 
           {activeTab === 'admin' && (
             <section className="panel">
-              <div className="panel-header">
-                <div><p className="eyebrow">Admin</p><h2>All analyzed listings with debug</h2></div>
+	              <div className="panel-header">
+	                <div><p className="eyebrow">Admin</p></div>
                 <div className="market-controls">
                   <input value={adminSearch} onChange={(e) => setAdminSearch(e.target.value)} placeholder="Search item, brand, category..." />
                   <button className="primary" onClick={loadAdminAnalyses} disabled={adminLoading}>{adminLoading ? 'Loading...' : 'Refresh'}</button>
@@ -3703,96 +4942,48 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
         <div className="listing-modal-overlay">
           <div className="listing-modal-card">
             <div className="listing-modal-head">
-              <h3>{listingModalMode === 'edit' ? 'Edit Draft' : 'Create Listing'}</h3>
-              <button className="ghost small" type="button" onClick={() => setShowCreateListingModal(false)}>Close</button>
+              <h3>Create Listing</h3>
+              <button className="ghost small" type="button" onClick={() => setShowCreateListingModal(false)} disabled={analysisLoading || createListingBusy}>Close</button>
             </div>
-            <p className="tiny-note listing-modal-note">
-              {listingModalMode === 'edit'
-                ? 'Edit mode: update images/condition, then continue to listing details.'
-                : 'Step 1: Upload images and select condition.'}
-            </p>
-            {listingModalMode === 'edit' ? (
-              <>
-                <p className="listing-modal-label"><strong>Images (1-4)</strong></p>
-                <input
-                  id="edit-draft-image-input"
-                  type="file"
-                  accept="image/*"
-                  multiple
-                  style={{ display: 'none' }}
-                  onChange={(e) => {
-                    const selected = Array.from(e.target.files || [])
-                    const maxNew = Math.max(0, 4 - editPreviewUrls.length)
-                    setImages((prev) => {
-                      const room = Math.max(0, maxNew - prev.length)
-                      return room > 0 ? [...prev, ...selected.slice(0, room)] : prev
-                    })
-                    setReceiptPromptPending(false)
-                    setReceiptPromptDismissed(false)
-                  }}
-                />
-                <div className="listing-modal-image-grid">
-                  {modalPreviewUrls.map((url, idx) => (
-                    <div key={url} className="listing-modal-thumb">
-                      <img src={url} alt={`Upload ${idx + 1}`} />
-                    </div>
-                  ))}
-                  {modalPreviewUrls.length < 4 && (
-                    <label
-                      htmlFor="edit-draft-image-input"
-                      className="listing-modal-add-image"
-                      title="Add image"
-                    >
-                      +
-                    </label>
-                  )}
-                </div>
-                <label>
-                  <span>Category</span>
-                  <select value={category} onChange={(e) => setCategory(e.target.value)}>
-                    <option value="">Auto detect</option>
-                    <option value="clothes">Clothes</option>
-                    <option value="shoes">Shoes</option>
-                    <option value="handbag">Handbag</option>
-                  </select>
-                </label>
-                <label>
-                  <span>Title</span>
-                  <textarea
-                    value={itemTitle}
-                    onChange={(e) => setItemTitle(e.target.value)}
-                    rows={2}
-                    placeholder="e.g. Jimmy Choo Rosalia 50 Slingback Pump"
-                  />
-                </label>
-                <label>
-                  <span>Item description</span>
-                  <textarea
-                    value={itemDescription}
-                    onChange={(e) => setItemDescription(e.target.value)}
-                    rows={4}
-                    placeholder="Describe materials, color, hardware, wear, and notable details."
-                  />
-                </label>
-              </>
-            ) : (
-              <label>
-                <span>Photos (1-4)</span>
-                <input
-                  type="file"
-                  accept="image/*"
-                  multiple
-                  onChange={(e) => {
-                    const next = Array.from(e.target.files || []).slice(0, 4)
-                    setImages(next)
-                    setEditImageCount(next.length)
-                    setEditPreviewUrls([])
-                    setReceiptPromptPending(false)
-                    setReceiptPromptDismissed(false)
-                  }}
-                />
-              </label>
-            )}
+            <p className="tiny-note listing-modal-note">Step 1: Upload images and select condition.</p>
+            {createListingBusy && <p className="ok-text">Uploading photos and creating listing...</p>}
+            {analysisLoading && <p className="ok-text">Analyzing photos...</p>}
+            {analysisError && <p className="error-text">{analysisError}</p>}
+            {savedListingNotice && !analysisLoading && !createListingBusy && <p className="ok-text">{savedListingNotice}</p>}
+
+            <label>
+              <span>Photos (1-6)</span>
+              <input
+                type="file"
+                accept="image/*"
+                multiple
+                onChange={(e) => {
+                  const next = Array.from(e.target.files || []).slice(0, 6)
+                  setImages(next)
+                  setSelectedCreateImageIndex(0)
+                  setEditImageCount(next.length)
+                  setEditPreviewUrls([])
+                  setReceiptPromptPending(false)
+                  setReceiptPromptDismissed(false)
+                }}
+              />
+            </label>
+            <label>
+              <span>Category</span>
+              <select
+                value={category}
+                onChange={(e) => {
+                  const nextCategory = e.target.value
+                  setCategory(nextCategory)
+                  if (itemSize && !sizeOptionsForCategory(nextCategory).includes(itemSize)) setItemSize('')
+                }}
+              >
+                <option value="">Auto detect</option>
+                <option value="clothes">Clothes</option>
+                <option value="shoes">Shoes</option>
+                <option value="handbag">Handbag</option>
+              </select>
+            </label>
             <label className="listing-modal-field">
               <span>Your condition assessment</span>
               <select value={userCondition} onChange={(e) => setUserCondition(e.target.value)} required>
@@ -3801,144 +4992,58 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                 <option value="LikeNew">Like New</option>
               </select>
             </label>
-            {listingModalMode === 'edit' && (
-              <label>
-                <span>Size</span>
-                <select value={itemSize} onChange={(e) => setItemSize(e.target.value)}>
-                  {(() => {
-                    const categoryForSize = category || modalEditingListing?.analysis?.category || modalEditingListing?.category || ''
-                    const options = sizeOptionsForCategory(categoryForSize)
-                    return (
-                      <>
-                        <option value="">{options.length ? 'Select size' : 'Select category first'}</option>
-                        {options.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
-                      </>
-                    )
-                  })()}
-                </select>
-              </label>
-            )}
-            {listingModalMode === 'edit' && (
-              <div className="warning-list listing-modal-warning">
-                <p>
-                  This brand/model is often sold with authenticity receipt or proof of purchase.
-                  Uploading receipt can improve valuation confidence.
-                </p>
-                <input
-                  id="edit-draft-receipt-input"
-                  type="file"
-                  accept="image/*"
-                  style={{ display: 'none' }}
-                  onChange={(e) => {
-                    if (!modalEditingListing) return
-                    const file = Array.from(e.target.files || [])[0]
-                    if (!file) return
-                    setImages((prev) => {
-                      const maxNew = Math.max(0, 4 - editPreviewUrls.length)
-                      if (maxNew <= 0) return prev
-                      return [...prev.slice(0, Math.max(0, maxNew - 1)), file]
-                    })
-                    setShowCreateListingModal(false)
-                    setReceiptPromptPending(false)
-                    setReceiptPromptDismissed(false)
-                    setTimeout(() => {
-                      updateListingAndRunAsyncAnalysis(modalEditingListing)
-                    }, 0)
-                  }}
-                />
-                <div className="button-row">
-                  <label htmlFor="edit-draft-receipt-input" className="primary" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', textDecoration: 'none' }}>
-                    Upload authenticity receipt
-                  </label>
+            <label>
+              <span>Size</span>
+              <select value={itemSize} onChange={(e) => setItemSize(e.target.value)}>
+                {(() => {
+                  const options = sizeOptionsForCategory(category)
+                  return (
+                    <>
+                      <option value="">{options.length ? 'Select size' : 'Select category first'}</option>
+                      {options.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
+                    </>
+                  )
+                })()}
+              </select>
+            </label>
+
+            <div className="listing-modal-image-grid listing-modal-image-grid-top">
+              {modalPreviewUrls.map((url, idx) => (
+                <div key={url} className={`listing-modal-thumb ${idx === selectedCreateImageIndex ? 'is-hero' : ''}`}>
+                  <img src={url} alt={`Upload ${idx + 1}`} />
+                  {idx === selectedCreateImageIndex && <span className="listing-hero-badge">Hero</span>}
                   <button
-                    className="ghost"
+                    className="listing-modal-set-hero"
                     type="button"
-                    onClick={() => {
-                      if (!modalEditingListing) return
-                      setShowCreateListingModal(false)
-                      publishListingActive(modalEditingListing)
-                    }}
+                    onClick={() => setSelectedCreateImageIndex(idx)}
                   >
-                    Publish Listing
+                    Set Hero
                   </button>
                 </div>
-              </div>
-            )}
-            {listingModalMode === 'edit' && modalEditingListing?.analysis && (
-              <div className="analysis-panels listing-modal-analysis">
-                <article className="result-card feature">
-                  <p className="eyebrow">AI Analysis</p>
-                  <h3>{modalEditingListing.analysis.brand?.name === 'unknown' ? 'Brand unknown' : (modalEditingListing.analysis.brand?.name || 'Unknown')}</h3>
-                  <div className="metric-grid">
-                    <div><span>Category</span><strong>{modalEditingListing.analysis.category || 'unknown'}</strong></div>
-                    <div><span>Brand confidence</span><strong>{confidenceLabel(modalEditingListing.analysis.brand?.confidence)}</strong></div>
-                    <div><span>Condition</span><strong>{modalEditingListing.analysis.condition?.grade || modalEditingListing.condition || 'n/a'}</strong></div>
-                    <div><span>Condition confidence</span><strong>{confidenceLabel(modalEditingListing.analysis.condition?.confidence)}</strong></div>
-                  </div>
-                  {modalEditingListing.analysis.user_condition && (
-                    <div className="request-list">
-                      <span>User condition:</span>
-                      <code>{modalEditingListing.analysis.user_condition}</code>
-                    </div>
-                  )}
-                  {modalEditingListing.analysis.warnings?.length > 0 && (
-                    <div className="warning-list">
-                      {modalEditingListing.analysis.warnings.map((warning) => (
-                        <p key={warning}>{warning}</p>
-                      ))}
-                    </div>
-                  )}
-                  {modalEditingListing.analysis.item_profile?.model_identification?.name && (
-                    <div className="request-list">
-                      <span>GPT item profile:</span>
-                      <code>{modalEditingListing.analysis.item_profile.model_identification.name}</code>
-                    </div>
-                  )}
-                  {modalEditingListing.analysis.valuation ? (
-                    <div className="valuation-band">
-                      <div><span>Estimated value</span><strong>{money(modalEditingListing.analysis.valuation.estimated_value)}</strong></div>
-                      <div><span>Range</span><strong>{money(modalEditingListing.analysis.valuation.range_low)} - {money(modalEditingListing.analysis.valuation.range_high)}</strong></div>
-                      <div><span>Valuation confidence</span><strong>{confidenceLabel(modalEditingListing.analysis.valuation.confidence)}</strong></div>
-                    </div>
-                  ) : <p className="muted-text">No valuation returned yet (unknown brand or no comps).</p>}
-                  {modalEditingListing.analysis.requested_photos?.length > 0 && (
-                    <div className="request-list"><span>Requested photos:</span>{modalEditingListing.analysis.requested_photos.map((r) => <code key={r}>{r}</code>)}</div>
-                  )}
-                </article>
-              </div>
-            )}
-            {listingModalMode !== 'edit' && (
-              <div className="listing-modal-image-grid listing-modal-image-grid-top">
-                {modalPreviewUrls.map((url, idx) => (
-                  <div key={url} className="listing-modal-thumb">
-                    <img src={url} alt={`Upload ${idx + 1}`} />
-                  </div>
-                ))}
-              </div>
-            )}
+              ))}
+            </div>
+
             <div className="button-row listing-modal-actions">
-              <button className="ghost" type="button" onClick={() => setShowCreateListingModal(false)}>Cancel</button>
-              {listingModalMode !== 'edit' && (
-                <button
-                  className="primary"
-                  type="button"
-                  onClick={() => {
-                    const currentImageCount = modalPreviewUrls.length
-                    if (currentImageCount < 1 || currentImageCount > 4) {
-                      setAnalysisError('Upload 1 to 4 images before continuing.')
-                      return
-                    }
-                    if (!userCondition) {
-                      setAnalysisError('Select item condition before continuing.')
-                      return
-                    }
-                    setShowCreateListingModal(false)
-                    createListingAndRunAsyncAnalysis()
-                  }}
-                >
-                  Continue
-                </button>
-              )}
+              <button className="ghost" type="button" onClick={() => setShowCreateListingModal(false)} disabled={analysisLoading || createListingBusy}>Cancel</button>
+              <button
+                className="primary"
+                type="button"
+                disabled={analysisLoading || createListingBusy}
+                onClick={async () => {
+                  const currentImageCount = modalPreviewUrls.length
+                  if (currentImageCount < 1 || currentImageCount > 6) {
+                    setAnalysisError('Upload 1 to 6 images before continuing.')
+                    return
+                  }
+                  if (!userCondition) {
+                    setAnalysisError('Select item condition before continuing.')
+                    return
+                  }
+                  await createListingAndRunAsyncAnalysis()
+                }}
+              >
+                {createListingBusy ? 'Creating...' : 'Create Listing'}
+              </button>
             </div>
           </div>
         </div>
@@ -4022,15 +5127,106 @@ function LikeIcon({ liked = false }) {
   )
 }
 
-function ListingCard({ item, own = false, onEditDraft = null, marketplaceCompact = false, onOpenTrade = null, myTradeCandidates = [], onOpenMatches = null, matchPreviewImages = [], editorialStyle = false, onOpenMagazinePage = null, isOwnListing = false, liked = false, onToggleLike = null }) {
-  const gallery = Array.isArray(item.images) && item.images.length > 0
+function SocialShareIcon({ network }) {
+  const Icon = network === 'facebook' ? FaFacebookF : FaPinterestP
+  return <Icon className="listing-share-icon" aria-hidden="true" focusable="false" />
+}
+
+function ListingImage({ src, alt, onFailed }) {
+  const [status, setStatus] = useState('loading')
+  const [blobUrl, setBlobUrl] = useState('')
+
+  useEffect(() => {
+    if (!src) {
+      setStatus('failed')
+      setBlobUrl('')
+      return undefined
+    }
+    if (!shouldRenderListingImageAsBlob(src)) {
+      setBlobUrl('')
+      setStatus('direct')
+      return undefined
+    }
+
+    const controller = new AbortController()
+    let cancelled = false
+    let createdBlobUrl = ''
+    setStatus('loading')
+    setBlobUrl('')
+    fetchListingImageBlobUrl(src, controller.signal)
+      .then((url) => {
+        createdBlobUrl = url
+        if (cancelled) {
+          URL.revokeObjectURL(url)
+          return
+        }
+        setBlobUrl(url)
+        setStatus('loaded')
+      })
+      .catch((err) => {
+        if (cancelled || err?.name === 'AbortError') return
+        setBlobUrl('')
+        setStatus('direct')
+      })
+
+    return () => {
+      cancelled = true
+      controller.abort()
+      if (createdBlobUrl) URL.revokeObjectURL(createdBlobUrl)
+    }
+  }, [src])
+
+  if (!src || status === 'failed') {
+    return (
+      <div className="listing-image-fallback" aria-label="No image available">
+        Image unavailable
+      </div>
+    )
+  }
+
+  return (
+    <>
+      {status === 'loading' && (
+        <div className="listing-image-fallback listing-image-loading" aria-label="Image loading">
+          Loading image...
+        </div>
+      )}
+      {status !== 'loading' && (
+        <img
+          src={blobUrl || src}
+          alt={alt}
+          onLoad={() => setStatus('loaded')}
+          onError={() => {
+            setStatus('failed')
+            onFailed?.(src)
+          }}
+        />
+      )}
+    </>
+  )
+}
+
+function ListingCard({ item, own = false, onEditDraft = null, onPublishListing = null, onRemoveListing = null, marketplaceCompact = false, onOpenTrade = null, myTradeCandidates = [], onOpenMatches = null, matchPreviewImages = [], editorialStyle = false, onOpenDetails = null, isOwnListing = false, liked = false, onToggleLike = null }) {
+  const rawGallery = Array.isArray(item.images) && item.images.length > 0
     ? item.images
     : [item.image].filter(Boolean)
+  const [failedImageSrcs, setFailedImageSrcs] = useState(() => new Set())
+  useEffect(() => {
+    setFailedImageSrcs(new Set())
+  }, [item?.id, rawGallery.join('|')])
+  const gallery = rawGallery.filter((src) => !failedImageSrcs.has(src))
+  const cardGallery = gallery.slice(0, 1)
   const imageSrc = gallery[0] || null
 
   const statusLabel = item.status || 'Review'
   const statusClass = `status-${String(statusLabel).toLowerCase().replace(/\s+/g, '')}`
-  const editDisabled = own && String(statusLabel).toLowerCase() === 'analyzing'
+  const normalizedStatus = String(statusLabel).toLowerCase()
+  const analysisInProgress = normalizedStatus === 'analyzing'
+  const cardDisabled = own && analysisInProgress
+  const editDisabled = own && analysisInProgress
+  const publishDisabled = own && analysisInProgress
+  const canPublishListing = own && typeof onPublishListing === 'function' && !['active', 'analyzing'].includes(normalizedStatus)
+  const analysisFailed = normalizedStatus === 'analysisfailed'
   const badgeLabel = item.status || 'Active'
   const badgeClass = `status-${String(badgeLabel).toLowerCase().replace(/\s+/g, '')}`
   const brandLabel = String(item.brand || '').trim() || 'Unknown brand'
@@ -4038,13 +5234,23 @@ function ListingCard({ item, own = false, onEditDraft = null, marketplaceCompact
   const cityLabel = String(item.city || '').trim() || 'Unknown city'
   const sizeLabel = String(item.size || '').trim() || 'N/A'
   const isEditorial = editorialStyle || (marketplaceCompact && !own)
-  const isMagazineClickable = typeof onOpenMagazinePage === 'function'
+  const isDetailClickable = typeof onOpenDetails === 'function' && !cardDisabled
   const showLikeButton = !own && !isOwnListing && typeof onToggleLike === 'function'
 
-  function openMagazinePage() {
-    if (!isMagazineClickable) return
-    onOpenMagazinePage(item)
+  function openDetailPage() {
+    if (!isDetailClickable) return
+    onOpenDetails(item)
   }
+
+  const markImageFailed = useCallback((src) => {
+    if (!src) return
+    setFailedImageSrcs((prev) => {
+      if (prev.has(src)) return prev
+      const next = new Set(prev)
+      next.add(src)
+      return next
+    })
+  }, [])
 
   function shareToFacebook(e) {
     e?.stopPropagation?.()
@@ -4078,32 +5284,38 @@ function ListingCard({ item, own = false, onEditDraft = null, marketplaceCompact
   return (
     <>
       <article
-        className={`listing-card ${isEditorial ? 'market-editorial' : ''} ${isMagazineClickable ? 'is-clickable' : ''}`}
-        onClick={isMagazineClickable ? openMagazinePage : undefined}
-        role={isMagazineClickable ? 'button' : undefined}
-        tabIndex={isMagazineClickable ? 0 : undefined}
-        onKeyDown={isMagazineClickable ? (e) => {
+        className={`listing-card ${own ? 'closet-listing-card' : ''} ${isEditorial ? 'market-editorial' : ''} ${isDetailClickable ? 'is-clickable' : ''} ${cardDisabled ? 'is-disabled' : ''}`}
+        onClick={isDetailClickable ? openDetailPage : undefined}
+        role={isDetailClickable ? 'button' : undefined}
+        tabIndex={isDetailClickable ? 0 : undefined}
+        aria-disabled={cardDisabled || undefined}
+        onKeyDown={isDetailClickable ? (e) => {
           if (e.key === 'Enter' || e.key === ' ') {
             e.preventDefault()
-            openMagazinePage()
+            openDetailPage()
           }
         } : undefined}
       >
-        <div className={`image-wrap ${gallery.length > 1 ? 'multi-images' : ''}`}>
-        {gallery.length > 1 ? (
+        <div className={`image-wrap ${cardGallery.length > 1 ? 'multi-images' : ''}`}>
+        {cardGallery.length > 1 ? (
           <div className="listing-image-grid" role="img" aria-label={`${item.title || 'Listing'} images`}>
-            {gallery.map((src, idx) => (
-              <img key={`${item.id}-gallery-${idx}`} src={src} alt={`${item.title || 'Listing'} image ${idx + 1}`} />
+            {cardGallery.map((src, idx) => (
+              <ListingImage
+                key={`${item.id}-gallery-${idx}`}
+                src={src}
+                alt={`${item.title || 'Listing'} image ${idx + 1}`}
+                onFailed={markImageFailed}
+              />
             ))}
           </div>
         ) : imageSrc ? (
-          <img src={imageSrc} alt={item.title} />
+          <ListingImage src={imageSrc} alt={item.title} onFailed={markImageFailed} />
         ) : (
           <div className="listing-image-fallback" aria-label="No image available">
             Image unavailable
           </div>
         )}
-        {own && !isEditorial && <span className={`mode-badge ${badgeClass}`}>{badgeLabel}</span>}
+        {own && !isEditorial && <span className={`status-badge ${badgeClass}`}>{badgeLabel}</span>}
       </div>
       <div className="listing-body">
         {isEditorial ? (
@@ -4125,10 +5337,15 @@ function ListingCard({ item, own = false, onEditDraft = null, marketplaceCompact
                 </button>
               )}
             </div>
-            <p className="editorial-byline">BY {String(item.owner || 'Unknown seller').toUpperCase()}</p>
+            <p className="editorial-byline">BY {String(item.owner || 'Unknown member').toUpperCase()}</p>
             <p className="editorial-meta">
               EST. {money(item.estimatedValue)} · {brandLabel.toUpperCase()} · {conditionLabel.toUpperCase()} · SIZE {sizeLabel.toUpperCase()}
             </p>
+            {own && analysisFailed && (
+              <p className="listing-analysis-failed-message">
+                Analysis failed. Please manually update the listing details.
+              </p>
+            )}
             <div className="listing-footer editorial-footer">
               <div className="listing-actions">
                 {!own && matchPreviewImages.length > 0 && (
@@ -4161,13 +5378,53 @@ function ListingCard({ item, own = false, onEditDraft = null, marketplaceCompact
                         if (!editDisabled) onEditDraft?.(item)
                       }}
                     >
-                      <span>EDIT DRAFT</span>
+                      <span>{editDisabled ? 'EDIT LISTING' : 'EDIT LISTING'}</span>
                     </button>
-                    <button className="editorial-match-btn" type="button" onClick={shareToFacebook}>
-                      <span>SHARE FACEBOOK</span>
+                    {canPublishListing && (
+                      <button
+                        className="editorial-match-btn"
+                        type="button"
+                        disabled={publishDisabled}
+                        title={publishDisabled ? 'Cannot publish while analysis is running' : 'Publish listing to Marketplace'}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          if (!publishDisabled) onPublishListing?.(item)
+                        }}
+                      >
+                        <span>PUBLISH LISTING</span>
+                      </button>
+                    )}
+                    {typeof onRemoveListing === 'function' && (
+                      <button
+                        className="editorial-match-btn listing-remove-btn listing-icon-btn"
+                        type="button"
+                        title="Delete listing"
+                        aria-label="Delete listing"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          onRemoveListing(item)
+                        }}
+                      >
+                        <FiTrash2 aria-hidden="true" />
+                      </button>
+                    )}
+                    <button
+                      className="editorial-match-btn listing-share-icon-btn"
+                      type="button"
+                      onClick={shareToFacebook}
+                      title="Share on Facebook"
+                      aria-label="Share on Facebook"
+                    >
+                      <SocialShareIcon network="facebook" />
                     </button>
-                    <button className="editorial-match-btn" type="button" onClick={shareToPinterest}>
-                      <span>SHARE PINTEREST</span>
+                    <button
+                      className="editorial-match-btn listing-share-icon-btn"
+                      type="button"
+                      onClick={shareToPinterest}
+                      title="Share on Pinterest"
+                      aria-label="Share on Pinterest"
+                    >
+                      <SocialShareIcon network="pinterest" />
                     </button>
                   </div>
                 )}
@@ -4186,6 +5443,11 @@ function ListingCard({ item, own = false, onEditDraft = null, marketplaceCompact
               <span>{cityLabel}</span>
             </div>
             <p className="listing-notes listing-notes-clamp">{getListingDescription(item) || 'No description provided.'}</p>
+            {own && analysisFailed && (
+              <p className="listing-analysis-failed-message">
+                Analysis failed. Please manually update the listing details.
+              </p>
+            )}
             {!marketplaceCompact && <div className="tag-row">{(item.tags || []).slice(0, 4).map((tag) => <span key={tag}>{tag}</span>)}</div>}
             {(!marketplaceCompact || !own) && (
               <div className="listing-footer">
@@ -4237,10 +5499,54 @@ function ListingCard({ item, own = false, onEditDraft = null, marketplaceCompact
                           if (!editDisabled) onEditDraft?.(item)
                         }}
                       >
-                        Edit draft
+                        Edit Listing
                       </button>
-                      <button className="ghost small" type="button" onClick={shareToFacebook}>Share Facebook</button>
-                      <button className="ghost small" type="button" onClick={shareToPinterest}>Share Pinterest</button>
+                      {canPublishListing && (
+                        <button
+                          className="ghost small"
+                          type="button"
+                          disabled={publishDisabled}
+                          title={publishDisabled ? 'Cannot publish while analysis is running' : 'Publish listing to Marketplace'}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            if (!publishDisabled) onPublishListing?.(item)
+                          }}
+                        >
+                          Publish Listing
+                        </button>
+                      )}
+                      {typeof onRemoveListing === 'function' && (
+                        <button
+                          className="ghost small listing-remove-btn listing-icon-btn"
+                          type="button"
+                          title="Delete listing"
+                          aria-label="Delete listing"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            onRemoveListing(item)
+                          }}
+                        >
+                          <FiTrash2 aria-hidden="true" />
+                        </button>
+                      )}
+                      <button
+                        className="ghost small listing-share-icon-btn"
+                        type="button"
+                        onClick={shareToFacebook}
+                        title="Share on Facebook"
+                        aria-label="Share on Facebook"
+                      >
+                        <SocialShareIcon network="facebook" />
+                      </button>
+                      <button
+                        className="ghost small listing-share-icon-btn"
+                        type="button"
+                        onClick={shareToPinterest}
+                        title="Share on Pinterest"
+                        aria-label="Share on Pinterest"
+                      >
+                        <SocialShareIcon network="pinterest" />
+                      </button>
                     </>
                   )}
                 </div>

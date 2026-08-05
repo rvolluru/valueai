@@ -27,7 +27,7 @@ FROM python:3.11-slim
 WORKDIR /app
 COPY --from=py-deps /usr/local /usr/local
 COPY pyproject.toml README.md ./
-COPY apps ./apps
+COPY apps/api ./apps/api
 COPY packages ./packages
 COPY --from=web-build /web/dist ./apps/api/app/static
 

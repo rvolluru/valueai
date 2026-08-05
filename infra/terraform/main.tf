@@ -87,6 +87,13 @@ resource "aws_security_group" "alb" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
+  ingress {
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
   egress {
     from_port   = 0
     to_port     = 0
@@ -229,9 +236,52 @@ resource "aws_lb_listener" "http" {
   load_balancer_arn = aws_lb.api.arn
   port              = 80
   protocol          = "HTTP"
+
+  dynamic "default_action" {
+    for_each = var.api_certificate_arn == "" ? [1] : []
+    content {
+      type             = "forward"
+      target_group_arn = aws_lb_target_group.api.arn
+    }
+  }
+
+  dynamic "default_action" {
+    for_each = var.api_certificate_arn == "" ? [] : [1]
+    content {
+      type = "redirect"
+      redirect {
+        port        = "443"
+        protocol    = "HTTPS"
+        status_code = "HTTP_301"
+      }
+    }
+  }
+}
+
+resource "aws_lb_listener" "https" {
+  count             = var.api_certificate_arn == "" ? 0 : 1
+  load_balancer_arn = aws_lb.api.arn
+  port              = 443
+  protocol          = "HTTPS"
+  certificate_arn   = var.api_certificate_arn
+  ssl_policy        = "ELBSecurityPolicy-TLS13-1-2-2021-06"
+
   default_action {
     type             = "forward"
     target_group_arn = aws_lb_target_group.api.arn
+  }
+}
+
+resource "aws_route53_record" "api" {
+  count   = var.create_api_dns_record && var.route53_zone_id != "" && var.api_domain_name != "" ? 1 : 0
+  zone_id = var.route53_zone_id
+  name    = var.api_domain_name
+  type    = "A"
+
+  alias {
+    name                   = aws_lb.api.dns_name
+    zone_id                = aws_lb.api.zone_id
+    evaluate_target_health = true
   }
 }
 
@@ -264,6 +314,11 @@ resource "aws_ecs_task_definition" "api" {
         { name = "DATABASE_URL", value = "postgresql://${var.db_username}:${var.db_password}@${aws_db_instance.postgres.address}:5432/${var.db_name}" },
         { name = "OPENAI_API_KEY", value = var.openai_api_key },
         { name = "GEMINI_API_KEY", value = var.gemini_api_key },
+        { name = "PHOTOROOM_API_KEY", value = var.photoroom_api_key },
+        { name = "IMAGE_STAGING_PHOTOROOM_ENABLED", value = tostring(var.image_staging_photoroom_enabled) },
+        { name = "PHOTOROOM_BACKGROUND_COLOR", value = var.photoroom_background_color },
+        { name = "PHOTOROOM_OUTPUT_FORMAT", value = var.photoroom_output_format },
+        { name = "PHOTOROOM_OUTPUT_SIZE", value = var.photoroom_output_size },
         { name = "STRIPE_SECRET_KEY", value = var.stripe_secret_key },
         { name = "STRIPE_PUBLISHABLE_KEY", value = var.stripe_publishable_key },
         { name = "CLERK_ENABLED", value = tostring(var.clerk_enabled) },
@@ -271,6 +326,7 @@ resource "aws_ecs_task_definition" "api" {
         { name = "CLERK_JWKS_URL", value = var.clerk_jwks_url },
         { name = "CLERK_AUDIENCE", value = var.clerk_audience },
         { name = "CLERK_AUTHORIZED_PARTIES", value = var.clerk_authorized_parties },
+        { name = "CORS_ALLOW_ORIGINS", value = var.cors_allow_origins },
         { name = "BRAND_ENABLE_GPT_VISION", value = tostring(var.brand_enable_gpt_vision) },
         { name = "GPT_ITEM_PROFILE_ENABLED", value = tostring(var.gpt_item_profile_enabled) },
         { name = "GPT_ITEM_PROFILE_PROVIDER_ORDER", value = var.gpt_item_profile_provider_order },

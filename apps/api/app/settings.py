@@ -85,6 +85,13 @@ class Settings(BaseSettings):
 
     condition_rembg_enabled: bool = False
     image_staging_enabled: bool = True
+    image_staging_photoroom_enabled: bool = True
+    photoroom_api_key: str | None = None
+    photoroom_segment_url: str = "https://sdk.photoroom.com/v1/segment"
+    photoroom_timeout_s: float = 20.0
+    photoroom_output_format: str = "jpg"
+    photoroom_background_color: str = "#FFFFFF"
+    photoroom_output_size: str = "full"
     image_staging_gemini_enabled: bool = True
     image_staging_gemini_model: str = "gemini-2.5-flash-image-preview"
     image_staging_gemini_timeout_s: float = 30.0
@@ -97,7 +104,7 @@ class Settings(BaseSettings):
     condition_force_category_classifier: bool = False
     condition_force_efficientnet: bool = False
 
-    max_images_per_request: int = Field(default=4, ge=1, le=8)
+    max_images_per_request: int = Field(default=6, ge=1, le=8)
     gemini_api_key: str | None = None
     openai_api_key: str | None = None
 
@@ -118,6 +125,11 @@ class Settings(BaseSettings):
     valuation_min_comps: int = 3
     valuation_max_comps: int = 25
     valuation_currency: str = "USD"
+
+    trade_match_agent_enabled: bool = True
+    trade_match_agent_max_targets: int = Field(default=100, ge=1, le=500)
+    trade_match_agent_max_user_items: int = Field(default=200, ge=1, le=500)
+    trade_match_agent_max_matches_per_listing: int = Field(default=3, ge=1, le=10)
 
     instagram_graph_api_version: str = "v20.0"
     instagram_user_id: str | None = None
@@ -146,12 +158,17 @@ class Settings(BaseSettings):
     ses_template_signup_welcome: str | None = "jouft-signup-welcome-v1"
     ses_template_forgot_password: str | None = "jouft-forgot-password-v1"
     ses_template_offer_update: str | None = "jouft-offer-update-v1"
+    ses_template_shipping_reminder: str | None = "jouft-shipping-reminder-v1"
     smtp_host: str | None = None
     smtp_port: int = 587
     smtp_username: str | None = None
     smtp_password: str | None = None
     smtp_from_email: str | None = None
     smtp_use_tls: bool = True
+    shipping_reminder_enabled: bool = True
+    shipping_reminder_interval_hours: int = 24
+    shipping_reminder_poll_seconds: int = 3600
+    shipping_reminder_auto_track: bool = True
 
 
 @lru_cache(maxsize=1)

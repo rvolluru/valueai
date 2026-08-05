@@ -25,6 +25,13 @@ def _build_client():
     os.environ["STORAGE_BACKEND"] = "local"
     os.environ["API_KEY"] = "test-key"
     os.environ["BRAND_DEBUG"] = "false"
+    os.environ["GEMINI_API_KEY"] = ""
+    os.environ["OPENAI_API_KEY"] = ""
+    os.environ["PHOTOROOM_API_KEY"] = ""
+    os.environ["IMAGE_STAGING_ENABLED"] = "true"
+    os.environ["IMAGE_STAGING_PHOTOROOM_ENABLED"] = "false"
+    os.environ["IMAGE_STAGING_GEMINI_ENABLED"] = "false"
+    os.environ["CONDITION_REMBG_ENABLED"] = "false"
 
     from app import deps, settings
 
@@ -36,25 +43,88 @@ def _build_client():
 
     from app.main import app
 
+    app.dependency_overrides.clear()
     return TestClient(app)
+
+
+def _stub_item_profile(
+    *,
+    brand: str = "Nike",
+    model: str = "Air Force 1",
+    category: str = "shoes",
+    estimated_price: float | None = 700.0,
+) -> dict:
+    resale_price = estimated_price
+    return {
+        "category": category,
+        "candidate_brand": brand,
+        "candidate_model": model,
+        "confidence": 0.9,
+        "model_identification": {
+            "name": model,
+            "confidence": 0.85,
+            "attributes": ["clean silhouette", "signature construction"],
+        },
+        "authenticity_screen": {
+            "verdict": "inconclusive",
+            "confidence": 0.6,
+            "reasons": [],
+            "required_checks": [],
+            "disclaimer": "screening only",
+        },
+        "expected_auth_docs": {
+            "usually_provided": "no",
+            "typical_documents": [],
+        },
+        "receipt_present": "no",
+        "retail_price_estimate": {
+            "estimated_price": 1200 if resale_price is not None else None,
+            "currency": "USD",
+            "confidence": 0.7,
+            "rationale": "stub",
+            "references": [],
+        },
+        "resale_price_estimate": {
+            "estimated_price": resale_price,
+            "currency": "USD",
+            "confidence": 0.66,
+            "rationale": "stub",
+            "condition_assumption": "LikeNew",
+            "references": [],
+        },
+    }
+
+
+def _override_gpt_profiler(profile: dict | None):
+    from app.deps import get_gpt_item_profiler
+    from app.gpt_item_profile import GptItemProfileResult
+    from app.main import app
+
+    class StubGptProfiler:
+        def profile_item(self, **kwargs):
+            return GptItemProfileResult(profile=profile, enabled=True, called=True)
+
+    app.dependency_overrides[get_gpt_item_profiler] = lambda: StubGptProfiler()
+    return app
 
 
 def test_analyze_response_schema_and_debug_payload() -> None:
     client = _build_client()
+    _override_gpt_profiler(_stub_item_profile())
     files = [
         ("images", ("full_item.jpg", _make_image(), "image/jpeg")),
         ("images", ("nike_tag_closeup.jpg", _make_image("NIKE"), "image/jpeg")),
     ]
-    data = {"item_id": "item-123", "debug": "true"}
+    data = {"item_id": "item-123", "user_condition": "LikeNew", "debug": "true"}
     res = client.post("/v1/analyze", data=data, files=files, headers={"x-api-key": "test-key"})
     assert res.status_code == 200, res.text
     body = res.json()
     assert body["item_id"] == "item-123"
     assert body["category"] in {"clothes", "shoes", "handbag"}
     assert body["brand"]["name"] == "Nike"
-    assert body["brand"]["evidence"] == "ocr_tag"
+    assert body["brand"]["evidence"] == "gpt_item_profile"
     assert body["brand"]["confidence"] >= 0.75
-    assert body["condition"]["grade"] in {"New", "LikeNew", "Good", "Fair", "Poor"}
+    assert body["condition"]["grade"] in {"New", "LikeNew"}
     assert isinstance(body["condition"]["confidence"], float)
     assert "valuation" in body
     assert body["valuation"] is not None
@@ -66,6 +136,38 @@ def test_analyze_response_schema_and_debug_payload() -> None:
     assert "valuation" in body["debug"]
     assert "thresholds" in body["debug"]
     assert body["warnings"] == []
+
+
+def test_client_state_round_trip_uses_backend_storage() -> None:
+    client = _build_client()
+
+    initial = client.get("/v1/me/client-state", headers={"x-api-key": "test-key"})
+    assert initial.status_code == 200, initial.text
+    assert initial.json()["liked_listing_ids"] == []
+
+    payload = {
+        "alert_preferences": {"likes": True, "trades": False, "shipping": True},
+        "liked_listing_ids": ["listing-1", "listing-2", "listing-1"],
+    }
+    saved = client.put("/v1/me/client-state", json=payload, headers={"x-api-key": "test-key"})
+    assert saved.status_code == 200, saved.text
+    body = saved.json()
+    assert body["alert_preferences"] == payload["alert_preferences"]
+    assert body["liked_listing_ids"] == ["listing-1", "listing-2"]
+
+    fetched = client.get("/v1/me/client-state", headers={"x-api-key": "test-key"})
+    assert fetched.status_code == 200, fetched.text
+    assert fetched.json()["alert_preferences"] == payload["alert_preferences"]
+    assert fetched.json()["liked_listing_ids"] == ["listing-1", "listing-2"]
+
+    partial = client.put(
+        "/v1/me/client-state",
+        json={"liked_listing_ids": ["listing-3"]},
+        headers={"x-api-key": "test-key"},
+    )
+    assert partial.status_code == 200, partial.text
+    assert partial.json()["alert_preferences"] == payload["alert_preferences"]
+    assert partial.json()["liked_listing_ids"] == ["listing-3"]
 
 
 def test_analyze_accepts_item_size_in_debug_hints() -> None:
@@ -93,8 +195,350 @@ def test_analyze_generates_item_id_when_missing() -> None:
     assert len(body["item_id"]) > 10
 
 
+def test_upload_images_persists_without_analysis() -> None:
+    client = _build_client()
+    files = [
+        ("images", ("full_item.jpg", _make_image(), "image/jpeg")),
+        ("images", ("detail.jpg", _make_image("DETAIL"), "image/jpeg")),
+    ]
+    res = client.post("/v1/uploads/images", data={"item_id": "item-upload-only"}, files=files, headers={"x-api-key": "test-key"})
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["item_id"] == "item-upload-only"
+    assert len(body["uploaded_images"]) == 2
+    assert body["uploaded_images"][0]["image_url"].startswith("/v1/images/")
+    assert body["uploaded_images"][0]["role_hint"] == "full_item"
+    assert body["uploaded_images"][1]["role_hint"] == "close_up"
+
+
+def test_create_listing_with_analyzing_status_queues_backend_analysis() -> None:
+    client = _build_client()
+    _override_gpt_profiler(
+        _stub_item_profile(
+            brand="Chanel",
+            model="Classic Flap Bag",
+            category="handbag",
+            estimated_price=2300,
+        )
+    )
+    upload = client.post(
+        "/v1/uploads/images",
+        data={"item_id": "item-create-analysis"},
+        files=[("images", ("full_item.jpg", _make_image("CHANEL"), "image/jpeg"))],
+        headers={"x-api-key": "test-key"},
+    )
+    assert upload.status_code == 200, upload.text
+    image_url = upload.json()["uploaded_images"][0]["image_url"]
+
+    create_res = client.post(
+        "/v1/listings",
+        json={
+            "title": "New listing",
+            "mode": "trade",
+            "category": "handbag",
+            "brand": "unknown",
+            "condition": "LikeNew",
+            "size": "Medium",
+            "estimated_value": 0,
+            "city": "Your area",
+            "image": image_url,
+            "images": [image_url],
+            "description": "",
+            "wants": "Open to similar-value offers",
+            "tags": ["Analyzing"],
+            "source_item_id": "item-create-analysis",
+            "analysis": None,
+            "status": "Analyzing",
+        },
+        headers={"x-api-key": "test-key"},
+    )
+    assert create_res.status_code == 200, create_res.text
+    listing_id = create_res.json()["listing_id"]
+
+    list_res = client.get("/v1/listings?mine=true&limit=10", headers={"x-api-key": "test-key"})
+    assert list_res.status_code == 200, list_res.text
+    listing = next(item for item in list_res.json()["items"] if item["listing_id"] == listing_id)
+    assert listing["status"] == "Review"
+    assert listing["title"] == "Classic Flap Bag"
+    assert listing["brand"] == "Chanel"
+    assert listing["estimated_value"] == 2300
+    assert listing["image"] == image_url
+    assert listing["images"] == [image_url]
+    assert listing["analysis"]["brand"]["name"] == "Chanel"
+
+
+def test_create_listing_reuses_recent_analysis_for_same_uploaded_images() -> None:
+    client = _build_client()
+    _override_gpt_profiler(
+        _stub_item_profile(
+            brand="Louis Vuitton",
+            model="Looping MM",
+            category="handbag",
+            estimated_price=1150,
+        )
+    )
+    image_bytes = _make_image("LV")
+    analyze_res = client.post(
+        "/v1/analyze",
+        data={"item_id": "item-original-analysis", "user_condition": "LikeNew", "debug": "true"},
+        files=[("images", ("lv.jpg", image_bytes, "image/jpeg"))],
+        headers={"x-api-key": "test-key"},
+    )
+    assert analyze_res.status_code == 200, analyze_res.text
+
+    upload = client.post(
+        "/v1/uploads/images",
+        data={"item_id": "item-repeat-upload"},
+        files=[("images", ("lv-repeat.jpg", image_bytes, "image/jpeg"))],
+        headers={"x-api-key": "test-key"},
+    )
+    assert upload.status_code == 200, upload.text
+    image_url = upload.json()["uploaded_images"][0]["image_url"]
+
+    create_res = client.post(
+        "/v1/listings",
+        json={
+            "title": "New listing",
+            "mode": "trade",
+            "category": "handbag",
+            "brand": "unknown",
+            "condition": "LikeNew",
+            "size": "Medium",
+            "estimated_value": 0,
+            "city": "Your area",
+            "image": image_url,
+            "images": [image_url],
+            "description": "",
+            "wants": "Open to similar-value offers",
+            "tags": ["Analyzing"],
+            "source_item_id": "item-repeat-upload",
+            "analysis": None,
+            "status": "Analyzing",
+        },
+        headers={"x-api-key": "test-key"},
+    )
+    assert create_res.status_code == 200, create_res.text
+    body = create_res.json()
+    assert body["status"] == "Review"
+    assert body["title"] == "Looping MM"
+    assert body["brand"] == "Louis Vuitton"
+    assert body["estimated_value"] == 1150
+    assert body["image"] == image_url
+    assert body["images"] == [image_url]
+    assert body["analysis"]["item_id"] == "item-repeat-upload"
+    assert body["analysis"]["uploaded_images"][0]["image_url"] == image_url
+    assert body["analysis"]["debug"]["analysis_reuse"]["reused"] is True
+
+
+def test_create_listing_with_analyzing_status_marks_failed_when_images_are_unreadable() -> None:
+    client = _build_client()
+    _override_gpt_profiler(_stub_item_profile())
+
+    create_res = client.post(
+        "/v1/listings",
+        json={
+            "title": "New listing",
+            "mode": "trade",
+            "category": "handbag",
+            "brand": "unknown",
+            "condition": "LikeNew",
+            "size": None,
+            "estimated_value": 0,
+            "city": "Your area",
+            "image": "/v1/images/missing-image-id",
+            "images": ["/v1/images/missing-image-id"],
+            "description": "",
+            "wants": "Open to similar-value offers",
+            "tags": ["Analyzing"],
+            "source_item_id": "item-missing-image",
+            "analysis": None,
+            "status": "Analyzing",
+        },
+        headers={"x-api-key": "test-key"},
+    )
+    assert create_res.status_code == 200, create_res.text
+    created = create_res.json()
+    assert created["status"] == "AnalysisFailed"
+    assert created["tags"] == ["Analysis failed"]
+
+    list_res = client.get("/v1/listings?mine=true&limit=10", headers={"x-api-key": "test-key"})
+    assert list_res.status_code == 200, list_res.text
+    listing = next(item for item in list_res.json()["items"] if item["listing_id"] == created["listing_id"])
+    assert listing["status"] == "AnalysisFailed"
+    assert listing["tags"] == ["Analysis failed"]
+
+
+def test_recently_updated_analyzing_listing_is_not_marked_stale_by_original_created_at() -> None:
+    client = _build_client()
+    from app import deps
+
+    db = deps.get_db()
+    db.insert_listing(
+        listing_id="recent-edit-analyzing",
+        owner_subject="api-key",
+        owner_name="Local Tester",
+        title="Old Listing Recently Edited",
+        mode="trade",
+        category="handbag",
+        brand="Louis Vuitton",
+        condition="New",
+        size="Large",
+        estimated_value=1200.0,
+        city="Your area",
+        image="https://example.test/bag.jpg",
+        images=["https://example.test/bag.jpg"],
+        description="Recently edited listing",
+        wants="Open to similar-value offers",
+        tags=["Analyzing"],
+        source_item_id=None,
+        analysis=None,
+        status="Analyzing",
+    )
+    db.execute(
+        "UPDATE listings SET created_at = ?, updated_at = ? WHERE listing_id = ?",
+        (
+            "2026-01-01T00:00:00+00:00",
+            "2099-01-01T00:00:00+00:00",
+            "recent-edit-analyzing",
+        ),
+    )
+    db.commit()
+
+    list_res = client.get("/v1/listings?mine=true&limit=10", headers={"x-api-key": "test-key"})
+    assert list_res.status_code == 200, list_res.text
+    listing = next(item for item in list_res.json()["items"] if item["listing_id"] == "recent-edit-analyzing")
+    assert listing["status"] == "Analyzing"
+
+
+def test_photoroom_staging_uses_segment_api(monkeypatch) -> None:
+    monkeypatch.setenv("PHOTOROOM_API_KEY", "photoroom-test-key")
+
+    from app.main import _stage_item_image
+    from app.settings import Settings
+
+    captured: dict[str, object] = {}
+    processed = io.BytesIO()
+    Image.new("RGB", (16, 16), color="white").save(processed, format="JPEG")
+
+    class StubResponse:
+        status_code = 200
+        content = processed.getvalue()
+
+        def raise_for_status(self):
+            return None
+
+    class StubClient:
+        def __init__(self, timeout):
+            captured["timeout"] = timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def post(self, url, headers, data, files):
+            captured["url"] = url
+            captured["headers"] = headers
+            captured["data"] = data
+            captured["files"] = files
+            return StubResponse()
+
+    monkeypatch.setattr("app.main.httpx.Client", StubClient)
+    raw = _make_image("PRODUCT")
+    out, content_type, debug = _stage_item_image(
+        raw,
+        "image/jpeg",
+        Settings(
+            image_staging_enabled=True,
+            image_staging_photoroom_enabled=True,
+            image_staging_gemini_enabled=False,
+            condition_rembg_enabled=False,
+            photoroom_api_key="photoroom-test-key",
+        ),
+    )
+
+    with Image.open(io.BytesIO(out)) as staged:
+        assert staged.size == (16, 16)
+    assert content_type == "image/jpeg"
+    assert debug["provider"] == "photoroom_remove_background"
+    assert debug["synthetic_shadow"] is False
+    assert captured["url"] == "https://sdk.photoroom.com/v1/segment"
+    assert captured["headers"] == {"x-api-key": "photoroom-test-key"}
+    assert captured["data"]["format"] == "jpg"
+    assert captured["data"]["bg_color"] == "#FFFFFF"
+    assert captured["data"]["crop"] == "false"
+    assert captured["data"]["despill"] == "false"
+    assert "image_file" in captured["files"]
+
+
+def test_analyze_uses_original_upload_bytes_for_item_profile(monkeypatch) -> None:
+    os.environ["GPT_ITEM_PROFILE_ENABLED"] = "true"
+    client = _build_client()
+    from app.deps import get_gpt_item_profiler
+    from app.gpt_item_profile import GptItemProfileResult
+    from app.main import app
+
+    original = _make_image("ORIGINAL")
+    captured: dict[str, object] = {}
+
+    def fake_stage_item_image(raw, content_type, settings):
+        raise AssertionError("PhotoRoom/background staging should not run before item analysis")
+
+    class StubGptProfiler:
+        def profile_item(self, **kwargs):
+            images = kwargs["images"]
+            captured["analysis_bytes"] = images[0].bytes_data
+            captured["analysis_content_type"] = images[0].content_type
+            return GptItemProfileResult(
+                profile={
+                    "category": "handbag",
+                    "brand": {"name": "Chanel", "confidence": 0.8},
+                    "model_identification": {"name": "Classic Flap", "confidence": 0.8, "attributes": []},
+                    "authenticity_screen": {
+                        "verdict": "inconclusive",
+                        "confidence": 0.6,
+                        "reasons": [],
+                        "required_checks": [],
+                        "disclaimer": "screening only",
+                    },
+                    "resale_price_estimate": {
+                        "estimated_price": 800,
+                        "currency": "USD",
+                        "confidence": 0.7,
+                        "rationale": "stub",
+                        "condition_assumption": "LikeNew",
+                        "references": [],
+                    },
+                },
+                enabled=True,
+                called=True,
+            )
+
+    monkeypatch.setattr("app.main._stage_item_image", fake_stage_item_image)
+    app.dependency_overrides[get_gpt_item_profiler] = lambda: StubGptProfiler()
+    try:
+        res = client.post(
+            "/v1/analyze",
+            data={"debug": "true"},
+            files=[("images", ("product.jpg", original, "image/jpeg"))],
+            headers={"x-api-key": "test-key"},
+        )
+        assert res.status_code == 200, res.text
+        body = res.json()
+        assert body["uploaded_images"][0]["storage_uri"].endswith(".jpg")
+        assert captured["analysis_bytes"] == original
+        assert captured["analysis_content_type"] == "image/jpeg"
+        assert body["debug"]["uploads"][0]["staging"]["provider"] == "exif_orientation"
+        assert body["debug"]["uploads"][0]["staging"]["background_staging"] == "deferred"
+        assert body["debug"]["uploads"][0]["analysis_source"] == "original_upload"
+    finally:
+        app.dependency_overrides.clear()
+
+
 def test_analyze_unknown_brand_requests_more_photos() -> None:
     client = _build_client()
+    _override_gpt_profiler(None)
     files = [("images", ("full_item.jpg", _make_image(), "image/jpeg"))]
     res = client.post(
         "/v1/analyze",
@@ -106,7 +550,8 @@ def test_analyze_unknown_brand_requests_more_photos() -> None:
     body = res.json()
     assert body["brand"]["name"] == "unknown"
     assert body["valuation"] is None
-    assert "close_up_tag_label" in body["requested_photos"]
+    assert body["requested_photos"] == []
+    assert body["item_profile"] is None
 
 
 def test_analyze_warns_when_user_condition_conflicts_with_model() -> None:
@@ -120,7 +565,7 @@ def test_analyze_warns_when_user_condition_conflicts_with_model() -> None:
             return ConditionResult(
                 category=category_hint or "handbag",
                 category_confidence=1.0,
-                grade="Fair",
+                grade="LikeNew",
                 confidence=0.86,
                 issues=[],
                 debug={"condition": {"model": "test_override"}},
@@ -138,15 +583,15 @@ def test_analyze_warns_when_user_condition_conflicts_with_model() -> None:
         assert res.status_code == 200, res.text
         body = res.json()
         assert body["user_condition"] == "LikeNew"
-        assert body["condition"]["grade"] == "Fair"
-        assert len(body["warnings"]) == 1
-        assert "model assessment suggests Fair" in body["warnings"][0]
+        assert body["condition"]["grade"] == "LikeNew"
+        assert body["warnings"] == []
     finally:
         app.dependency_overrides.clear()
 
 
 def test_user_condition_drives_valuation_before_model_is_trusted() -> None:
     client = _build_client()
+    _override_gpt_profiler(_stub_item_profile())
     files = [
         ("images", ("full_item.jpg", _make_image(), "image/jpeg")),
         ("images", ("nike_tag_closeup.jpg", _make_image("NIKE"), "image/jpeg")),
@@ -160,7 +605,7 @@ def test_user_condition_drives_valuation_before_model_is_trusted() -> None:
     assert res.status_code == 200, res.text
     body = res.json()
     assert body["user_condition"] == "New"
-    assert body["condition"]["grade"] in {"New", "LikeNew", "Good", "Fair", "Poor"}
+    assert body["condition"]["grade"] in {"New", "LikeNew"}
     assert body["valuation"] is not None
     assert body["debug"]["valuation"]["condition_source"] == "user_input"
     assert body["debug"]["valuation"]["condition_grade_used"] == "New"
@@ -169,43 +614,14 @@ def test_user_condition_drives_valuation_before_model_is_trusted() -> None:
 def test_gpt_pricing_is_used_as_primary_when_available() -> None:
     os.environ["VALUATION_PROVIDERS"] = "stub"
     client = _build_client()
-    os.environ["GPT_ITEM_PROFILE_ENABLED"] = "true"
-    from app.deps import get_brand_analyzer, get_gpt_item_profiler, get_valuation_service
+    from app.deps import get_gpt_item_profiler, get_valuation_service
     from app.main import app
     from app.gpt_item_profile import GptItemProfileResult
-
-    class StubBrandAnalyzer:
-        def analyze(self, image_inputs, debug=False):
-            return {"name": "Nike", "confidence": 0.9, "evidence": "stub"}
 
     class StubGptProfiler:
         def profile_item(self, **kwargs):
             return GptItemProfileResult(
-                profile={
-                    "model_identification": {"name": "Test Model", "confidence": 0.8, "attributes": []},
-                    "authenticity_screen": {
-                        "verdict": "inconclusive",
-                        "confidence": 0.6,
-                        "reasons": [],
-                        "required_checks": [],
-                        "disclaimer": "screening only",
-                    },
-                    "retail_price_estimate": {
-                        "estimated_price": 1200,
-                        "currency": "USD",
-                        "confidence": 0.7,
-                        "rationale": "stub",
-                        "references": [],
-                    },
-                    "resale_price_estimate": {
-                        "estimated_price": 700,
-                        "currency": "USD",
-                        "confidence": 0.66,
-                        "rationale": "stub",
-                        "condition_assumption": "Good",
-                        "references": [],
-                    },
-                },
+                profile=_stub_item_profile(model="Test Model", estimated_price=700),
                 enabled=True,
                 called=True,
             )
@@ -218,7 +634,6 @@ def test_gpt_pricing_is_used_as_primary_when_available() -> None:
         def serialize(result):
             return {}
 
-    app.dependency_overrides[get_brand_analyzer] = lambda: StubBrandAnalyzer()
     app.dependency_overrides[get_gpt_item_profiler] = lambda: StubGptProfiler()
     app.dependency_overrides[get_valuation_service] = lambda: FailIfCalledValuationService()
 
@@ -242,44 +657,15 @@ def test_gpt_pricing_is_used_as_primary_when_available() -> None:
 def test_crawler_pricing_is_used_as_fallback_when_gpt_has_no_price() -> None:
     os.environ["VALUATION_PROVIDERS"] = "stub"
     client = _build_client()
-    os.environ["GPT_ITEM_PROFILE_ENABLED"] = "true"
-    from app.deps import get_brand_analyzer, get_gpt_item_profiler, get_valuation_service
+    from app.deps import get_gpt_item_profiler, get_valuation_service
     from app.main import app
     from app.gpt_item_profile import GptItemProfileResult
     from valuation.types import ValuationResult
 
-    class StubBrandAnalyzer:
-        def analyze(self, image_inputs, debug=False):
-            return {"name": "Nike", "confidence": 0.9, "evidence": "stub"}
-
     class StubGptProfilerNoPrice:
         def profile_item(self, **kwargs):
             return GptItemProfileResult(
-                profile={
-                    "model_identification": {"name": "Test Model", "confidence": 0.8, "attributes": []},
-                    "authenticity_screen": {
-                        "verdict": "inconclusive",
-                        "confidence": 0.6,
-                        "reasons": [],
-                        "required_checks": [],
-                        "disclaimer": "screening only",
-                    },
-                    "retail_price_estimate": {
-                        "estimated_price": None,
-                        "currency": "USD",
-                        "confidence": 0.4,
-                        "rationale": "stub",
-                        "references": [],
-                    },
-                    "resale_price_estimate": {
-                        "estimated_price": None,
-                        "currency": "USD",
-                        "confidence": 0.4,
-                        "rationale": "stub",
-                        "condition_assumption": "Good",
-                        "references": [],
-                    },
-                },
+                profile=_stub_item_profile(model="Test Model", estimated_price=None),
                 enabled=True,
                 called=True,
             )
@@ -316,7 +702,6 @@ def test_crawler_pricing_is_used_as_fallback_when_gpt_has_no_price() -> None:
                 payload["_debug"] = result.debug
             return payload
 
-    app.dependency_overrides[get_brand_analyzer] = lambda: StubBrandAnalyzer()
     app.dependency_overrides[get_gpt_item_profiler] = lambda: StubGptProfilerNoPrice()
     app.dependency_overrides[get_valuation_service] = lambda: StubFallbackValuationService()
 
@@ -340,17 +725,18 @@ def test_create_and_list_listing_with_api_key() -> None:
     client = _build_client()
     create_payload = {
         "title": "Jimmy Choo Rosalia 50 Slingback Pump",
-        "mode": "sell_trade",
+        "mode": "trade",
         "category": "shoes",
         "brand": "Jimmy Choo",
-        "condition": "Good",
+        "condition": "LikeNew",
         "estimated_value": 425.0,
         "city": "New York, NY",
         "image": "https://example.test/image.jpg",
         "wants": "Open to similar-value offers",
-        "tags": ["Good", "Jimmy Choo", "sell/trade"],
+        "tags": ["LikeNew", "Jimmy Choo", "trade"],
         "source_item_id": "item-abc",
         "analysis": {"item_id": "item-abc"},
+        "status": "Active",
     }
 
     create_res = client.post("/v1/listings", json=create_payload, headers={"x-api-key": "test-key"})
@@ -365,3 +751,309 @@ def test_create_and_list_listing_with_api_key() -> None:
     payload = list_res.json()
     assert payload["count"] >= 1
     assert any(item["listing_id"] == created["listing_id"] for item in payload["items"])
+
+
+def test_marketplace_matches_exclude_same_owner_listings() -> None:
+    client = _build_client()
+    base_payload = {
+        "mode": "trade",
+        "category": "handbag",
+        "brand": "Jouft",
+        "condition": "LikeNew",
+        "city": "New York, NY",
+        "wants": "Open to similar-value offers",
+        "status": "Active",
+    }
+
+    first_res = client.post(
+        "/v1/listings",
+        json={
+            **base_payload,
+            "title": "Same Owner Tote",
+            "estimated_value": 500.0,
+            "image": "https://example.test/tote.jpg",
+        },
+        headers={"x-api-key": "test-key"},
+    )
+    second_res = client.post(
+        "/v1/listings",
+        json={
+            **base_payload,
+            "title": "Same Owner Bag",
+            "estimated_value": 525.0,
+            "image": "https://example.test/bag.jpg",
+        },
+        headers={"x-api-key": "test-key"},
+    )
+    assert first_res.status_code == 200, first_res.text
+    assert second_res.status_code == 200, second_res.text
+
+    list_res = client.get("/v1/listings?limit=10&include_matches=true", headers={"x-api-key": "test-key"})
+    assert list_res.status_code == 200, list_res.text
+    items = list_res.json()["items"]
+    created_ids = {first_res.json()["listing_id"], second_res.json()["listing_id"]}
+    listed = [item for item in items if item["listing_id"] in created_ids]
+    assert len(listed) == 2
+    assert all(item["matches"] == [] for item in listed)
+
+
+def test_trade_match_agent_generates_persisted_optional_matches() -> None:
+    client = _build_client()
+    from app import deps
+
+    db = deps.get_db()
+    db.insert_listing(
+        listing_id="other-active-bag",
+        owner_subject="other-user",
+        owner_name="Other User",
+        title="Other Active Bag",
+        mode="trade",
+        category="handbag",
+        brand="Chanel",
+        condition="LikeNew",
+        size=None,
+        estimated_value=1000.0,
+        city="New York, NY",
+        image="https://example.test/other.jpg",
+        images=["https://example.test/other.jpg"],
+        description="Target listing",
+        wants="Open to similar-value offers",
+        tags=[],
+        source_item_id=None,
+        analysis=None,
+        status="Active",
+    )
+    own_res = client.post(
+        "/v1/listings",
+        json={
+            "title": "My Active Bag",
+            "mode": "trade",
+            "category": "handbag",
+            "brand": "Louis Vuitton",
+            "condition": "LikeNew",
+            "estimated_value": 950.0,
+            "city": "New York, NY",
+            "image": "https://example.test/mine.jpg",
+            "images": ["https://example.test/mine.jpg"],
+            "wants": "Open to similar-value offers",
+            "status": "Active",
+        },
+        headers={"x-api-key": "test-key"},
+    )
+    assert own_res.status_code == 200, own_res.text
+
+    run_res = client.post("/v1/trade-match-agent/run?limit=10", headers={"x-api-key": "test-key"})
+    assert run_res.status_code == 200, run_res.text
+    body = run_res.json()
+    assert body["generated_count"] == 1
+    match = body["items"][0]
+    assert match["target_listing_id"] == "other-active-bag"
+    assert match["candidate_listing_id"] == own_res.json()["listing_id"]
+    assert match["status"] == "suggested"
+    assert match["target_listing"]["title"] == "Other Active Bag"
+    assert match["candidate_listing"]["title"] == "My Active Bag"
+
+    list_res = client.get("/v1/trade-match-agent/matches", headers={"x-api-key": "test-key"})
+    assert list_res.status_code == 200, list_res.text
+    assert list_res.json()["count"] == 1
+
+    dismiss_res = client.patch(
+        f"/v1/trade-match-agent/matches/{match['match_id']}",
+        json={"status": "dismissed"},
+        headers={"x-api-key": "test-key"},
+    )
+    assert dismiss_res.status_code == 200, dismiss_res.text
+    assert dismiss_res.json()["status"] == "dismissed"
+
+    suggested_res = client.get("/v1/trade-match-agent/matches", headers={"x-api-key": "test-key"})
+    assert suggested_res.status_code == 200, suggested_res.text
+    assert suggested_res.json()["count"] == 0
+
+
+def test_create_listing_recovers_images_from_analysis_uploads() -> None:
+    client = _build_client()
+    create_payload = {
+        "title": "Mobile Uploaded Listing",
+        "mode": "trade",
+        "category": "handbag",
+        "brand": "Jouft",
+        "condition": "LikeNew",
+        "estimated_value": 225.0,
+        "city": "New York, NY",
+        "image": "file:///private/var/mobile/local-photo.jpg",
+        "images": ["file:///private/var/mobile/local-photo.jpg"],
+        "analysis": {
+            "item_id": "item-mobile-upload",
+            "uploaded_images": [
+                {"image_url": "/v1/images/mobile-upload-1"},
+                {"image_url": "/v1/images/mobile-upload-2"},
+            ],
+        },
+        "status": "Active",
+    }
+
+    create_res = client.post("/v1/listings", json=create_payload, headers={"x-api-key": "test-key"})
+    assert create_res.status_code == 200, create_res.text
+    created = create_res.json()
+    assert created["image"] == "/v1/images/mobile-upload-1"
+    assert created["images"] == ["/v1/images/mobile-upload-1", "/v1/images/mobile-upload-2"]
+
+    list_res = client.get("/v1/listings?limit=10", headers={"x-api-key": "test-key"})
+    assert list_res.status_code == 200, list_res.text
+    listed = next(item for item in list_res.json()["items"] if item["listing_id"] == created["listing_id"])
+    assert listed["image"].endswith("/v1/images/mobile-upload-1")
+    assert listed["images"][0].endswith("/v1/images/mobile-upload-1")
+
+
+def test_listing_media_normalizes_raw_alb_image_urls() -> None:
+    client = _build_client()
+    raw_alb_url = "https://valueai-mvp-alb-103817159.us-east-1.elb.amazonaws.com/v1/images/4103cfb0-1239-4e60-af3c-0b5c69eb015b"
+    create_payload = {
+        "title": "Legacy ALB Image Listing",
+        "mode": "trade",
+        "category": "handbag",
+        "brand": "Jouft",
+        "condition": "LikeNew",
+        "estimated_value": 225.0,
+        "city": "New York, NY",
+        "image": raw_alb_url,
+        "images": [raw_alb_url],
+        "status": "Active",
+    }
+
+    create_res = client.post("/v1/listings", json=create_payload, headers={"x-api-key": "test-key"})
+    assert create_res.status_code == 200, create_res.text
+    created = create_res.json()
+    assert created["image"] == "/v1/images/4103cfb0-1239-4e60-af3c-0b5c69eb015b"
+    assert created["images"] == ["/v1/images/4103cfb0-1239-4e60-af3c-0b5c69eb015b"]
+
+    list_res = client.get("/v1/listings?limit=10", headers={"x-api-key": "test-key"})
+    assert list_res.status_code == 200, list_res.text
+    listed = next(item for item in list_res.json()["items"] if item["listing_id"] == created["listing_id"])
+    assert listed["image"] == "/v1/images/4103cfb0-1239-4e60-af3c-0b5c69eb015b"
+    assert listed["images"] == ["/v1/images/4103cfb0-1239-4e60-af3c-0b5c69eb015b"]
+
+
+def test_listing_media_dedupes_absolute_and_relative_api_image_urls() -> None:
+    client = _build_client()
+    create_payload = {
+        "title": "Duplicate Absolute Relative Listing",
+        "mode": "trade",
+        "category": "handbag",
+        "brand": "Chanel",
+        "condition": "LikeNew",
+        "estimated_value": 225.0,
+        "city": "New York, NY",
+        "image": "https://www.jouft.com/v1/images/image-one",
+        "images": [
+            "https://www.jouft.com/v1/images/image-one",
+            "https://api.jouft.com/v1/images/image-two",
+            "/v1/images/image-one",
+            "/v1/images/image-two",
+        ],
+        "status": "Active",
+    }
+
+    create_res = client.post("/v1/listings", json=create_payload, headers={"x-api-key": "test-key"})
+    assert create_res.status_code == 200, create_res.text
+    created = create_res.json()
+    assert created["image"] == "/v1/images/image-one"
+    assert created["images"] == ["/v1/images/image-one", "/v1/images/image-two"]
+
+    list_res = client.get("/v1/listings?limit=10", headers={"x-api-key": "test-key"})
+    assert list_res.status_code == 200, list_res.text
+    listed = next(item for item in list_res.json()["items"] if item["listing_id"] == created["listing_id"])
+    assert listed["images"] == ["/v1/images/image-one", "/v1/images/image-two"]
+
+
+def test_listing_media_dedupes_upload_url_variants_to_image_ids() -> None:
+    client = _build_client()
+    files = [
+        ("images", ("boots-front.jpg", _make_image("FRONT"), "image/jpeg")),
+        ("images", ("boots-side.jpg", _make_image("SIDE"), "image/jpeg")),
+    ]
+    upload_res = client.post(
+        "/v1/uploads/images",
+        data={"item_id": "item-duplicate-upload-urls"},
+        files=files,
+        headers={"x-api-key": "test-key"},
+    )
+    assert upload_res.status_code == 200, upload_res.text
+    uploaded = upload_res.json()["uploaded_images"]
+    first_url = uploaded[0]["image_url"]
+    second_url = uploaded[1]["image_url"]
+    first_upload_path = uploaded[0]["storage_uri"].replace(".data/uploads/", "/uploads/", 1)
+    second_upload_path = uploaded[1]["storage_uri"].replace(".data/uploads/", "/uploads/", 1)
+
+    create_payload = {
+        "title": "Duplicate Upload URL Listing",
+        "mode": "trade",
+        "category": "shoes",
+        "brand": "Chanel",
+        "condition": "LikeNew",
+        "estimated_value": 1200.0,
+        "city": "New York, NY",
+        "image": f"http://127.0.0.1:8000{first_upload_path}",
+        "images": [
+            f"http://127.0.0.1:8000{first_upload_path}",
+            f"http://127.0.0.1:8000{second_upload_path}",
+            first_upload_path,
+            second_upload_path,
+            first_url,
+            second_url,
+        ],
+        "source_item_id": "item-duplicate-upload-urls",
+        "status": "Active",
+    }
+
+    create_res = client.post("/v1/listings", json=create_payload, headers={"x-api-key": "test-key"})
+    assert create_res.status_code == 200, create_res.text
+    created = create_res.json()
+    assert created["image"] == first_url
+    assert created["images"] == [first_url, second_url]
+
+    list_res = client.get("/v1/listings?mine=true&limit=10", headers={"x-api-key": "test-key"})
+    assert list_res.status_code == 200, list_res.text
+    listed = next(item for item in list_res.json()["items"] if item["listing_id"] == created["listing_id"])
+    assert listed["image"] == first_url
+    assert listed["images"] == [first_url, second_url]
+
+
+def test_marketplace_lists_only_active_but_mine_includes_review() -> None:
+    client = _build_client()
+    review_payload = {
+        "title": "Review Queue Dress",
+        "mode": "trade",
+        "category": "clothes",
+        "brand": "Jouft",
+        "condition": "LikeNew",
+        "estimated_value": 125.0,
+        "city": "New York, NY",
+        "image": "https://example.test/review.jpg",
+        "status": "Review",
+    }
+    active_payload = {
+        **review_payload,
+        "title": "Active Marketplace Dress",
+        "image": "https://example.test/active.jpg",
+        "status": "Active",
+    }
+
+    review_res = client.post("/v1/listings", json=review_payload, headers={"x-api-key": "test-key"})
+    active_res = client.post("/v1/listings", json=active_payload, headers={"x-api-key": "test-key"})
+    assert review_res.status_code == 200, review_res.text
+    assert active_res.status_code == 200, active_res.text
+    review_id = review_res.json()["listing_id"]
+    active_id = active_res.json()["listing_id"]
+
+    market_res = client.get("/v1/listings?limit=10", headers={"x-api-key": "test-key"})
+    assert market_res.status_code == 200, market_res.text
+    market_ids = {item["listing_id"] for item in market_res.json()["items"]}
+    assert active_id in market_ids
+    assert review_id not in market_ids
+
+    mine_res = client.get("/v1/listings?mine=true&limit=10", headers={"x-api-key": "test-key"})
+    assert mine_res.status_code == 200, mine_res.text
+    mine_ids = {item["listing_id"] for item in mine_res.json()["items"]}
+    assert active_id in mine_ids
+    assert review_id in mine_ids

@@ -26,14 +26,20 @@ function errorDetail(payload) {
 
 async function requestJson({ apiBaseUrl, path, method = 'GET', auth = {}, body, headers = {} }) {
   const url = `${normalizeBaseUrl(apiBaseUrl)}${path}`;
-  const resp = await fetch(url, {
-    method,
-    headers: {
-      ...buildAuthHeaders(auth),
-      ...headers,
-    },
-    body,
-  });
+  let resp;
+  try {
+    resp = await fetch(url, {
+      method,
+      headers: {
+        ...buildAuthHeaders(auth),
+        ...headers,
+      },
+      body,
+    });
+  } catch (e) {
+    const baseUrl = normalizeBaseUrl(apiBaseUrl);
+    throw new Error(`Network request failed connecting to ${baseUrl}. ${e?.message || ''}`.trim());
+  }
   const payload = await parseJsonOrNull(resp);
   if (!resp.ok) {
     throw new Error(errorDetail(payload) || `API error (${resp.status})`);
@@ -64,6 +70,47 @@ export function createMobileApiClient({ apiBaseUrl }) {
         body: fd,
       });
     },
+    async uploadImages({ images = [], itemId = '' }, auth = {}) {
+      const fd = new FormData();
+      images.forEach((img, idx) => {
+        fd.append('images', {
+          uri: img.uri,
+          name: img.fileName || `upload-${idx + 1}.jpg`,
+          type: img.mimeType || 'image/jpeg',
+        });
+      });
+      if (itemId) fd.append('item_id', itemId);
+      return requestJson({
+        apiBaseUrl,
+        path: '/v1/uploads/images',
+        method: 'POST',
+        auth,
+        body: fd,
+      });
+    },
+    async queueListingAnalysis({ listingId, images = [], imageUrls = [], category, userCondition, itemDescription, itemSize, debug = true }, auth = {}) {
+      const fd = new FormData();
+      images.forEach((img, idx) => {
+        fd.append('images', {
+          uri: img.uri,
+          name: img.fileName || `upload-${idx + 1}.jpg`,
+          type: img.mimeType || 'image/jpeg',
+        });
+      });
+      if (Array.isArray(imageUrls) && imageUrls.length > 0) fd.append('image_urls_json', JSON.stringify(imageUrls));
+      if (category) fd.append('category', category);
+      if (userCondition) fd.append('user_condition', userCondition);
+      if (itemDescription) fd.append('item_description', itemDescription);
+      if (itemSize) fd.append('item_size', itemSize);
+      fd.append('debug', String(Boolean(debug)));
+      return requestJson({
+        apiBaseUrl,
+        path: `/v1/listings/${encodeURIComponent(listingId)}/analysis-jobs`,
+        method: 'POST',
+        auth,
+        body: fd,
+      });
+    },
     createListing(payload, auth = {}) {
       return requestJson({
         apiBaseUrl,
@@ -72,6 +119,24 @@ export function createMobileApiClient({ apiBaseUrl }) {
         auth,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
+      });
+    },
+    updateListing(listingId, payload, auth = {}) {
+      return requestJson({
+        apiBaseUrl,
+        path: `/v1/listings/${encodeURIComponent(listingId)}`,
+        method: 'PUT',
+        auth,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+    },
+    deleteListing(listingId, auth = {}) {
+      return requestJson({
+        apiBaseUrl,
+        path: `/v1/listings/${encodeURIComponent(listingId)}`,
+        method: 'DELETE',
+        auth,
       });
     },
     listListings(params = {}, auth = {}) {
@@ -147,6 +212,26 @@ export function createMobileApiClient({ apiBaseUrl }) {
         auth,
       });
     },
+    fetchShippingQuote(offerId, auth = {}) {
+      return requestJson({
+        apiBaseUrl,
+        path: `/v1/offers/${encodeURIComponent(offerId)}/shipping-quote`,
+        method: 'POST',
+        auth,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+    },
+    createShippingLabels(offerId, rateId = null, auth = {}) {
+      return requestJson({
+        apiBaseUrl,
+        path: `/v1/offers/${encodeURIComponent(offerId)}/shipping-labels`,
+        method: 'POST',
+        auth,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirmed: true, rate_id: rateId || null }),
+      });
+    },
     fetchShippingLabelDocument(shipmentId, auth = {}) {
       return requestJson({
         apiBaseUrl,
@@ -171,6 +256,37 @@ export function createMobileApiClient({ apiBaseUrl }) {
         auth,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload || {}),
+      });
+    },
+    fetchClientState(auth = {}) {
+      return requestJson({
+        apiBaseUrl,
+        path: '/v1/me/client-state',
+        method: 'GET',
+        auth,
+      });
+    },
+    saveClientState(payload, auth = {}) {
+      return requestJson({
+        apiBaseUrl,
+        path: '/v1/me/client-state',
+        method: 'PUT',
+        auth,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload || {}),
+      });
+    },
+    addressSuggestions({ q = '', city = '', state = '', postalCode = '' } = {}, auth = {}) {
+      const query = new URLSearchParams();
+      if (q) query.set('q', q);
+      if (city) query.set('city', city);
+      if (state) query.set('state', state);
+      if (postalCode) query.set('postal_code', postalCode);
+      return requestJson({
+        apiBaseUrl,
+        path: `/v1/usps/address-suggest?${query.toString()}`,
+        method: 'GET',
+        auth,
       });
     },
     paymentMethods(auth = {}) {
@@ -209,6 +325,16 @@ export function createMobileApiClient({ apiBaseUrl }) {
         body: JSON.stringify(payload || {}),
       });
     },
+    createSetupIntent(auth = {}) {
+      return requestJson({
+        apiBaseUrl,
+        path: '/v1/me/payment-methods/stripe/setup-intent',
+        method: 'POST',
+        auth,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+    },
     syncStripePaymentMethods(auth = {}) {
       return requestJson({
         apiBaseUrl,
@@ -217,6 +343,16 @@ export function createMobileApiClient({ apiBaseUrl }) {
         auth,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({}),
+      });
+    },
+    activateSubscription(payload, auth = {}) {
+      return requestJson({
+        apiBaseUrl,
+        path: '/v1/me/subscription/activate',
+        method: 'POST',
+        auth,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload || {}),
       });
     },
   };

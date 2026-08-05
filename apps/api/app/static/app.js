@@ -38,7 +38,7 @@ function truncate(text, n = 80) {
 
 function renderPreviews(files) {
   previewGrid.innerHTML = "";
-  [...files].slice(0, 4).forEach((file, index) => {
+  [...files].slice(0, 6).forEach((file, index) => {
     const fig = document.createElement("figure");
     fig.className = "preview";
     const img = document.createElement("img");
@@ -203,8 +203,8 @@ sampleBtn.addEventListener("click", () => {
 form.addEventListener("submit", async (e) => {
   e.preventDefault();
   const files = [...(imagesInput.files || [])];
-  if (files.length < 1 || files.length > 4) {
-    setStatus("Please select 1-4 images.", "error");
+  if (files.length < 1 || files.length > 6) {
+    setStatus("Please select 1-6 images.", "error");
     return;
   }
 
@@ -227,7 +227,7 @@ form.addEventListener("submit", async (e) => {
   if (itemDescription) fd.append("item_description", itemDescription);
   if (purchaseYear) fd.append("purchase_year", purchaseYear);
   fd.append("debug", String(debug));
-  files.slice(0, 4).forEach((f) => fd.append("images", f, f.name));
+  files.slice(0, 6).forEach((f) => fd.append("images", f, f.name));
 
   analyzeBtn.disabled = true;
   setStatus("Submitting analysis request...");
