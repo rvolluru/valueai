@@ -5,7 +5,7 @@ from typing import Any, Literal, TypeAlias
 from pydantic import BaseModel, Field
 
 
-ConditionGrade: TypeAlias = Literal["New", "LikeNew"]
+ConditionGrade: TypeAlias = Literal["NewWithTags", "New", "LikeNew"]
 
 
 class BrandOut(BaseModel):
@@ -50,6 +50,47 @@ class AnalyzeResponse(BaseModel):
 class UploadImagesResponse(BaseModel):
     item_id: str
     uploaded_images: list[UploadedImageOut] = Field(default_factory=list)
+
+
+class PresignImageUploadItem(BaseModel):
+    filename: str | None = None
+    content_type: str = "image/jpeg"
+    content_length: int | None = Field(default=None, ge=0)
+
+
+class PresignImageUploadRequest(BaseModel):
+    item_id: str | None = None
+    images: list[PresignImageUploadItem] = Field(default_factory=list)
+
+
+class PresignedImageUploadSlot(BaseModel):
+    image_id: str
+    role_hint: str | None = None
+    storage_uri: str
+    image_url: str
+    upload_url: str
+    method: str = "PUT"
+    headers: dict[str, str] = Field(default_factory=dict)
+    expires_in: int = 900
+
+
+class PresignImageUploadResponse(BaseModel):
+    item_id: str
+    upload_slots: list[PresignedImageUploadSlot] = Field(default_factory=list)
+
+
+class ConfirmPresignedImageUploadItem(BaseModel):
+    image_id: str
+    filename: str | None = None
+    content_type: str = "image/jpeg"
+    storage_uri: str
+    role_hint: str | None = None
+    content_hash: str | None = None
+
+
+class ConfirmPresignedImageUploadRequest(BaseModel):
+    item_id: str
+    uploaded_images: list[ConfirmPresignedImageUploadItem] = Field(default_factory=list)
 
 
 class HealthResponse(BaseModel):
@@ -119,6 +160,18 @@ class ClientStateResponse(BaseModel):
     liked_listing_ids: list[str] = Field(default_factory=list)
     created_at: str
     updated_at: str
+
+
+class UserNotificationResponse(BaseModel):
+    notification_id: str
+    owner_subject: str
+    actor_subject: str | None = None
+    type: str
+    title: str
+    body: str
+    entity_id: str | None = None
+    action_tab: str | None = None
+    created_at: str
 
 
 class PaymentMethodCreateRequest(BaseModel):

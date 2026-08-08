@@ -75,13 +75,20 @@ class Settings(BaseSettings):
     brand_logo_yolo_weights_path: str | None = None
     brand_logo_yolo_confidence: float = 0.35
     gpt_item_profile_enabled: bool = True
-    gpt_item_profile_provider_order: str = "gemini,openai"
+    gpt_item_profile_provider_order: str = "hybrid,gemini,openai"
     gpt_item_profile_model: str = "gpt-5"
     gpt_item_profile_gemini_model: str = "gemini-2.5-flash"
     gpt_item_profile_timeout_s: float = 25.0
-    gpt_item_profile_max_images: int = Field(default=2, ge=1, le=4)
+    gpt_item_profile_max_images: int = Field(default=6, ge=1, le=6)
     gpt_item_profile_image_detail: str = "auto"
     gpt_item_profile_reasoning_effort: str = "low"
+    gpt_item_profile_vertex_search_enabled: bool = False
+    gpt_item_profile_vertex_search_project_id: str | None = None
+    gpt_item_profile_vertex_search_location: str = "global"
+    gpt_item_profile_vertex_search_model: str | None = None
+    gpt_item_profile_vertex_search_datastore: str | None = None
+    gpt_item_profile_vertex_search_access_token: str | None = None
+    gpt_item_profile_vertex_search_max_results: int = Field(default=10, ge=1, le=10)
 
     condition_rembg_enabled: bool = False
     image_staging_enabled: bool = True

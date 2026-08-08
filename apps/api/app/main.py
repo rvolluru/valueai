@@ -49,6 +49,7 @@ from .schemas import (
     BrandOut,
     ClientStateResponse,
     ClientStateUpdateRequest,
+    ConfirmPresignedImageUploadRequest,
     ConditionGrade,
     ConditionOut,
     HealthResponse,
@@ -63,6 +64,9 @@ from .schemas import (
     PaymentMethodCreateRequest,
     PaymentMethodListResponse,
     PaymentMethodResponse,
+    PresignImageUploadRequest,
+    PresignImageUploadResponse,
+    PresignedImageUploadSlot,
     StripeSetupCheckoutRequest,
     StripeSetupCheckoutResponse,
     StripeAttachPaymentMethodRequest,
@@ -75,6 +79,7 @@ from .schemas import (
     TradeMatchStatusUpdateRequest,
     UploadedImageOut,
     UploadImagesResponse,
+    UserNotificationResponse,
     UserProfileQuizResponse,
     UserProfileQuizUpdateRequest,
     VersionResponse,
@@ -200,8 +205,15 @@ if _settings.storage_backend == "local":
     app.mount("/uploads", StaticFiles(directory=str(_uploads_dir)), name="uploads")
 
 VALID_CATEGORIES = {"clothes", "shoes", "handbag"}
-VALID_CONDITION_GRADES = {"new": "New", "likenew": "LikeNew"}
-CONDITION_SEVERITY_RANK = {"New": 5, "LikeNew": 4}
+VALID_CONDITION_GRADES = {
+    "newwithtags": "NewWithTags",
+    "newwithtag": "NewWithTags",
+    "brandnewwithtags": "NewWithTags",
+    "nwt": "NewWithTags",
+    "new": "New",
+    "likenew": "LikeNew",
+}
+CONDITION_SEVERITY_RANK = {"NewWithTags": 6, "New": 5, "LikeNew": 4}
 
 
 def _trade_match_tolerance(value: float) -> tuple[float, float]:
@@ -268,6 +280,29 @@ def _listing_matches_viewer_size_preferences(
     if not allowed:
         return False
     return listing_size in allowed
+
+
+def _sent_offer_match_pairs(db: Database, subject: str) -> set[tuple[str, str]]:
+    """Return active marketplace target/offered-listing pairs already sent by this viewer."""
+    active_statuses = {"pending", "accepted", "countered"}
+    pairs: set[tuple[str, str]] = set()
+    for offer in db.list_trade_offers_for_subject(subject, limit=200, status=None):
+        if str(offer.get("from_subject") or "") != subject:
+            continue
+        if str(offer.get("status") or "").lower() not in active_statuses:
+            continue
+        target_id = str(offer.get("target_listing_id") or "").strip()
+        offered_ids = [
+            str(x).strip()
+            for x in (offer.get("offered_listing_ids") or [])
+            if isinstance(x, str) and str(x).strip()
+        ]
+        if not offered_ids and isinstance(offer.get("offered_listing_id"), str):
+            offered_ids = [offer["offered_listing_id"].strip()]
+        for offered_id in offered_ids:
+            if target_id and offered_id:
+                pairs.add((target_id, offered_id))
+    return pairs
 
 
 def _public_image_url_from_storage_uri(storage_uri: str, settings: Settings) -> str:
@@ -1097,6 +1132,105 @@ def _extract_prices_from_text(value: object) -> list[float]:
     return out
 
 
+def _extract_retail_prices_from_text(value: object) -> list[float]:
+    if not isinstance(value, str):
+        return []
+    patterns = [
+        r"retail(?:\s+(?:price|value|reference|msrp))?[^$]{0,80}\$\s*(\d{1,6}(?:,\d{3})*(?:\.\d{1,2})?)",
+        r"\$\s*(\d{1,6}(?:,\d{3})*(?:\.\d{1,2})?)[^.\n]{0,80}\bretail\b",
+    ]
+    values: list[float] = []
+    for pattern in patterns:
+        for match in re.findall(pattern, value, flags=re.IGNORECASE):
+            try:
+                price = float(str(match).replace(",", ""))
+            except Exception:
+                continue
+            if price > 0:
+                values.append(price)
+    return values
+
+
+def _retail_to_resale_factor_for_category(category: object) -> float:
+    category_key = str(category or "").strip().casefold()
+    if category_key == "handbag":
+        return 0.88
+    if category_key == "shoes":
+        return 0.80
+    if category_key == "clothes":
+        return 0.72
+    return 0.80
+
+
+def _condition_multiplier_for_retail_fallback(condition_grade: str | None) -> float:
+    condition_key = str(condition_grade or "").strip()
+    return {
+        "NewWithTags": 1.10,
+        "New": 1.00,
+        "LikeNew": 0.90,
+        "Good": 0.75,
+        "Fair": 0.55,
+        "Poor": 0.35,
+    }.get(condition_key, 0.90)
+
+
+def _visual_condition_pricing_multiplier(item_profile: dict[str, object]) -> tuple[float, dict[str, object]]:
+    assessment = item_profile.get("visual_condition_assessment")
+    if not isinstance(assessment, dict):
+        return 1.0, {"applied": False}
+    pricing_tier = str(assessment.get("pricing_tier") or "").strip().casefold()
+    wear_level = str(assessment.get("wear_level") or "").strip().casefold()
+    box_included = str(assessment.get("box_included") or "").strip().casefold()
+    dust_bag_included = str(assessment.get("dust_bag_included") or "").strip().casefold()
+    new_in_box_signal = str(assessment.get("new_in_box_signal") or "").strip().casefold()
+    try:
+        confidence = max(0.0, min(float(assessment.get("confidence")), 1.0))
+    except Exception:
+        confidence = 0.0
+
+    multiplier = 1.0
+    reasons: list[str] = []
+    if confidence >= 0.55 and pricing_tier == "new_in_box":
+        multiplier = 1.18
+        reasons.append("new_in_box_pricing_tier")
+    elif confidence >= 0.55 and pricing_tier == "pristine":
+        multiplier = 1.10
+        reasons.append("pristine_pricing_tier")
+
+    if confidence >= 0.55 and wear_level == "pristine":
+        multiplier = max(multiplier, 1.08)
+        reasons.append("pristine_wear_level")
+    if confidence >= 0.55 and box_included == "yes":
+        multiplier += 0.04
+        reasons.append("box_included")
+    if confidence >= 0.55 and dust_bag_included == "yes":
+        multiplier += 0.03
+        reasons.append("dust_bag_included")
+    if confidence >= 0.55 and new_in_box_signal == "yes":
+        multiplier = max(multiplier, 1.18)
+        reasons.append("new_in_box_signal")
+
+    multiplier = min(multiplier, 1.18)
+    if multiplier <= 1.0:
+        return 1.0, {
+            "applied": False,
+            "pricing_tier": pricing_tier or "unclear",
+            "confidence": round(confidence, 3),
+        }
+    return multiplier, {
+        "applied": True,
+        "multiplier": round(multiplier, 3),
+        "pricing_tier": pricing_tier,
+        "wear_level": wear_level,
+        "box_included": box_included,
+        "dust_bag_included": dust_bag_included,
+        "new_in_box_signal": new_in_box_signal,
+        "confidence": round(confidence, 3),
+        "reasons": list(dict.fromkeys(reasons)),
+        "evidence": assessment.get("evidence") if isinstance(assessment.get("evidence"), list) else [],
+    }
+
+
 def _select_breakdown_row(
     breakdown: object,
     *,
@@ -1112,9 +1246,18 @@ def _select_breakdown_row(
 
     def score(label: str) -> int:
         lbl = label.casefold()
+        if target == "newwithtags":
+            if "current-season" in lbl or "current season" in lbl:
+                return 105
+            if "new with tags" in lbl or "nwt" in lbl or "brand new with tags" in lbl:
+                return 100
+            if "brand new" in lbl or "tags" in lbl:
+                return 95
+            if "new" in lbl or "pristine" in lbl:
+                return 85
         if target == "new":
             if "original retail" in lbl:
-                return 100
+                return 40
             if "high-end" in lbl or "excellent" in lbl or "new" in lbl or "pristine" in lbl:
                 return 90
         if target == "likenew":
@@ -1172,21 +1315,58 @@ def valuation_from_gpt_item_profile(
     pricing_row_label = "resale_price_estimate"
     if isinstance(resale, dict):
         estimated_value = _coerce_positive_float(resale.get("estimated_price"))
+    breakdown_estimated_value, breakdown_range_low, breakdown_range_high, breakdown_row_label = _select_breakdown_row(
+        resale_breakdown,
+        condition_grade=condition_grade,
+    )
+    if (
+        str(condition_grade or "").strip().casefold() == "newwithtags"
+        and breakdown_estimated_value is not None
+        and (estimated_value is None or breakdown_estimated_value > estimated_value)
+    ):
+        estimated_value = breakdown_estimated_value
+        range_low = breakdown_range_low
+        range_high = breakdown_range_high
+        pricing_row_label = breakdown_row_label
     if estimated_value is None:
-        estimated_value, range_low, range_high, pricing_row_label = _select_breakdown_row(
-            resale_breakdown,
-            condition_grade=condition_grade,
-        )
+        estimated_value = breakdown_estimated_value
+        range_low = breakdown_range_low
+        range_high = breakdown_range_high
+        pricing_row_label = breakdown_row_label
+
+    retail_reference = _coerce_positive_float(retail.get("estimated_price")) if isinstance(retail, dict) else None
+    retail_derived = False
+    visual_condition_adjustment: dict[str, object] = {"applied": False}
+    if estimated_value is None and retail_reference is not None:
+        factor = _retail_to_resale_factor_for_category(item_profile.get("category"))
+        condition_multiplier = _condition_multiplier_for_retail_fallback(condition_grade)
+        visual_multiplier, visual_condition_adjustment = _visual_condition_pricing_multiplier(item_profile)
+        estimated_value = retail_reference * factor * condition_multiplier * visual_multiplier
+        range_low = estimated_value * 0.85
+        range_high = estimated_value * 1.15
+        pricing_row_label = "retail_price_estimate_resale_fallback"
+        retail_derived = True
     if estimated_value is None:
         return None
 
-    retail_reference = _coerce_positive_float(retail.get("estimated_price")) if isinstance(retail, dict) else None
     confidence = resale.get("confidence") if isinstance(resale, dict) else None
+    if retail_derived:
+        retail_confidence = retail.get("confidence") if isinstance(retail, dict) else None
+        try:
+            confidence = min(float(retail_confidence), 0.35)
+        except Exception:
+            confidence = 0.35
     try:
         confidence_01 = max(0.0, min(float(confidence), 1.0))
     except Exception:
         confidence_01 = 0.5
-    currency = resale.get("currency") if isinstance(resale, dict) and isinstance(resale.get("currency"), str) else default_currency
+    currency = (
+        resale.get("currency")
+        if isinstance(resale, dict) and isinstance(resale.get("currency"), str)
+        else retail.get("currency")
+        if isinstance(retail, dict) and isinstance(retail.get("currency"), str)
+        else default_currency
+    )
 
     return {
         "estimated_value": round(estimated_value, 2),
@@ -1194,11 +1374,47 @@ def valuation_from_gpt_item_profile(
         "range_low": round(range_low, 2) if isinstance(range_low, (int, float)) else None,
         "range_high": round(range_high, 2) if isinstance(range_high, (int, float)) else None,
         "confidence": round(confidence_01, 3),
-        "basis": "gpt_resale_estimate_primary" if pricing_row_label == "resale_price_estimate" else "gpt_resale_breakdown_condition_selected",
+        "basis": (
+            "gpt_resale_estimate_primary"
+            if pricing_row_label == "resale_price_estimate"
+            else "gpt_retail_reference_resale_fallback"
+            if pricing_row_label == "retail_price_estimate_resale_fallback"
+            else "gpt_resale_breakdown_condition_selected"
+        ),
         "comps_summary": {"count": 1, "source_breakdown": {"gpt_item_profile": 1}},
         "resale_market_value": round(estimated_value, 2),
         "retail_reference_value": round(retail_reference, 2) if retail_reference is not None else None,
         "selected_breakdown_label": pricing_row_label if pricing_row_label != "resale_price_estimate" else None,
+        "visual_condition_adjustment": visual_condition_adjustment if retail_derived else {"applied": False},
+    }
+
+
+def apply_gemini_grounded_retail_reference(
+    item_profile: dict[str, object] | None,
+    workflow_debug: object,
+    item_profile_debug: dict[str, object],
+) -> None:
+    if not isinstance(item_profile, dict) or not isinstance(workflow_debug, dict):
+        return
+    retail = item_profile.get("retail_price_estimate")
+    if isinstance(retail, dict) and _coerce_positive_float(retail.get("estimated_price")) is not None:
+        return
+    grounded_search = workflow_debug.get("grounded_search")
+    prices = _extract_retail_prices_from_text(grounded_search)
+    if not prices:
+        return
+    retail_reference = max(prices)
+    item_profile["retail_price_estimate"] = {
+        "estimated_price": retail_reference,
+        "currency": "USD",
+        "confidence": 0.35,
+        "rationale": "Extracted from Gemini grounded retail evidence because structured retail pricing was missing.",
+        "references": [],
+    }
+    item_profile_debug["retail_reference_extracted"] = {
+        "applied": True,
+        "estimated_price": round(retail_reference, 2),
+        "source": "gemini_grounded_search",
     }
 
 
@@ -1216,11 +1432,11 @@ def normalize_category(value: str | None) -> str | None:
 def normalize_condition_grade(value: str | None) -> ConditionGrade | None:
     if value is None:
         return None
-    norm = value.strip().replace(" ", "").casefold()
+    norm = value.strip().replace("-", "").replace("_", "").replace(" ", "").casefold()
     if not norm:
         return None
     if norm not in VALID_CONDITION_GRADES:
-        raise HTTPException(status_code=400, detail="user_condition must be New|LikeNew")
+        raise HTTPException(status_code=400, detail="user_condition must be NewWithTags|New|LikeNew")
     return VALID_CONDITION_GRADES[norm]  # type: ignore[return-value]
 
 
@@ -1580,6 +1796,66 @@ def put_client_state(
         ),
     )
     return ClientStateResponse(**saved)
+
+
+@app.get("/v1/me/notifications")
+def list_notifications(
+    limit: int = Query(50, ge=1, le=100),
+    principal: AuthPrincipal = Depends(get_request_principal),
+    db: Database = Depends(get_db),
+):
+    items = db.list_user_notifications(principal.subject, limit=limit)
+    return {
+        "count": len(items),
+        "items": [UserNotificationResponse(**item).model_dump() for item in items],
+    }
+
+
+@app.delete("/v1/me/notifications")
+def clear_notifications(
+    principal: AuthPrincipal = Depends(get_request_principal),
+    db: Database = Depends(get_db),
+):
+    deleted = db.delete_user_notifications(principal.subject)
+    return {"deleted": deleted}
+
+
+@app.delete("/v1/me/notifications/{notification_id}")
+def delete_notification(
+    notification_id: str,
+    principal: AuthPrincipal = Depends(get_request_principal),
+    db: Database = Depends(get_db),
+):
+    db.delete_user_notification(principal.subject, notification_id)
+    return {"deleted": True}
+
+
+@app.post("/v1/listings/{listing_id}/like")
+def like_listing(
+    listing_id: str,
+    principal: AuthPrincipal = Depends(get_request_principal),
+    db: Database = Depends(get_db),
+):
+    listing = db.get_listing_by_id(listing_id)
+    if not listing:
+        raise HTTPException(status_code=404, detail="Listing not found")
+    owner_subject = str(listing.get("owner_subject") or "").strip()
+    if not owner_subject:
+        raise HTTPException(status_code=409, detail="Listing owner is unavailable")
+    if owner_subject == principal.subject:
+        return {"created": False, "reason": "own_listing"}
+    title = str(listing.get("title") or "your listing").strip() or "your listing"
+    notification = db.create_user_notification(
+        notification_id=str(uuid.uuid4()),
+        owner_subject=owner_subject,
+        actor_subject=principal.subject,
+        type="listing-liked",
+        title="Listing liked",
+        body=f"Someone liked {title}.",
+        entity_id=listing_id,
+        action_tab="marketplace",
+    )
+    return {"created": True, "notification": UserNotificationResponse(**notification).model_dump()}
 
 
 @app.get("/v1/me/payment-methods", response_model=PaymentMethodListResponse)
@@ -2651,6 +2927,7 @@ def list_recent_listings(
 
     if include_matches and not mine:
         viewer_size_prefs = _profile_size_preferences(db.get_user_profile_quiz(principal.subject))
+        sent_offer_pairs = _sent_offer_match_pairs(db, principal.subject)
         my_active = [
             _normalize_listing_media(x)
             for x in db.list_owner_listings(principal.subject, limit=200)
@@ -2673,12 +2950,19 @@ def list_recent_listings(
             for candidate in my_active:
                 if str(candidate.get("listing_id") or "") == str(record.get("listing_id") or ""):
                     continue
+                if (str(record.get("listing_id") or ""), str(candidate.get("listing_id") or "")) in sent_offer_pairs:
+                    continue
                 candidate_owner_subject = str(candidate.get("owner_subject") or "")
                 candidate_owner_name = str(candidate.get("owner_name") or "").strip().lower()
                 if owner_subject and candidate_owner_subject and owner_subject == candidate_owner_subject:
                     # Never return same-owner listings as matches.
                     continue
-                if owner_name and candidate_owner_name and owner_name == candidate_owner_name:
+                if (
+                    (not owner_subject or not candidate_owner_subject)
+                    and owner_name
+                    and candidate_owner_name
+                    and owner_name == candidate_owner_name
+                ):
                     # Older records may be missing a stable subject; still avoid same-owner matches.
                     continue
                 candidate_value = float(candidate.get("estimated_value") or 0)
@@ -2757,11 +3041,14 @@ def list_offer_candidates(
     tolerance, _ = _trade_match_tolerance(target_value)
     safe_limit = max(1, min(limit, 200))
     mine = db.list_owner_listings(principal.subject, limit=safe_limit)
+    sent_offer_pairs = _sent_offer_match_pairs(db, principal.subject)
     candidates: list[dict] = []
     for record in mine:
         if str(record.get("status") or "").lower() != "active":
             continue
         if str(record.get("listing_id") or "") == str(target.get("listing_id") or ""):
+            continue
+        if (str(target.get("listing_id") or ""), str(record.get("listing_id") or "")) in sent_offer_pairs:
             continue
         cand_value = float(record.get("estimated_value") or 0)
         if cand_value <= 0:
@@ -2988,6 +3275,7 @@ def create_offer(
     payload: OfferCreateRequest,
     principal: AuthPrincipal = Depends(get_request_principal),
     db: Database = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ):
     offered_ids = [x for x in (payload.offered_listing_ids or []) if isinstance(x, str) and x.strip()]
     if payload.offered_listing_id and payload.offered_listing_id.strip():
@@ -3002,6 +3290,8 @@ def create_offer(
         raise HTTPException(status_code=404, detail="Target listing not found")
     if target["owner_subject"] == principal.subject:
         raise HTTPException(status_code=400, detail="Cannot create a trade offer on your own listing")
+    if not _subject_has_complete_shipping_address(db, principal.subject, settings):
+        raise HTTPException(status_code=400, detail="Add a complete shipping address in Profile before sending a trade offer")
     if str(target.get("status", "")).lower() != "active":
         raise HTTPException(status_code=400, detail="Target listing is not active")
     target_value = float(target.get("estimated_value") or 0)
@@ -3107,6 +3397,8 @@ def action_offer(
         raise HTTPException(status_code=403, detail="Forbidden")
     if payload.status == "accepted" and principal.subject == str(offer.get("from_subject") or ""):
         raise HTTPException(status_code=400, detail="Sender is already marked ready. Only the receiver needs to accept.")
+    if payload.status == "accepted" and not _subject_has_complete_shipping_address(db, principal.subject, settings):
+        raise HTTPException(status_code=400, detail="Add a complete shipping address in Profile before accepting trade")
     if payload.status == "accepted" and payload.receive_address is None:
         raise HTTPException(status_code=400, detail="Select receive shipping address while accepting trade")
     receive_address_payload = payload.receive_address.model_dump() if payload.receive_address else None
@@ -3243,6 +3535,10 @@ def _address_complete(a: dict[str, str | None]) -> bool:
         and (a.get("postal") or "").strip()
         and (a.get("country") or "").strip()
     )
+
+
+def _subject_has_complete_shipping_address(db: Database, subject: str, settings: Settings | None = None) -> bool:
+    return _address_complete(_subject_shipping_snapshot(db, subject, settings))
 
 
 def _contact_complete(a: dict[str, str | None]) -> bool:
@@ -4301,6 +4597,113 @@ def auth_me(principal: AuthPrincipal = Depends(require_clerk_user), settings: Se
     )
 
 
+def _upload_extension(filename: str | None, content_type: str | None) -> str:
+    normalized_type = (content_type or "").split(";")[0].strip().lower()
+    if normalized_type in {"image/jpeg", "image/jpg"}:
+        return ".jpg"
+    if normalized_type == "image/png":
+        return ".png"
+    if normalized_type == "image/webp":
+        return ".webp"
+    ext = os.path.splitext(filename or "")[1].lower()
+    if ext in {".jpg", ".jpeg", ".png", ".webp"}:
+        return ".jpg" if ext == ".jpeg" else ext
+    return ".jpg"
+
+
+@app.post("/v1/uploads/images/presign", response_model=PresignImageUploadResponse)
+def presign_image_uploads(
+    payload: PresignImageUploadRequest,
+    settings: Settings = Depends(get_settings),
+    principal: AuthPrincipal = Depends(get_request_principal),
+    storage: Storage = Depends(get_storage),
+) -> PresignImageUploadResponse:
+    _ = principal.subject
+    item_id = (payload.item_id or "").strip() or f"item-{uuid.uuid4()}"
+    if not payload.images:
+        raise HTTPException(status_code=400, detail="At least one image is required")
+    if len(payload.images) > settings.max_images_per_request:
+        raise HTTPException(status_code=400, detail=f"Maximum {settings.max_images_per_request} images")
+
+    slots: list[PresignedImageUploadSlot] = []
+    for idx, image in enumerate(payload.images):
+        content_type = (image.content_type or "image/jpeg").split(";")[0].strip().lower() or "image/jpeg"
+        if not content_type.startswith("image/"):
+            raise HTTPException(status_code=400, detail="Only image uploads are supported")
+        image_uuid = str(uuid.uuid4())
+        filename = f"{image_uuid}{_upload_extension(image.filename, content_type)}"
+        try:
+            upload_url, storage_uri = storage.create_presigned_upload(
+                item_id=item_id,
+                filename=filename,
+                content_type=content_type,
+            )
+        except NotImplementedError as exc:
+            raise HTTPException(status_code=409, detail="Direct uploads are not configured for this environment") from exc
+        role_hint = "full_item" if idx == 0 else "close_up"
+        slots.append(
+            PresignedImageUploadSlot(
+                image_id=image_uuid,
+                role_hint=role_hint,
+                storage_uri=storage_uri,
+                image_url=f"/v1/images/{image_uuid}",
+                upload_url=upload_url,
+                headers={"Content-Type": content_type},
+            )
+        )
+
+    return PresignImageUploadResponse(item_id=item_id, upload_slots=slots)
+
+
+@app.post("/v1/uploads/images/confirm", response_model=UploadImagesResponse)
+def confirm_presigned_image_uploads(
+    payload: ConfirmPresignedImageUploadRequest,
+    settings: Settings = Depends(get_settings),
+    principal: AuthPrincipal = Depends(get_request_principal),
+    db: Database = Depends(get_db),
+    storage: Storage = Depends(get_storage),
+) -> UploadImagesResponse:
+    _ = principal.subject
+    item_id = payload.item_id.strip()
+    if not item_id:
+        raise HTTPException(status_code=400, detail="item_id is required")
+    if not payload.uploaded_images:
+        raise HTTPException(status_code=400, detail="At least one uploaded image is required")
+    if len(payload.uploaded_images) > settings.max_images_per_request:
+        raise HTTPException(status_code=400, detail=f"Maximum {settings.max_images_per_request} images")
+
+    db.insert_item(item_id)
+    uploaded_images_out: list[UploadedImageOut] = []
+    for idx, image in enumerate(payload.uploaded_images):
+        try:
+            exists = storage.object_exists(image.storage_uri)
+        except NotImplementedError as exc:
+            raise HTTPException(status_code=409, detail="Direct uploads are not configured for this environment") from exc
+        if not exists:
+            raise HTTPException(status_code=400, detail="Uploaded image was not found in storage")
+        role_hint = image.role_hint or ("full_item" if idx == 0 else "close_up")
+        db.insert_image(
+            PersistedImage(
+                image_id=image.image_id,
+                item_id=item_id,
+                storage_uri=image.storage_uri,
+                filename=(image.filename or f"{image.image_id}.jpg"),
+                role_hint=role_hint,
+                content_hash=image.content_hash,
+            )
+        )
+        uploaded_images_out.append(
+            UploadedImageOut(
+                image_id=image.image_id,
+                role_hint=role_hint,
+                storage_uri=image.storage_uri,
+                image_url=f"/v1/images/{image.image_id}",
+            )
+        )
+
+    return UploadImagesResponse(item_id=item_id, uploaded_images=uploaded_images_out)
+
+
 @app.post("/v1/uploads/images", response_model=UploadImagesResponse)
 async def upload_images(
     images: Annotated[list[UploadFile], File(...)],
@@ -4863,6 +5266,7 @@ async def analyze(
             workflow_debug = item_profile_payload.pop("_workflow", None)
             if workflow_debug is not None:
                 item_profile_debug["workflow"] = workflow_debug
+                apply_gemini_grounded_retail_reference(item_profile_payload, workflow_debug, item_profile_debug)
         inferred_profile_category = infer_category_from_item_profile(item_profile_payload)
         if (
             inferred_profile_category

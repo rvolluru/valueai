@@ -216,6 +216,41 @@ export function createApiClient(options) {
     });
   }
 
+  async function createImageUploadSlots({ images = [], itemId }, auth = {}) {
+    const resolvedAuth = await resolveAuth(auth);
+    return post(
+      "/v1/uploads/images/presign",
+      {
+        item_id: itemId || null,
+        images: images.map((img, idx) => ({
+          filename: img.filename || img.fileName || img.name || `upload-${idx + 1}.jpg`,
+          content_type: img.contentType || img.mimeType || img.type || "image/jpeg",
+          content_length: Number.isFinite(Number(img.contentLength || img.size)) ? Number(img.contentLength || img.size) : null,
+        })),
+      },
+      resolvedAuth,
+    );
+  }
+
+  async function confirmImageUploads({ itemId, uploadedImages = [] }, auth = {}) {
+    const resolvedAuth = await resolveAuth(auth);
+    return post(
+      "/v1/uploads/images/confirm",
+      {
+        item_id: itemId,
+        uploaded_images: uploadedImages.map((img) => ({
+          image_id: img.image_id || img.imageId,
+          filename: img.filename || img.fileName || null,
+          content_type: img.content_type || img.contentType || img.mimeType || "image/jpeg",
+          storage_uri: img.storage_uri || img.storageUri,
+          role_hint: img.role_hint || img.roleHint || null,
+          content_hash: img.content_hash || img.contentHash || null,
+        })),
+      },
+      resolvedAuth,
+    );
+  }
+
   async function queueListingAnalysis(
     { listingId, images = [], category, userCondition, itemDescription, itemSize, debug = true },
     auth = {},
@@ -255,6 +290,8 @@ export function createApiClient(options) {
     delete: del,
     analyzeItem,
     uploadImages,
+    createImageUploadSlots,
+    confirmImageUploads,
     queueListingAnalysis,
     listListings: (params = {}, auth = {}) => {
       const query = new URLSearchParams();
@@ -280,6 +317,10 @@ export function createApiClient(options) {
     saveProfileQuiz: (payload, auth = {}) => put("/v1/me/profile-quiz", payload, auth),
     clientState: (auth = {}) => get("/v1/me/client-state", auth),
     saveClientState: (payload, auth = {}) => put("/v1/me/client-state", payload, auth),
+    listNotifications: (limit = 50, auth = {}) => get(`/v1/me/notifications?limit=${limit}`, auth),
+    clearNotifications: (auth = {}) => del("/v1/me/notifications", auth),
+    deleteNotification: (notificationId, auth = {}) => del(`/v1/me/notifications/${encodeURIComponent(notificationId)}`, auth),
+    likeListing: (listingId, auth = {}) => post(`/v1/listings/${encodeURIComponent(listingId)}/like`, {}, auth),
     paymentMethods: (auth = {}) => get("/v1/me/payment-methods", auth),
     createSetupCheckoutSession: ({ successUrl, cancelUrl }, auth = {}) =>
       post("/v1/me/payment-methods/stripe/setup-checkout-session", { success_url: successUrl, cancel_url: cancelUrl }, auth),

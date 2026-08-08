@@ -15,6 +15,7 @@ import {
 } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
+import * as ImageManipulator from 'expo-image-manipulator';
 import * as WebBrowser from 'expo-web-browser';
 import Constants from 'expo-constants';
 import { StatusBar } from 'expo-status-bar';
@@ -35,6 +36,8 @@ const CONTACT_EMAIL = 'admin@jouft.com';
 const CONTACT_ADDRESS_LINES = ['120 Vantis Dr. Suite 300', 'Aliso Viejo, CA 92656', 'US'];
 const CONTACT_MAP_QUERY = '120 Vantis Dr Suite 300, Aliso Viejo, CA 92656, US';
 const CONTACT_DIRECTIONS_URL = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(CONTACT_MAP_QUERY)}`;
+const UPLOAD_MAX_DIMENSION = 1600;
+const UPLOAD_JPEG_QUALITY = 0.82;
 const TABS = ['marketplace', 'closet', 'create', 'inbox', 'profile'];
 const TAB_LABELS = {
   marketplace: 'Market',
@@ -56,8 +59,12 @@ const SUBSCRIPTION_PLANS = [
   { key: 'starter_15', label: '$15 Plan', monthly: 15, annual: 162, limit: '25 listings / month' },
   { key: 'pro_25', label: '$25 Plan', monthly: 25, annual: 270, limit: 'Unlimited listings' },
 ];
-const FEMALE_APPAREL_SIZE_OPTIONS = ['XXS', 'XS', 'S', 'M', 'L', 'XL', 'XXL'];
-const MALE_APPAREL_SIZE_OPTIONS = ['XS', 'S', 'M', 'L', 'XL', 'XXL', 'XXXL'];
+const US_NUMERIC_APPAREL_SIZE_OPTIONS = ['00', '0', '2', '4', '6', '8', '10', '12', '14', '16', '18', '20', '22', '24'];
+const FEMALE_ALPHA_APPAREL_SIZE_OPTIONS = ['XXS', 'XS', 'S', 'M', 'L', 'XL', 'XXL'];
+const MALE_ALPHA_APPAREL_SIZE_OPTIONS = ['XS', 'S', 'M', 'L', 'XL', 'XXL', 'XXXL'];
+const FEMALE_APPAREL_SIZE_OPTIONS = [...FEMALE_ALPHA_APPAREL_SIZE_OPTIONS, ...US_NUMERIC_APPAREL_SIZE_OPTIONS];
+const MALE_APPAREL_SIZE_OPTIONS = [...MALE_ALPHA_APPAREL_SIZE_OPTIONS, ...US_NUMERIC_APPAREL_SIZE_OPTIONS];
+const APPAREL_SIZE_OPTIONS = ['XXS', 'XS', 'S', 'M', 'L', 'XL', 'XXL', 'XXXL', ...US_NUMERIC_APPAREL_SIZE_OPTIONS];
 const FEMALE_SHOE_SIZE_OPTIONS = ['US 5', 'US 5.5', 'US 6', 'US 6.5', 'US 7', 'US 7.5', 'US 8', 'US 8.5', 'US 9', 'US 9.5', 'US 10', 'US 10.5', 'US 11', 'US 12'];
 const MALE_SHOE_SIZE_OPTIONS = ['US 6', 'US 6.5', 'US 7', 'US 7.5', 'US 8', 'US 8.5', 'US 9', 'US 9.5', 'US 10', 'US 10.5', 'US 11', 'US 11.5', 'US 12', 'US 13', 'US 14'];
 const PROFILE_CATEGORY_OPTIONS = ['Dresses', 'Jackets', 'Shoes', 'Handbags', 'Skirts', 'Accessories'];
@@ -85,7 +92,8 @@ try {
   NotificationsModule = require('expo-notifications');
   NotificationsModule.setNotificationHandler({
     handleNotification: async () => ({
-      shouldShowAlert: true,
+      shouldShowBanner: true,
+      shouldShowList: true,
       shouldPlaySound: false,
       shouldSetBadge: false,
     }),
@@ -117,12 +125,97 @@ const DEFAULT_ALERT_PREFS = {
   shipping: true,
 };
 
+function uploadBaseName(name, index) {
+  const fallback = `upload-${index + 1}`;
+  const cleanName = String(name || fallback);
+  const dotIndex = cleanName.lastIndexOf('.');
+  return dotIndex > 0 ? cleanName.slice(0, dotIndex) : cleanName;
+}
+
+async function prepareMobileImageForUpload(image, index) {
+  const width = Number(image?.width || 0);
+  const height = Number(image?.height || 0);
+  const resizeAction = width > 0 && height > 0 && Math.max(width, height) > UPLOAD_MAX_DIMENSION
+    ? [{
+      resize: width >= height
+        ? { width: UPLOAD_MAX_DIMENSION }
+        : { height: UPLOAD_MAX_DIMENSION },
+    }]
+    : [];
+  const result = await ImageManipulator.manipulateAsync(
+    image.uri,
+    resizeAction,
+    { compress: UPLOAD_JPEG_QUALITY, format: ImageManipulator.SaveFormat.JPEG },
+  );
+  return {
+    ...image,
+    uri: result.uri,
+    width: result.width || image.width,
+    height: result.height || image.height,
+    fileName: `${uploadBaseName(image.fileName || image.name, index)}.jpg`,
+    mimeType: 'image/jpeg',
+    fileSize: result.fileSize || image.fileSize || null,
+  };
+}
+
+async function uploadImagesWithDirectFallback({ apiClient, images, auth }) {
+  let prepared = [];
+  try {
+    prepared = await Promise.all((images || []).map((image, index) => prepareMobileImageForUpload(image, index)));
+  } catch (e) {
+    prepared = images || [];
+  }
+  try {
+    const blobs = await Promise.all(prepared.map(async (image) => {
+      const resp = await fetch(image.uri);
+      if (!resp.ok) throw new Error('Could not read prepared image for upload.');
+      return resp.blob();
+    }));
+    const presigned = await apiClient.createImageUploadSlots({
+      images: prepared.map((image, index) => ({
+        fileName: image.fileName || `upload-${index + 1}.jpg`,
+        mimeType: image.mimeType || 'image/jpeg',
+        contentLength: blobs[index]?.size || image.fileSize || null,
+      })),
+    }, auth);
+    const slots = presigned?.upload_slots || [];
+    if (slots.length !== prepared.length) throw new Error('Upload slot count did not match selected images.');
+    await Promise.all(slots.map(async (slot, index) => {
+      const resp = await fetch(slot.upload_url, {
+        method: slot.method || 'PUT',
+        headers: slot.headers || { 'Content-Type': prepared[index]?.mimeType || 'image/jpeg' },
+        body: blobs[index],
+      });
+      if (!resp.ok) throw new Error(`Direct image upload failed (${resp.status})`);
+    }));
+    return apiClient.confirmImageUploads({
+      itemId: presigned.item_id,
+      uploadedImages: slots.map((slot, index) => ({
+        image_id: slot.image_id,
+        filename: prepared[index]?.fileName || `upload-${index + 1}.jpg`,
+        content_type: prepared[index]?.mimeType || 'image/jpeg',
+        storage_uri: slot.storage_uri,
+        role_hint: slot.role_hint,
+      })),
+    }, auth);
+  } catch (e) {
+    return apiClient.uploadImages({ images: prepared }, auth);
+  }
+}
+
 function titleCase(input) {
   return String(input || '')
     .split(/[_\s-]+/)
     .filter(Boolean)
     .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1).toLowerCase()}`)
     .join(' ');
+}
+
+function displayConditionLabel(input) {
+  const normalized = String(input || '').replace(/[-_\s]+/g, '').toLowerCase();
+  if (normalized === 'newwithtags' || normalized === 'nwt') return 'New with Tags';
+  if (normalized === 'likenew') return 'Like New';
+  return titleCase(input || 'unknown');
 }
 
 function buildSuggestedDescriptionFromProfile(profile) {
@@ -182,7 +275,7 @@ function isSameListingOwner(left, right, currentSubject = '') {
   if (normalizedCurrentSubject && leftSubject === normalizedCurrentSubject && rightSubject === normalizedCurrentSubject) return true;
   const leftOwner = listingOwnerName(left);
   const rightOwner = listingOwnerName(right);
-  return Boolean(leftOwner && rightOwner && leftOwner === rightOwner);
+  return Boolean((!leftSubject || !rightSubject) && leftOwner && rightOwner && leftOwner === rightOwner);
 }
 
 function getCrossOwnerMatches(item, currentSubject = '') {
@@ -193,6 +286,21 @@ function getCrossOwnerMatches(item, currentSubject = '') {
     if (isSameListingOwner(item, match, normalizedCurrentSubject)) return false;
     if (normalizedCurrentSubject && itemOwnerSubject === normalizedCurrentSubject && listingOwnerSubject(match) === normalizedCurrentSubject) return false;
     return true;
+  });
+}
+
+function removeSentOfferMatchesFromListings(listings, targetListingId, offeredListingIds) {
+  const targetId = String(targetListingId || '').trim();
+  const offeredIds = new Set((Array.isArray(offeredListingIds) ? offeredListingIds : [])
+    .map((id) => String(id || '').trim())
+    .filter(Boolean));
+  if (!targetId || offeredIds.size === 0) return listings;
+  return (Array.isArray(listings) ? listings : []).map((listing) => {
+    if (String(listing?.listing_id || listing?.id || '') !== targetId || !Array.isArray(listing?.matches)) return listing;
+    return {
+      ...listing,
+      matches: listing.matches.filter((match) => !offeredIds.has(String(match?.listing_id || match?.id || ''))),
+    };
   });
 }
 
@@ -227,7 +335,7 @@ function missingPublishFields(listing) {
   const value = Number(listing?.estimated_value ?? listing?.estimatedValue ?? 0);
   const size = String(listing?.size || '').trim();
   const validCategories = new Set(['clothes', 'shoes', 'handbag']);
-  const validConditions = new Set(['New', 'LikeNew']);
+  const validConditions = new Set(['NewWithTags', 'New', 'LikeNew']);
 
   if (gallery.length < 1) missing.push('photos');
   if (!title || title.toLowerCase() === 'new listing' || title.toLowerCase() === 'untitled listing') missing.push('title');
@@ -355,6 +463,21 @@ function normalizeShippingAddresses(addresses, fallbackProfile = null) {
   return [];
 }
 
+function isCompleteShippingAddress(address) {
+  return Boolean(
+    String(address?.full_name || '').trim()
+    && String(address?.address_line1 || '').trim()
+    && String(address?.city || '').trim()
+    && String(address?.state || '').trim()
+    && String(address?.postal_code || '').trim()
+    && String(address?.country || '').trim()
+  );
+}
+
+function completeShippingAddresses(addresses) {
+  return (Array.isArray(addresses) ? addresses : []).filter(isCompleteShippingAddress);
+}
+
 function normalizeProfileShippingAddresses(addresses, fallbackProfile = null) {
   const normalized = Array.isArray(addresses)
     ? addresses
@@ -410,6 +533,13 @@ function normalizeProfileQuiz(profile) {
   };
 }
 
+function isProfileSetupRequired(profile) {
+  const firstName = String(profile?.first_name || profile?.firstName || '').trim();
+  const lastName = String(profile?.last_name || profile?.lastName || '').trim();
+  const email = String(profile?.email || '').trim();
+  return !firstName || !lastName || !email;
+}
+
 function normalizeMultiSizeValue(value) {
   if (Array.isArray(value)) {
     return value
@@ -432,7 +562,7 @@ function serializeMultiSizeValue(values) {
 function sizeOptionsForCategory(category) {
   const normalized = String(category || '').trim().toLowerCase();
   if (normalized === 'shoes') return ['US 5', 'US 5.5', 'US 6', 'US 6.5', 'US 7', 'US 7.5', 'US 8', 'US 8.5', 'US 9', 'US 9.5', 'US 10', 'US 10.5', 'US 11', 'US 12'];
-  if (normalized === 'clothes') return ['XXS', 'XS', 'S', 'M', 'L', 'XL', 'XXL'];
+  if (normalized === 'clothes') return APPAREL_SIZE_OPTIONS;
   if (normalized === 'handbag') return ['Mini', 'Small', 'Medium', 'Large'];
   return [];
 }
@@ -539,7 +669,7 @@ function ListingCard({
   );
   const ownerName = listingOwnerDisplayName(item, isCurrentUserListing ? (currentUserDisplayName || 'You') : 'Member');
   const brandLabel = item?.brand || 'Unknown';
-  const conditionLabel = titleCase(item?.condition || 'unknown');
+  const conditionLabel = displayConditionLabel(item?.condition || 'unknown');
   const sizeLabel = item?.size || 'N/A';
   return (
     <View style={[styles.listingCard, closetCardDisabled && styles.listingCardDisabled]}>
@@ -714,7 +844,7 @@ function OfferCard({ offer, apiBaseUrl }) {
           )}
           <Text style={styles.offerItemTitle} numberOfLines={2}>{targetListing?.title || 'Target listing'}</Text>
           <Text style={styles.offerItemMeta} numberOfLines={1}>
-            {targetListing?.brand || 'Unknown'} • {titleCase(targetListing?.condition || 'unknown')}
+            {targetListing?.brand || 'Unknown'} • {displayConditionLabel(targetListing?.condition || 'unknown')}
           </Text>
         </View>
         <View style={styles.offerOfferedPanel}>
@@ -783,6 +913,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
   const [tradeOfferMessage, setTradeOfferMessage] = useState('');
   const [tradeOfferBusy, setTradeOfferBusy] = useState(false);
   const [tradeOfferError, setTradeOfferError] = useState('');
+  const [appAlert, setAppAlert] = useState(null);
   const [shippingAddresses, setShippingAddresses] = useState([]);
   const [profileShippingAddresses, setProfileShippingAddresses] = useState([]);
   const [profileQuiz, setProfileQuiz] = useState(null);
@@ -851,6 +982,8 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
   const offerStatusMapRef = useRef(new Map());
   const initializedShippingStateRef = useRef(false);
   const shippingStatusMapRef = useRef(new Map());
+  const seenServerNotificationIdsRef = useRef(new Set());
+  const profileSetupCheckedRef = useRef('');
   const normalizedProfileGender = profileQuiz?.gender === 'male' || profileQuiz?.gender === 'female' || profileQuiz?.gender === 'other'
     ? profileQuiz.gender
     : '';
@@ -993,6 +1126,48 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     }
   }
 
+  useEffect(() => {
+    if (!authReady()) return;
+    const profileKey = String(clerkUserProfile?.id || clerkUserProfile?.email || bearerToken || apiKey || 'anonymous');
+    if (profileSetupCheckedRef.current === profileKey) return;
+    profileSetupCheckedRef.current = profileKey;
+    let cancelled = false;
+    (async () => {
+      const auth = await authContext();
+      if (cancelled) return;
+      const profile = await apiClient.fetchProfileQuiz(auth);
+      if (cancelled) return;
+      const normalized = normalizeProfileQuiz({
+        ...(profile || {}),
+        first_name: profile?.first_name || clerkUserProfile?.firstName || '',
+        last_name: profile?.last_name || clerkUserProfile?.lastName || '',
+        email: profile?.email || clerkUserProfile?.email || '',
+        shipping_email: profile?.shipping_email || profile?.email || clerkUserProfile?.email || '',
+        shipping_phone: profile?.shipping_phone || '',
+      });
+      setProfileQuiz(normalized);
+      if (isProfileSetupRequired(normalized)) {
+        setProfileSection('account');
+        setActiveTab('profile');
+      }
+    })().catch(() => {
+      profileSetupCheckedRef.current = '';
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    apiClient,
+    clerkEnabled,
+    authMode,
+    bearerToken,
+    apiKey,
+    clerkUserProfile?.id,
+    clerkUserProfile?.firstName,
+    clerkUserProfile?.lastName,
+    clerkUserProfile?.email,
+  ]);
+
   async function loadShippingLabelsForOffer(offerId) {
     const payload = await apiClient.fetchShippingLabels(offerId, await authContext());
     const shipments = Array.isArray(payload?.shipments) ? payload.shipments : [];
@@ -1072,12 +1247,30 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
   }
 
   function canSendAlert(category) {
-    return Boolean(pushEnabled && alertPrefs?.[category] && notificationPermission === 'granted');
+    return Boolean(alertPrefs?.[category]);
+  }
+
+  function canSendLocalNotification() {
+    return Boolean(pushEnabled && notificationPermission === 'granted');
   }
 
   async function sendCategoryAlert(category, title, body) {
     if (!canSendAlert(category)) return;
-    await sendLocalNotification(title, body);
+    if (category === 'trades') {
+      setAppAlert({
+        title,
+        message: body,
+        primaryLabel: 'View Inbox',
+        secondaryLabel: 'Dismiss',
+        onPrimary: () => {
+          setAppAlert(null);
+          setActiveTab('inbox');
+        },
+      });
+    } else {
+      setNotice(body || title);
+    }
+    if (canSendLocalNotification()) await sendLocalNotification(title, body);
   }
 
   function toggleAlertPreference(category) {
@@ -1088,7 +1281,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     }));
   }
 
-  function toggleLikedListing(item) {
+  async function toggleLikedListing(item) {
     const listingId = String(item?.listing_id || item?.id || '');
     if (!listingId) return;
     const isLiked = likedListingIds.includes(listingId);
@@ -1096,8 +1289,11 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
       prev.includes(listingId) ? prev.filter((id) => id !== listingId) : [...prev, listingId]
     ));
     if (!isLiked) {
-      const title = item?.title || 'this listing';
-      sendCategoryAlert('likes', 'Listing Liked', `${title} was added to your liked listings.`);
+      try {
+        await apiClient.likeListing(listingId, await authContext());
+      } catch (e) {
+        // Liked state is still saved locally; notification delivery is best effort.
+      }
     }
   }
 
@@ -1575,6 +1771,11 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
 
   async function submitTradeOffer() {
     if (!tradeComposerTarget?.listing_id) return;
+    const currentAddresses = completeShippingAddresses(shippingAddresses.length > 0 ? shippingAddresses : await loadProfileAddresses());
+    if (currentAddresses.length === 0) {
+      setTradeOfferError('Add a complete shipping address in Profile before sending a trade offer.');
+      return;
+    }
     if (!tradeOfferListingIds.length) {
       setTradeOfferError('Select at least one listing to offer.');
       return;
@@ -1599,6 +1800,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
         },
         await authContext(),
       );
+      setMarketplaceListings((prev) => removeSentOfferMatchesFromListings(prev, tradeComposerTarget.listing_id, tradeOfferListingIds));
       closeTradeComposer();
       setNotice('Trade offer sent.');
       setActiveTab('inbox');
@@ -1608,6 +1810,20 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     } finally {
       setTradeOfferBusy(false);
     }
+  }
+
+  function showShippingAddressRequiredAlert(message = 'Add a shipping address to your profile before accepting a trade.') {
+    setAppAlert({
+      title: 'Shipping Address Required',
+      message,
+      primaryLabel: 'Go to Profile',
+      onPrimary: () => {
+        setAppAlert(null);
+        setProfileSection('shipping');
+        setActiveTab('profile');
+      },
+      secondaryLabel: 'Cancel',
+    });
   }
 
   async function respondToOffer(offerId, status) {
@@ -1620,13 +1836,17 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     try {
       let receiveAddress = null;
       if (status === 'accepted') {
-        const currentAddresses = shippingAddresses.length > 0 ? shippingAddresses : await loadProfileAddresses();
+        const currentAddresses = completeShippingAddresses(shippingAddresses.length > 0 ? shippingAddresses : await loadProfileAddresses());
         if (currentAddresses.length === 0) {
-          throw new Error('Add a shipping address in Profile before accepting trade.');
+          showShippingAddressRequiredAlert('Add shipping address to profile.');
+          return;
         }
-        const selectedId = selectedAddressByOffer[offerId] || currentAddresses[0]?.id;
-        const selected = currentAddresses.find((entry) => entry.id === selectedId) || currentAddresses[0];
-        if (!selected) throw new Error('Select receive address before accepting trade.');
+        const selectedId = selectedAddressByOffer[offerId] || (currentAddresses.length === 1 ? currentAddresses[0].id : '');
+        const selected = currentAddresses.find((entry) => entry.id === selectedId) || null;
+        if (!selected) {
+          showShippingAddressRequiredAlert('Select a shipping address before accepting trade.');
+          return;
+        }
         receiveAddress = {
           label: selected.label || null,
           full_name: selected.full_name || null,
@@ -1666,9 +1886,9 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
         Alert.alert('Label unavailable', 'Carrier label URL is not available yet. Please try refresh labels.');
         return;
       }
-      const canOpen = await Linking.canOpenURL(labelUrl);
-      if (!canOpen) throw new Error('Cannot open label URL on this device.');
-      await Linking.openURL(labelUrl);
+      await WebBrowser.openBrowserAsync(labelUrl, {
+        presentationStyle: WebBrowser.WebBrowserPresentationStyle.PAGE_SHEET,
+      });
     } catch (e) {
       setError(e.message || 'Unable to open shipping label.');
     }
@@ -1763,7 +1983,19 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     if (activeTab === 'inbox' && incomingOffers.length === 0) {
       loadInbox(offerFilter);
     }
-  }, [activeTab]);
+  }, [
+    activeTab,
+    marketplaceListings.length,
+    myListings.length,
+    incomingOffers.length,
+    offerFilter,
+    clerkEnabled,
+    clerkUserProfile?.id,
+    authMode,
+    bearerToken,
+    apiKey,
+    apiBaseUrl,
+  ]);
 
   useEffect(() => {
     if (!authReady()) return;
@@ -1865,7 +2097,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
   }, [isListingDetailOpen, marketplaceListings, selectedListing, selectedListingIndex, selectedListingSource]);
 
   useEffect(() => {
-    if (!authReady() || !pushEnabled || notificationPermission !== 'granted') return;
+    if (!authReady()) return;
     let cancelled = false;
     let timer = null;
     async function pollOffersAndNotify() {
@@ -1873,6 +2105,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
         const payload = await apiClient.incomingOffers('all', 50, await authContext());
         if (cancelled) return;
         const offers = Array.isArray(payload?.items) ? payload.items : [];
+        const actorSubject = String(payload?.actor?.subject || marketplaceActorSubject || clerkUserProfile?.id || '').trim();
         const nextMap = new Map();
         offers.forEach((offer) => {
           const offerId = String(offer?.offer_id || '');
@@ -1889,8 +2122,15 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
           const prev = prevMap.get(offerId);
           if (!prev) {
             const incoming = offers.find((entry) => String(entry?.offer_id || '') === offerId);
-            const title = incoming?.target_listing?.title || incoming?.target_listing_id || 'your listing';
-            sendCategoryAlert('trades', 'New Trade Offer', `You received a new offer for ${title}.`);
+            const isReceivedOffer = Boolean(
+              incoming
+              && actorSubject
+              && String(incoming?.to_subject || '').trim() === actorSubject,
+            );
+            if (isReceivedOffer) {
+              const title = incoming?.target_listing?.title || incoming?.target_listing_id || 'your listing';
+              sendCategoryAlert('trades', 'New Trade Offer', `You received a new offer for ${title}.`);
+            }
           } else if (prev !== 'accepted' && status === 'accepted') {
             const incoming = offers.find((entry) => String(entry?.offer_id || '') === offerId);
             const title = incoming?.target_listing?.title || incoming?.target_listing_id || 'your listing';
@@ -1946,7 +2186,61 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
       cancelled = true;
       if (timer) clearInterval(timer);
     };
-  }, [apiClient, pushEnabled, alertPrefs, notificationPermission, clerkEnabled, authMode, bearerToken, apiKey]);
+  }, [
+    apiClient,
+    pushEnabled,
+    alertPrefs,
+    notificationPermission,
+    clerkEnabled,
+    authMode,
+    bearerToken,
+    apiKey,
+    marketplaceActorSubject,
+    clerkUserProfile?.id,
+  ]);
+
+  useEffect(() => {
+    if (!authReady()) return;
+    let cancelled = false;
+    let timer = null;
+    async function pollServerNotifications() {
+      try {
+        const payload = await apiClient.listNotifications(50, await authContext());
+        if (cancelled) return;
+        const items = Array.isArray(payload?.items) ? payload.items : [];
+        for (const notification of items.reverse()) {
+          const notificationId = String(notification?.notification_id || notification?.id || '');
+          if (!notificationId || seenServerNotificationIdsRef.current.has(notificationId)) continue;
+          seenServerNotificationIdsRef.current.add(notificationId);
+          const type = String(notification?.type || '');
+          const category = type === 'listing-liked' ? 'likes' : type.includes('shipping') ? 'shipping' : 'trades';
+          await sendCategoryAlert(
+            category,
+            notification?.title || 'Jouft notification',
+            notification?.body || '',
+          );
+          apiClient.deleteNotification(notificationId, await authContext()).catch(() => {});
+        }
+      } catch (e) {
+        // Background notification polling should not interrupt the current screen.
+      }
+    }
+    pollServerNotifications();
+    timer = setInterval(pollServerNotifications, OFFER_POLL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      if (timer) clearInterval(timer);
+    };
+  }, [
+    apiClient,
+    pushEnabled,
+    alertPrefs,
+    notificationPermission,
+    clerkEnabled,
+    authMode,
+    bearerToken,
+    apiKey,
+  ]);
 
   async function pickImages() {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -2261,7 +2555,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     try {
       const auth = await authContext();
       const uploaded = imagesForAnalysis.length > 0
-        ? await apiClient.uploadImages({ images: imagesForAnalysis }, auth)
+        ? await uploadImagesWithDirectFallback({ apiClient, images: imagesForAnalysis, auth })
         : null;
       const uploadedImageUrls = persistableImageUrls(uploadedImageUrlsFromPayload(uploaded));
       if (imagesForAnalysis.length > 0 && uploadedImageUrls.length < 1) {
@@ -2327,7 +2621,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
         <View style={styles.offerDetailPanel}>
           <Text style={styles.offerLaneLabel}>Details</Text>
           <Text style={styles.offerDetailItemMeta}>
-            {selectedListing?.brand || 'Unknown'} • {titleCase(selectedListing?.condition || 'unknown')} • {titleCase(selectedListing?.category || 'listing')}
+            {selectedListing?.brand || 'Unknown'} • {displayConditionLabel(selectedListing?.condition || 'unknown')} • {titleCase(selectedListing?.category || 'listing')}
           </Text>
           <Text style={styles.offerDetailItemMeta}>
             {money(selectedListing?.estimated_value)}
@@ -2655,14 +2949,14 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                 </View>
                 <Text style={styles.label}>Condition</Text>
                 <View style={styles.modeRow}>
-                  {['New', 'LikeNew'].map((condition) => (
+                  {['NewWithTags', 'New', 'LikeNew'].map((condition) => (
                     <TouchableOpacity
                       key={condition}
                       style={[styles.modeBtn, userCondition === condition && styles.modeBtnActive]}
                       onPress={() => setUserCondition(condition)}
                     >
                       <Text style={[styles.modeBtnText, userCondition === condition && styles.modeBtnTextActive]}>
-                        {condition === 'LikeNew' ? 'Like New' : condition}
+                        {condition === 'NewWithTags' ? 'New with Tags' : condition === 'LikeNew' ? 'Like New' : condition}
                       </Text>
                     </TouchableOpacity>
                   ))}
@@ -2708,14 +3002,14 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                 <TextInput value={itemDescription} onChangeText={setItemDescription} style={[styles.input, styles.multiInput]} multiline />
                 <Text style={styles.label}>Condition</Text>
                 <View style={styles.modeRow}>
-                  {['New', 'LikeNew'].map((condition) => (
+                  {['NewWithTags', 'New', 'LikeNew'].map((condition) => (
                     <TouchableOpacity
                       key={condition}
                       style={[styles.modeBtn, userCondition === condition && styles.modeBtnActive]}
                       onPress={() => setUserCondition(condition)}
                     >
                       <Text style={[styles.modeBtnText, userCondition === condition && styles.modeBtnTextActive]}>
-                        {condition === 'LikeNew' ? 'Like New' : condition}
+                        {condition === 'NewWithTags' ? 'New with Tags' : condition === 'LikeNew' ? 'Like New' : condition}
                       </Text>
                     </TouchableOpacity>
                   ))}
@@ -2825,7 +3119,8 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                 const offerId = offer.offer_id;
                 const isPending = String(offer?.status || '').toLowerCase() === 'pending';
                 const isAccepted = String(offer?.status || '').toLowerCase() === 'accepted';
-                const selectedAddressId = selectedAddressByOffer[offerId] || shippingAddresses[0]?.id || '';
+                const selectableAddresses = completeShippingAddresses(shippingAddresses);
+                const selectedAddressId = selectedAddressByOffer[offerId] || (selectableAddresses.length === 1 ? selectableAddresses[0].id : '');
                 const labels = Array.isArray(shippingLabelsByOffer[offerId]) ? shippingLabelsByOffer[offerId] : [];
                 const quote = shippingQuoteByOffer[offerId] || null;
                 const shippingBusy = Boolean(shippingBusyByOffer[offerId]);
@@ -2841,10 +3136,10 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                       <View style={styles.offerActions}>
                         <Text style={styles.label}>Receive address</Text>
                         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.addressRow}>
-                          {shippingAddresses.length === 0 ? (
-                            <Text style={styles.helperText}>No saved addresses. Add one in Profile.</Text>
+                          {selectableAddresses.length === 0 ? (
+                            <Text style={styles.helperText}>Add a complete shipping address in Profile.</Text>
                           ) : (
-                            shippingAddresses.map((address) => {
+                            selectableAddresses.map((address) => {
                               const active = address.id === selectedAddressId;
                               return (
                                 <TouchableOpacity
@@ -2864,7 +3159,10 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                           )}
                         </ScrollView>
                         <View style={styles.actionRow}>
-                          <TouchableOpacity style={styles.primaryBtn} onPress={() => respondToOffer(offerId, 'accepted')}>
+                          <TouchableOpacity
+                            style={styles.primaryBtn}
+                            onPress={() => respondToOffer(offerId, 'accepted')}
+                          >
                             <Text style={styles.primaryBtnText}>Accept Trade</Text>
                           </TouchableOpacity>
                           <TouchableOpacity style={styles.secondaryBtn} onPress={() => respondToOffer(offerId, 'declined')}>
@@ -3498,7 +3796,8 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
           const targetListing = selectedOffer?.target_listing || null;
           const offeredListings = offerOfferedListings(selectedOffer);
           const targetGallery = listingGallery(targetListing, apiBaseUrl);
-          const selectedAddressId = selectedAddressByOffer[offerId] || shippingAddresses[0]?.id || '';
+          const selectableAddresses = completeShippingAddresses(shippingAddresses);
+          const selectedAddressId = selectedAddressByOffer[offerId] || (selectableAddresses.length === 1 ? selectableAddresses[0].id : '');
           const labels = Array.isArray(shippingLabelsByOffer[offerId]) ? shippingLabelsByOffer[offerId] : [];
           const quote = shippingQuoteByOffer[offerId] || null;
           const shippingBusy = Boolean(shippingBusyByOffer[offerId]);
@@ -3535,7 +3834,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                     ) : null}
                     <Text style={styles.offerDetailItemTitle}>{targetListing?.title || 'Target listing'}</Text>
                     <Text style={styles.offerDetailItemMeta}>
-                      {targetListing?.brand || 'Unknown'} • {titleCase(targetListing?.condition || 'unknown')} • {titleCase(targetListing?.category || 'listing')}
+                      {targetListing?.brand || 'Unknown'} • {displayConditionLabel(targetListing?.condition || 'unknown')} • {titleCase(targetListing?.category || 'listing')}
                     </Text>
                   </View>
 
@@ -3557,7 +3856,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                             )}
                             <Text style={styles.offerDetailItemTitle}>{listing?.title || 'Offered listing'}</Text>
                             <Text style={styles.offerDetailItemMeta}>
-                              {listing?.brand || 'Unknown'} • {titleCase(listing?.condition || 'unknown')} • ${Number(listing?.estimated_value || 0).toFixed(0)}
+                              {listing?.brand || 'Unknown'} • {displayConditionLabel(listing?.condition || 'unknown')} • ${Number(listing?.estimated_value || 0).toFixed(0)}
                             </Text>
                           </View>
                         );
@@ -3576,10 +3875,10 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                     <View style={styles.offerDetailPanel}>
                       <Text style={styles.offerLaneLabel}>Actions</Text>
                       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.addressRow}>
-                        {shippingAddresses.length === 0 ? (
-                          <Text style={styles.helperText}>No saved addresses. Add one in Profile.</Text>
+                        {selectableAddresses.length === 0 ? (
+                          <Text style={styles.helperText}>Add a complete shipping address in Profile.</Text>
                         ) : (
-                          shippingAddresses.map((address) => {
+                          selectableAddresses.map((address) => {
                             const active = address.id === selectedAddressId;
                             return (
                               <TouchableOpacity
@@ -3599,7 +3898,10 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                         )}
                       </ScrollView>
                       <View style={styles.actionRow}>
-                        <TouchableOpacity style={styles.primaryBtn} onPress={() => respondToOffer(offerId, 'accepted')}>
+                        <TouchableOpacity
+                          style={styles.primaryBtn}
+                          onPress={() => respondToOffer(offerId, 'accepted')}
+                        >
                           <Text style={styles.primaryBtnText}>Accept Trade</Text>
                         </TouchableOpacity>
                         <TouchableOpacity style={styles.secondaryBtn} onPress={() => respondToOffer(offerId, 'declined')}>
@@ -3691,7 +3993,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                     )}
                     <Text style={styles.offerDetailItemTitle}>{tradeComposerTarget?.title || 'Target listing'}</Text>
                     <Text style={styles.offerDetailItemMeta}>
-                      {tradeComposerTarget?.brand || 'Unknown'} • {titleCase(tradeComposerTarget?.condition || 'unknown')} • {money(tradeComposerTarget?.estimated_value)}
+                      {tradeComposerTarget?.brand || 'Unknown'} • {displayConditionLabel(tradeComposerTarget?.condition || 'unknown')} • {money(tradeComposerTarget?.estimated_value)}
                     </Text>
                     <TouchableOpacity
                       style={styles.secondaryBtnCompact}
@@ -3777,6 +4079,38 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
         })() : null}
       </ScrollView>
       <Modal
+        visible={Boolean(appAlert)}
+        animationType="fade"
+        transparent
+        onRequestClose={() => setAppAlert(null)}
+      >
+        <View style={styles.appAlertOverlay}>
+          <View style={styles.appAlertCard}>
+            <Text style={styles.appAlertEyebrow}>JOUFT</Text>
+            <Text style={styles.appAlertTitle}>{appAlert?.title || 'Notice'}</Text>
+            <Text style={styles.appAlertMessage}>{appAlert?.message || ''}</Text>
+            <View style={styles.appAlertActions}>
+              {appAlert?.secondaryLabel ? (
+                <TouchableOpacity style={styles.secondaryBtnCompact} onPress={() => setAppAlert(null)}>
+                  <Text style={styles.secondaryBtnText}>{appAlert.secondaryLabel}</Text>
+                </TouchableOpacity>
+              ) : null}
+              {appAlert?.primaryLabel ? (
+                <TouchableOpacity
+                  style={styles.primaryBtnCompact}
+                  onPress={() => {
+                    if (typeof appAlert?.onPrimary === 'function') appAlert.onPrimary();
+                    else setAppAlert(null);
+                  }}
+                >
+                  <Text style={styles.primaryBtnText}>{appAlert.primaryLabel}</Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
+          </View>
+        </View>
+      </Modal>
+      <Modal
         visible={Boolean(selectedGalleryImage)}
         animationType="fade"
         transparent={false}
@@ -3817,6 +4151,7 @@ function ClerkAuthScreen() {
   const [password, setPassword] = useState('');
   const [verificationCode, setVerificationCode] = useState('');
   const [pendingSignInVerification, setPendingSignInVerification] = useState(false);
+  const [signInVerificationStep, setSignInVerificationStep] = useState('first_email_code');
   const [pendingSignUpVerification, setPendingSignUpVerification] = useState(false);
   const [pendingPasswordReset, setPendingPasswordReset] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -3842,6 +4177,7 @@ function ClerkAuthScreen() {
     setVerificationCode('');
     setPassword('');
     setPendingSignInVerification(false);
+    setSignInVerificationStep('first_email_code');
     setPendingSignUpVerification(false);
     setPendingPasswordReset(false);
   }
@@ -3869,7 +4205,52 @@ function ClerkAuthScreen() {
     }
   }
 
+  async function prepareSignInSecondFactor(result) {
+    const secondFactors = Array.isArray(result?.supportedSecondFactors) ? result.supportedSecondFactors : [];
+    const emailCodeFactor = secondFactors.find((factor) => factor?.strategy === 'email_code');
+    if (emailCodeFactor?.emailAddressId) {
+      await signIn.prepareSecondFactor({
+        strategy: 'email_code',
+        emailAddressId: emailCodeFactor.emailAddressId,
+      });
+      setSignInVerificationStep('second_email_code');
+      setPendingSignInVerification(true);
+      setNotice('Enter the additional sign-in code Clerk sent to your email.');
+      return;
+    }
+    const totpFactor = secondFactors.find((factor) => factor?.strategy === 'totp');
+    if (totpFactor) {
+      setSignInVerificationStep('second_totp');
+      setPendingSignInVerification(true);
+      setNotice('Enter the authenticator code for this account.');
+      return;
+    }
+    setError('This account requires another sign-in step that the mobile app does not support yet.');
+  }
+
   async function prepareSignInEmailCode(result) {
+    const passwordFactor = (result?.supportedFirstFactors || []).find((factor) => factor?.strategy === 'password');
+    if (passwordFactor) {
+      if (!password.trim()) {
+        setError('Enter your password to sign in.');
+        return;
+      }
+      const passwordResult = await signIn.attemptFirstFactor({
+        strategy: 'password',
+        password,
+      });
+      if (passwordResult?.status === 'complete' && passwordResult?.createdSessionId) {
+        await setSignInActive({ session: passwordResult.createdSessionId });
+        return;
+      }
+      if (passwordResult?.status === 'needs_second_factor') {
+        await prepareSignInSecondFactor(passwordResult);
+        return;
+      }
+      setError('Additional sign-in steps are required for this account.');
+      return;
+    }
+
     const emailCodeFactor = (result?.supportedFirstFactors || []).find((factor) => factor?.strategy === 'email_code');
     if (!emailCodeFactor?.emailAddressId) {
       setError('This account needs a sign-in method that the mobile app does not support yet.');
@@ -3879,6 +4260,7 @@ function ClerkAuthScreen() {
       strategy: 'email_code',
       emailAddressId: emailCodeFactor.emailAddressId,
     });
+    setSignInVerificationStep('first_email_code');
     setPendingSignInVerification(true);
     setNotice('Enter the sign-in code Clerk sent to your email.');
   }
@@ -3889,12 +4271,26 @@ function ClerkAuthScreen() {
     setError('');
     setNotice('');
     try {
-      const result = await signIn.attemptFirstFactor({
-        strategy: 'email_code',
-        code: verificationCode.trim(),
-      });
+      const result = signInVerificationStep === 'second_email_code'
+        ? await signIn.attemptSecondFactor({
+          strategy: 'email_code',
+          code: verificationCode.trim(),
+        })
+        : signInVerificationStep === 'second_totp'
+          ? await signIn.attemptSecondFactor({
+            strategy: 'totp',
+            code: verificationCode.trim(),
+          })
+          : await signIn.attemptFirstFactor({
+            strategy: 'email_code',
+            code: verificationCode.trim(),
+          });
       if (result?.status === 'complete' && result?.createdSessionId) {
         await setSignInActive({ session: result.createdSessionId });
+        return;
+      }
+      if (result?.status === 'needs_second_factor') {
+        await prepareSignInSecondFactor(result);
         return;
       }
       setError('Additional sign-in steps are required for this account.');
@@ -3920,6 +4316,10 @@ function ClerkAuthScreen() {
       const result = await signIn.create(payload);
       if (result?.status === 'complete' && result?.createdSessionId) {
         await setSignInActive({ session: result.createdSessionId });
+        return;
+      }
+      if (result?.status === 'needs_second_factor') {
+        await prepareSignInSecondFactor(result);
         return;
       }
       await prepareSignInEmailCode(result);
@@ -4215,6 +4615,7 @@ function ClerkMobileApp() {
 
   const label = user?.fullName || user?.primaryEmailAddress?.emailAddress || user?.username || user?.id || 'Authenticated user';
   const clerkUserProfile = {
+    id: user?.id || '',
     firstName: user?.firstName || '',
     lastName: user?.lastName || '',
     email: user?.primaryEmailAddress?.emailAddress || '',
@@ -4325,6 +4726,49 @@ const styles = StyleSheet.create({
     shadowRadius: 24,
     shadowOffset: { width: 0, height: 12 },
     elevation: 12,
+  },
+  appAlertOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(16, 14, 12, 0.52)',
+    justifyContent: 'center',
+    paddingHorizontal: 18,
+  },
+  appAlertCard: {
+    borderWidth: 1,
+    borderColor: 'rgba(92, 18, 28, 0.22)',
+    backgroundColor: theme.surface,
+    padding: 22,
+    gap: 10,
+    borderRadius: 12,
+    shadowColor: '#000',
+    shadowOpacity: 0.22,
+    shadowRadius: 24,
+    shadowOffset: { width: 0, height: 12 },
+    elevation: 14,
+  },
+  appAlertEyebrow: {
+    color: theme.muted,
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 4,
+    textTransform: 'uppercase',
+  },
+  appAlertTitle: {
+    color: theme.brand,
+    fontFamily: 'Didot',
+    fontSize: 36,
+    lineHeight: 38,
+  },
+  appAlertMessage: {
+    color: theme.muted,
+    fontSize: 16,
+    lineHeight: 23,
+  },
+  appAlertActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 10,
+    marginTop: 8,
   },
   rootErrorCard: {
     margin: 16,

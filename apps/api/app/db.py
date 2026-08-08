@@ -58,6 +58,35 @@ def _image_id_from_api_url(value: object) -> str | None:
     return image_id or None
 
 
+def _remove_analysis_uploads_when_display_gallery_exists(images: list[str], analysis: object) -> list[str]:
+    if not images or not isinstance(analysis, dict):
+        return images
+    uploaded_images = analysis.get("uploaded_images")
+    if not isinstance(uploaded_images, list):
+        return images
+
+    analysis_keys: set[str] = set()
+    for entry in uploaded_images:
+        if not isinstance(entry, dict):
+            continue
+        image_url = entry.get("image_url")
+        image_id = entry.get("image_id")
+        storage_uri = entry.get("storage_uri")
+        for value in (
+            image_url,
+            f"/v1/images/{image_id.strip()}" if isinstance(image_id, str) and image_id.strip() else None,
+            storage_uri,
+        ):
+            key = listing_image_dedupe_key(value)
+            if key:
+                analysis_keys.add(key)
+
+    if not analysis_keys:
+        return images
+    display_images = [url for url in images if listing_image_dedupe_key(url) not in analysis_keys]
+    return display_images or images
+
+
 def _upload_path_from_public_url(value: object) -> str | None:
     if not isinstance(value, str):
         return None
@@ -312,6 +341,19 @@ class Database:
               liked_listing_ids_json TEXT NOT NULL DEFAULT '[]',
               created_at TEXT NOT NULL,
               updated_at TEXT NOT NULL
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS user_notifications (
+              notification_id TEXT PRIMARY KEY,
+              owner_subject TEXT NOT NULL,
+              actor_subject TEXT,
+              type TEXT NOT NULL,
+              title TEXT NOT NULL,
+              body TEXT NOT NULL,
+              entity_id TEXT,
+              action_tab TEXT,
+              created_at TEXT NOT NULL
             )
             """,
             """
@@ -1605,11 +1647,17 @@ class Database:
             except Exception:
                 analysis = None
 
-            analysis_uploaded_images = self._image_urls_from_analysis_uploads(analysis)
-
             normalized_images: list[str] = []
             seen_image_keys: set[str] = set()
-            for url in [*images, *analysis_uploaded_images]:
+            # Analysis uploads are the model inputs, not an additional display gallery.
+            # Only fall back to them when the listing has no explicit images; otherwise
+            # PhotoRoom/display images plus original analysis uploads can double-count.
+            image_candidates = (
+                _remove_analysis_uploads_when_display_gallery_exists(images, analysis)
+                if images
+                else self._image_urls_from_analysis_uploads(analysis)
+            )
+            for url in image_candidates:
                 resolved = resolve(url, source_item_id)
                 key = listing_image_dedupe_key(resolved)
                 if resolved and key not in seen_image_keys:
@@ -1783,6 +1831,8 @@ class Database:
             analysis = None
         if not safe_images:
             safe_images = self._image_urls_from_analysis_uploads(analysis)
+        else:
+            safe_images = _remove_analysis_uploads_when_display_gallery_exists(safe_images, analysis)
         if not safe_images and isinstance(source_item_id, str) and source_item_id.strip():
             safe_images = [f"/v1/images/{image_id}" for image_id in self.list_image_ids_for_item(source_item_id, limit=20)]
         if not image and safe_images:
@@ -2188,6 +2238,103 @@ class Database:
             "created_at": now,
             "updated_at": now,
         }
+
+    def create_user_notification(
+        self,
+        *,
+        notification_id: str,
+        owner_subject: str,
+        actor_subject: str | None,
+        type: str,
+        title: str,
+        body: str,
+        entity_id: str | None = None,
+        action_tab: str | None = None,
+    ) -> dict:
+        now = utc_now_iso()
+        if self._sqlite_conn is not None:
+            with self._sqlite_lock:
+                self._sqlite_conn.execute(
+                    """INSERT INTO user_notifications
+                    (notification_id, owner_subject, actor_subject, type, title, body, entity_id, action_tab, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (notification_id, owner_subject, actor_subject, type, title, body, entity_id, action_tab, now),
+                )
+                self._sqlite_conn.commit()
+        else:
+            cur = self._pg_cursor()
+            cur.execute(
+                f"""INSERT INTO user_notifications
+                (notification_id, owner_subject, actor_subject, type, title, body, entity_id, action_tab, created_at)
+                VALUES ({self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param})
+                """,
+                (notification_id, owner_subject, actor_subject, type, title, body, entity_id, action_tab, now),
+            )
+            cur.close()
+            self._pg.commit()
+        return {
+            "notification_id": notification_id,
+            "owner_subject": owner_subject,
+            "actor_subject": actor_subject,
+            "type": type,
+            "title": title,
+            "body": body,
+            "entity_id": entity_id,
+            "action_tab": action_tab,
+            "created_at": now,
+        }
+
+    def list_user_notifications(self, owner_subject: str, limit: int = 50) -> list[dict]:
+        safe_limit = max(1, min(int(limit or 50), 100))
+        query = (
+            f"SELECT notification_id, owner_subject, actor_subject, type, title, body, entity_id, action_tab, created_at "
+            f"FROM user_notifications WHERE owner_subject = {self.param} ORDER BY created_at DESC LIMIT {safe_limit}"
+        )
+        if self._sqlite_conn is not None:
+            with self._sqlite_lock:
+                rows = self._sqlite_conn.execute(query, (owner_subject,)).fetchall()
+        else:
+            cur = self._pg_cursor()
+            cur.execute(query, (owner_subject,))
+            rows = cur.fetchall()
+            cur.close()
+        keys = ["notification_id", "owner_subject", "actor_subject", "type", "title", "body", "entity_id", "action_tab", "created_at"]
+        out: list[dict] = []
+        for row in rows:
+            if isinstance(row, sqlite3.Row):
+                out.append(dict(row))
+            else:
+                out.append({key: row[idx] for idx, key in enumerate(keys)})
+        return out
+
+    def delete_user_notification(self, owner_subject: str, notification_id: str) -> bool:
+        query = f"DELETE FROM user_notifications WHERE owner_subject = {self.param} AND notification_id = {self.param}"
+        if self._sqlite_conn is not None:
+            with self._sqlite_lock:
+                cur = self._sqlite_conn.execute(query, (owner_subject, notification_id))
+                self._sqlite_conn.commit()
+                return cur.rowcount > 0
+        cur = self._pg_cursor()
+        cur.execute(query, (owner_subject, notification_id))
+        deleted = cur.rowcount > 0
+        cur.close()
+        self._pg.commit()
+        return deleted
+
+    def delete_user_notifications(self, owner_subject: str) -> int:
+        query = f"DELETE FROM user_notifications WHERE owner_subject = {self.param}"
+        if self._sqlite_conn is not None:
+            with self._sqlite_lock:
+                cur = self._sqlite_conn.execute(query, (owner_subject,))
+                self._sqlite_conn.commit()
+                return int(cur.rowcount or 0)
+        cur = self._pg_cursor()
+        cur.execute(query, (owner_subject,))
+        deleted = int(cur.rowcount or 0)
+        cur.close()
+        self._pg.commit()
+        return deleted
 
     def list_payment_methods(self, owner_subject: str) -> list[dict]:
         query = (

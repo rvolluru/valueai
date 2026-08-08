@@ -211,6 +211,142 @@ def test_upload_images_persists_without_analysis() -> None:
     assert body["uploaded_images"][1]["role_hint"] == "close_up"
 
 
+def test_presigned_upload_confirm_persists_images() -> None:
+    client = _build_client()
+
+    from app import deps
+    from app.storage import Storage
+
+    class FakePresignedStorage(Storage):
+        def save_upload(self, item_id: str, filename: str, content_type: str, data: bytes) -> str:
+            raise NotImplementedError
+
+        def save_debug_artifact(self, item_id: str, filename: str, data: bytes) -> str:
+            raise NotImplementedError
+
+        def create_presigned_upload(self, item_id: str, filename: str, content_type: str, expires_in: int = 900) -> tuple[str, str]:
+            return f"https://uploads.example.test/{item_id}/{filename}", f"s3://test-bucket/uploads/{item_id}/{filename}"
+
+        def object_exists(self, storage_uri: str) -> bool:
+            return storage_uri.startswith("s3://test-bucket/uploads/")
+
+    client.app.dependency_overrides[deps.get_storage] = lambda: FakePresignedStorage()
+    presign = client.post(
+        "/v1/uploads/images/presign",
+        json={
+            "item_id": "item-direct-upload",
+            "images": [
+                {"filename": "full_item.jpeg", "content_type": "image/jpeg", "content_length": 123},
+                {"filename": "detail.jpeg", "content_type": "image/jpeg", "content_length": 456},
+            ],
+        },
+        headers={"x-api-key": "test-key"},
+    )
+    assert presign.status_code == 200, presign.text
+    slots = presign.json()["upload_slots"]
+    assert len(slots) == 2
+    assert slots[0]["headers"]["Content-Type"] == "image/jpeg"
+
+    confirm = client.post(
+        "/v1/uploads/images/confirm",
+        json={
+            "item_id": "item-direct-upload",
+            "uploaded_images": [
+                {
+                    "image_id": slots[0]["image_id"],
+                    "filename": "full_item.jpg",
+                    "content_type": "image/jpeg",
+                    "storage_uri": slots[0]["storage_uri"],
+                    "role_hint": slots[0]["role_hint"],
+                    "content_hash": "abc",
+                },
+                {
+                    "image_id": slots[1]["image_id"],
+                    "filename": "detail.jpg",
+                    "content_type": "image/jpeg",
+                    "storage_uri": slots[1]["storage_uri"],
+                    "role_hint": slots[1]["role_hint"],
+                    "content_hash": "def",
+                },
+            ],
+        },
+        headers={"x-api-key": "test-key"},
+    )
+    assert confirm.status_code == 200, confirm.text
+    body = confirm.json()
+    assert body["item_id"] == "item-direct-upload"
+    assert [entry["role_hint"] for entry in body["uploaded_images"]] == ["full_item", "close_up"]
+    assert body["uploaded_images"][0]["image_url"].startswith("/v1/images/")
+    image_urls = [entry["image_url"] for entry in body["uploaded_images"]]
+
+    create = client.post(
+        "/v1/listings",
+        json={
+            "title": "Direct upload listing",
+            "mode": "trade",
+            "category": "handbag",
+            "brand": "Chanel",
+            "condition": "LikeNew",
+            "size": "Medium",
+            "estimated_value": 1200,
+            "city": "Your area",
+            "image": image_urls[0],
+            "images": image_urls,
+            "description": "Created from direct-upload image URLs.",
+            "wants": "Open to similar-value offers",
+            "tags": [],
+            "source_item_id": "item-direct-upload",
+            "status": "Active",
+        },
+        headers={"x-api-key": "test-key"},
+    )
+    assert create.status_code == 200, create.text
+    listing = create.json()
+    listing_id = listing["listing_id"]
+    assert listing["image"].startswith("/v1/images/")
+    assert listing["images"] == image_urls
+
+    closet = client.get("/v1/listings?mine=true&limit=10", headers={"x-api-key": "test-key"})
+    assert closet.status_code == 200, closet.text
+    closet_items = closet.json()["items"]
+    saved = next(item for item in closet_items if item["listing_id"] == listing_id)
+    assert saved["image"].startswith("/v1/images/")
+    assert len(saved["images"]) == 2
+    assert all(url.startswith("/v1/images/") for url in saved["images"])
+
+    marketplace = client.get("/v1/listings?limit=10", headers={"x-api-key": "test-key"})
+    assert marketplace.status_code == 200, marketplace.text
+    market_saved = next(item for item in marketplace.json()["items"] if item["listing_id"] == listing_id)
+    assert market_saved["image"].startswith("/v1/images/")
+    assert len(market_saved["images"]) == 2
+
+    update = client.put(
+        f"/v1/listings/{listing_id}",
+        json={
+            "title": "Edited direct upload listing",
+            "mode": "trade",
+            "category": "handbag",
+            "brand": "Chanel",
+            "condition": "LikeNew",
+            "size": "Large",
+            "estimated_value": 1300,
+            "city": "Your area",
+            "image": image_urls[1],
+            "images": [image_urls[1], image_urls[0]],
+            "description": "Edited with reordered direct-upload image URLs.",
+            "wants": "Open to similar-value offers",
+            "tags": [],
+            "source_item_id": "item-direct-upload",
+            "status": "Active",
+        },
+        headers={"x-api-key": "test-key"},
+    )
+    assert update.status_code == 200, update.text
+    updated = update.json()
+    assert updated["image"] == image_urls[1]
+    assert updated["images"] == [image_urls[1], image_urls[0]]
+
+
 def test_create_listing_with_analyzing_status_queues_backend_analysis() -> None:
     client = _build_client()
     _override_gpt_profiler(
@@ -410,6 +546,49 @@ def test_recently_updated_analyzing_listing_is_not_marked_stale_by_original_crea
     assert listing["status"] == "Analyzing"
 
 
+def test_listing_media_repair_does_not_append_analysis_uploads_to_existing_gallery() -> None:
+    client = _build_client()
+    from app import deps
+
+    db = deps.get_db()
+    analysis_uploads = [
+        {"image_id": f"original-{idx}", "image_url": f"/v1/images/original-{idx}"}
+        for idx in range(4)
+    ]
+    display_images = [f"/v1/images/display-{idx}" for idx in range(4)]
+    mixed_gallery = [*display_images, *[entry["image_url"] for entry in analysis_uploads]]
+    db.insert_listing(
+        listing_id="listing-with-display-and-analysis-images",
+        owner_subject="api-key",
+        owner_name="Local Tester",
+        title="Gianvito Rossi Portofino Ankle Strap Sandal",
+        mode="trade",
+        category="shoes",
+        brand="Gianvito Rossi",
+        condition="LikeNew",
+        size="Medium",
+        estimated_value=650.0,
+        city="Your area",
+        image=mixed_gallery[0],
+        images=mixed_gallery,
+        description="Display gallery should not include analysis inputs",
+        wants="Open to similar-value offers",
+        tags=[],
+        source_item_id="item-gallery-repair",
+        analysis={"uploaded_images": analysis_uploads},
+        status="Active",
+    )
+
+    changed = db.migrate_listing_media_urls_to_http()
+    assert changed == 1
+
+    list_res = client.get("/v1/listings?mine=true&limit=10", headers={"x-api-key": "test-key"})
+    assert list_res.status_code == 200, list_res.text
+    listing = next(item for item in list_res.json()["items"] if item["listing_id"] == "listing-with-display-and-analysis-images")
+    assert listing["images"] == display_images
+    assert len(listing["images"]) == 4
+
+
 def test_photoroom_staging_uses_segment_api(monkeypatch) -> None:
     monkeypatch.setenv("PHOTOROOM_API_KEY", "photoroom-test-key")
 
@@ -470,6 +649,208 @@ def test_photoroom_staging_uses_segment_api(monkeypatch) -> None:
     assert captured["data"]["crop"] == "false"
     assert captured["data"]["despill"] == "false"
     assert "image_file" in captured["files"]
+
+
+def test_gpt_profile_uses_retail_reference_as_low_confidence_resale_before_crawlers() -> None:
+    from app.main import apply_gemini_grounded_retail_reference, valuation_from_gpt_item_profile
+
+    profile = {
+        "category": "shoes",
+        "retail_price_estimate": {"estimated_price": None, "currency": "USD", "confidence": 0.5},
+        "resale_price_estimate": {"estimated_price": None, "currency": "USD", "confidence": 0.5},
+        "resale_price_breakdown": [],
+    }
+    debug: dict[str, object] = {}
+    workflow = {
+        "grounded_search": (
+            'A comparable Chanel chain-link cap-toe ankle boot had a retail price of $1550. '
+            "Direct resale comps for this exact model were limited."
+        )
+    }
+
+    apply_gemini_grounded_retail_reference(profile, workflow, debug)
+    valuation = valuation_from_gpt_item_profile(profile, default_currency="USD", condition_grade="New")
+
+    assert profile["retail_price_estimate"]["estimated_price"] == 1550.0
+    assert debug["retail_reference_extracted"]["applied"] is True
+    assert valuation["estimated_value"] == 1240.0
+    assert valuation["retail_reference_value"] == 1550.0
+    assert valuation["confidence"] == 0.35
+    assert valuation["basis"] == "gpt_retail_reference_resale_fallback"
+
+
+def test_gpt_profile_uses_visual_condition_signals_for_retail_resale_fallback() -> None:
+    from app.main import valuation_from_gpt_item_profile
+
+    profile = {
+        "category": "shoes",
+        "visual_condition_assessment": {
+            "wear_level": "pristine",
+            "box_included": "yes",
+            "dust_bag_included": "yes",
+            "new_in_box_signal": "yes",
+            "pricing_tier": "new_in_box",
+            "confidence": 0.82,
+            "evidence": ["Original branded box visible", "No visible sole wear"],
+        },
+        "retail_price_estimate": {"estimated_price": 1550, "currency": "USD", "confidence": 0.5},
+        "resale_price_estimate": {"estimated_price": None, "currency": "USD", "confidence": 0.5},
+        "resale_price_breakdown": [],
+    }
+
+    valuation = valuation_from_gpt_item_profile(profile, default_currency="USD", condition_grade="New")
+
+    assert valuation["estimated_value"] == 1463.2
+    assert valuation["retail_reference_value"] == 1550.0
+    assert valuation["basis"] == "gpt_retail_reference_resale_fallback"
+    assert valuation["visual_condition_adjustment"]["applied"] is True
+    assert valuation["visual_condition_adjustment"]["multiplier"] == 1.18
+    assert "new_in_box_pricing_tier" in valuation["visual_condition_adjustment"]["reasons"]
+
+
+def test_new_with_tags_condition_normalization_and_breakdown_selection() -> None:
+    from app.main import normalize_condition_grade, valuation_from_gpt_item_profile
+
+    assert normalize_condition_grade("New with Tags") == "NewWithTags"
+    assert normalize_condition_grade("NWT") == "NewWithTags"
+
+    profile = {
+        "category": "clothes",
+        "retail_price_estimate": {"estimated_price": 495, "currency": "USD", "confidence": 0.8},
+        "resale_price_estimate": {"estimated_price": 135, "currency": "USD", "confidence": 0.7},
+        "resale_price_breakdown": [
+            {
+                "label": "Without tags / excellent condition",
+                "estimated_price": 75,
+                "range_low": 60,
+                "range_high": 90,
+                "rationale": "Excellent used examples.",
+            },
+            {
+                "label": "New with tags / brand new",
+                "estimated_price": 210,
+                "range_low": 180,
+                "range_high": 240,
+                "rationale": "NWT peer-to-peer comps.",
+            },
+            {
+                "label": "Current-season style with MSRP context",
+                "estimated_price": 260,
+                "range_low": 225,
+                "range_high": 300,
+                "rationale": "Current-season style with MSRP around $495.",
+            },
+            {
+                "label": "Original Retail Value",
+                "estimated_price": 495,
+                "range_low": 495,
+                "range_high": 495,
+                "rationale": "MSRP, not resale.",
+            },
+        ],
+    }
+
+    new_with_tags = valuation_from_gpt_item_profile(profile, default_currency="USD", condition_grade="NewWithTags")
+    plain_new_profile = {
+        **profile,
+        "resale_price_estimate": {"estimated_price": None, "currency": "USD", "confidence": 0.7},
+    }
+    plain_new = valuation_from_gpt_item_profile(plain_new_profile, default_currency="USD", condition_grade="New")
+
+    assert new_with_tags["estimated_value"] == 260.0
+    assert new_with_tags["selected_breakdown_label"] == "Current-season style with MSRP context"
+    assert plain_new["estimated_value"] == 75.0
+    assert plain_new["selected_breakdown_label"] == "Without tags / excellent condition"
+
+
+def test_analyze_skips_crawler_when_gemini_retail_reference_can_be_derived(monkeypatch) -> None:
+    os.environ["GPT_ITEM_PROFILE_ENABLED"] = "true"
+    client = _build_client()
+    from app.deps import get_gpt_item_profiler, get_valuation_service
+    from app.gpt_item_profile import GptItemProfileResult
+    from app.main import app
+
+    class StubGptProfiler:
+        def profile_item(self, **kwargs):
+            return GptItemProfileResult(
+                profile={
+                    "category": "shoes",
+                    "candidate_brand": "Chanel",
+                    "candidate_model": "Chanel Two-Tone Cap-Toe Ankle Boots with Chain Detail",
+                    "confidence": 0.9,
+                    "model_identification": {
+                        "name": "Chanel Two-Tone Cap-Toe Ankle Boots with Chain Detail",
+                        "confidence": 0.9,
+                        "attributes": ["two-tone cap toe", "chain detail"],
+                    },
+                    "authenticity_screen": {
+                        "verdict": "inconclusive",
+                        "confidence": 0.6,
+                        "reasons": [],
+                        "required_checks": [],
+                        "disclaimer": "screening only",
+                    },
+                    "visual_condition_assessment": {
+                        "wear_level": "pristine",
+                        "box_included": "yes",
+                        "dust_bag_included": "yes",
+                        "new_in_box_signal": "yes",
+                        "pricing_tier": "new_in_box",
+                        "confidence": 0.82,
+                        "evidence": ["Original branded box visible", "No visible sole wear"],
+                    },
+                    "retail_price_estimate": {
+                        "estimated_price": None,
+                        "currency": "USD",
+                        "confidence": 0.5,
+                        "rationale": "",
+                        "references": [],
+                    },
+                    "resale_price_estimate": {
+                        "estimated_price": None,
+                        "currency": "USD",
+                        "confidence": 0.5,
+                        "rationale": "",
+                        "condition_assumption": "New",
+                        "references": [],
+                    },
+                    "resale_price_breakdown": [],
+                    "_workflow": {
+                        "grounded_search": "A comparable Chanel chain-link ankle boot had a retail price of $1550."
+                    },
+                },
+                enabled=True,
+                called=True,
+            )
+
+    class FailingValuationService:
+        def evaluate(self, *args, **kwargs):
+            raise AssertionError("Crawler valuation should not run when Gemini retail fallback is available")
+
+        @staticmethod
+        def serialize(result):
+            raise AssertionError("Crawler valuation should not run when Gemini retail fallback is available")
+
+    app.dependency_overrides[get_gpt_item_profiler] = lambda: StubGptProfiler()
+    app.dependency_overrides[get_valuation_service] = lambda: FailingValuationService()
+    try:
+        res = client.post(
+            "/v1/analyze",
+            data={"user_condition": "New", "item_size": "US 8", "debug": "true"},
+            files=[("images", ("boots.jpg", _make_image("CHANEL"), "image/jpeg"))],
+            headers={"x-api-key": "test-key"},
+        )
+        assert res.status_code == 200, res.text
+        body = res.json()
+        assert body["valuation"]["estimated_value"] == 1463.2
+        assert body["valuation"]["retail_reference_value"] == 1550.0
+        assert body["valuation"]["basis"] == "gpt_retail_reference_resale_fallback"
+        assert body["valuation"]["visual_condition_adjustment"]["applied"] is True
+        assert body["debug"]["enrichment"]["gpt_item_profile"]["retail_reference_extracted"]["applied"] is True
+        assert body["debug"]["valuation"]["pricing_source"] == "gpt_primary"
+        assert body["debug"]["valuation"]["pricing_fallback_used"] is False
+    finally:
+        app.dependency_overrides.clear()
 
 
 def test_analyze_uses_original_upload_bytes_for_item_profile(monkeypatch) -> None:
@@ -795,6 +1176,60 @@ def test_marketplace_matches_exclude_same_owner_listings() -> None:
     listed = [item for item in items if item["listing_id"] in created_ids]
     assert len(listed) == 2
     assert all(item["matches"] == [] for item in listed)
+
+
+def test_marketplace_matches_allow_same_display_name_with_different_owner_subjects() -> None:
+    client = _build_client()
+    from app import deps
+
+    db = deps.get_db()
+    db.insert_listing(
+        listing_id="viewer-active-bag",
+        owner_subject="api-key",
+        owner_name="Rajesh Volluru",
+        title="Viewer Active Bag",
+        mode="trade",
+        category="handbag",
+        brand="Louis Vuitton",
+        condition="LikeNew",
+        size="Medium",
+        estimated_value=1000.0,
+        city="New York, NY",
+        image="https://example.test/viewer.jpg",
+        images=["https://example.test/viewer.jpg"],
+        description="Viewer closet item.",
+        wants="Open to similar-value offers",
+        tags=[],
+        source_item_id="item-viewer",
+        analysis={"item_id": "item-viewer"},
+        status="Active",
+    )
+    db.insert_listing(
+        listing_id="other-active-bag-same-name",
+        owner_subject="other-user",
+        owner_name="Rajesh Volluru",
+        title="Other Active Bag Same Name",
+        mode="trade",
+        category="handbag",
+        brand="Louis Vuitton",
+        condition="LikeNew",
+        size="Medium",
+        estimated_value=1030.0,
+        city="New York, NY",
+        image="https://example.test/other.jpg",
+        images=["https://example.test/other.jpg"],
+        description="Other user marketplace item.",
+        wants="Open to similar-value offers",
+        tags=[],
+        source_item_id="item-other",
+        analysis={"item_id": "item-other"},
+        status="Active",
+    )
+
+    list_res = client.get("/v1/listings?limit=10&include_matches=true", headers={"x-api-key": "test-key"})
+    assert list_res.status_code == 200, list_res.text
+    other = next(item for item in list_res.json()["items"] if item["listing_id"] == "other-active-bag-same-name")
+    assert [match["listing_id"] for match in other["matches"]] == ["viewer-active-bag"]
 
 
 def test_trade_match_agent_generates_persisted_optional_matches() -> None:

@@ -97,4 +97,11 @@ def get_gpt_item_profiler() -> GptItemProfiler:
         max_images=s.gpt_item_profile_max_images,
         image_detail=s.gpt_item_profile_image_detail,
         reasoning_effort=s.gpt_item_profile_reasoning_effort,
+        vertex_search_enabled=s.gpt_item_profile_vertex_search_enabled,
+        vertex_project_id=s.gpt_item_profile_vertex_search_project_id,
+        vertex_location=s.gpt_item_profile_vertex_search_location,
+        vertex_model=s.gpt_item_profile_vertex_search_model,
+        vertex_data_store=s.gpt_item_profile_vertex_search_datastore,
+        vertex_access_token=s.gpt_item_profile_vertex_search_access_token,
+        vertex_max_results=s.gpt_item_profile_vertex_search_max_results,
     )

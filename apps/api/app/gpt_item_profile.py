@@ -46,6 +46,13 @@ class GptItemProfiler:
         max_images: int,
         image_detail: str,
         reasoning_effort: str,
+        vertex_search_enabled: bool = False,
+        vertex_project_id: str | None = None,
+        vertex_location: str = "global",
+        vertex_model: str | None = None,
+        vertex_data_store: str | None = None,
+        vertex_access_token: str | None = None,
+        vertex_max_results: int = 10,
     ):
         self.enabled = enabled
         self.provider_order = [p.strip().lower() for p in provider_order.split(",") if p.strip()] or ["gemini", "openai"]
@@ -53,8 +60,15 @@ class GptItemProfiler:
         self.openai_model = openai_model
         self.gemini_api_key = gemini_api_key
         self.gemini_model = gemini_model
+        self.vertex_search_enabled = vertex_search_enabled
+        self.vertex_project_id = vertex_project_id
+        self.vertex_location = vertex_location.strip() if vertex_location else "global"
+        self.vertex_model = vertex_model or gemini_model
+        self.vertex_data_store = vertex_data_store
+        self.vertex_access_token = vertex_access_token
+        self.vertex_max_results = max(1, min(vertex_max_results, 20))
         self.timeout_s = timeout_s
-        self.max_images = max(1, min(max_images, 4))
+        self.max_images = max(1, min(max_images, 6))
         self.image_detail = image_detail if image_detail in {"low", "high", "auto"} else "auto"
         self.reasoning_effort = reasoning_effort.strip().lower() if reasoning_effort else ""
         self._profile_cache: dict[str, dict[str, Any]] = {}
@@ -90,6 +104,74 @@ class GptItemProfiler:
         best_partial_profile: dict[str, Any] | None = None
         best_partial_provider: str | None = None
         for provider in self.provider_order:
+            if provider in {"hybrid", "gemini_openai", "gemini_openai_valuation"}:
+                if not self.gemini_api_key:
+                    provider_errors.append("hybrid: GEMINI_API_KEY missing")
+                    continue
+                if not self.openai_api_key:
+                    provider_errors.append("hybrid: OPENAI_API_KEY missing")
+                    continue
+                called = True
+                try:
+                    parsed = self._call_gemini_openai_hybrid(
+                        images=images,
+                        brand_name=brand_name,
+                        category=category,
+                        item_size=item_size,
+                        condition_grade=condition_grade,
+                        condition_source=condition_source,
+                        item_description=item_description,
+                    )
+                    if parsed is not None:
+                        parsed.setdefault("_provider", "hybrid")
+                        if self._has_usable_profile_data(parsed) and self._has_usable_pricing(parsed):
+                            self._profile_cache[cache_key] = dict(parsed)
+                            return GptItemProfileResult(profile=parsed, enabled=True, called=True)
+                        best_partial_profile = parsed
+                        best_partial_provider = "hybrid"
+                        provider_errors.append("hybrid: weak_or_missing_data_trying_next_provider")
+                        continue
+                    provider_errors.append("hybrid: empty_response")
+                except httpx.ReadTimeout:
+                    provider_errors.append(f"hybrid: timeout after {self.timeout_s:.0f}s")
+                except Exception as exc:
+                    provider_errors.append(f"hybrid: {exc}")
+                continue
+
+            if provider in {"vertex", "vertexai", "vertex_ai_search"}:
+                if not self.vertex_search_enabled:
+                    provider_errors.append("vertex: disabled")
+                    continue
+                if not self.vertex_project_id or not self.vertex_data_store:
+                    provider_errors.append("vertex: GCP project or Vertex AI Search datastore missing")
+                    continue
+                called = True
+                try:
+                    parsed = self._call_vertex_ai_search(
+                        images=images,
+                        brand_name=brand_name,
+                        category=category,
+                        item_size=item_size,
+                        condition_grade=condition_grade,
+                        condition_source=condition_source,
+                        item_description=item_description,
+                    )
+                    if parsed is not None:
+                        parsed.setdefault("_provider", "vertex")
+                        if self._has_usable_pricing(parsed) and self._has_strong_pricing_evidence(parsed):
+                            self._profile_cache[cache_key] = dict(parsed)
+                            return GptItemProfileResult(profile=parsed, enabled=True, called=True)
+                        best_partial_profile = parsed
+                        best_partial_provider = "vertex"
+                        provider_errors.append("vertex: weak_or_missing_pricing_trying_next_provider")
+                        continue
+                    provider_errors.append("vertex: empty_response")
+                except httpx.ReadTimeout:
+                    provider_errors.append(f"vertex: timeout after {self.timeout_s:.0f}s")
+                except Exception as exc:
+                    provider_errors.append(f"vertex: {exc}")
+                continue
+
             if provider == "gemini":
                 if not self.gemini_api_key:
                     provider_errors.append("gemini: GEMINI_API_KEY missing")
@@ -419,6 +501,34 @@ class GptItemProfiler:
                     },
                     "required": ["verdict", "confidence", "reasons", "required_checks", "disclaimer"],
                 },
+                "visual_condition_assessment": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "wear_level": {
+                            "type": "string",
+                            "enum": ["pristine", "minimal", "visible", "heavy", "unclear"],
+                        },
+                        "box_included": {"type": "string", "enum": ["yes", "no", "unclear"]},
+                        "dust_bag_included": {"type": "string", "enum": ["yes", "no", "unclear"]},
+                        "new_in_box_signal": {"type": "string", "enum": ["yes", "no", "unclear"]},
+                        "pricing_tier": {
+                            "type": "string",
+                            "enum": ["new_in_box", "pristine", "excellent", "pre_owned", "worn", "unclear"],
+                        },
+                        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                        "evidence": {"type": "array", "items": {"type": "string"}},
+                    },
+                    "required": [
+                        "wear_level",
+                        "box_included",
+                        "dust_bag_included",
+                        "new_in_box_signal",
+                        "pricing_tier",
+                        "confidence",
+                        "evidence",
+                    ],
+                },
                 "retail_price_estimate": {
                     "type": "object",
                     "additionalProperties": False,
@@ -529,6 +639,7 @@ class GptItemProfiler:
                 "dupe_risk_assessment",
                 "why_not_fast_fashion",
                 "authenticity_screen",
+                "visual_condition_assessment",
                 "retail_price_estimate",
                 "resale_price_estimate",
                 "resale_price_breakdown",
@@ -548,6 +659,82 @@ class GptItemProfiler:
                     "name": "item_profile_result",
                     "strict": True,
                     "schema": schema,
+                }
+            },
+        }
+        if self.reasoning_effort:
+            payload["reasoning"] = {"effort": self.reasoning_effort}
+        return payload
+
+    def _build_valuation_schema(self) -> dict[str, Any]:
+        full = self._build_schema()
+        props = full["properties"]
+        required = [
+            "grounding_sources",
+            "retail_price_estimate",
+            "resale_price_estimate",
+            "resale_price_breakdown",
+            "expected_auth_docs",
+        ]
+        return {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {key: props[key] for key in required},
+            "required": required,
+        }
+
+    def _build_openai_valuation_payload(
+        self,
+        *,
+        content: list[dict[str, Any]],
+        gemini_profile: dict[str, Any],
+    ) -> dict[str, Any]:
+        valuation_schema = self._build_valuation_schema()
+        valuation_context = {
+            "category": gemini_profile.get("category"),
+            "candidate_brand": gemini_profile.get("candidate_brand"),
+            "candidate_model": gemini_profile.get("candidate_model"),
+            "model_identification": gemini_profile.get("model_identification"),
+            "visual_signatures": gemini_profile.get("visual_signatures"),
+            "visual_condition_assessment": gemini_profile.get("visual_condition_assessment"),
+        }
+        valuation_content = [
+            *content,
+            {
+                "type": "input_text",
+                "text": (
+                    "Valuation task: Use the Gemini visual identification below as the fixed item identity. "
+                    "Do not reclassify the brand or model unless the valuation evidence clearly proves it impossible. "
+                    "Use web search to find resale-market pricing from trusted resale sources first: The RealReal, "
+                    "Vestiaire Collective, Fashionphile, Rebag, eBay sold/available comps, Poshmark, Depop, and Vinted. "
+                    "Value the item for a patient peer-to-peer luxury trade, not a liquidation, wholesale, or quick-sale price. "
+                    "Do not let one low eBay/Vinted sale dominate the estimate when stronger NWT/current-season or retail context exists. "
+                    "Account for size, stated condition, visible wear, tags, box/dust bag/accessories, and new-in-box or pristine signals "
+                    "from the images and Gemini assessment. "
+                    "For contemporary apparel with confirmed current-season or near-current MSRP and NewWithTags condition, use a patient "
+                    "peer-to-peer estimate around 45%-60% of MSRP unless same-condition sold comps clearly prove a lower market. "
+                    "For NewWithTags apparel that is not current-season, use a patient peer-to-peer estimate around 35%-50% of MSRP when "
+                    "trusted resale comps are thin or noisy. "
+                    "For resale_price_breakdown, always include condition-tier rows when evidence allows: "
+                    "'Without tags / excellent condition', 'New with tags / brand new', and "
+                    "'Current-season style with MSRP context'. Use range_low/range_high and an estimated midpoint for each tier. "
+                    "If the user condition is NewWithTags, make resale_price_estimate select the New with tags tier unless the photos "
+                    "or comps clearly contradict that condition. "
+                    "Return only the valuation JSON fields required by the schema.\n\n"
+                    f"Gemini identification and condition:\n{json.dumps(valuation_context, ensure_ascii=True)}"
+                ),
+            },
+        ]
+        payload: dict[str, Any] = {
+            "model": self.openai_model,
+            "input": [{"role": "user", "content": valuation_content}],
+            "tools": [{"type": "web_search_preview"}],
+            "text": {
+                "format": {
+                    "type": "json_schema",
+                    "name": "item_valuation_result",
+                    "strict": True,
+                    "schema": valuation_schema,
                 }
             },
         }
@@ -603,6 +790,9 @@ class GptItemProfiler:
                     "Single-call task: identify exact luxury item model and produce grounded pricing in one response.\n"
                     "Constraints:\n"
                     "1) Identify exact category, brand, and model from the image.\n"
+                    "1a) Derive visual condition and completeness from the photos: pristine/unworn cues, visible wear, "
+                    "whether an original branded box is shown, whether dust bags or accessories are shown, and whether "
+                    "the item should be priced as new-in-box/pristine versus ordinary pre-owned.\n"
                     "2) Use Google grounding and prioritize: Rebag, Poshmark, The RealReal, Vestiaire Collective, "
                     "1stdibs, Fashionphile. De-prioritize eBay unless needed.\n"
                     "3) Compute resale pricing specifically for the identified category/model and current item condition.\n"
@@ -610,7 +800,7 @@ class GptItemProfiler:
                     "5) Return ONLY JSON. No prose.\n\n"
                     "JSON keys required:\n"
                     "category, candidate_brand, candidate_model, confidence, visual_signatures, grounding_sources, "
-                    "dupe_risk_assessment, why_not_fast_fashion, model_identification, authenticity_screen, "
+                    "dupe_risk_assessment, why_not_fast_fashion, model_identification, authenticity_screen, visual_condition_assessment, "
                     "retail_price_estimate, resale_price_estimate, resale_price_breakdown, receipt_present, expected_auth_docs.\n"
                     "For resale_price_breakdown include rows close to: Good/Pre-owned Condition, "
                     "High-End/Excellent Condition, Original Retail Value (or closest equivalent labels).\n"
@@ -633,10 +823,15 @@ class GptItemProfiler:
                 "text": (
                     "Step 1/2 - Grounded Evidence Collection.\n"
                     "Identify the exact category, brand, and model from the image. "
+                    "Derive visual condition and completeness from the image: pristine/unworn cues, visible wear, "
+                    "original branded box, dust bags, and whether the item should be valued as new-in-box/pristine. "
                     "Use Google grounding and ONLY use these websites, in this strict priority order:\n"
                     "Tier 1: 1) The RealReal, 2) Vestiaire Collective, 3) Fashionphile, 4) Rebag.\n"
                     "Tier 2: 5) eBay, 6) Poshmark.\n"
                     "Tier 3: 7) Depop, 8) Vinted.\n"
+                    "Search using explicit domain-limited queries such as: "
+                    "site:therealreal.com OR site:vestiairecollective.com OR site:fashionphile.com OR site:rebag.com OR "
+                    "site:ebay.com OR site:poshmark.com OR site:depop.com OR site:vinted.com.\n"
                     "Prefer higher tiers first; only use lower tiers when higher-tier evidence is insufficient.\n"
                     "Collect pricing evidence relevant to the identified model and current condition, including "
                     "median-like central value and condition-based ranges when available.\n"
@@ -647,7 +842,7 @@ class GptItemProfiler:
         return {
             "contents": [{"role": "user", "parts": gemini_parts}],
             "tools": [{"google_search": {}}],
-            "generationConfig": {"temperature": 0.1},
+            "generationConfig": {"temperature": 1.0},
         }
 
     def _build_gemini_formatter_payload(self, *, content: list[dict[str, Any]], grounded_text: str) -> dict[str, Any]:
@@ -660,7 +855,7 @@ class GptItemProfiler:
                     f"Grounded evidence:\n{grounded_text}\n\n"
                     "Return ONLY a JSON object with keys exactly:\n"
                     "category, candidate_brand, candidate_model, confidence, visual_signatures, grounding_sources, "
-                    "dupe_risk_assessment, why_not_fast_fashion, model_identification, authenticity_screen, "
+                    "dupe_risk_assessment, why_not_fast_fashion, model_identification, authenticity_screen, visual_condition_assessment, "
                     "retail_price_estimate, resale_price_estimate, resale_price_breakdown, receipt_present, expected_auth_docs.\n"
                     "Use numeric values for estimated_price/ranges whenever possible. No markdown, no prose."
                 )
@@ -672,6 +867,37 @@ class GptItemProfiler:
                 "responseMimeType": "application/json",
                 "temperature": 0.1,
             },
+        }
+
+    def _build_vertex_ai_search_payload(self, *, content: list[dict[str, Any]]) -> dict[str, Any]:
+        gemini_parts = self._build_gemini_parts(content=content)
+        gemini_parts.append(
+            {
+                "text": (
+                    "Step 1/2 - Vertex AI Search Evidence Collection.\n"
+                    "Identify the exact category, brand, and model from the images. "
+                    "Derive visual condition and completeness from the photos: pristine/unworn cues, visible wear, "
+                    "original branded box, dust bags, and whether the item should be valued as new-in-box/pristine. "
+                    "Use only evidence retrieved from the configured Vertex AI Search datastore. "
+                    "Collect pricing evidence relevant to the identified model and current item condition, including "
+                    "median-like central value and condition-based ranges when available. "
+                    "Return concise evidence text with source titles, URLs when present, and numeric price mentions."
+                )
+            }
+        )
+        return {
+            "contents": [{"role": "user", "parts": gemini_parts}],
+            "tools": [
+                {
+                    "retrieval": {
+                        "vertexAiSearch": {
+                            "datastore": self.vertex_data_store,
+                            "maxResults": self.vertex_max_results,
+                        }
+                    }
+                }
+            ],
+            "generationConfig": {"temperature": 1.0},
         }
 
     def _build_gemini_search_payload(self, *, content: list[dict[str, Any]], visual_signatures: str) -> dict[str, Any]:
@@ -730,7 +956,7 @@ class GptItemProfiler:
                     f"{conflict_text}\n\n"
                     "Now return ONLY a strict JSON object with keys exactly: "
                     "category, candidate_brand, candidate_model, confidence, visual_signatures, grounding_sources, "
-                    "dupe_risk_assessment, why_not_fast_fashion, model_identification, authenticity_screen, "
+                    "dupe_risk_assessment, why_not_fast_fashion, model_identification, authenticity_screen, visual_condition_assessment, "
                     "retail_price_estimate, resale_price_estimate, resale_price_breakdown, receipt_present, expected_auth_docs. "
                     "For resale_price_breakdown, include these rows when available from sources: "
                     "'Good/Pre-owned Condition', 'High-End/Excellent Condition', and 'Original Retail Value'. "
@@ -782,6 +1008,106 @@ class GptItemProfiler:
                 raise RuntimeError(f"openai_http_{resp.status_code}: {resp.text[:600]}")
             raw = resp.json()
         return self._parse_response(raw)
+
+    def _call_openai_valuation(
+        self,
+        *,
+        content: list[dict[str, Any]],
+        gemini_profile: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        payload = self._build_openai_valuation_payload(content=content, gemini_profile=gemini_profile)
+        with httpx.Client(timeout=self.timeout_s) as client:
+            resp = client.post(
+                "https://api.openai.com/v1/responses",
+                headers={
+                    "Authorization": f"Bearer {self.openai_api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+            if resp.status_code >= 400:
+                raise RuntimeError(f"openai_http_{resp.status_code}: {resp.text[:600]}")
+            raw = resp.json()
+        text = self._extract_output_text(raw)
+        if not text:
+            return None
+        data = self._parse_json_relaxed(text)
+        return data if isinstance(data, dict) else None
+
+    def _merge_gemini_identification_with_openai_valuation(
+        self,
+        *,
+        gemini_profile: dict[str, Any],
+        openai_valuation: dict[str, Any],
+    ) -> dict[str, Any]:
+        merged = dict(gemini_profile)
+        if "grounding_sources" in openai_valuation:
+            merged["grounding_sources"] = openai_valuation.get("grounding_sources")
+        for key in (
+            "retail_price_estimate",
+            "resale_price_estimate",
+            "resale_price_breakdown",
+            "expected_auth_docs",
+        ):
+            if key in openai_valuation:
+                merged[key] = openai_valuation.get(key)
+        workflow = dict(merged.get("_workflow") or {})
+        workflow["hybrid"] = {
+            "identification_provider": "gemini",
+            "valuation_provider": "openai",
+        }
+        workflow["openai_valuation"] = openai_valuation
+        merged["_workflow"] = workflow
+        merged["_provider"] = "hybrid"
+        return self._normalize_profile_shape(merged)
+
+    def _call_gemini_openai_hybrid(
+        self,
+        *,
+        images: list[ImageInput],
+        brand_name: str,
+        category: str,
+        item_size: str | None,
+        condition_grade: str,
+        condition_source: str,
+        item_description: str | None,
+    ) -> dict[str, Any] | None:
+        content = self._build_content(
+            images=images,
+            brand_name=brand_name,
+            category=category,
+            item_size=item_size,
+            condition_grade=condition_grade,
+            condition_source=condition_source,
+            item_description=item_description,
+        )
+        gemini_profile = self._call_gemini(
+            images=images,
+            brand_name=brand_name,
+            category=category,
+            item_size=item_size,
+            condition_grade=condition_grade,
+            condition_source=condition_source,
+            item_description=item_description,
+            schema=self._build_schema(),
+        )
+        if not isinstance(gemini_profile, dict):
+            return None
+        openai_valuation = self._call_openai_valuation(content=content, gemini_profile=gemini_profile)
+        if not isinstance(openai_valuation, dict):
+            workflow = dict(gemini_profile.get("_workflow") or {})
+            workflow["hybrid"] = {
+                "identification_provider": "gemini",
+                "valuation_provider": "openai",
+                "valuation_error": "empty_response",
+            }
+            gemini_profile["_workflow"] = workflow
+            gemini_profile["_provider"] = "hybrid"
+            return gemini_profile
+        return self._merge_gemini_identification_with_openai_valuation(
+            gemini_profile=gemini_profile,
+            openai_valuation=openai_valuation,
+        )
 
     def _call_gemini(
         self,
@@ -843,6 +1169,100 @@ class GptItemProfiler:
         parsed_single["_workflow"] = workflow
         return parsed_single
 
+    def _vertex_generate_content_url(self) -> str:
+        project = self.vertex_project_id or ""
+        location = self.vertex_location or "global"
+        model = self.vertex_model or self.gemini_model
+        host = "aiplatform.googleapis.com" if location == "global" else f"{location}-aiplatform.googleapis.com"
+        return (
+            f"https://{host}/v1beta1/projects/{project}/locations/{location}/"
+            f"publishers/google/models/{model}:generateContent"
+        )
+
+    def _vertex_bearer_token(self) -> str:
+        explicit = self.vertex_access_token or ""
+        if explicit.strip():
+            return explicit.strip()
+        try:
+            import google.auth  # type: ignore
+            from google.auth.transport.requests import Request  # type: ignore
+        except Exception as exc:
+            raise RuntimeError("vertex_access_token_missing_and_google_auth_unavailable") from exc
+        credentials, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+        credentials.refresh(Request())
+        token = getattr(credentials, "token", None)
+        if not isinstance(token, str) or not token.strip():
+            raise RuntimeError("vertex_access_token_unavailable")
+        return token.strip()
+
+    def _call_vertex_ai_search(
+        self,
+        *,
+        images: list[ImageInput],
+        brand_name: str,
+        category: str,
+        item_size: str | None,
+        condition_grade: str,
+        condition_source: str,
+        item_description: str | None,
+    ) -> dict[str, Any] | None:
+        content = self._build_content(
+            images=images,
+            brand_name=brand_name,
+            category=category,
+            item_size=item_size,
+            condition_grade=condition_grade,
+            condition_source=condition_source,
+            item_description=item_description,
+        )
+        url = self._vertex_generate_content_url()
+        token = self._vertex_bearer_token()
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        }
+        grounding_metadata: dict[str, Any] | None = None
+        workflow: dict[str, Any] = {
+            "vertex_ai_search": {
+                "project_id": self.vertex_project_id,
+                "location": self.vertex_location,
+                "model": self.vertex_model,
+                "data_store": self.vertex_data_store,
+                "max_results": self.vertex_max_results,
+            }
+        }
+        with httpx.Client(timeout=self.timeout_s) as client:
+            search_resp = client.post(
+                url,
+                headers=headers,
+                json=self._build_vertex_ai_search_payload(content=content),
+            )
+            if search_resp.status_code >= 400:
+                raise RuntimeError(f"vertex_http_{search_resp.status_code}: {search_resp.text[:600]}")
+            search_raw = search_resp.json()
+            grounding_metadata = self._extract_gemini_grounding_metadata(search_raw)
+            grounded_text = self._extract_gemini_text(search_raw) or ""
+            workflow["grounded_search"] = grounded_text
+
+            format_resp = client.post(
+                url,
+                headers=headers,
+                json=self._build_gemini_formatter_payload(content=content, grounded_text=grounded_text),
+            )
+            if format_resp.status_code >= 400:
+                raise RuntimeError(f"vertex_http_{format_resp.status_code}: {format_resp.text[:600]}")
+            format_raw = format_resp.json()
+        parsed = self._parse_gemini_response(format_raw)
+        if not isinstance(parsed, dict):
+            raise RuntimeError("vertex_two_step_parse_failed")
+        if isinstance(grounding_metadata, dict):
+            grounding_sources = self._grounding_sources_from_metadata(grounding_metadata)
+            if grounding_sources:
+                parsed["grounding_sources"] = grounding_sources
+            parsed["_grounding_metadata"] = grounding_metadata
+        parsed["_workflow"] = workflow
+        return parsed
+
     def _parse_response(self, raw: dict[str, Any]) -> dict[str, Any] | None:
         text = self._extract_output_text(raw)
         if not text:
@@ -878,6 +1298,9 @@ class GptItemProfiler:
             visual_signatures=normalized.get("visual_signatures"),
         )
         normalized["authenticity_screen"] = self._normalize_authenticity_screen(normalized.get("authenticity_screen"))
+        normalized["visual_condition_assessment"] = self._normalize_visual_condition_assessment(
+            normalized.get("visual_condition_assessment")
+        )
         normalized["retail_price_estimate"] = self._normalize_price_estimate(normalized.get("retail_price_estimate"))
         normalized["resale_price_estimate"] = self._normalize_price_estimate(normalized.get("resale_price_estimate"))
         normalized["resale_price_breakdown"] = self._normalize_resale_price_breakdown(
@@ -887,6 +1310,34 @@ class GptItemProfiler:
         normalized["receipt_present"] = self._normalize_receipt_present(normalized.get("receipt_present"))
         normalized["expected_auth_docs"] = self._normalize_expected_auth_docs(normalized.get("expected_auth_docs"))
         return normalized
+
+    def _normalize_visual_condition_assessment(self, value: Any) -> dict[str, Any]:
+        data = value if isinstance(value, dict) else {}
+
+        def enum_value(raw: Any, allowed: set[str], default: str) -> str:
+            if isinstance(raw, str):
+                normalized = raw.strip().casefold().replace("-", "_").replace(" ", "_")
+                if normalized in allowed:
+                    return normalized
+            return default
+
+        return {
+            "wear_level": enum_value(
+                data.get("wear_level"),
+                {"pristine", "minimal", "visible", "heavy", "unclear"},
+                "unclear",
+            ),
+            "box_included": enum_value(data.get("box_included"), {"yes", "no", "unclear"}, "unclear"),
+            "dust_bag_included": enum_value(data.get("dust_bag_included"), {"yes", "no", "unclear"}, "unclear"),
+            "new_in_box_signal": enum_value(data.get("new_in_box_signal"), {"yes", "no", "unclear"}, "unclear"),
+            "pricing_tier": enum_value(
+                data.get("pricing_tier"),
+                {"new_in_box", "pristine", "excellent", "pre_owned", "worn", "unclear"},
+                "unclear",
+            ),
+            "confidence": self._normalize_confidence(data.get("confidence")) or 0.0,
+            "evidence": self._as_str_list(data.get("evidence")),
+        }
 
     @staticmethod
     def _as_nullable_str(value: Any) -> str | None:

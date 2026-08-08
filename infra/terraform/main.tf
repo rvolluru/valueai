@@ -63,6 +63,18 @@ resource "aws_s3_bucket_public_access_block" "uploads" {
   restrict_public_buckets = true
 }
 
+resource "aws_s3_bucket_cors_configuration" "uploads" {
+  bucket = aws_s3_bucket.uploads.id
+
+  cors_rule {
+    allowed_headers = ["*"]
+    allowed_methods = ["GET", "HEAD", "PUT", "POST"]
+    allowed_origins = split(",", var.cors_allow_origins)
+    expose_headers  = ["ETag"]
+    max_age_seconds = 3000
+  }
+}
+
 resource "aws_ecr_repository" "api" {
   count                = var.create_ecr_repository ? 1 : 0
   name                 = "${var.project_name}-api"
@@ -336,6 +348,13 @@ resource "aws_ecs_task_definition" "api" {
         { name = "GPT_ITEM_PROFILE_MAX_IMAGES", value = tostring(var.gpt_item_profile_max_images) },
         { name = "GPT_ITEM_PROFILE_IMAGE_DETAIL", value = var.gpt_item_profile_image_detail },
         { name = "GPT_ITEM_PROFILE_REASONING_EFFORT", value = var.gpt_item_profile_reasoning_effort },
+        { name = "GPT_ITEM_PROFILE_VERTEX_SEARCH_ENABLED", value = tostring(var.gpt_item_profile_vertex_search_enabled) },
+        { name = "GPT_ITEM_PROFILE_VERTEX_SEARCH_PROJECT_ID", value = var.gpt_item_profile_vertex_search_project_id },
+        { name = "GPT_ITEM_PROFILE_VERTEX_SEARCH_LOCATION", value = var.gpt_item_profile_vertex_search_location },
+        { name = "GPT_ITEM_PROFILE_VERTEX_SEARCH_MODEL", value = var.gpt_item_profile_vertex_search_model },
+        { name = "GPT_ITEM_PROFILE_VERTEX_SEARCH_DATASTORE", value = var.gpt_item_profile_vertex_search_datastore },
+        { name = "GPT_ITEM_PROFILE_VERTEX_SEARCH_ACCESS_TOKEN", value = var.gpt_item_profile_vertex_search_access_token },
+        { name = "GPT_ITEM_PROFILE_VERTEX_SEARCH_MAX_RESULTS", value = tostring(var.gpt_item_profile_vertex_search_max_results) },
         { name = "FIRECRAWL_API_KEY", value = var.firecrawl_api_key },
         { name = "VALUATION_USE_FIRECRAWL", value = tostring(var.valuation_use_firecrawl) },
         { name = "VALUATION_ENABLED", value = tostring(var.valuation_enabled) },

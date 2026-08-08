@@ -88,6 +88,43 @@ export function createMobileApiClient({ apiBaseUrl }) {
         body: fd,
       });
     },
+    async createImageUploadSlots({ images = [], itemId = '' }, auth = {}) {
+      return requestJson({
+        apiBaseUrl,
+        path: '/v1/uploads/images/presign',
+        method: 'POST',
+        auth,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          item_id: itemId || null,
+          images: images.map((img, idx) => ({
+            filename: img.filename || img.fileName || img.name || `upload-${idx + 1}.jpg`,
+            content_type: img.contentType || img.mimeType || img.type || 'image/jpeg',
+            content_length: Number.isFinite(Number(img.contentLength || img.fileSize || img.size)) ? Number(img.contentLength || img.fileSize || img.size) : null,
+          })),
+        }),
+      });
+    },
+    async confirmImageUploads({ itemId, uploadedImages = [] }, auth = {}) {
+      return requestJson({
+        apiBaseUrl,
+        path: '/v1/uploads/images/confirm',
+        method: 'POST',
+        auth,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          item_id: itemId,
+          uploaded_images: uploadedImages.map((img) => ({
+            image_id: img.image_id || img.imageId,
+            filename: img.filename || img.fileName || null,
+            content_type: img.content_type || img.contentType || img.mimeType || 'image/jpeg',
+            storage_uri: img.storage_uri || img.storageUri,
+            role_hint: img.role_hint || img.roleHint || null,
+            content_hash: img.content_hash || img.contentHash || null,
+          })),
+        }),
+      });
+    },
     async queueListingAnalysis({ listingId, images = [], imageUrls = [], category, userCondition, itemDescription, itemSize, debug = true }, auth = {}) {
       const fd = new FormData();
       images.forEach((img, idx) => {
@@ -274,6 +311,40 @@ export function createMobileApiClient({ apiBaseUrl }) {
         auth,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload || {}),
+      });
+    },
+    listNotifications(limit = 50, auth = {}) {
+      return requestJson({
+        apiBaseUrl,
+        path: `/v1/me/notifications?limit=${limit}`,
+        method: 'GET',
+        auth,
+      });
+    },
+    clearNotifications(auth = {}) {
+      return requestJson({
+        apiBaseUrl,
+        path: '/v1/me/notifications',
+        method: 'DELETE',
+        auth,
+      });
+    },
+    deleteNotification(notificationId, auth = {}) {
+      return requestJson({
+        apiBaseUrl,
+        path: `/v1/me/notifications/${encodeURIComponent(notificationId)}`,
+        method: 'DELETE',
+        auth,
+      });
+    },
+    likeListing(listingId, auth = {}) {
+      return requestJson({
+        apiBaseUrl,
+        path: `/v1/listings/${encodeURIComponent(listingId)}/like`,
+        method: 'POST',
+        auth,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
       });
     },
     addressSuggestions({ q = '', city = '', state = '', postalCode = '' } = {}, auth = {}) {

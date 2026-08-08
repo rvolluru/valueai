@@ -176,7 +176,7 @@ variable "gpt_item_profile_enabled" {
 
 variable "gpt_item_profile_provider_order" {
   type    = string
-  default = "gemini,openai"
+  default = "hybrid,gemini,openai"
 }
 
 variable "gpt_item_profile_model" {
@@ -196,7 +196,7 @@ variable "gpt_item_profile_timeout_s" {
 
 variable "gpt_item_profile_max_images" {
   type    = number
-  default = 2
+  default = 6
 }
 
 variable "gpt_item_profile_image_detail" {
@@ -207,6 +207,42 @@ variable "gpt_item_profile_image_detail" {
 variable "gpt_item_profile_reasoning_effort" {
   type    = string
   default = "low"
+}
+
+variable "gpt_item_profile_vertex_search_enabled" {
+  type    = bool
+  default = false
+}
+
+variable "gpt_item_profile_vertex_search_project_id" {
+  type    = string
+  default = ""
+}
+
+variable "gpt_item_profile_vertex_search_location" {
+  type    = string
+  default = "global"
+}
+
+variable "gpt_item_profile_vertex_search_model" {
+  type    = string
+  default = ""
+}
+
+variable "gpt_item_profile_vertex_search_datastore" {
+  type    = string
+  default = ""
+}
+
+variable "gpt_item_profile_vertex_search_access_token" {
+  type      = string
+  default   = ""
+  sensitive = true
+}
+
+variable "gpt_item_profile_vertex_search_max_results" {
+  type    = number
+  default = 10
 }
 
 variable "firecrawl_api_key" {

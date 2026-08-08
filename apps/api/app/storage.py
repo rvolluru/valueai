@@ -16,6 +16,12 @@ class Storage:
     def save_debug_artifact(self, item_id: str, filename: str, data: bytes) -> str:
         raise NotImplementedError
 
+    def create_presigned_upload(self, item_id: str, filename: str, content_type: str, expires_in: int = 900) -> tuple[str, str]:
+        raise NotImplementedError
+
+    def object_exists(self, storage_uri: str) -> bool:
+        raise NotImplementedError
+
 
 class LocalStorage(Storage):
     def __init__(self, base_dir: str):
@@ -74,6 +80,27 @@ class S3Storage(Storage):
         key = f"artifacts/{item_id}/{filename}"
         ctype = "application/json" if filename.endswith(".json") else "application/octet-stream"
         return self._put(key, data, ctype)
+
+    def create_presigned_upload(self, item_id: str, filename: str, content_type: str, expires_in: int = 900) -> tuple[str, str]:
+        key = f"uploads/{item_id}/{filename}"
+        upload_url = self.client.generate_presigned_url(
+            "put_object",
+            Params={"Bucket": self.bucket, "Key": key, "ContentType": content_type},
+            ExpiresIn=expires_in,
+            HttpMethod="PUT",
+        )
+        return upload_url, f"s3://{self.bucket}/{key}"
+
+    def object_exists(self, storage_uri: str) -> bool:
+        prefix = f"s3://{self.bucket}/"
+        if not storage_uri.startswith(prefix):
+            return False
+        key = storage_uri[len(prefix) :]
+        try:
+            self.client.head_object(Bucket=self.bucket, Key=key)
+            return True
+        except Exception:
+            return False
 
 
 def build_storage(settings: Settings) -> Storage:

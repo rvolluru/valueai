@@ -8,7 +8,7 @@ import {
   useUser,
 } from '@clerk/clerk-react'
 import { FaFacebookF, FaPinterestP } from 'react-icons/fa'
-import { FiTrash2 } from 'react-icons/fi'
+import { FiBell, FiTrash2 } from 'react-icons/fi'
 import { createWebApiClient } from './lib/apiClient'
 
 const API_DEFAULT =
@@ -126,6 +126,21 @@ function normalizeShippingAddresses(addresses, fallback = null) {
     }
   }
   return [emptyShippingAddress()]
+}
+
+function isCompleteShippingAddress(address) {
+  return Boolean(
+    String(address?.full_name || '').trim()
+    && String(address?.address_line1 || '').trim()
+    && String(address?.city || '').trim()
+    && String(address?.state || '').trim()
+    && String(address?.postal_code || '').trim()
+    && String(address?.country || '').trim()
+  )
+}
+
+function completeShippingAddresses(addresses) {
+  return (Array.isArray(addresses) ? addresses : []).filter(isCompleteShippingAddress)
 }
 
 function normalizeMultiSizeValue(value) {
@@ -288,7 +303,7 @@ function missingPublishFields(listing) {
   const value = Number(listing?.estimatedValue || 0)
   const size = String(listing?.size || '').trim()
   const validCategories = new Set(['clothes', 'shoes', 'handbag'])
-  const validConditions = new Set(['New', 'LikeNew'])
+  const validConditions = new Set(['NewWithTags', 'New', 'LikeNew'])
 
   if (gallery.length < 1) missing.push('photos')
   if (!title || title.toLowerCase() === 'new listing' || title.toLowerCase() === 'untitled listing') missing.push('title')
@@ -366,10 +381,17 @@ function sameStringList(left, right) {
   return a.every((value, index) => value === b[index])
 }
 
+function displayConditionLabel(input) {
+  const normalized = String(input || '').replace(/[-_\s]+/g, '').toLowerCase()
+  if (normalized === 'newwithtags' || normalized === 'nwt') return 'New with Tags'
+  if (normalized === 'likenew') return 'Like New'
+  return String(input || 'Unknown condition').trim() || 'Unknown condition'
+}
+
 function buildListingShareCaption(item) {
   const title = String(item?.title || 'Listing').trim()
   const brand = String(item?.brand || 'Unknown brand').trim()
-  const condition = String(item?.condition || 'Unknown condition').trim()
+  const condition = displayConditionLabel(item?.condition)
   const value = money(item?.estimatedValue)
   const description = getListingDescription(item)
   const imageLinks = getListingGallery(item).slice(0, 3)
@@ -379,13 +401,17 @@ function buildListingShareCaption(item) {
 
 function sizeOptionsForCategory(category) {
   if (category === 'shoes') return ['US 5', 'US 5.5', 'US 6', 'US 6.5', 'US 7', 'US 7.5', 'US 8', 'US 8.5', 'US 9', 'US 9.5', 'US 10', 'US 10.5', 'US 11', 'US 12']
-  if (category === 'clothes') return ['XXS', 'XS', 'S', 'M', 'L', 'XL', 'XXL']
+  if (category === 'clothes') return APPAREL_SIZE_OPTIONS
   if (category === 'handbag') return ['Mini', 'Small', 'Medium', 'Large']
   return []
 }
 
-const FEMALE_APPAREL_SIZE_OPTIONS = ['XXS', 'XS', 'S', 'M', 'L', 'XL', 'XXL']
-const MALE_APPAREL_SIZE_OPTIONS = ['XS', 'S', 'M', 'L', 'XL', 'XXL', 'XXXL']
+const US_NUMERIC_APPAREL_SIZE_OPTIONS = ['00', '0', '2', '4', '6', '8', '10', '12', '14', '16', '18', '20', '22', '24']
+const FEMALE_ALPHA_APPAREL_SIZE_OPTIONS = ['XXS', 'XS', 'S', 'M', 'L', 'XL', 'XXL']
+const MALE_ALPHA_APPAREL_SIZE_OPTIONS = ['XS', 'S', 'M', 'L', 'XL', 'XXL', 'XXXL']
+const FEMALE_APPAREL_SIZE_OPTIONS = [...FEMALE_ALPHA_APPAREL_SIZE_OPTIONS, ...US_NUMERIC_APPAREL_SIZE_OPTIONS]
+const MALE_APPAREL_SIZE_OPTIONS = [...MALE_ALPHA_APPAREL_SIZE_OPTIONS, ...US_NUMERIC_APPAREL_SIZE_OPTIONS]
+const APPAREL_SIZE_OPTIONS = ['XXS', 'XS', 'S', 'M', 'L', 'XL', 'XXL', 'XXXL', ...US_NUMERIC_APPAREL_SIZE_OPTIONS]
 const FEMALE_SHOE_SIZE_OPTIONS = ['US 5', 'US 5.5', 'US 6', 'US 6.5', 'US 7', 'US 7.5', 'US 8', 'US 8.5', 'US 9', 'US 9.5', 'US 10', 'US 10.5', 'US 11', 'US 12']
 const MALE_SHOE_SIZE_OPTIONS = ['US 6', 'US 6.5', 'US 7', 'US 7.5', 'US 8', 'US 8.5', 'US 9', 'US 9.5', 'US 10', 'US 10.5', 'US 11', 'US 11.5', 'US 12', 'US 13', 'US 14']
 const PROFILE_CATEGORY_OPTIONS = ['Dresses', 'Jackets', 'Shoes', 'Handbags', 'Skirts', 'Accessories']
@@ -455,6 +481,13 @@ function resolveSignupFullName(session, profileData) {
   return typeof session?.name === 'string' ? session.name.trim() : ''
 }
 
+function isProfileSetupRequired(profile) {
+  const firstName = String(profile?.first_name || profile?.firstName || '').trim()
+  const lastName = String(profile?.last_name || profile?.lastName || '').trim()
+  const email = String(profile?.email || '').trim()
+  return !firstName || !lastName || !email
+}
+
 function brandSizeChartUrl(brand, category) {
   const name = String(brand || '').trim().toLowerCase()
   if (!name || name === 'unknown') return null
@@ -518,6 +551,66 @@ function loadStripeJs() {
   return stripeJsPromise
 }
 
+const UPLOAD_MAX_DIMENSION = 1600
+const UPLOAD_JPEG_QUALITY = 0.82
+
+function uploadBaseName(name, index) {
+  const fallback = `upload-${index + 1}`
+  const cleanName = String(name || fallback)
+  const dotIndex = cleanName.lastIndexOf('.')
+  return dotIndex > 0 ? cleanName.slice(0, dotIndex) : cleanName
+}
+
+async function sha256Hex(blob) {
+  if (!window.crypto?.subtle) return null
+  const buffer = await blob.arrayBuffer()
+  const digest = await window.crypto.subtle.digest('SHA-256', buffer)
+  return Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, '0')).join('')
+}
+
+async function resizeImageForUpload(file, index) {
+  const sourceType = file?.type || 'image/jpeg'
+  if (!sourceType.startsWith('image/')) return file
+  let bitmap
+  try {
+    bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' })
+  } catch {
+    bitmap = await createImageBitmap(file)
+  }
+  const scale = Math.min(1, UPLOAD_MAX_DIMENSION / Math.max(bitmap.width, bitmap.height))
+  const width = Math.max(1, Math.round(bitmap.width * scale))
+  const height = Math.max(1, Math.round(bitmap.height * scale))
+  const canvas = document.createElement('canvas')
+  canvas.width = width
+  canvas.height = height
+  const context = canvas.getContext('2d')
+  context.drawImage(bitmap, 0, 0, width, height)
+  if (typeof bitmap.close === 'function') bitmap.close()
+  const blob = await new Promise((resolve, reject) => {
+    canvas.toBlob((nextBlob) => {
+      if (nextBlob) resolve(nextBlob)
+      else reject(new Error('Could not prepare image for upload'))
+    }, 'image/jpeg', UPLOAD_JPEG_QUALITY)
+  })
+  return new File([blob], `${uploadBaseName(file?.name, index)}.jpg`, {
+    type: 'image/jpeg',
+    lastModified: Date.now(),
+  })
+}
+
+async function prepareImagesForUpload(images) {
+  return Promise.all((images || []).map(async (file, index) => {
+    const preparedFile = await resizeImageForUpload(file, index)
+    return {
+      file: preparedFile,
+      filename: preparedFile.name || `upload-${index + 1}.jpg`,
+      contentType: preparedFile.type || 'image/jpeg',
+      contentLength: preparedFile.size,
+      contentHash: await sha256Hex(preparedFile),
+    }
+  }))
+}
+
 async function analyzeItem({ apiBaseUrl, apiKey, bearerToken, images, category, userCondition, itemDescription, itemSize, debug }) {
   const { client, authContext } = createWebApiClient({ apiBaseUrl, apiKey })
   return client.analyzeItem(
@@ -535,10 +628,62 @@ async function analyzeItem({ apiBaseUrl, apiKey, bearerToken, images, category, 
 
 async function uploadListingImages({ apiBaseUrl, apiKey, bearerToken, images }) {
   const { client, authContext } = createWebApiClient({ apiBaseUrl, apiKey })
-  return client.uploadImages(
-    { images: (images || []).map((file) => ({ file })) },
-    authContext(bearerToken),
-  )
+  let prepared
+  try {
+    prepared = await prepareImagesForUpload(images || [])
+  } catch (err) {
+    console.warn('Client image preparation failed; falling back to original upload.', err)
+    prepared = (images || []).map((file, index) => ({
+      file,
+      filename: file?.name || `upload-${index + 1}.jpg`,
+      contentType: file?.type || 'image/jpeg',
+      contentLength: file?.size || null,
+      contentHash: null,
+    }))
+  }
+  const auth = authContext(bearerToken)
+  try {
+    const presigned = await client.createImageUploadSlots(
+      {
+        images: prepared.map((entry) => ({
+          filename: entry.filename,
+          contentType: entry.contentType,
+          contentLength: entry.contentLength,
+        })),
+      },
+      auth,
+    )
+    const slots = presigned?.upload_slots || []
+    if (slots.length !== prepared.length) throw new Error('Upload slot count did not match selected images.')
+    await Promise.all(slots.map(async (slot, index) => {
+      const resp = await fetch(slot.upload_url, {
+        method: slot.method || 'PUT',
+        headers: slot.headers || { 'Content-Type': prepared[index].contentType },
+        body: prepared[index].file,
+      })
+      if (!resp.ok) throw new Error(`Direct image upload failed (${resp.status})`)
+    }))
+    return client.confirmImageUploads(
+      {
+        itemId: presigned.item_id,
+        uploadedImages: slots.map((slot, index) => ({
+          image_id: slot.image_id,
+          filename: prepared[index].filename,
+          content_type: prepared[index].contentType,
+          storage_uri: slot.storage_uri,
+          role_hint: slot.role_hint,
+          content_hash: prepared[index].contentHash,
+        })),
+      },
+      auth,
+    )
+  } catch (err) {
+    console.warn('Direct image upload failed; falling back to API upload.', err)
+    return client.uploadImages(
+      { images: prepared.map((entry) => ({ file: entry.file })) },
+      auth,
+    )
+  }
 }
 
 async function queueListingAnalysisJob({ apiBaseUrl, apiKey, bearerToken, listingId, images, category, userCondition, itemDescription, itemSize, debug }) {
@@ -631,6 +776,21 @@ async function fetchClientStateRemote({ apiBaseUrl, apiKey, bearerToken }) {
 async function saveClientStateRemote({ apiBaseUrl, apiKey, bearerToken, payload }) {
   const { client, authContext } = createWebApiClient({ apiBaseUrl, apiKey })
   return client.saveClientState(payload, authContext(bearerToken))
+}
+
+async function fetchNotificationsRemote({ apiBaseUrl, apiKey, bearerToken, limit = 50 }) {
+  const { client, authContext } = createWebApiClient({ apiBaseUrl, apiKey })
+  return client.listNotifications(limit, authContext(bearerToken))
+}
+
+async function deleteNotificationRemote({ apiBaseUrl, apiKey, bearerToken, notificationId }) {
+  const { client, authContext } = createWebApiClient({ apiBaseUrl, apiKey })
+  return client.deleteNotification(notificationId, authContext(bearerToken))
+}
+
+async function likeListingRemote({ apiBaseUrl, apiKey, bearerToken, listingId }) {
+  const { client, authContext } = createWebApiClient({ apiBaseUrl, apiKey })
+  return client.likeListing(listingId, authContext(bearerToken))
 }
 
 async function fetchUspsAddressSuggestionsRemote({ apiBaseUrl, apiKey, bearerToken, q, city, state, postalCode }) {
@@ -1422,6 +1582,8 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   const [listingModalMode, setListingModalMode] = useState('create')
   const [modalEditingListing, setModalEditingListing] = useState(null)
   const [savedListingNotice, setSavedListingNotice] = useState('')
+  const [appAlert, setAppAlert] = useState(null)
+  const [selectedShippingLabel, setSelectedShippingLabel] = useState(null)
   const [profileQuiz, setProfileQuiz] = useState({
     first_name: profileData?.firstName || '', last_name: profileData?.lastName || '', email: profileData?.email || session?.email || '',
     gender: '', birthday: '', tops_size: [], dresses_size: [], bottoms_size: [], shoes_size: [], category_preferences: [],
@@ -1454,6 +1616,10 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   const stripePaymentElementRef = useRef(null)
   const [incomingOffers, setIncomingOffers] = useState([])
   const [offersActorSubject, setOffersActorSubject] = useState('')
+  const [tradeNotification, setTradeNotification] = useState(null)
+  const [notifications, setNotifications] = useState([])
+  const [notificationsHydrated, setNotificationsHydrated] = useState(false)
+  const [notificationPanelOpen, setNotificationPanelOpen] = useState(false)
   const [tradeComposerTarget, setTradeComposerTarget] = useState(null)
   const [marketMatchesTargetId, setMarketMatchesTargetId] = useState(null)
   const [selectedMarketImageIndex, setSelectedMarketImageIndex] = useState(0)
@@ -1477,9 +1643,19 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   const [clientStateHydrated, setClientStateHydrated] = useState(false)
   const forcedLogoutRef = useRef(false)
   const profileSetupAutoOpenedRef = useRef(false)
+  const knownIncomingOfferIdsRef = useRef(new Set())
+  const offerStatusByIdRef = useRef(new Map())
+  const shippingSignatureByOfferRef = useRef(new Map())
+  const incomingOfferPollInitializedRef = useRef(false)
+  const seenServerNotificationIdsRef = useRef(new Set())
   const profileQuizHydrationStartedRef = useRef('')
+  const lastLoadedProfileQuizRef = useRef(null)
   const profileSetupDirtyRef = useRef(false)
   const activeTabRef = useRef(activeTab)
+  const notificationStorageKey = useMemo(() => {
+    const subject = String(session?.id || session?.email || 'guest').trim() || 'guest'
+    return `jouft.notifications.${subject}`
+  }, [session?.email, session?.id])
 
   useEffect(() => {
     activeTabRef.current = activeTab
@@ -1511,6 +1687,12 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     return candidates[0] || participants[0] || ''
   }
 
+  function isOfferReceivedByCurrentUser(offer, actorSubject = '') {
+    const actor = String(actorSubject || resolveOfferActorSubject(offer) || '').trim()
+    const recipient = String(offer?.to_subject || '').trim()
+    return Boolean(actor && recipient && actor === recipient)
+  }
+
   function isOwnedByCurrentUser(listing) {
     const ownerSubject = String(listing?.ownerSubject || '').trim()
     const currentSubject = String(session?.id || '').trim()
@@ -1518,6 +1700,63 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     const ownerName = String(listing?.owner || '').trim().toLowerCase()
     const currentName = String(session?.name || '').trim().toLowerCase()
     return Boolean(ownerName && currentName && ownerName === currentName)
+  }
+
+  function navigateToTab(tab) {
+    setActiveTab(tab)
+    if (typeof window !== 'undefined') {
+      window.history.pushState({}, '', tabHref(tab))
+    }
+  }
+
+  const unreadNotificationCount = notifications.filter((entry) => !entry.read).length
+
+  function addAppNotification({ type, title, body, actionTab = 'inbox', entityId = '' }) {
+    const notification = {
+      id: `${type || 'notification'}-${entityId || Date.now()}-${Date.now()}`,
+      type: type || 'notification',
+      title: title || 'Notification',
+      body: body || '',
+      actionTab,
+      entityId,
+      createdAt: new Date().toISOString(),
+      read: false,
+    }
+    setNotifications((prev) => [notification, ...prev].slice(0, 50))
+    return notification
+  }
+
+  function openNotificationCenter() {
+    if (notificationPanelOpen) {
+      setNotificationPanelOpen(false)
+      setNotifications((prev) => prev.filter((entry) => !entry.read))
+      return
+    }
+    setNotifications((prev) => prev.map((entry) => ({ ...entry, read: true })))
+    setNotificationPanelOpen(true)
+  }
+
+  function openNotificationAction(notification) {
+    setNotificationPanelOpen(false)
+    setNotifications((prev) => prev.filter((entry) => entry.id !== notification?.id && !entry.read))
+    if (notification?.actionTab) {
+      navigateToTab(notification.actionTab)
+      if (notification.actionTab === 'inbox') setOfferStatusFilter('all')
+    }
+  }
+
+  function showShippingAddressRequiredAlert(message = 'Add a shipping address to your profile before accepting a trade.') {
+    setAppAlert({
+      title: 'Shipping Address Required',
+      message,
+      primaryLabel: 'Go to Profile',
+      onPrimary: () => {
+        setAppAlert(null)
+        setProfileSection('shipping')
+        navigateToTab('profile')
+      },
+      secondaryLabel: 'Cancel',
+    })
   }
 
   function isSameListingOwner(left, right) {
@@ -1528,14 +1767,29 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     const leftOwner = String(left?.owner || left?.owner_name || '').trim().toLowerCase()
     const rightOwner = String(right?.owner || right?.owner_name || '').trim().toLowerCase()
     const currentName = String(session?.name || '').trim().toLowerCase()
-    if (currentName && isOwnedByCurrentUser(left) && rightOwner === currentName) return true
-    if (currentName && isOwnedByCurrentUser(right) && leftOwner === currentName) return true
-    return Boolean(leftOwner && rightOwner && leftOwner === rightOwner)
+    if (!rightSubject && currentName && isOwnedByCurrentUser(left) && rightOwner === currentName) return true
+    if (!leftSubject && currentName && isOwnedByCurrentUser(right) && leftOwner === currentName) return true
+    return Boolean((!leftSubject || !rightSubject) && leftOwner && rightOwner && leftOwner === rightOwner)
   }
 
   function getCrossOwnerMatches(listing) {
     const matches = Array.isArray(listing?.matches) ? listing.matches : []
     return matches.filter((candidate) => !isSameListingOwner(listing, candidate))
+  }
+
+  function removeSentOfferMatches(targetListingId, offeredListingIds) {
+    const targetId = String(targetListingId || '').trim()
+    const offeredIds = new Set((Array.isArray(offeredListingIds) ? offeredListingIds : [])
+      .map((id) => String(id || '').trim())
+      .filter(Boolean))
+    if (!targetId || offeredIds.size === 0) return
+    setMarketListings((prev) => prev.map((listing) => {
+      if (String(listing?.id || '') !== targetId || !Array.isArray(listing?.matches)) return listing
+      return {
+        ...listing,
+        matches: listing.matches.filter((match) => !offeredIds.has(String(match?.id || ''))),
+      }
+    }))
   }
 
   useEffect(() => {
@@ -1578,13 +1832,80 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     return () => { cancelled = true }
   }, [apiBaseUrl, apiKey, clerkEnabled, clientStateHydrated, getBearerToken, likedListingIds])
 
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    setNotificationsHydrated(false)
+    try {
+      const raw = window.localStorage.getItem(notificationStorageKey)
+      const parsed = raw ? JSON.parse(raw) : []
+      setNotifications(Array.isArray(parsed) ? parsed.slice(0, 50) : [])
+    } catch {
+      setNotifications([])
+    } finally {
+      setNotificationsHydrated(true)
+    }
+  }, [notificationStorageKey])
+
+  useEffect(() => {
+    if (!notificationsHydrated || typeof window === 'undefined') return
+    try {
+      window.localStorage.setItem(notificationStorageKey, JSON.stringify(notifications.slice(0, 50)))
+    } catch {}
+  }, [notificationStorageKey, notifications, notificationsHydrated])
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function pollServerNotifications() {
+      try {
+        const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
+        const payload = await fetchNotificationsRemote({
+          apiBaseUrl,
+          apiKey: clerkEnabled ? '' : apiKey.trim(),
+          bearerToken,
+          limit: 50,
+        })
+        if (cancelled) return
+        const items = Array.isArray(payload?.items) ? payload.items : []
+        items.slice().reverse().forEach((item) => {
+          const id = String(item?.notification_id || item?.id || '')
+          if (!id || seenServerNotificationIdsRef.current.has(id)) return
+          seenServerNotificationIdsRef.current.add(id)
+          addAppNotification({
+            type: item?.type || 'notification',
+            title: item?.title || 'Notification',
+            body: item?.body || '',
+            actionTab: item?.action_tab === 'marketplace' ? 'market' : (item?.action_tab || 'inbox'),
+            entityId: item?.entity_id || '',
+          })
+          deleteNotificationRemote({
+            apiBaseUrl,
+            apiKey: clerkEnabled ? '' : apiKey.trim(),
+            bearerToken,
+            notificationId: id,
+          }).catch(() => {})
+        })
+      } catch {}
+    }
+
+    pollServerNotifications()
+    const timer = window.setInterval(pollServerNotifications, 15000)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [apiBaseUrl, apiKey, clerkEnabled, getBearerToken])
+
   async function loadProfileQuizIntoState({ force = false } = {}) {
     const hydrationKey = String(session?.id || session?.email || 'anonymous')
-    if (!force && profileQuizHydrationStartedRef.current === hydrationKey) return null
+    if (!force && profileQuizHydrationStartedRef.current === hydrationKey) {
+      return lastLoadedProfileQuizRef.current
+    }
     profileQuizHydrationStartedRef.current = hydrationKey
     const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
     if (clerkEnabled && !bearerToken) throw new Error('Authentication token unavailable.')
     const data = await fetchProfileQuizRemote({ apiBaseUrl, apiKey: clerkEnabled ? '' : apiKey.trim(), bearerToken })
+    lastLoadedProfileQuizRef.current = data
     const shippingAddresses = normalizeShippingAddresses(data?.shipping_addresses, data)
     const hydratedShippingAddresses = shippingAddresses.map((address, idx) => (
       idx === 0 && !address.full_name && signupFullName
@@ -1635,7 +1956,20 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
       try {
         const data = await loadProfileQuizIntoState()
         if (!cancelled) {
-          if (shouldAutoOpenProfileSetupRef.current && !profileSetupAutoOpenedRef.current) {
+          if (!data) return
+          const profileSetupRequired = isProfileSetupRequired(data)
+          const shouldOpenSetup = (
+            !hasExplicitTabInLocation()
+            && (profileSetupRequired || shouldAutoOpenProfileSetupRef.current)
+          )
+          if (!profileSetupRequired) {
+            shouldAutoOpenProfileSetupRef.current = false
+            if (activeTabRef.current === 'profile_setup' && !profileSetupDirtyRef.current) {
+              navigateToTab('market')
+              return
+            }
+          }
+          if (shouldOpenSetup && !profileSetupAutoOpenedRef.current) {
             profileSetupAutoOpenedRef.current = true
             setActiveTab('profile_setup')
           }
@@ -1814,47 +2148,213 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   const selectedSubscriptionPlanId = normalizeSubscriptionPlanId(profileQuiz.subscription_plan)
   const selectedBillingCycle = normalizeBillingCycle(profileQuiz.subscription_billing_cycle)
   const shippingAddresses = normalizeShippingAddresses(profileQuiz.shipping_addresses, profileQuiz)
+  const completeProfileShippingAddresses = completeShippingAddresses(shippingAddresses)
   const primaryShippingAddressId = shippingAddresses[0]?.id || ''
+
+  const loadIncomingOffers = useCallback(async ({ status = offerStatusFilter, updateInbox = true } = {}) => {
+    const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
+    const payload = await fetchIncomingOffersRemote({
+      apiBaseUrl,
+      apiKey: clerkEnabled ? '' : apiKey.trim(),
+      bearerToken,
+      status,
+      limit: 50,
+    })
+    const items = Array.isArray(payload?.items) ? payload.items : []
+    const actorSubject = typeof payload?.actor?.subject === 'string' ? payload.actor.subject : ''
+    if (updateInbox) {
+      setIncomingOffers(items)
+      setOffersActorSubject(actorSubject)
+      setOfferReceiveAddressById((prev) => {
+        const next = { ...prev }
+        items.forEach((offer) => {
+          if (!next[offer.offer_id]) {
+            next[offer.offer_id] = primaryShippingAddressId
+          }
+        })
+        return next
+      })
+    }
+    return { items, actorSubject }
+  }, [apiBaseUrl, apiKey, clerkEnabled, getBearerToken, offerStatusFilter, primaryShippingAddressId])
+
+  function incomingTradeNotificationText(offers) {
+    const list = Array.isArray(offers) ? offers : []
+    if (list.length === 1) {
+      const offer = list[0]
+      const targetTitle = offer?.target_listing?.title || 'one of your listings'
+      return `New trade request for ${targetTitle}.`
+    }
+    return `${list.length} new trade requests.`
+  }
+
+  function notificationOfferTitle(offer) {
+    return offer?.target_listing?.title || offer?.offered_listing?.title || 'a listing'
+  }
+
+  function shippingLabelSignature(shipments) {
+    return (Array.isArray(shipments) ? shipments : [])
+      .map((shipment) => {
+        const id = shipment?.shipment_id || shipment?.id || ''
+        const labelReady = String(shipment?.label_url || shipment?.label_href || '').trim() ? 'label:yes' : 'label:no'
+        const status = shipment?.status || ''
+        return `${id}:${status}:${labelReady}`
+      })
+      .join('|')
+  }
 
   useEffect(() => {
     if (activeTab !== 'inbox') return undefined
     let cancelled = false
-    async function refreshOffers() {
-      try {
-        const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
-        const payload = await fetchIncomingOffersRemote({
-          apiBaseUrl,
-          apiKey: clerkEnabled ? '' : apiKey.trim(),
-          bearerToken,
-          status: offerStatusFilter,
-          limit: 50,
-        })
-        if (!cancelled) {
-          const items = Array.isArray(payload?.items) ? payload.items : []
-          setIncomingOffers(items)
-          setOffersActorSubject(typeof payload?.actor?.subject === 'string' ? payload.actor.subject : '')
-	          setOfferReceiveAddressById((prev) => {
-	            const next = { ...prev }
-	            items.forEach((offer) => {
-	              if (!next[offer.offer_id]) {
-	                next[offer.offer_id] = primaryShippingAddressId
-	              }
-	            })
-	            return next
-	          })
-        }
-      } catch {
-        if (!cancelled) {
-          setIncomingOffers([])
-          setOffersActorSubject('')
-        }
+    loadIncomingOffers({ status: offerStatusFilter, updateInbox: true }).catch(() => {
+      if (!cancelled) {
+        setIncomingOffers([])
+        setOffersActorSubject('')
       }
-    }
-    refreshOffers()
+    })
     return () => {
       cancelled = true
     }
-  }, [activeTab, apiBaseUrl, apiKey, clerkEnabled, getBearerToken, offerStatusFilter, primaryShippingAddressId])
+  }, [activeTab, loadIncomingOffers, offerStatusFilter])
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function pollPendingOffers() {
+      try {
+        const inboxActive = activeTabRef.current === 'inbox'
+        const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
+        const { items, actorSubject } = await loadIncomingOffers({
+          status: 'all',
+          updateInbox: false,
+        })
+        if (cancelled) return
+        if (inboxActive) {
+          const visibleItems = offerStatusFilter === 'all'
+            ? items
+            : items.filter((offer) => String(offer?.status || '').toLowerCase() === offerStatusFilter)
+          setIncomingOffers(visibleItems)
+          setOffersActorSubject(actorSubject)
+          setOfferReceiveAddressById((prev) => {
+            const next = { ...prev }
+            visibleItems.forEach((offer) => {
+              if (!next[offer.offer_id]) {
+                next[offer.offer_id] = primaryShippingAddressId
+              }
+            })
+            return next
+          })
+        }
+        const pendingReceived = items.filter((offer) => (
+          String(offer?.status || '').toLowerCase() === 'pending'
+          && isOfferReceivedByCurrentUser(offer, actorSubject)
+        ))
+        const currentIds = new Set(pendingReceived.map((offer) => String(offer?.offer_id || '')).filter(Boolean))
+        const previousIds = knownIncomingOfferIdsRef.current
+        const newOffers = pendingReceived.filter((offer) => {
+          const id = String(offer?.offer_id || '')
+          return id && !previousIds.has(id)
+        })
+        knownIncomingOfferIdsRef.current = currentIds
+        const previousStatusById = offerStatusByIdRef.current
+        const nextStatusById = new Map(previousStatusById)
+        const acceptedOffers = []
+        items.forEach((offer) => {
+          const offerId = String(offer?.offer_id || '')
+          if (!offerId) return
+          const status = String(offer?.status || '').toLowerCase()
+          const previousStatus = String(previousStatusById.get(offerId) || '').toLowerCase()
+          if (status === 'accepted' && previousStatus && previousStatus !== 'accepted') {
+            acceptedOffers.push(offer)
+          }
+          nextStatusById.set(offerId, status)
+        })
+        offerStatusByIdRef.current = nextStatusById
+        if (!incomingOfferPollInitializedRef.current) {
+          incomingOfferPollInitializedRef.current = true
+          const initializedAcceptedOffers = items.filter((offer) => String(offer?.status || '').toLowerCase() === 'accepted')
+          for (const offer of initializedAcceptedOffers) {
+            const offerId = String(offer?.offer_id || '')
+            if (!offerId) continue
+            try {
+              const payload = await fetchShippingLabelsRemote({
+                apiBaseUrl,
+                apiKey: clerkEnabled ? '' : apiKey.trim(),
+                bearerToken,
+                offerId,
+              })
+              const shipments = Array.isArray(payload?.shipments) ? payload.shipments : []
+              shippingSignatureByOfferRef.current.set(offerId, shippingLabelSignature(shipments))
+              if (inboxActive) setShippingLabelsByOffer((prev) => ({ ...prev, [offerId]: shipments }))
+            } catch {}
+          }
+          return
+        }
+        if (newOffers.length > 0) {
+          setTradeNotification({
+            id: newOffers.map((offer) => offer.offer_id).join(','),
+            message: incomingTradeNotificationText(newOffers),
+          })
+          newOffers.forEach((offer) => {
+            addAppNotification({
+              type: 'trade-received',
+              title: 'Trade offer received',
+              body: incomingTradeNotificationText([offer]),
+              actionTab: 'inbox',
+              entityId: offer?.offer_id || '',
+            })
+          })
+        }
+        acceptedOffers.forEach((offer) => {
+          addAppNotification({
+            type: 'trade-accepted',
+            title: 'Trade accepted',
+            body: `Trade accepted for ${notificationOfferTitle(offer)}.`,
+            actionTab: 'inbox',
+            entityId: offer?.offer_id || '',
+          })
+        })
+        const acceptedForShipping = items.filter((offer) => String(offer?.status || '').toLowerCase() === 'accepted')
+        for (const offer of acceptedForShipping) {
+          const offerId = String(offer?.offer_id || '')
+          if (!offerId) continue
+          try {
+            const payload = await fetchShippingLabelsRemote({
+              apiBaseUrl,
+              apiKey: clerkEnabled ? '' : apiKey.trim(),
+              bearerToken,
+              offerId,
+            })
+            const shipments = Array.isArray(payload?.shipments) ? payload.shipments : []
+            const previousSignature = shippingSignatureByOfferRef.current.get(offerId) || ''
+            const nextSignature = shippingLabelSignature(shipments)
+            const hadLabel = previousSignature.includes('label:yes')
+            const hasLabel = nextSignature.includes('label:yes')
+            shippingSignatureByOfferRef.current.set(offerId, nextSignature)
+            if (inboxActive) setShippingLabelsByOffer((prev) => ({ ...prev, [offerId]: shipments }))
+            if (hasLabel && !hadLabel) {
+              addAppNotification({
+                type: 'shipping-label',
+                title: 'Shipping label created',
+                body: `Shipping label is ready for ${notificationOfferTitle(offer)}.`,
+                actionTab: 'inbox',
+                entityId: offerId,
+              })
+            }
+          } catch {}
+        }
+      } catch {
+        // Background notification polling should not interrupt the current screen.
+      }
+    }
+
+    pollPendingOffers()
+    const timer = window.setInterval(pollPendingOffers, 15000)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [apiBaseUrl, apiKey, clerkEnabled, getBearerToken, loadIncomingOffers, offerStatusFilter, primaryShippingAddressId])
   const safeActiveShippingAddressIdx = Math.max(0, Math.min(activeShippingAddressIdx, shippingAddresses.length - 1))
   const activeShippingAddress = shippingAddresses[safeActiveShippingAddressIdx] || shippingAddresses[0] || emptyShippingAddress()
   const primaryProfileAddress = shippingAddresses[0] || emptyShippingAddress()
@@ -2184,7 +2684,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
 
   function toRemoteListingPayload(listing) {
     const allowedCategories = ['clothes', 'shoes', 'handbag']
-    const allowedConditions = ['New', 'LikeNew']
+    const allowedConditions = ['NewWithTags', 'New', 'LikeNew']
     const uploadedImageUrls = getUploadedImageUrlsFromAnalysis(listing.analysis)
     const listingImageUrls = persistableImageUrls([...(Array.isArray(listing.images) ? listing.images : []), listing.image])
     const imageUrls = listingImageUrls.length > 0 ? listingImageUrls : uploadedImageUrls
@@ -2558,11 +3058,25 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   function toggleMarketplaceLike(listingId) {
     const normalizedId = String(listingId || '').trim()
     if (!normalizedId) return
+    const alreadyLiked = likedListingIds.includes(normalizedId)
     setLikedListingIds((prev) => (
       prev.includes(normalizedId)
         ? prev.filter((id) => id !== normalizedId)
         : [...prev, normalizedId]
     ))
+    if (!alreadyLiked) {
+      ;(async () => {
+        try {
+          const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
+          await likeListingRemote({
+            apiBaseUrl,
+            apiKey: clerkEnabled ? '' : apiKey.trim(),
+            bearerToken,
+            listingId: normalizedId,
+          })
+        } catch {}
+      })()
+    }
   }
 
   const suggestedTrades = useMemo(() => {
@@ -2685,6 +3199,10 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
 
   async function submitTradeOffer() {
     if (!tradeComposerTarget?.id) return
+    if (completeProfileShippingAddresses.length === 0) {
+      setTradeOfferError('Add a complete shipping address in Profile before sending a trade offer.')
+      return
+    }
     if (!tradeOfferListingIds.length) {
       setTradeOfferError('Select one or more of your listings to offer for trade.')
       return
@@ -2703,6 +3221,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
           message: tradeOfferMessage.trim(),
         },
       })
+      removeSentOfferMatches(tradeComposerTarget.id, tradeOfferListingIds)
       setTradeComposerTarget(null)
       setTradeOfferCandidates([])
       setTradeOfferListingIds([])
@@ -2723,6 +3242,14 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
 
   async function respondToOffer(offerId, status, receiveAddress = null) {
     try {
+      if (status === 'accepted' && completeProfileShippingAddresses.length === 0) {
+        showShippingAddressRequiredAlert('Add shipping address to profile.')
+        return
+      }
+      if (status === 'accepted' && !receiveAddress) {
+        showShippingAddressRequiredAlert('Select a shipping address before accepting trade.')
+        return
+      }
       const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
       const updatedOffer = await actionOfferRemote({
         apiBaseUrl,
@@ -2880,7 +3407,13 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
       const resolved = /^https?:\/\//i.test(rawUrl)
         ? rawUrl
         : `${apiBaseUrl.replace(/\/$/, '')}${rawUrl}`
-      window.open(resolved, '_blank', 'noopener,noreferrer')
+      setSelectedShippingLabel({
+        url: resolved,
+        shipmentId: shipment?.shipment_id || '',
+        carrier: shipment?.carrier || payload?.carrier || 'Carrier',
+        serviceLevel: shipment?.service_level || payload?.service_level || '',
+        trackingNumber: shipment?.tracking_number || payload?.tracking_number || '',
+      })
     } catch (err) {
       const msg = err.message || 'Failed to open label.'
       setSavedListingNotice(msg)
@@ -3255,10 +3788,10 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
               </div>
             </div>
             <div className="app-brand-links" aria-label="Primary app sections">
-              <a href={tabHref('market')} className={activeTab === 'market' ? 'app-brand-link active' : 'app-brand-link'}>Marketplace</a>
-              <a href={tabHref('portfolio')} className={activeTab === 'portfolio' ? 'app-brand-link active' : 'app-brand-link'}>My Closet</a>
-              <a href={tabHref('inbox')} className={activeTab === 'inbox' ? 'app-brand-link active' : 'app-brand-link'}>Trade Inbox</a>
-              <a href={tabHref('profile')} className={activeTab === 'profile' || activeTab === 'profile_setup' ? 'app-brand-link active' : 'app-brand-link'}>Profile</a>
+              <a href={tabHref('market')} onClick={(event) => { event.preventDefault(); navigateToTab('market') }} className={activeTab === 'market' ? 'app-brand-link active' : 'app-brand-link'}>Marketplace</a>
+              <a href={tabHref('portfolio')} onClick={(event) => { event.preventDefault(); navigateToTab('portfolio') }} className={activeTab === 'portfolio' ? 'app-brand-link active' : 'app-brand-link'}>My Closet</a>
+              <a href={tabHref('inbox')} onClick={(event) => { event.preventDefault(); navigateToTab('inbox') }} className={activeTab === 'inbox' ? 'app-brand-link active' : 'app-brand-link'}>Trade Inbox</a>
+              <a href={tabHref('profile')} onClick={(event) => { event.preventDefault(); navigateToTab('profile') }} className={activeTab === 'profile' || activeTab === 'profile_setup' ? 'app-brand-link active' : 'app-brand-link'}>Profile</a>
             </div>
           </div>
         </div>
@@ -3266,12 +3799,119 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
           {!clerkEnabled && <label className="inline-field"><span>API Key</span><input value={apiKey} onChange={(e) => setApiKey(e.target.value)} /></label>}
           {clerkEnabled ? (
             <>
-              <button className="ghost" type="button" onClick={() => setActiveTab('profile')}>Profile</button>
+              <div className="notification-center">
+                <button
+                  className={`notification-bell${unreadNotificationCount > 0 ? ' has-unread' : ''}`}
+                  type="button"
+                  onClick={openNotificationCenter}
+                  aria-label={`Notifications${unreadNotificationCount > 0 ? `, ${unreadNotificationCount} unread` : ''}`}
+                >
+                  <FiBell aria-hidden="true" />
+                  {unreadNotificationCount > 0 && (
+                    <span className="notification-count">{unreadNotificationCount > 99 ? '99+' : unreadNotificationCount}</span>
+                  )}
+                </button>
+                {notificationPanelOpen && (
+                  <div className="notification-panel" role="dialog" aria-label="Notifications">
+                    <div className="notification-panel-head">
+                      <strong>Notifications</strong>
+                      {notifications.length > 0 && (
+                        <button className="ghost small" type="button" onClick={() => setNotifications([])}>Clear</button>
+                      )}
+                    </div>
+                    {notifications.length === 0 ? (
+                      <p className="notification-empty">No notifications yet.</p>
+                    ) : (
+                      <div className="notification-list">
+                        {notifications.map((notification) => (
+                          <button
+                            key={notification.id}
+                            className={`notification-item notification-${notification.type}`}
+                            type="button"
+                            onClick={() => openNotificationAction(notification)}
+                          >
+                            <span>{notification.title}</span>
+                            {notification.body && <small>{notification.body}</small>}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+              <button className="ghost" type="button" onClick={() => navigateToTab('profile')}>Profile</button>
               {userMenu}
             </>
           ) : <button className="ghost" onClick={onLogout}>Log out</button>}
         </div>
       </div>
+
+      {tradeNotification && (
+        <div className="trade-notification-banner" role="status" aria-live="polite">
+          <div>
+            <strong>Trade request received</strong>
+            <p>{tradeNotification.message}</p>
+          </div>
+          <div className="trade-notification-actions">
+            <button
+              className="primary small"
+              type="button"
+              onClick={() => {
+                setTradeNotification(null)
+                navigateToTab('inbox')
+                setOfferStatusFilter('pending')
+              }}
+            >
+              View
+            </button>
+            <button className="ghost small" type="button" onClick={() => setTradeNotification(null)}>Dismiss</button>
+          </div>
+        </div>
+      )}
+
+      {appAlert && (
+        <div className="app-alert-overlay" role="presentation" onClick={() => setAppAlert(null)}>
+          <section className="app-alert-card" role="dialog" aria-modal="true" aria-labelledby="app-alert-title" onClick={(event) => event.stopPropagation()}>
+            <p className="eyebrow">JOUFT</p>
+            <h3 id="app-alert-title">{appAlert.title}</h3>
+            <p>{appAlert.message}</p>
+            <div className="button-row app-alert-actions">
+              {appAlert.secondaryLabel && (
+                <button className="ghost" type="button" onClick={() => setAppAlert(null)}>{appAlert.secondaryLabel}</button>
+              )}
+              {appAlert.primaryLabel && (
+                <button className="primary" type="button" onClick={() => (typeof appAlert.onPrimary === 'function' ? appAlert.onPrimary() : setAppAlert(null))}>
+                  {appAlert.primaryLabel}
+                </button>
+              )}
+            </div>
+          </section>
+        </div>
+      )}
+
+      {selectedShippingLabel && (
+        <div className="shipping-label-overlay" role="presentation" onClick={() => setSelectedShippingLabel(null)}>
+          <section className="shipping-label-card" role="dialog" aria-modal="true" aria-labelledby="shipping-label-title" onClick={(event) => event.stopPropagation()}>
+            <div className="shipping-label-head">
+              <div>
+                <p className="eyebrow">Shipping Label</p>
+                <h3 id="shipping-label-title">{selectedShippingLabel.carrier} {selectedShippingLabel.serviceLevel}</h3>
+                {selectedShippingLabel.trackingNumber ? (
+                  <p className="tiny-note">Tracking: {selectedShippingLabel.trackingNumber}</p>
+                ) : null}
+              </div>
+              <button className="ghost small" type="button" onClick={() => setSelectedShippingLabel(null)}>Close</button>
+            </div>
+            <div className="shipping-label-frame">
+              <iframe title="Shipping label preview" src={selectedShippingLabel.url} />
+            </div>
+            <div className="button-row shipping-label-actions">
+              <a className="ghost small" href={selectedShippingLabel.url} target="_blank" rel="noreferrer">Open externally</a>
+              <a className="primary small" href={selectedShippingLabel.url} target="_blank" rel="noreferrer">Download</a>
+            </div>
+          </section>
+        </div>
+      )}
 
       {showFreshListingsStrip && activeTab !== 'profile' && activeTab !== 'profile_setup' && latestActiveListings.length > 0 && (
       <section className="panel latest-hero">
@@ -3536,7 +4176,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                 className="ghost small"
                 type="button"
                 onClick={() => {
-                  setActiveTab('market')
+                  navigateToTab('market')
                 }}
               >
                 Skip for now
@@ -3552,7 +4192,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                     onClick={async () => {
                       try {
                         await saveProfileQuiz()
-                        setActiveTab('market')
+                        navigateToTab('market')
                       } catch (err) {
                         setProfileSaveMsg(err.message || 'Failed to save profile.')
                       }
@@ -4232,6 +4872,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                         <span>Your condition assessment</span>
                         <select value={userCondition} onChange={(e) => setUserCondition(e.target.value)} required>
                           <option value="">Select condition</option>
+                          <option value="NewWithTags">New with Tags</option>
                           <option value="New">New</option>
                           <option value="LikeNew">Like New</option>
                         </select>
@@ -4412,8 +5053,9 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                     const offerShipments = shippingLabelsByOffer[offer.offer_id]
                     const hasLoadedShipments = Array.isArray(offerShipments)
                     const hasShipments = hasLoadedShipments && offerShipments.length > 0
-                    const selectedAddressId = offerReceiveAddressById[offer.offer_id] || shippingAddresses[0]?.id || ''
-                    const selectedAddress = shippingAddresses.find((a) => a.id === selectedAddressId) || shippingAddresses[0] || null
+                    const selectableAddresses = completeProfileShippingAddresses
+                    const selectedAddressId = offerReceiveAddressById[offer.offer_id] || (selectableAddresses.length === 1 ? selectableAddresses[0].id : '')
+                    const selectedAddress = selectableAddresses.find((a) => a.id === selectedAddressId) || null
                     const quote = shippingQuoteByOffer[offer.offer_id]
                     const targetThumbs = (Array.isArray(offer.target_listing?.images) && offer.target_listing.images.length > 0
                       ? offer.target_listing.images
@@ -4468,7 +5110,10 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                                   value={selectedAddressId}
                                   onChange={(e) => setOfferReceiveAddressById((prev) => ({ ...prev, [offer.offer_id]: e.target.value }))}
                                 >
-                                  {shippingAddresses.map((addr, idx) => (
+                                  <option value="">
+                                    {selectableAddresses.length === 0 ? 'Add complete address in Profile' : 'Select shipping address'}
+                                  </option>
+                                  {selectableAddresses.map((addr, idx) => (
                                     <option key={addr.id} value={addr.id}>{addr.label?.trim() || `Address ${idx + 1}`} - {addr.city || 'City'} {addr.state || ''}</option>
                                   ))}
                                 </select>
@@ -4613,7 +5258,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                               <div>
                                 <h3>{item.title || 'Untitled listing'}</h3>
                                 <p className="editorial-meta">
-                                  EST. {money(item.estimatedValue)} · {String(item.brand || 'Unknown').toUpperCase()} · {String(item.condition || 'Unknown').toUpperCase()} · SIZE {String(item.size || 'N/A').toUpperCase()}
+                                  EST. {money(item.estimatedValue)} · {String(item.brand || 'Unknown').toUpperCase()} · {displayConditionLabel(item.condition).toUpperCase()} · SIZE {String(item.size || 'N/A').toUpperCase()}
                                 </p>
                               </div>
                               <div className="market-selected-actions">
@@ -4988,6 +5633,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
               <span>Your condition assessment</span>
               <select value={userCondition} onChange={(e) => setUserCondition(e.target.value)} required>
                 <option value="">Select condition</option>
+                <option value="NewWithTags">New with Tags</option>
                 <option value="New">New</option>
                 <option value="LikeNew">Like New</option>
               </select>
@@ -5230,7 +5876,7 @@ function ListingCard({ item, own = false, onEditDraft = null, onPublishListing =
   const badgeLabel = item.status || 'Active'
   const badgeClass = `status-${String(badgeLabel).toLowerCase().replace(/\s+/g, '')}`
   const brandLabel = String(item.brand || '').trim() || 'Unknown brand'
-  const conditionLabel = String(item.condition || '').trim() || 'Unknown condition'
+  const conditionLabel = displayConditionLabel(item.condition)
   const cityLabel = String(item.city || '').trim() || 'Unknown city'
   const sizeLabel = String(item.size || '').trim() || 'N/A'
   const isEditorial = editorialStyle || (marketplaceCompact && !own)
