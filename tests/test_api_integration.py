@@ -136,6 +136,20 @@ def test_listing_title_from_analysis_preserves_specific_model_title() -> None:
     assert title == "Classic Flap Bag"
 
 
+def test_listing_title_from_analysis_replaces_unclear_placeholder() -> None:
+    from app.main import _listing_title_from_analysis
+
+    title = _listing_title_from_analysis(
+        "unclear",
+        model_name="Sylvie Crochet Top (style LCDE-WS1076)",
+        profile={},
+        brand="L'Academie",
+        category="clothes",
+    )
+
+    assert title == "Sylvie Crochet Top (style LCDE-WS1076)"
+
+
 def test_shippo_flat_rate_quote_overrides_display_amount_but_keeps_rate_id() -> None:
     from app.main import _apply_shippo_flat_rate_quote, _estimated_shipping_weight_oz_from_listing
     from app.settings import Settings

@@ -566,7 +566,7 @@ def _profile_description_from_analysis(response_payload: dict) -> tuple[str, str
     return model_name, profile_description
 
 
-_DEFAULT_LISTING_TITLES = {"", "new listing", "unknown", "unknown unknown", "n/a", "none"}
+_DEFAULT_LISTING_TITLES = {"", "new listing", "unknown", "unknown unknown", "unclear", "n/a", "none"}
 
 
 def _listing_title_from_analysis(
@@ -690,6 +690,7 @@ def _reuse_recent_analysis_for_listing(
     }
     response_payload["debug"] = debug_payload
 
+    profile = response_payload.get("item_profile") if isinstance(response_payload.get("item_profile"), dict) else {}
     model_name, profile_description = _profile_description_from_analysis(response_payload)
     brand = str(response_payload.get("brand", {}).get("name") or current.get("brand") or "unknown")
     condition = str(response_payload.get("user_condition") or current.get("condition") or "LikeNew")
