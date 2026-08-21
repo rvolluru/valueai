@@ -5,6 +5,7 @@ import {
   Image,
   Linking,
   Modal,
+  RefreshControl,
   Share,
   ScrollView,
   StyleSheet,
@@ -39,6 +40,7 @@ const CONTACT_DIRECTIONS_URL = `https://www.google.com/maps/dir/?api=1&destinati
 const UPLOAD_MAX_DIMENSION = 1600;
 const UPLOAD_JPEG_QUALITY = 0.82;
 const TABS = ['marketplace', 'closet', 'create', 'inbox', 'profile'];
+const LISTINGS_PAGE_SIZE = 24;
 const TAB_LABELS = {
   marketplace: 'Market',
   closet: 'Closet',
@@ -103,13 +105,15 @@ try {
 }
 
 const theme = {
-  bg: '#f7f3ee',
-  surface: '#fffdf9',
+  bg: '#f1f1f1',
+  surface: '#fbf8f2',
   text: '#18181b',
-  muted: '#6d6760',
-  line: '#e3dbd0',
+  muted: '#4f5560',
+  line: 'rgba(18, 26, 36, 0.14)',
+  lineStrong: 'rgba(18, 26, 36, 0.28)',
   brand: '#4a161b',
   brandSoft: '#f1e8e1',
+  panel: '#f8f8f8',
   success: '#155e4a',
   error: '#a82222',
 };
@@ -218,6 +222,21 @@ function displayConditionLabel(input) {
   return titleCase(input || 'unknown');
 }
 
+function shipmentTrackingLabel(shipment) {
+  const raw = String(shipment?.tracking_status || shipment?.status || '').trim().toLowerCase();
+  const labels = {
+    label_created: 'Label created',
+    pre_transit: 'Label created',
+    shipped: 'In transit',
+    transit: 'In transit',
+    out_for_delivery: 'Out for delivery',
+    delivered: 'Delivered',
+    returned: 'Returned',
+    exception: 'Delivery exception',
+  };
+  return labels[raw] || (raw ? titleCase(raw) : 'Tracking pending');
+}
+
 function buildSuggestedDescriptionFromProfile(profile) {
   const modelName = profile?.model_identification?.name?.trim?.() || '';
   const attrs = Array.isArray(profile?.model_identification?.attributes)
@@ -265,6 +284,13 @@ function listingOwnerDisplayName(item, fallback = 'Unknown member') {
   );
   if (!ownerNameRaw || ownerNameLooksLikeSubject) return fallback;
   return ownerNameRaw;
+}
+
+function ownerFirstName(name, fallback = 'Member') {
+  const value = String(name || '').trim();
+  if (!value) return fallback;
+  const first = value.split(/\s+/).find(Boolean);
+  return first || fallback;
 }
 
 function isSameListingOwner(left, right, currentSubject = '') {
@@ -317,10 +343,22 @@ function getMatchPreviewImages(item, apiBaseUrl, currentSubject = '') {
 
 function listingGallery(listing, apiBaseUrl) {
   if (!listing || typeof listing !== 'object') return [];
-  const raw = Array.isArray(listing.images) && listing.images.length > 0
+  const listedImages = Array.isArray(listing.listed_images)
+    ? listing.listed_images
+    : (Array.isArray(listing.listedImages) ? listing.listedImages : []);
+  const raw = listedImages.length > 0
+    ? listedImages.map((entry) => entry?.d_img || entry?.display_image || entry?.image)
+    : Array.isArray(listing.images) && listing.images.length > 0
     ? listing.images
     : [listing.image].filter(Boolean);
-  return raw.map((url) => normalizeImageUrl(url, apiBaseUrl)).filter(Boolean);
+  const seen = new Set();
+  return raw
+    .map((url) => normalizeImageUrl(url, apiBaseUrl))
+    .filter((url) => {
+      if (!url || seen.has(url)) return false;
+      seen.add(url);
+      return true;
+    });
 }
 
 function missingPublishFields(listing) {
@@ -426,6 +464,21 @@ function offerOfferedListings(offer) {
   return Array.isArray(offer?.offered_listings) && offer.offered_listings.length > 0
     ? offer.offered_listings
     : (offer?.offered_listing ? [offer.offered_listing] : []);
+}
+
+function offerParticipantName(offer, role = 'from') {
+  const direct = String(role === 'to' ? offer?.to_name || '' : offer?.from_name || '').trim();
+  if (direct && !direct.toLowerCase().startsWith('user_')) return direct.split(/\s+/)[0];
+  const subject = String(role === 'to' ? offer?.to_subject || '' : offer?.from_subject || '').trim();
+  return subject && !subject.toLowerCase().startsWith('user_') ? subject.split(/\s+/)[0] : 'Member';
+}
+
+function offerActorSubject(offer, fallbackSubject = '') {
+  const fallback = String(fallbackSubject || '').trim();
+  const actor = String(offer?.actor_subject || offer?.actorSubject || '').trim();
+  if (actor) return actor;
+  if (fallback) return fallback;
+  return '';
 }
 
 function normalizeShippingAddresses(addresses, fallbackProfile = null) {
@@ -537,7 +590,24 @@ function isProfileSetupRequired(profile) {
   const firstName = String(profile?.first_name || profile?.firstName || '').trim();
   const lastName = String(profile?.last_name || profile?.lastName || '').trim();
   const email = String(profile?.email || '').trim();
-  return !firstName || !lastName || !email;
+  const gender = String(profile?.gender || '').trim();
+  const birthday = String(profile?.birthday || '').trim();
+  const addresses = completeShippingAddresses(normalizeProfileShippingAddresses(profile?.shipping_addresses, profile));
+  const hasSizes = normalizeMultiSizeValue(profile?.tops_size).length > 0
+    || normalizeMultiSizeValue(profile?.dresses_size).length > 0
+    || normalizeMultiSizeValue(profile?.bottoms_size).length > 0
+    || normalizeMultiSizeValue(profile?.shoes_size).length > 0;
+  const hasStyle = Array.isArray(profile?.style_descriptors) && profile.style_descriptors.length > 0;
+  const hasGoal = Array.isArray(profile?.jouft_goals) && profile.jouft_goals.length > 0;
+  const plan = String(profile?.subscription_plan || '').trim().toLowerCase();
+  const status = String(profile?.subscription_status || '').trim().toLowerCase();
+  const hasSubscription = plan === 'free' || ['active', 'trialing'].includes(status);
+  return !firstName || !lastName || !email || !gender || !birthday || addresses.length === 0 || !hasSizes || !hasStyle || !hasGoal || !hasSubscription;
+}
+
+function normalizeSelectableSubscriptionPlan(plan) {
+  const raw = String(plan || '').trim();
+  return SUBSCRIPTION_PLANS.some((entry) => entry.key === raw) ? raw : 'free';
 }
 
 function normalizeMultiSizeValue(value) {
@@ -638,6 +708,7 @@ function ListingCard({
   startTradeDisabled = false,
   onOpenDetails = null,
   onEditDraft = null,
+  onReviewListing = null,
   onPublishListing = null,
   onRemoveListing = null,
   onShareListing = null,
@@ -661,13 +732,16 @@ function ListingCard({
   const analysisFailed = statusLabel.toLowerCase() === 'analysisfailed';
   const analyzing = statusLabel.toLowerCase() === 'analyzing';
   const closetCardDisabled = analyzing && Boolean(onEditDraft || onPublishListing || onRemoveListing);
-  const canPublishListing = typeof onPublishListing === 'function' && !['active', 'analyzing'].includes(statusLabel.toLowerCase());
+  const canReviewAndPublish = typeof onReviewListing === 'function' && !['active', 'analyzing', 'analysisfailed'].includes(statusLabel.toLowerCase());
   const isCurrentUserListing = Boolean(
     currentOwnerSubject
     && listingOwnerSubject(item)
     && listingOwnerSubject(item) === String(currentOwnerSubject || '').trim().toLowerCase()
   );
-  const ownerName = listingOwnerDisplayName(item, isCurrentUserListing ? (currentUserDisplayName || 'You') : 'Member');
+  const ownerName = ownerFirstName(
+    listingOwnerDisplayName(item, isCurrentUserListing ? (currentUserDisplayName || 'You') : 'Member'),
+    isCurrentUserListing ? 'You' : 'Member',
+  );
   const brandLabel = item?.brand || 'Unknown';
   const conditionLabel = displayConditionLabel(item?.condition || 'unknown');
   const sizeLabel = item?.size || 'N/A';
@@ -761,14 +835,6 @@ function ListingCard({
             <Text style={styles.secondaryBtnText}>Edit Listing</Text>
           </TouchableOpacity>
         ) : null}
-        {canPublishListing ? (
-          <TouchableOpacity
-            style={styles.secondaryBtnCompact}
-            onPress={() => onPublishListing(item)}
-          >
-            <Text style={styles.secondaryBtnText}>Publish Listing</Text>
-          </TouchableOpacity>
-        ) : null}
         {onRemoveListing ? (
           <TouchableOpacity
             style={[styles.secondaryBtnCompact, styles.dangerBtnCompact, closetCardDisabled && styles.primaryBtnDisabled]}
@@ -819,6 +885,16 @@ function ListingCard({
           <Text style={styles.pendingReviewText}>Pending Review</Text>
         </View>
       ) : null}
+      {canReviewAndPublish ? (
+        <TouchableOpacity
+          style={styles.pendingReviewOverlay}
+          onPress={() => onReviewListing(item)}
+          accessibilityRole="button"
+          accessibilityLabel="Review and publish listing"
+        >
+          <Text style={styles.pendingReviewText}>Review and Publish</Text>
+        </TouchableOpacity>
+      ) : null}
     </View>
   );
 }
@@ -831,7 +907,7 @@ function OfferCard({ offer, apiBaseUrl }) {
     <View style={styles.offerCard}>
       <Text style={styles.offerTitle}>Offer #{String(offer?.offer_id || '').slice(0, 8)}</Text>
       <Text style={styles.offerMeta}>Status: {titleCase(offer?.status || 'pending')}</Text>
-      <Text style={styles.offerMeta}>From: {offer?.from_subject || 'n/a'}</Text>
+      <Text style={styles.offerMeta}>From: {offerParticipantName(offer, 'from')}</Text>
       <View style={styles.offerMediaRow}>
         <View style={styles.offerTargetPanel}>
           <Text style={styles.offerLaneLabel}>Target Listing</Text>
@@ -914,6 +990,8 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
   const [tradeOfferBusy, setTradeOfferBusy] = useState(false);
   const [tradeOfferError, setTradeOfferError] = useState('');
   const [appAlert, setAppAlert] = useState(null);
+  const [offerActionBusyById, setOfferActionBusyById] = useState({});
+  const [offerAcceptedListingById, setOfferAcceptedListingById] = useState({});
   const [shippingAddresses, setShippingAddresses] = useState([]);
   const [profileShippingAddresses, setProfileShippingAddresses] = useState([]);
   const [profileQuiz, setProfileQuiz] = useState(null);
@@ -958,6 +1036,12 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
   const [loading, setLoading] = useState(false);
   const [marketplaceLoading, setMarketplaceLoading] = useState(false);
   const [closetLoading, setClosetLoading] = useState(false);
+  const [marketplaceHasMore, setMarketplaceHasMore] = useState(false);
+  const [closetHasMore, setClosetHasMore] = useState(false);
+  const [marketplaceNextOffset, setMarketplaceNextOffset] = useState(0);
+  const [closetNextOffset, setClosetNextOffset] = useState(0);
+  const [marketplacePageLoading, setMarketplacePageLoading] = useState(false);
+  const [closetPageLoading, setClosetPageLoading] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
 
@@ -980,22 +1064,30 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
   );
   const initializedOfferStateRef = useRef(false);
   const offerStatusMapRef = useRef(new Map());
-  const initializedShippingStateRef = useRef(false);
-  const shippingStatusMapRef = useRef(new Map());
-  const seenServerNotificationIdsRef = useRef(new Set());
-  const profileSetupCheckedRef = useRef('');
+	  const initializedShippingStateRef = useRef(false);
+	  const shippingStatusMapRef = useRef(new Map());
+	  const seenServerNotificationIdsRef = useRef(new Set());
+	  const profileSetupCheckedRef = useRef('');
+	  const mainScrollRef = useRef(null);
   const normalizedProfileGender = profileQuiz?.gender === 'male' || profileQuiz?.gender === 'female' || profileQuiz?.gender === 'other'
     ? profileQuiz.gender
     : '';
   const profileApparelSizeOptions = normalizedProfileGender === 'male' ? MALE_APPAREL_SIZE_OPTIONS : FEMALE_APPAREL_SIZE_OPTIONS;
   const profileShoeSizeOptions = normalizedProfileGender === 'male' ? MALE_SHOE_SIZE_OPTIONS : FEMALE_SHOE_SIZE_OPTIONS;
-  const profileCategoryOptions = normalizedProfileGender === 'male'
-    ? PROFILE_CATEGORY_OPTIONS.filter((item) => item !== 'Dresses')
-    : PROFILE_CATEGORY_OPTIONS;
-
-  useEffect(() => {
-    if (paymentMethods.length === 0) {
-      if (selectedSubscriptionPaymentMethodId) setSelectedSubscriptionPaymentMethodId('');
+	  const profileCategoryOptions = normalizedProfileGender === 'male'
+	    ? PROFILE_CATEGORY_OPTIONS.filter((item) => item !== 'Dresses')
+	    : PROFILE_CATEGORY_OPTIONS;
+	
+	  useEffect(() => {
+	    if (!isListingDetailOpen) return;
+	    requestAnimationFrame(() => {
+	      mainScrollRef.current?.scrollTo?.({ y: 0, animated: false });
+	    });
+	  }, [isListingDetailOpen, selectedListingSource, selectedListing?.listing_id]);
+	
+	  useEffect(() => {
+	    if (paymentMethods.length === 0) {
+	      if (selectedSubscriptionPaymentMethodId) setSelectedSubscriptionPaymentMethodId('');
       return;
     }
     const selectedStillExists = paymentMethods.some((method) => method?.payment_method_id === selectedSubscriptionPaymentMethodId);
@@ -1004,16 +1096,19 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     setSelectedSubscriptionPaymentMethodId(fallback?.payment_method_id || '');
   }, [paymentMethods, selectedSubscriptionPaymentMethodId]);
 
-  function openListingDetails(listing, source) {
-    if (!listing) return;
-    const list = source === 'closet' ? myListings : marketplaceListings;
-    const idx = list.findIndex((entry) => String(entry?.listing_id || '') === String(listing?.listing_id || ''));
+	  function openListingDetails(listing, source) {
+	    if (!listing) return;
+	    const list = source === 'closet' ? myListings : marketplaceListings;
+	    const idx = list.findIndex((entry) => String(entry?.listing_id || '') === String(listing?.listing_id || ''));
     setIsListingDetailOpen(true);
     setSelectedListing(listing);
     setSelectedListingSource(source || 'marketplace');
-    setSelectedListingIndex(idx);
-    setFailedDetailImages({});
-  }
+	    setSelectedListingIndex(idx);
+	    setFailedDetailImages({});
+	    requestAnimationFrame(() => {
+	      mainScrollRef.current?.scrollTo?.({ y: 0, animated: false });
+	    });
+	  }
 
   function closeListingDetails() {
     setIsListingDetailOpen(false);
@@ -1040,14 +1135,41 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     return { apiKey: apiKey.trim() };
   }
 
+  function profileSetupSectionFor(profile = profileQuiz, availablePaymentMethods = paymentMethods) {
+    const firstName = String(profile?.first_name || profile?.firstName || '').trim();
+    const lastName = String(profile?.last_name || profile?.lastName || '').trim();
+    const email = String(profile?.email || '').trim();
+    const birthday = String(profile?.birthday || '').trim();
+    const gender = String(profile?.gender || '').trim();
+    const completeAddresses = completeShippingAddresses(normalizeProfileShippingAddresses(profile?.shipping_addresses, profile));
+    const hasSizes = normalizeMultiSizeValue(profile?.tops_size).length > 0
+      || normalizeMultiSizeValue(profile?.dresses_size).length > 0
+      || normalizeMultiSizeValue(profile?.bottoms_size).length > 0
+      || normalizeMultiSizeValue(profile?.shoes_size).length > 0;
+    const hasStyle = Array.isArray(profile?.style_descriptors) && profile.style_descriptors.length > 0;
+    const hasGoal = Array.isArray(profile?.jouft_goals) && profile.jouft_goals.length > 0;
+    const plan = String(profile?.subscription_plan || '').trim().toLowerCase();
+    const status = String(profile?.subscription_status || '').trim().toLowerCase();
+    const hasSubscription = plan === 'free' || ['active', 'trialing'].includes(status);
+
+    if (!firstName || !lastName || !email || !birthday) return 'account';
+    if (!gender || !hasSizes || !hasStyle || !hasGoal) return 'style';
+    if (completeAddresses.length === 0) return 'shipping';
+    if (!hasSubscription && availablePaymentMethods.length === 0) return 'payments';
+    if (!hasSubscription) return 'subscription';
+    return '';
+  }
+
   async function loadMarketplace() {
     setLoading(true);
     setMarketplaceLoading(true);
     setError('');
     try {
-      const payload = await apiClient.listMarketplace(50, await authContext());
+      const payload = await apiClient.listMarketplace(LISTINGS_PAGE_SIZE, await authContext(), { offset: 0 });
       setMarketplaceListings(Array.isArray(payload?.items) ? payload.items : []);
       setMarketplaceActorSubject(String(payload?.actor?.subject || ''));
+      setMarketplaceHasMore(Boolean(payload?.has_more));
+      setMarketplaceNextOffset(Number.isFinite(Number(payload?.next_offset)) ? Number(payload.next_offset) : 0);
     } catch (e) {
       setError(e.message || String(e));
     } finally {
@@ -1066,13 +1188,63 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     setClosetLoading(true);
     setError('');
     try {
-      const payload = await apiClient.listMyListings(100, await authContext());
+      const payload = await apiClient.listMyListings(LISTINGS_PAGE_SIZE, await authContext(), { offset: 0 });
       setMyListings(Array.isArray(payload?.items) ? payload.items : []);
+      setClosetHasMore(Boolean(payload?.has_more));
+      setClosetNextOffset(Number.isFinite(Number(payload?.next_offset)) ? Number(payload.next_offset) : 0);
     } catch (e) {
       setError(e.message || String(e));
     } finally {
       setLoading(false);
       setClosetLoading(false);
+    }
+  }
+
+  async function loadMoreMarketplace() {
+    if (marketplaceLoading || marketplacePageLoading || !marketplaceHasMore) return;
+    setMarketplacePageLoading(true);
+    try {
+      const payload = await apiClient.listMarketplace(LISTINGS_PAGE_SIZE, await authContext(), { offset: marketplaceNextOffset });
+      const nextItems = Array.isArray(payload?.items) ? payload.items : [];
+      setMarketplaceListings((prev) => {
+        const seen = new Set(prev.map((item) => String(item?.listing_id || item?.id || '')));
+        return [...prev, ...nextItems.filter((item) => {
+          const id = String(item?.listing_id || item?.id || '');
+          if (!id || seen.has(id)) return false;
+          seen.add(id);
+          return true;
+        })];
+      });
+      setMarketplaceHasMore(Boolean(payload?.has_more));
+      setMarketplaceNextOffset(Number.isFinite(Number(payload?.next_offset)) ? Number(payload.next_offset) : 0);
+    } catch (e) {
+      setError(e.message || String(e));
+    } finally {
+      setMarketplacePageLoading(false);
+    }
+  }
+
+  async function loadMoreCloset() {
+    if (closetLoading || closetPageLoading || !closetHasMore) return;
+    setClosetPageLoading(true);
+    try {
+      const payload = await apiClient.listMyListings(LISTINGS_PAGE_SIZE, await authContext(), { offset: closetNextOffset });
+      const nextItems = Array.isArray(payload?.items) ? payload.items : [];
+      setMyListings((prev) => {
+        const seen = new Set(prev.map((item) => String(item?.listing_id || item?.id || '')));
+        return [...prev, ...nextItems.filter((item) => {
+          const id = String(item?.listing_id || item?.id || '');
+          if (!id || seen.has(id)) return false;
+          seen.add(id);
+          return true;
+        })];
+      });
+      setClosetHasMore(Boolean(payload?.has_more));
+      setClosetNextOffset(Number.isFinite(Number(payload?.next_offset)) ? Number(payload.next_offset) : 0);
+    } catch (e) {
+      setError(e.message || String(e));
+    } finally {
+      setClosetPageLoading(false);
     }
   }
 
@@ -1102,7 +1274,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
         shipping_email: profile?.shipping_email || profile?.email || clerkUserProfile?.email || '',
         shipping_phone: profile?.shipping_phone || '',
       }));
-      setSubscriptionPlan(String(profile?.subscription_plan || 'free'));
+      setSubscriptionPlan(normalizeSelectableSubscriptionPlan(profile?.subscription_plan));
       setSubscriptionCycle(String(profile?.subscription_billing_cycle || 'monthly'));
       const normalized = normalizeShippingAddresses(profile?.shipping_addresses, profile);
       const editable = normalizeProfileShippingAddresses(profile?.shipping_addresses, profile);
@@ -1126,6 +1298,16 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     }
   }
 
+  async function reloadProfileTabAfterSave(message = '') {
+    setActiveTab('profile');
+    requestAnimationFrame(() => {
+      mainScrollRef.current?.scrollTo?.({ y: 0, animated: false });
+    });
+    await loadProfileAddresses();
+    await loadPaymentMethods();
+    if (message) setProfileSaveMsg(message);
+  }
+
   useEffect(() => {
     if (!authReady()) return;
     const profileKey = String(clerkUserProfile?.id || clerkUserProfile?.email || bearerToken || apiKey || 'anonymous');
@@ -1146,8 +1328,19 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
         shipping_phone: profile?.shipping_phone || '',
       });
       setProfileQuiz(normalized);
-      if (isProfileSetupRequired(normalized)) {
-        setProfileSection('account');
+      let loadedPaymentMethods = paymentMethods;
+      try {
+        const paymentPayload = await apiClient.paymentMethods(auth);
+        if (cancelled) return;
+        loadedPaymentMethods = Array.isArray(paymentPayload?.items) ? paymentPayload.items : [];
+        setPaymentMethods(loadedPaymentMethods);
+      } catch (e) {
+        loadedPaymentMethods = [];
+        setPaymentMethods([]);
+      }
+      const requiredProfileSection = profileSetupSectionFor(normalized, loadedPaymentMethods);
+      if (requiredProfileSection) {
+        setProfileSection(requiredProfileSection);
         setActiveTab('profile');
       }
     })().catch(() => {
@@ -1178,6 +1371,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
   async function loadShippingQuoteForOffer(offerId) {
     if (!offerId) return null;
     setShippingBusyByOffer((prev) => ({ ...prev, [offerId]: true }));
+    setShippingQuoteByOffer((prev) => ({ ...prev, [offerId]: prev[offerId] || { status: 'loading' } }));
     setError('');
     try {
       const quote = await apiClient.fetchShippingQuote(offerId, await authContext());
@@ -1474,7 +1668,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
       shipping_postal_code: primary.postal_code || null,
       shipping_country: primary.country || null,
       shipping_addresses: ensuredDefault,
-      subscription_plan: subscriptionPlanOverride ?? profileQuiz?.subscription_plan ?? subscriptionPlan ?? 'free',
+      subscription_plan: normalizeSelectableSubscriptionPlan(subscriptionPlanOverride ?? profileQuiz?.subscription_plan ?? subscriptionPlan),
       subscription_billing_cycle: subscriptionCycleOverride ?? profileQuiz?.subscription_billing_cycle ?? subscriptionCycle ?? 'monthly',
       subscription_status: profileQuiz?.subscription_status ?? null,
       subscription_renewal_date: profileQuiz?.subscription_renewal_date ?? null,
@@ -1494,13 +1688,13 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
       const payload = buildProfileQuizPayload();
       const saved = await apiClient.saveProfileQuiz(payload, await authContext());
       setProfileQuiz(normalizeProfileQuiz(saved));
-      setSubscriptionPlan(String(saved?.subscription_plan || 'free'));
+      setSubscriptionPlan(normalizeSelectableSubscriptionPlan(saved?.subscription_plan));
       setSubscriptionCycle(String(saved?.subscription_billing_cycle || 'monthly'));
       const normalized = normalizeShippingAddresses(saved?.shipping_addresses, saved);
       const editable = normalizeProfileShippingAddresses(saved?.shipping_addresses, saved);
       setShippingAddresses(normalized);
       setProfileShippingAddresses(editable);
-      setProfileSaveMsg('Shipping addresses saved.');
+      await reloadProfileTabAfterSave('Shipping addresses saved.');
     } catch (e) {
       setError(e.message || 'Failed to save shipping addresses.');
     } finally {
@@ -1522,7 +1716,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
       });
       const saved = await apiClient.saveProfileQuiz(payload, await authContext());
       setProfileQuiz(normalizeProfileQuiz(saved));
-      setProfileSaveMsg('Style preferences saved.');
+      await reloadProfileTabAfterSave('Profile saved.');
     } catch (e) {
       setError(e.message || 'Failed to save style preferences.');
     } finally {
@@ -1536,6 +1730,11 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
       return;
     }
     const selectedPlan = SUBSCRIPTION_PLANS.find((entry) => entry.key === plan);
+    if (!selectedPlan) {
+      setProfileSaveMsg('Select a subscription plan to start.');
+      setSubscriptionPlan('free');
+      return;
+    }
     const amount = cycle === 'annual' ? Number(selectedPlan?.annual || 0) : Number(selectedPlan?.monthly || 0);
     const selectedPaymentMethod = paymentMethods.find((method) => method?.payment_method_id === selectedSubscriptionPaymentMethodId)
       || paymentMethods.find((method) => method?.is_default)
@@ -1576,9 +1775,9 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
         subscription_status: activated?.status || null,
         subscription_renewal_date: activated?.renewal_date || null,
       }));
-      setSubscriptionPlan(String(activated?.plan || plan || 'free'));
+      setSubscriptionPlan(normalizeSelectableSubscriptionPlan(activated?.plan || plan));
       setSubscriptionCycle(String(activated?.billing_cycle || cycle || 'monthly'));
-      setProfileSaveMsg(activated?.message || (amount > 0 ? 'Subscription active.' : 'Free plan active.'));
+      setProfileSaveMsg(activated?.message || 'Subscription active.');
     } catch (e) {
       const message = e.message || 'Failed to activate subscription.';
       if (message.toLowerCase().includes('payment method')) {
@@ -1780,13 +1979,12 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
       setTradeOfferError('Select at least one listing to offer.');
       return;
     }
-    const offeredTotalValue = tradeOfferCandidates
-      .filter((listing) => tradeOfferListingIds.includes(listing?.listing_id))
-      .reduce((sum, listing) => sum + Number(listing?.estimated_value || 0), 0);
+    const selectedOfferListings = tradeOfferCandidates
+      .filter((listing) => tradeOfferListingIds.includes(listing?.listing_id));
     const targetValue = Number(tradeComposerTarget?.estimated_value || 0);
-    const gapPct = targetValue > 0 ? Math.abs(offeredTotalValue - targetValue) / targetValue : null;
-    if (gapPct === null || gapPct > 0.30) {
-      setTradeOfferError(gapPct === null ? 'Target listing needs a value before sending an offer.' : 'Offer is outside the 30% trade band.');
+    const allWithinBand = targetValue > 0 && selectedOfferListings.every((listing) => Math.abs(Number(listing?.estimated_value || 0) - targetValue) / targetValue <= 0.30);
+    if (!allWithinBand) {
+      setTradeOfferError(targetValue > 0 ? 'Each offered listing must be within the 30% trade band.' : 'Target listing needs a value before sending an offer.');
       return;
     }
     setTradeOfferBusy(true);
@@ -1826,16 +2024,47 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     });
   }
 
+  function confirmTradeAcceptance(offer, quoteOverride = null, selectedOfferedListing = null) {
+    const offeredTitle = selectedOfferedListing?.title || offer?.offered_listing?.title || 'the offered item';
+    const targetTitle = offer?.target_listing?.title || 'your item';
+    const quote = quoteOverride || shippingQuoteByOffer[offer?.offer_id];
+    const shippingCost = quote?.status === 'quoted' && quote?.amount
+      ? `${quote.currency || 'USD'} ${quote.amount}`
+      : 'unavailable';
+    return new Promise((resolve) => {
+      setAppAlert({
+        title: 'Accept Trade?',
+        message: `Accept this trade for ${targetTitle} in exchange for ${offeredTitle}? Shipping cost charged to you: ${shippingCost}.`,
+        primaryLabel: 'Accept Trade',
+        onPrimary: () => {
+          setAppAlert(null);
+          resolve(true);
+        },
+        secondaryLabel: 'Cancel',
+        onSecondary: () => resolve(false),
+      });
+    });
+  }
+
   async function respondToOffer(offerId, status) {
     if (!authReady()) {
       setError(clerkEnabled ? 'Sign in is required.' : (authMode === 'bearer' ? 'Bearer token required.' : 'API key required.'));
       return;
     }
-    setLoading(true);
+    const currentOffer = incomingOffers.find((offer) => offer.offer_id === offerId) || null;
     setError('');
     try {
       let receiveAddress = null;
+      let selectedOfferedListingId = null;
       if (status === 'accepted') {
+        const offeredChoices = Array.isArray(currentOffer?.offered_listings) && currentOffer.offered_listings.length > 0
+          ? currentOffer.offered_listings
+          : (currentOffer?.offered_listing ? [currentOffer.offered_listing] : []);
+        selectedOfferedListingId = offerAcceptedListingById[offerId] || currentOffer?.selected_offered_listing_id || (offeredChoices.length === 1 ? listingIdOf(offeredChoices[0]) : '');
+        if (!selectedOfferedListingId || !offeredChoices.some((listing) => listingIdOf(listing) === selectedOfferedListingId)) {
+          setError('Select one offered item to accept for this trade.');
+          return;
+        }
         const currentAddresses = completeShippingAddresses(shippingAddresses.length > 0 ? shippingAddresses : await loadProfileAddresses());
         if (currentAddresses.length === 0) {
           showShippingAddressRequiredAlert('Add shipping address to profile.');
@@ -1858,23 +2087,38 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
           country: selected.country || null,
           is_default: false,
         };
+        let acceptanceQuote = shippingQuoteByOffer[offerId] || null;
+        if (!acceptanceQuote) {
+          acceptanceQuote = await loadShippingQuoteForOffer(offerId);
+        }
+        const selectedOfferedListing = offeredChoices.find((listing) => listingIdOf(listing) === selectedOfferedListingId) || currentOffer?.offered_listing || null;
+        const confirmed = await confirmTradeAcceptance(currentOffer, acceptanceQuote, selectedOfferedListing);
+        if (!confirmed) return;
       }
 
-      const updated = await apiClient.actionOffer(offerId, status, receiveAddress, await authContext());
+      setOfferActionBusyById((prev) => ({ ...prev, [offerId]: status }));
+      setNotice(status === 'accepted' ? 'Accepting trade...' : 'Updating trade offer...');
+      const updated = await apiClient.actionOffer(offerId, status, receiveAddress, selectedOfferedListingId, await authContext());
       setIncomingOffers((prev) => prev.map((offer) => (offer.offer_id === offerId ? { ...offer, ...updated } : offer)));
       if (String(updated?.status || '').toLowerCase() === 'accepted') {
         await loadShippingLabelsForOffer(offerId);
-        setNotice('Trade accepted. Shipping labels are available below when ready.');
+        setOfferFilter('accepted');
+        setNotice('Trade accepted successfully. This trade is now in Accepted.');
       } else if (status === 'accepted') {
+        setOfferFilter('accepted');
         setNotice('Offer accepted. Waiting for finalization.');
       } else {
         setNotice('Offer updated.');
       }
-      await loadInbox(offerFilter);
+      await loadInbox(status === 'accepted' ? 'accepted' : offerFilter);
     } catch (e) {
       setError(e.message || String(e));
     } finally {
-      setLoading(false);
+      setOfferActionBusyById((prev) => {
+        const next = { ...prev };
+        delete next[offerId];
+        return next;
+      });
     }
   }
 
@@ -1896,9 +2140,11 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
 
   async function shareListing(item) {
     try {
-      const { imageUrl, title, caption } = buildSharePayload(item);
-      const payload = imageUrl
-        ? { message: `${caption}\n${imageUrl}`, url: imageUrl, title: title || 'Jouft Listing' }
+      const { shareUrl, imageUrl, title, caption } = buildSharePayload(item);
+      const payload = shareUrl
+        ? { message: `${caption}\n${shareUrl}`, url: shareUrl, title: title || 'Jouft Listing' }
+        : imageUrl
+          ? { message: `${caption}\n${imageUrl}`, url: imageUrl, title: title || 'Jouft Listing' }
         : { message: caption, title: title || 'Jouft Listing' };
       await Share.share(payload);
     } catch (e) {
@@ -1909,6 +2155,9 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
   function buildSharePayload(item) {
     const gallery = listingGallery(item, apiBaseUrl);
     const imageUrl = gallery[0] || '';
+    const listingId = String(item?.listing_id || item?.id || '').trim();
+    const base = String(apiBaseUrl || API_DEFAULT || '').replace(/\/$/, '');
+    const shareUrl = listingId && base ? `${base}/v1/share/listings/${encodeURIComponent(listingId)}` : '';
     const title = String(item?.title || 'Luxury listing').trim();
     const brand = String(item?.brand || 'Jouft').trim();
     const value = Number(item?.estimated_value || 0);
@@ -1920,22 +2169,22 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     ]
       .filter(Boolean)
       .join('\n');
-    return { imageUrl, title, caption };
+    return { shareUrl, imageUrl, title, caption };
   }
 
   async function shareListingPinterest(item) {
     try {
-      const { imageUrl, caption } = buildSharePayload(item);
-      if (imageUrl) {
-        const pinterestUrl = `https://www.pinterest.com/pin/create/button/?url=${encodeURIComponent(imageUrl)}&media=${encodeURIComponent(imageUrl)}&description=${encodeURIComponent(caption)}`;
-        const canOpenPinterest = await Linking.canOpenURL(pinterestUrl);
-        if (canOpenPinterest) {
-          await Linking.openURL(pinterestUrl);
-          return;
-        }
+      const { shareUrl, imageUrl, caption } = buildSharePayload(item);
+      if (shareUrl || imageUrl) {
+        const targetUrl = shareUrl || imageUrl;
+        const pinterestUrl = `https://www.pinterest.com/pin/create/button/?url=${encodeURIComponent(targetUrl)}${imageUrl ? `&media=${encodeURIComponent(imageUrl)}` : ''}&description=${encodeURIComponent(caption)}`;
+        await WebBrowser.openBrowserAsync(pinterestUrl, {
+          presentationStyle: WebBrowser.WebBrowserPresentationStyle.PAGE_SHEET,
+        });
+        return;
       }
       await Share.share(
-        { message: imageUrl ? `${caption}\n${imageUrl}` : caption },
+        { message: shareUrl ? `${caption}\n${shareUrl}` : imageUrl ? `${caption}\n${imageUrl}` : caption },
         { dialogTitle: 'Share to Pinterest' },
       );
     } catch (e) {
@@ -1945,16 +2194,16 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
 
   async function shareListingFacebook(item) {
     try {
-      const { imageUrl, caption } = buildSharePayload(item);
-      if (imageUrl) {
-        const sharerUrl = `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(imageUrl)}&quote=${encodeURIComponent(caption)}`;
-        const canOpenSharer = await Linking.canOpenURL(sharerUrl);
-        if (canOpenSharer) {
-          await Linking.openURL(sharerUrl);
-          return;
-        }
+      const { shareUrl, imageUrl, caption } = buildSharePayload(item);
+      if (shareUrl || imageUrl) {
+        const targetUrl = shareUrl || imageUrl;
+        const sharerUrl = `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(targetUrl)}&quote=${encodeURIComponent(caption)}`;
+        await WebBrowser.openBrowserAsync(sharerUrl, {
+          presentationStyle: WebBrowser.WebBrowserPresentationStyle.PAGE_SHEET,
+        });
+        return;
       }
-      await Share.share({ message: imageUrl ? `${caption}\n${imageUrl}` : caption }, { dialogTitle: 'Share to Facebook' });
+      await Share.share({ message: shareUrl ? `${caption}\n${shareUrl}` : imageUrl ? `${caption}\n${imageUrl}` : caption }, { dialogTitle: 'Share to Facebook' });
     } catch (e) {
       setError(e.message || 'Unable to share to Facebook.');
     }
@@ -2079,6 +2328,30 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
       }
     });
   }, [activeTab, incomingOffers, shippingLabelsByOffer]);
+
+  useEffect(() => {
+    if (!authReady()) return;
+    if (activeTab !== 'inbox') return;
+    const pendingReceivedOfferIds = incomingOffers
+      .filter((offer) => String(offer?.status || '').toLowerCase() === 'pending')
+      .filter((offer) => {
+        const actorSubject = offerActorSubject(offer, marketplaceActorSubject || clerkUserProfile?.id);
+        return actorSubject && actorSubject === String(offer?.to_subject || '').trim();
+      })
+      .map((offer) => offer.offer_id)
+      .filter((offerId) => offerId && !shippingQuoteByOffer[offerId]);
+    if (pendingReceivedOfferIds.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      for (const offerId of pendingReceivedOfferIds) {
+        if (cancelled) return;
+        await loadShippingQuoteForOffer(offerId);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, incomingOffers, shippingQuoteByOffer, marketplaceActorSubject, clerkUserProfile?.id]);
 
   useEffect(() => {
     if (!isListingDetailOpen) return;
@@ -2397,13 +2670,25 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
   }
 
   function handleTabPress(tab) {
-    if (tab === 'create') {
-      resetListingForm();
-      setNotice('');
-      setError('');
+    const requiredProfileSection = profileSetupSectionFor();
+    if (requiredProfileSection) {
+      setProfileSection(requiredProfileSection);
+      setActiveTab('profile');
+      if (tab !== 'profile') {
+        setNotice('Complete your profile setup and subscription to start.');
+      }
+      return;
     }
-    setActiveTab(tab);
-  }
+	    if (tab === 'create') {
+	      resetListingForm();
+	      setNotice('');
+	      setError('');
+	    }
+	    setActiveTab(tab);
+	    requestAnimationFrame(() => {
+	      mainScrollRef.current?.scrollTo?.({ y: 0, animated: false });
+	    });
+	  }
 
   function editSaveRequiresAnalysis() {
     if (!editingListing) return false;
@@ -2412,9 +2697,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     const imagesChanged = images.length > 0 || !sameStringList(keptImages, originalImages);
     const originalCondition = String(editingListing?.condition || 'n/a').trim();
     const nextCondition = String(userCondition || editingListing?.condition || 'n/a').trim();
-    const originalSize = String(editingListing?.size || '').trim();
-    const nextSize = String(itemSize || '').trim();
-    return imagesChanged || nextCondition !== originalCondition || nextSize !== originalSize;
+    return imagesChanged || nextCondition !== originalCondition;
   }
 
   async function waitForUploadedListingImages(imageUrls) {
@@ -2430,13 +2713,29 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     return false;
   }
 
-  function buildListingPayloadForSave({ imageUrls, sourceItemId = null, analysis = null, status = null } = {}) {
-    const resolvedImageUrls = persistableImageUrls(imageUrls || []);
+	  function buildListingPayloadForSave({ imageUrls, sourceItemId = null, analysis = null, status = null } = {}) {
+	    const resolvedImageUrls = persistableImageUrls(imageUrls || []);
     if (resolvedImageUrls.length < 1) {
       throw new Error(editingListingId ? 'Keep existing images or upload new photos before saving.' : 'Upload 1 to 6 images before creating the listing.');
     }
-    const resolvedAnalysis = analysis || analysisResult || editingListing?.analysis || null;
-    const analysisCategory = resolvedAnalysis?.category || editingListing?.category || category || 'handbag';
+	    const resolvedAnalysis = analysis || analysisResult || editingListing?.analysis || null;
+	    const originalImageUrls = persistableImageUrls(uploadedImageUrlsFromPayload({ uploaded_images: resolvedAnalysis?.uploaded_images || [] }));
+	    const existingListedImages = Array.isArray(editingListing?.listed_images)
+	      ? editingListing.listed_images
+	      : (Array.isArray(editingListing?.listedImages) ? editingListing.listedImages : []);
+	    const listedImages = resolvedImageUrls.map((url, idx) => {
+	      const existing = existingListedImages.find((entry) => {
+	        const display = persistableImageUrls([entry?.d_img || entry?.display_image || entry?.image])[0];
+	        return display === url;
+	      });
+	      if (existing) {
+	        const display = persistableImageUrls([existing.d_img || existing.display_image || existing.image])[0] || url;
+	        const original = persistableImageUrls([existing.p_img || existing.original_image || existing.source_image])[0] || display;
+	        return { p_img: original, d_img: display, is_hero: idx === 0 };
+	      }
+	      return { p_img: originalImageUrls[idx] || url, d_img: url, is_hero: idx === 0 };
+	    });
+	    const analysisCategory = resolvedAnalysis?.category || editingListing?.category || category || '';
     const analysisBrand = resolvedAnalysis?.brand?.name || editingListing?.brand || 'unknown';
     const analysisCondition = userCondition || resolvedAnalysis?.user_condition || editingListing?.condition || 'LikeNew';
     const value = Number(resolvedAnalysis?.valuation?.estimated_value ?? editingListing?.estimated_value ?? 0);
@@ -2450,8 +2749,9 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
       size: itemSize || editingListing?.size || null,
       estimated_value: value,
       city: editingListing?.city || 'Your area',
-      image: resolvedImageUrls[0] || null,
-      images: resolvedImageUrls,
+	      image: resolvedImageUrls[0] || null,
+	      images: resolvedImageUrls,
+	      listed_images: listedImages,
       description,
       wants: tradeNotes.trim() || editingListing?.wants || 'Open to similar-value offers',
       tags: [analysisCondition, analysisBrand].filter(Boolean),
@@ -2491,6 +2791,9 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
         await authContext(),
       );
       await loadCloset();
+      if (selectedListing && listingIdOf(selectedListing) === listingId) {
+        closeListingDetails();
+      }
       setNotice('Listing published to Marketplace.');
     } catch (e) {
       setError(e.message || String(e));
@@ -2503,12 +2806,12 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     const listingId = listingIdOf(item);
     if (!listingId) return;
     Alert.alert(
-      'Remove listing?',
-      `Remove "${item?.title || 'this listing'}" from your closet? This cannot be undone.`,
+      'Delete listing?',
+      `Delete "${item?.title || 'this listing'}" from your closet? This cannot be undone.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
-          text: 'Remove',
+          text: 'Delete',
           style: 'destructive',
           onPress: async () => {
             setLoading(true);
@@ -2538,6 +2841,10 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     const existingImages = isEditing ? orderedEditExistingImagesForSave() : [];
     if (!isEditing && (imagesForAnalysis.length < 1 || imagesForAnalysis.length > 6)) {
       setError('Upload 1 to 6 images before creating the listing.');
+      return;
+    }
+    if (!category) {
+      setError('Category is required.');
       return;
     }
     if (!userCondition) {
@@ -2616,6 +2923,8 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     const description = listingDescription(selectedListing);
     const selectedListingLiked = likedListingIds.includes(String(selectedListing?.listing_id || selectedListing?.id || ''));
     const selectedListingAnalysisFailed = String(selectedListing?.status || '').toLowerCase() === 'analysisfailed';
+    const selectedListingStatus = String(selectedListing?.status || '').trim().toLowerCase();
+    const canReviewClosetListing = selectedListingSource === 'closet' && !['active', 'analyzing', 'analysisfailed'].includes(selectedListingStatus);
     const body = (
       <>
         <View style={styles.offerDetailPanel}>
@@ -2638,6 +2947,26 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                 {selectedListingLiked ? 'Liked' : 'Like Listing'}
               </Text>
             </TouchableOpacity>
+          ) : null}
+          {canReviewClosetListing ? (
+            <View style={styles.listingDetailActionRow}>
+              <TouchableOpacity
+                style={styles.secondaryBtnCompact}
+                onPress={() => {
+                  const listing = selectedListing;
+                  closeListingDetails();
+                  openEditListingDraft(listing);
+                }}
+              >
+                <Text style={styles.secondaryBtnText}>Edit</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.primaryBtnCompact}
+                onPress={() => publishListingToMarketplace(selectedListing)}
+              >
+                <Text style={styles.primaryBtnText}>Publish</Text>
+              </TouchableOpacity>
+            </View>
           ) : null}
         </View>
 
@@ -2748,7 +3077,34 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
   return (
     <SafeAreaView style={styles.root} edges={['top', 'right', 'bottom', 'left']}>
       <StatusBar style="dark" />
-      <ScrollView style={styles.mainScroll} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+	      <ScrollView
+	        ref={mainScrollRef}
+	        style={styles.mainScroll}
+	        contentContainerStyle={styles.content}
+	        keyboardShouldPersistTaps="handled"
+	        scrollEventThrottle={250}
+	        onScroll={({ nativeEvent }) => {
+	          if (activeTab !== 'marketplace' && activeTab !== 'closet') return;
+	          const { layoutMeasurement, contentOffset, contentSize } = nativeEvent;
+	          const distanceFromBottom = contentSize.height - (layoutMeasurement.height + contentOffset.y);
+	          if (distanceFromBottom > 900) return;
+	          if (activeTab === 'marketplace') {
+	            loadMoreMarketplace();
+	          } else if (activeTab === 'closet') {
+	            loadMoreCloset();
+	          }
+	        }}
+	        refreshControl={
+	          activeTab === 'marketplace' || activeTab === 'closet' ? (
+	            <RefreshControl
+	              refreshing={activeTab === 'marketplace' ? marketplaceLoading : closetLoading}
+	              onRefresh={refreshActiveTab}
+	              tintColor={theme.brand}
+	              colors={[theme.brand]}
+	            />
+	          ) : null
+	        }
+	      >
         <TopBrandHeader />
 
         {!!error && <Text style={styles.error}>{error}</Text>}
@@ -2762,12 +3118,12 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
             ) : (
               <>
                 <SectionHeader title="Marketplace" subtitle="CURATED MATCHES" rightText="Refresh" onRightPress={refreshActiveTab} />
-                {marketplaceLoading ? (
+	                {marketplaceLoading && matchedMarketplaceListings.length === 0 ? (
                   <View style={styles.loadingState}>
                     <ActivityIndicator color={theme.brand} />
                     <Text style={styles.loadingText}>Loading marketplace listings...</Text>
                   </View>
-                ) : matchedMarketplaceListings.length === 0 ? (
+                ) : matchedMarketplaceListings.length === 0 && !marketplaceHasMore ? (
                   <View style={styles.emptyState}>
                     <Text style={styles.emptyTitle}>No matched marketplace listings yet</Text>
                     <Text style={styles.emptyText}>Create or publish a closet listing to see marketplace items that match your closet.</Text>
@@ -2779,6 +3135,18 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                       }}
                     >
                       <Text style={styles.primaryBtnText}>Create Listing</Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : matchedMarketplaceListings.length === 0 ? (
+                  <View style={styles.emptyState}>
+                    <Text style={styles.emptyTitle}>Looking for matched listings...</Text>
+                    <Text style={styles.emptyText}>More marketplace listings are available to check.</Text>
+                    <TouchableOpacity
+                      style={[styles.secondaryBtnCompact, styles.loadMoreButton, marketplacePageLoading && styles.primaryBtnDisabled]}
+                      onPress={loadMoreMarketplace}
+                      disabled={marketplacePageLoading}
+                    >
+                      {marketplacePageLoading ? <ActivityIndicator color={theme.brand} /> : <Text style={styles.secondaryBtnText}>Load More Listings</Text>}
                     </TouchableOpacity>
                   </View>
                 ) : (
@@ -2800,7 +3168,16 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                         onToggleLike={isOwnListing ? null : toggleLikedListing}
                       />
                     );
-                  })
+                  }).concat(marketplaceHasMore ? [
+                    <TouchableOpacity
+                      key="marketplace-load-more"
+                      style={[styles.secondaryBtnCompact, styles.loadMoreButton, marketplacePageLoading && styles.primaryBtnDisabled]}
+                      onPress={loadMoreMarketplace}
+                      disabled={marketplacePageLoading}
+                    >
+                      {marketplacePageLoading ? <ActivityIndicator color={theme.brand} /> : <Text style={styles.secondaryBtnText}>Load More Listings</Text>}
+                    </TouchableOpacity>,
+                  ] : [])
                 )}
               </>
             )}
@@ -2814,7 +3191,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
             ) : (
               <>
                 <SectionHeader title="My Closet" subtitle="YOUR LISTINGS" rightText="Refresh" onRightPress={refreshActiveTab} />
-                {closetLoading ? (
+	                {closetLoading && myListings.length === 0 ? (
                   <View style={styles.loadingState}>
                     <ActivityIndicator color={theme.brand} />
                     <Text style={styles.loadingText}>Loading your closet...</Text>
@@ -2829,6 +3206,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                       apiBaseUrl={apiBaseUrl}
                       onOpenDetails={(listing) => openListingDetails(listing, 'closet')}
                       onEditDraft={openEditListingDraft}
+                      onReviewListing={(listing) => openListingDetails(listing, 'closet')}
                       onPublishListing={publishListingToMarketplace}
                       onRemoveListing={removeListingFromCloset}
                       onShareListing={shareListing}
@@ -2837,7 +3215,16 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                       currentOwnerSubject={marketplaceActorSubject}
                       currentUserDisplayName={clerkUserLabel}
                     />
-                  ))
+                  )).concat(closetHasMore ? [
+                    <TouchableOpacity
+                      key="closet-load-more"
+                      style={[styles.secondaryBtnCompact, styles.loadMoreButton, closetPageLoading && styles.primaryBtnDisabled]}
+                      onPress={loadMoreCloset}
+                      disabled={closetPageLoading}
+                    >
+                      {closetPageLoading ? <ActivityIndicator color={theme.brand} /> : <Text style={styles.secondaryBtnText}>Load More Listings</Text>}
+                    </TouchableOpacity>,
+                  ] : [])
                 )}
               </>
             )}
@@ -3121,9 +3508,12 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                 const isAccepted = String(offer?.status || '').toLowerCase() === 'accepted';
                 const selectableAddresses = completeShippingAddresses(shippingAddresses);
                 const selectedAddressId = selectedAddressByOffer[offerId] || (selectableAddresses.length === 1 ? selectableAddresses[0].id : '');
+                const offeredChoices = offerOfferedListings(offer);
+                const selectedOfferedListingId = offerAcceptedListingById[offerId] || offer?.selected_offered_listing_id || (offeredChoices.length === 1 ? listingIdOf(offeredChoices[0]) : '');
                 const labels = Array.isArray(shippingLabelsByOffer[offerId]) ? shippingLabelsByOffer[offerId] : [];
                 const quote = shippingQuoteByOffer[offerId] || null;
                 const shippingBusy = Boolean(shippingBusyByOffer[offerId]);
+                const offerActionBusy = offerActionBusyById[offerId] || '';
                 return (
                   <View key={offerId} style={styles.offerCardWrap}>
                     <OfferCard offer={offer} apiBaseUrl={apiBaseUrl} />
@@ -3158,15 +3548,45 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                             })
                           )}
                         </ScrollView>
+                        <Text style={styles.label}>Accepted offered item</Text>
+                        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.addressRow}>
+                          {offeredChoices.length === 0 ? (
+                            <Text style={styles.helperText}>No offered items available.</Text>
+                          ) : (
+                            offeredChoices.map((listing, idx) => {
+                              const listingId = listingIdOf(listing);
+                              const active = listingId === selectedOfferedListingId;
+                              return (
+                                <TouchableOpacity
+                                  key={`${offerId}-offered-choice-${listingId || idx}`}
+                                  style={[styles.addressChip, active && styles.addressChipActive]}
+                                  onPress={() => setOfferAcceptedListingById((prev) => ({ ...prev, [offerId]: listingId }))}
+                                >
+                                  <Text style={[styles.addressChipText, active && styles.addressChipTextActive]} numberOfLines={1}>
+                                    {(listing?.title || `Item ${idx + 1}`).toUpperCase()}
+                                  </Text>
+                                  <Text style={[styles.addressChipSubText, active && styles.addressChipSubTextActive]}>
+                                    {money(listing?.estimated_value || 0)}
+                                  </Text>
+                                </TouchableOpacity>
+                              );
+                            })
+                          )}
+                        </ScrollView>
                         <View style={styles.actionRow}>
                           <TouchableOpacity
-                            style={styles.primaryBtn}
+                            style={[styles.primaryBtn, offerActionBusy && styles.primaryBtnDisabled]}
                             onPress={() => respondToOffer(offerId, 'accepted')}
+                            disabled={Boolean(offerActionBusy) || !selectedOfferedListingId}
                           >
-                            <Text style={styles.primaryBtnText}>Accept Trade</Text>
+                            <Text style={styles.primaryBtnText}>{offerActionBusy === 'accepted' ? 'Accepting...' : 'Accept Trade'}</Text>
                           </TouchableOpacity>
-                          <TouchableOpacity style={styles.secondaryBtn} onPress={() => respondToOffer(offerId, 'declined')}>
-                            <Text style={styles.secondaryBtnText}>Decline</Text>
+                          <TouchableOpacity
+                            style={[styles.secondaryBtn, offerActionBusy && styles.primaryBtnDisabled]}
+                            onPress={() => respondToOffer(offerId, 'declined')}
+                            disabled={Boolean(offerActionBusy)}
+                          >
+                            <Text style={styles.secondaryBtnText}>{offerActionBusy === 'declined' ? 'Declining...' : 'Decline'}</Text>
                           </TouchableOpacity>
                         </View>
                       </View>
@@ -3207,6 +3627,13 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                             <View key={shipment.shipment_id} style={styles.shipmentCard}>
                               <Text style={styles.shipmentTitle}>{shipment.carrier} • {shipment.service_level}</Text>
                               <Text style={styles.shipmentMeta}>Tracking: {shipment.tracking_number || 'pending'}</Text>
+                              <Text style={styles.shipmentMeta}>Status: {shipmentTrackingLabel(shipment)}</Text>
+                              {shipment.tracking_status_details ? (
+                                <Text style={styles.shipmentMeta}>{shipment.tracking_status_details}</Text>
+                              ) : null}
+                              {shipment.tracking_eta ? (
+                                <Text style={styles.shipmentMeta}>Estimated delivery: {shipment.tracking_eta}</Text>
+                              ) : null}
                               <Text style={styles.shipmentMeta}>From: {shipment.from_city || ''} {shipment.from_state || ''}</Text>
                               <Text style={styles.shipmentMeta}>To: {shipment.to_city || ''} {shipment.to_state || ''}</Text>
                               <TouchableOpacity style={styles.primaryBtnCompact} onPress={() => openShippingLabel(shipment)}>
@@ -3612,7 +4039,8 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
             <View style={styles.profilePlanList}>
               {SUBSCRIPTION_PLANS.map((plan) => {
                 const selected = subscriptionPlan === plan.key;
-                const activePlan = String(profileQuiz?.subscription_plan || 'free') === plan.key;
+                const activePlan = String(profileQuiz?.subscription_plan || '') === plan.key
+                  && ['active', 'trialing'].includes(String(profileQuiz?.subscription_status || '').toLowerCase());
                 const amount = subscriptionCycle === 'annual' ? plan.annual : plan.monthly;
                 return (
                   <TouchableOpacity
@@ -3694,7 +4122,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
               );
             })()}
             <Text style={styles.helperText}>
-              Current status: {titleCase(profileQuiz?.subscription_status || (subscriptionPlan === 'free' ? 'free' : 'not active'))}
+              Current status: {titleCase(profileQuiz?.subscription_status || 'not active')}
               {profileQuiz?.subscription_renewal_date ? ` • Renews ${profileQuiz.subscription_renewal_date}` : ''}
             </Text>
             {!!profileSaveMsg && <Text style={styles.notice}>{profileSaveMsg}</Text>}
@@ -3798,10 +4226,12 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
           const targetGallery = listingGallery(targetListing, apiBaseUrl);
           const selectableAddresses = completeShippingAddresses(shippingAddresses);
           const selectedAddressId = selectedAddressByOffer[offerId] || (selectableAddresses.length === 1 ? selectableAddresses[0].id : '');
+          const selectedOfferedListingId = offerAcceptedListingById[offerId] || selectedOffer?.selected_offered_listing_id || (offeredListings.length === 1 ? listingIdOf(offeredListings[0]) : '');
           const labels = Array.isArray(shippingLabelsByOffer[offerId]) ? shippingLabelsByOffer[offerId] : [];
-          const quote = shippingQuoteByOffer[offerId] || null;
-          const shippingBusy = Boolean(shippingBusyByOffer[offerId]);
-          const isPending = String(selectedOffer?.status || '').toLowerCase() === 'pending';
+	          const quote = shippingQuoteByOffer[offerId] || null;
+	          const shippingBusy = Boolean(shippingBusyByOffer[offerId]);
+	          const offerActionBusy = offerActionBusyById[offerId] || '';
+	          const isPending = String(selectedOffer?.status || '').toLowerCase() === 'pending';
           const isAccepted = String(selectedOffer?.status || '').toLowerCase() === 'accepted';
           return (
             <SafeAreaView style={styles.offerDetailOverlay}>
@@ -3874,6 +4304,15 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                   {isPending ? (
                     <View style={styles.offerDetailPanel}>
                       <Text style={styles.offerLaneLabel}>Actions</Text>
+                      <Text style={styles.helperText}>
+                        Shipping cost to send your item: {
+                          quote?.status === 'quoted' && quote?.amount
+                            ? `${quote.currency || 'USD'} ${quote.amount} • ${quote.carrier || 'USPS'} ${quote.service_level || ''}`
+                            : quote?.status === 'loading'
+                              ? 'Calculating...'
+                              : 'Unavailable until shipping addresses are complete.'
+                        }
+                      </Text>
                       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.addressRow}>
                         {selectableAddresses.length === 0 ? (
                           <Text style={styles.helperText}>Add a complete shipping address in Profile.</Text>
@@ -3897,16 +4336,46 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                           })
                         )}
                       </ScrollView>
+                      <Text style={styles.label}>Accepted offered item</Text>
+                      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.addressRow}>
+                        {offeredListings.length === 0 ? (
+                          <Text style={styles.helperText}>No offered items available.</Text>
+                        ) : (
+                          offeredListings.map((listing, idx) => {
+                            const listingId = listingIdOf(listing);
+                            const active = listingId === selectedOfferedListingId;
+                            return (
+                              <TouchableOpacity
+                                key={`${offerId}-detail-offered-choice-${listingId || idx}`}
+                                style={[styles.addressChip, active && styles.addressChipActive]}
+                                onPress={() => setOfferAcceptedListingById((prev) => ({ ...prev, [offerId]: listingId }))}
+                              >
+                                <Text style={[styles.addressChipText, active && styles.addressChipTextActive]} numberOfLines={1}>
+                                  {(listing?.title || `Item ${idx + 1}`).toUpperCase()}
+                                </Text>
+                                <Text style={[styles.addressChipSubText, active && styles.addressChipSubTextActive]}>
+                                  {money(listing?.estimated_value || 0)}
+                                </Text>
+                              </TouchableOpacity>
+                            );
+                          })
+                        )}
+                      </ScrollView>
                       <View style={styles.actionRow}>
-                        <TouchableOpacity
-                          style={styles.primaryBtn}
-                          onPress={() => respondToOffer(offerId, 'accepted')}
-                        >
-                          <Text style={styles.primaryBtnText}>Accept Trade</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity style={styles.secondaryBtn} onPress={() => respondToOffer(offerId, 'declined')}>
-                          <Text style={styles.secondaryBtnText}>Decline</Text>
-                        </TouchableOpacity>
+	                        <TouchableOpacity
+	                          style={[styles.primaryBtn, offerActionBusy && styles.primaryBtnDisabled]}
+	                          onPress={() => respondToOffer(offerId, 'accepted')}
+	                          disabled={Boolean(offerActionBusy) || !selectedOfferedListingId}
+	                        >
+	                          <Text style={styles.primaryBtnText}>{offerActionBusy === 'accepted' ? 'Accepting...' : 'Accept Trade'}</Text>
+	                        </TouchableOpacity>
+	                        <TouchableOpacity
+	                          style={[styles.secondaryBtn, offerActionBusy && styles.primaryBtnDisabled]}
+	                          onPress={() => respondToOffer(offerId, 'declined')}
+	                          disabled={Boolean(offerActionBusy)}
+	                        >
+	                          <Text style={styles.secondaryBtnText}>{offerActionBusy === 'declined' ? 'Declining...' : 'Decline'}</Text>
+	                        </TouchableOpacity>
                       </View>
                     </View>
                   ) : null}
@@ -3947,6 +4416,13 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                           <View key={`${offerId}-${shipment.shipment_id}`} style={styles.shipmentCard}>
                             <Text style={styles.shipmentTitle}>{shipment.carrier} • {shipment.service_level}</Text>
                             <Text style={styles.shipmentMeta}>Tracking: {shipment.tracking_number || 'pending'}</Text>
+                            <Text style={styles.shipmentMeta}>Status: {shipmentTrackingLabel(shipment)}</Text>
+                            {shipment.tracking_status_details ? (
+                              <Text style={styles.shipmentMeta}>{shipment.tracking_status_details}</Text>
+                            ) : null}
+                            {shipment.tracking_eta ? (
+                              <Text style={styles.shipmentMeta}>Estimated delivery: {shipment.tracking_eta}</Text>
+                            ) : null}
                             <TouchableOpacity style={styles.primaryBtnCompact} onPress={() => openShippingLabel(shipment)}>
                               <Text style={styles.primaryBtnText}>Download Label</Text>
                             </TouchableOpacity>
@@ -3963,12 +4439,12 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
 
         {tradeComposerTarget ? (() => {
           const targetGallery = listingGallery(tradeComposerTarget, apiBaseUrl);
-          const offeredTotalValue = tradeOfferCandidates
-            .filter((listing) => tradeOfferListingIds.includes(listing?.listing_id))
-            .reduce((sum, listing) => sum + Number(listing?.estimated_value || 0), 0);
+          const selectedOfferListings = tradeOfferCandidates
+            .filter((listing) => tradeOfferListingIds.includes(listing?.listing_id));
           const targetValue = Number(tradeComposerTarget?.estimated_value || 0);
-          const gapPct = targetValue > 0 ? Math.abs(offeredTotalValue - targetValue) / targetValue : null;
-          const withinBand = gapPct !== null ? gapPct <= 0.30 : false;
+          const withinBand = targetValue > 0 && selectedOfferListings.length > 0
+            ? selectedOfferListings.every((listing) => Math.abs(Number(listing?.estimated_value || 0) - targetValue) / targetValue <= 0.30)
+            : false;
           return (
             <SafeAreaView style={styles.offerDetailOverlay}>
               <View style={styles.offerDetailShell}>
@@ -4045,10 +4521,10 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
 
                   <View style={styles.offerDetailPanel}>
                     <Text style={styles.helperText}>
-                      Offered total: {money(offeredTotalValue)} • Target: {money(targetValue)}
+                      Selected choices: {selectedOfferListings.length} • Target: {money(targetValue)}
                     </Text>
                     <Text style={withinBand ? styles.notice : styles.error}>
-                      {gapPct === null ? 'Target listing needs a value before sending an offer.' : (withinBand ? 'Within 30% trade band' : 'Outside 30% trade band')}
+                      {withinBand ? 'Each selected item is within the 30% trade band' : 'Select at least one item within the 30% trade band'}
                     </Text>
                     <Text style={styles.label}>Message (optional)</Text>
                     <TextInput
@@ -4082,7 +4558,11 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
         visible={Boolean(appAlert)}
         animationType="fade"
         transparent
-        onRequestClose={() => setAppAlert(null)}
+        onRequestClose={() => {
+          const onSecondary = appAlert?.onSecondary;
+          setAppAlert(null);
+          if (typeof onSecondary === 'function') onSecondary();
+        }}
       >
         <View style={styles.appAlertOverlay}>
           <View style={styles.appAlertCard}>
@@ -4091,7 +4571,14 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
             <Text style={styles.appAlertMessage}>{appAlert?.message || ''}</Text>
             <View style={styles.appAlertActions}>
               {appAlert?.secondaryLabel ? (
-                <TouchableOpacity style={styles.secondaryBtnCompact} onPress={() => setAppAlert(null)}>
+                <TouchableOpacity
+                  style={styles.secondaryBtnCompact}
+                  onPress={() => {
+                    const onSecondary = appAlert?.onSecondary;
+                    setAppAlert(null);
+                    if (typeof onSecondary === 'function') onSecondary();
+                  }}
+                >
                   <Text style={styles.secondaryBtnText}>{appAlert.secondaryLabel}</Text>
                 </TouchableOpacity>
               ) : null}
@@ -4147,6 +4634,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
 function ClerkAuthScreen() {
   const [authPanelOpen, setAuthPanelOpen] = useState(false);
   const [mode, setMode] = useState('sign_in');
+  const [authEntryPoint, setAuthEntryPoint] = useState('sign_in');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [verificationCode, setVerificationCode] = useState('');
@@ -4155,12 +4643,13 @@ function ClerkAuthScreen() {
   const [pendingSignUpVerification, setPendingSignUpVerification] = useState(false);
   const [pendingPasswordReset, setPendingPasswordReset] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [oauthBusy, setOauthBusy] = useState(false);
+  const [oauthBusy, setOauthBusy] = useState('');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const { isLoaded: signInLoaded, signIn, setActive: setSignInActive } = useSignIn();
   const { isLoaded: signUpLoaded, signUp, setActive: setSignUpActive } = useSignUp();
   const { startOAuthFlow: startFacebookOAuthFlow } = useOAuth({ strategy: 'oauth_facebook' });
+  const { startOAuthFlow: startGoogleOAuthFlow } = useOAuth({ strategy: 'oauth_google' });
 
   function clerkErrorMessage(e, fallback) {
     const message = e?.errors?.[0]?.longMessage || e?.errors?.[0]?.message || e?.message || fallback;
@@ -4183,25 +4672,28 @@ function ClerkAuthScreen() {
   }
 
   function openAuth(nextMode) {
+    setAuthEntryPoint(nextMode === 'sign_up' ? 'request_access' : 'sign_in');
     resetAuthFlow(nextMode);
     setAuthPanelOpen(true);
   }
 
-  async function submitFacebookOAuth() {
-    setOauthBusy(true);
+  async function submitOAuth(provider) {
+    const startOAuthFlow = provider === 'google' ? startGoogleOAuthFlow : startFacebookOAuthFlow;
+    const providerLabel = provider === 'google' ? 'Google' : 'Facebook';
+    setOauthBusy(provider);
     setError('');
     setNotice('');
     try {
-      const { createdSessionId, setActive } = await startFacebookOAuthFlow();
+      const { createdSessionId, setActive } = await startOAuthFlow();
       if (createdSessionId && setActive) {
         await setActive({ session: createdSessionId });
         return;
       }
-      setNotice('Facebook sign-in was cancelled or did not complete.');
+      setNotice(`${providerLabel} sign-in was cancelled or did not complete.`);
     } catch (e) {
-      setError(clerkErrorMessage(e, 'Facebook sign-in failed.'));
+      setError(clerkErrorMessage(e, `${providerLabel} sign-in failed.`));
     } finally {
-      setOauthBusy(false);
+      setOauthBusy('');
     }
   }
 
@@ -4439,6 +4931,7 @@ function ClerkAuthScreen() {
 
   function authTitleForMode() {
     if (mode === 'reset_password') return 'Reset Password';
+    if (authEntryPoint === 'request_access') return 'Request Access';
     return mode === 'sign_in' ? 'Sign In' : 'Create Account';
   }
 
@@ -4512,10 +5005,18 @@ function ClerkAuthScreen() {
 
                 <TouchableOpacity
                   style={[styles.facebookBtn, oauthBusy && styles.primaryBtnDisabled]}
-                  onPress={submitFacebookOAuth}
-                  disabled={oauthBusy}
+                  onPress={() => submitOAuth('facebook')}
+                  disabled={Boolean(oauthBusy)}
                 >
-                  <Text style={styles.facebookBtnText}>{oauthBusy ? 'Connecting...' : 'Continue with Facebook'}</Text>
+                  <Text style={styles.facebookBtnText}>{oauthBusy === 'facebook' ? 'Connecting...' : 'Continue with Facebook'}</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.googleBtn, oauthBusy && styles.primaryBtnDisabled]}
+                  onPress={() => submitOAuth('google')}
+                  disabled={Boolean(oauthBusy)}
+                >
+                  <Text style={styles.googleBtnText}>{oauthBusy === 'google' ? 'Connecting...' : 'Continue with Google'}</Text>
                 </TouchableOpacity>
 
                 <View style={styles.authDivider}>
@@ -4524,14 +5025,16 @@ function ClerkAuthScreen() {
                   <View style={styles.authDividerLine} />
                 </View>
 
-                <View style={styles.modeRow}>
-                  <TouchableOpacity style={[styles.modeBtn, mode === 'sign_in' && styles.modeBtnActive]} onPress={() => resetAuthFlow('sign_in')}>
-                    <Text style={[styles.modeBtnText, mode === 'sign_in' && styles.modeBtnTextActive]}>Sign In</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={[styles.modeBtn, mode === 'sign_up' && styles.modeBtnActive]} onPress={() => resetAuthFlow('sign_up')}>
-                    <Text style={[styles.modeBtnText, mode === 'sign_up' && styles.modeBtnTextActive]}>Create Account</Text>
-                  </TouchableOpacity>
-                </View>
+                {authEntryPoint === 'request_access' ? null : (
+                  <View style={styles.modeRow}>
+                    <TouchableOpacity style={[styles.modeBtn, mode === 'sign_in' && styles.modeBtnActive]} onPress={() => resetAuthFlow('sign_in')}>
+                      <Text style={[styles.modeBtnText, mode === 'sign_in' && styles.modeBtnTextActive]}>Sign In</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={[styles.modeBtn, mode === 'sign_up' && styles.modeBtnActive]} onPress={() => resetAuthFlow('sign_up')}>
+                      <Text style={[styles.modeBtnText, mode === 'sign_up' && styles.modeBtnTextActive]}>Create Account</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
 
                 <Text style={styles.label}>Email</Text>
                 <TextInput
@@ -4698,14 +5201,14 @@ const styles = StyleSheet.create({
     paddingBottom: 28,
     gap: 12,
   },
-  authCard: {
-    borderWidth: 1,
-    borderColor: theme.line,
-    backgroundColor: theme.surface,
-    padding: 14,
-    gap: 8,
-    borderRadius: 12,
-  },
+	  authCard: {
+	    borderWidth: 1,
+	    borderColor: theme.line,
+	    backgroundColor: theme.surface,
+	    padding: 14,
+	    gap: 8,
+	    borderRadius: 0,
+	  },
   authModalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(16, 14, 12, 0.48)',
@@ -4733,13 +5236,13 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: 18,
   },
-  appAlertCard: {
-    borderWidth: 1,
-    borderColor: 'rgba(92, 18, 28, 0.22)',
-    backgroundColor: theme.surface,
-    padding: 22,
-    gap: 10,
-    borderRadius: 12,
+	  appAlertCard: {
+	    borderWidth: 1,
+	    borderColor: 'rgba(92, 18, 28, 0.22)',
+	    backgroundColor: theme.surface,
+	    padding: 22,
+	    gap: 10,
+	    borderRadius: 0,
     shadowColor: '#000',
     shadowOpacity: 0.22,
     shadowRadius: 24,
@@ -4770,28 +5273,28 @@ const styles = StyleSheet.create({
     gap: 10,
     marginTop: 8,
   },
-  rootErrorCard: {
+	  rootErrorCard: {
     margin: 16,
     borderWidth: 1,
     borderColor: theme.line,
     backgroundColor: theme.surface,
     padding: 14,
     gap: 8,
-    borderRadius: 12,
-  },
+	    borderRadius: 0,
+	  },
   authTitle: {
     color: theme.text,
     fontSize: 30,
     lineHeight: 34,
     fontFamily: 'Didot',
   },
-  mobileAuthHero: {
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: theme.line,
-    backgroundColor: '#120d0c',
-    borderRadius: 16,
-  },
+	  mobileAuthHero: {
+	    overflow: 'hidden',
+	    borderWidth: 1,
+	    borderColor: theme.line,
+	    backgroundColor: '#120d0c',
+	    borderRadius: 0,
+	  },
   mobileAuthTopbar: {
     paddingHorizontal: 14,
     paddingVertical: 12,
@@ -4805,11 +5308,11 @@ const styles = StyleSheet.create({
     fontSize: 28,
     letterSpacing: 1.8,
   },
-  mobileAuthPill: {
+	  mobileAuthPill: {
     color: '#f1e8e1',
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.35)',
-    borderRadius: 999,
+	    borderRadius: 0,
     paddingHorizontal: 10,
     paddingVertical: 6,
     fontSize: 10,
@@ -4843,11 +5346,10 @@ const styles = StyleSheet.create({
   authValueStrip: {
     gap: 8,
   },
-  authValueItem: {
-    borderWidth: 1,
-    borderColor: theme.line,
-    borderRadius: 12,
-    backgroundColor: theme.surface,
+	  authValueItem: {
+	    borderWidth: 1,
+	    borderColor: theme.line,
+	    backgroundColor: theme.surface,
     paddingHorizontal: 12,
     paddingVertical: 10,
   },
@@ -4870,18 +5372,37 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     gap: 10,
   },
-  facebookBtn: {
-    backgroundColor: '#1877f2',
-    borderRadius: 10,
-    paddingVertical: 13,
-    paddingHorizontal: 14,
-    alignItems: 'center',
-  },
-  facebookBtnText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '800',
-  },
+	  facebookBtn: {
+	    backgroundColor: '#1877f2',
+	    borderRadius: 0,
+	    paddingVertical: 13,
+	    paddingHorizontal: 14,
+	    alignItems: 'center',
+	    minHeight: 44,
+	  },
+	  facebookBtnText: {
+	    color: '#fff',
+	    fontSize: 14,
+	    fontWeight: '600',
+	    letterSpacing: 0.6,
+	  },
+	  googleBtn: {
+	    backgroundColor: theme.surface,
+	    borderColor: theme.lineStrong,
+	    borderRadius: 0,
+	    borderWidth: 1,
+	    paddingVertical: 13,
+	    paddingHorizontal: 14,
+	    alignItems: 'center',
+	    minHeight: 44,
+	    marginTop: 10,
+	  },
+	  googleBtnText: {
+	    color: theme.text,
+	    fontSize: 14,
+	    fontWeight: '600',
+	    letterSpacing: 0.6,
+	  },
   authDivider: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -4957,11 +5478,11 @@ const styles = StyleSheet.create({
     paddingTop: 10,
     paddingBottom: 12,
   },
-  tabButton: {
-    flex: 1,
-    borderWidth: 1,
-    borderColor: '#d4c8b6',
-    borderRadius: 12,
+	  tabButton: {
+	    flex: 1,
+	    borderWidth: 1,
+	    borderColor: theme.line,
+	    borderRadius: 0,
     paddingHorizontal: 6,
     paddingVertical: 7,
     backgroundColor: '#fff',
@@ -4976,11 +5497,11 @@ const styles = StyleSheet.create({
   tabButtonText: { color: '#4a4139', fontSize: 10, letterSpacing: 0.8, fontWeight: '700', textTransform: 'uppercase' },
   tabButtonTextActive: { color: '#fff' },
 
-  section: {
-    marginHorizontal: 16,
-    marginBottom: 12,
-    backgroundColor: theme.surface,
-    borderRadius: 14,
+	  section: {
+	    marginHorizontal: 16,
+	    marginBottom: 12,
+	    backgroundColor: theme.surface,
+	    borderRadius: 0,
     borderWidth: 1,
     borderColor: theme.line,
     padding: 12,
@@ -4995,10 +5516,10 @@ const styles = StyleSheet.create({
   alertPreferenceList: {
     gap: 8,
   },
-  alertPreferenceRow: {
-    borderWidth: 1,
-    borderColor: theme.line,
-    borderRadius: 10,
+	  alertPreferenceRow: {
+	    borderWidth: 1,
+	    borderColor: theme.line,
+	    borderRadius: 0,
     backgroundColor: '#fff',
     paddingHorizontal: 10,
     paddingVertical: 9,
@@ -5012,11 +5533,11 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
   },
-  alertToggle: {
-    minWidth: 54,
-    borderWidth: 1,
-    borderColor: '#d8c8b8',
-    borderRadius: 8,
+	  alertToggle: {
+	    minWidth: 54,
+	    borderWidth: 1,
+	    borderColor: theme.line,
+	    borderRadius: 0,
     paddingHorizontal: 10,
     paddingVertical: 7,
     alignItems: 'center',
@@ -5038,17 +5559,17 @@ const styles = StyleSheet.create({
   profilePlanList: {
     gap: 8,
   },
-  profilePlanCard: {
-    borderWidth: 1,
-    borderColor: theme.line,
-    borderRadius: 10,
+	  profilePlanCard: {
+	    borderWidth: 1,
+	    borderColor: theme.line,
+	    borderRadius: 0,
     padding: 10,
     backgroundColor: '#fff',
     gap: 3,
   },
-  profilePlanCardSelected: {
-    borderColor: '#b8a996',
-    backgroundColor: '#fffaf4',
+	  profilePlanCardSelected: {
+	    borderColor: theme.lineStrong,
+	    backgroundColor: '#fff',
   },
   profilePlanCardActive: {
     borderColor: theme.brand,
@@ -5108,10 +5629,10 @@ const styles = StyleSheet.create({
     lineHeight: 35,
     fontFamily: 'Didot',
   },
-  headerAction: {
-    borderWidth: 1,
-    borderColor: '#d8c8b8',
-    borderRadius: 8,
+	  headerAction: {
+	    borderWidth: 1,
+	    borderColor: theme.line,
+	    borderRadius: 0,
     backgroundColor: '#fff',
     paddingHorizontal: 10,
     paddingVertical: 7,
@@ -5359,10 +5880,10 @@ const styles = StyleSheet.create({
     fontSize: 10,
     lineHeight: 13,
   },
-  offerCardWrap: {
-    borderWidth: 1,
-    borderColor: theme.line,
-    borderRadius: 12,
+	  offerCardWrap: {
+	    borderWidth: 1,
+	    borderColor: theme.line,
+	    borderRadius: 0,
     overflow: 'hidden',
     backgroundColor: '#fff',
   },
@@ -5385,9 +5906,9 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
     zIndex: 40,
   },
-  offerDetailShell: {
-    flex: 1,
-    borderRadius: 14,
+	  offerDetailShell: {
+	    flex: 1,
+	    borderRadius: 0,
     borderWidth: 1,
     borderColor: theme.line,
     backgroundColor: theme.surface,
@@ -5450,6 +5971,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     flexWrap: 'wrap',
     gap: 10,
+  },
+  listingDetailActionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flexWrap: 'wrap',
   },
   listingDetailGalleryImageFull: {
     width: '100%',
@@ -5526,18 +6053,18 @@ const styles = StyleSheet.create({
     padding: 10,
     gap: 8,
   },
-  profileAddressCard: {
-    borderWidth: 1,
-    borderColor: theme.line,
-    borderRadius: 10,
+	  profileAddressCard: {
+	    borderWidth: 1,
+	    borderColor: theme.line,
+	    borderRadius: 0,
     padding: 9,
     gap: 6,
     backgroundColor: '#fff',
   },
-  profilePaymentCard: {
-    borderWidth: 1,
-    borderColor: theme.line,
-    borderRadius: 10,
+	  profilePaymentCard: {
+	    borderWidth: 1,
+	    borderColor: theme.line,
+	    borderRadius: 0,
     padding: 10,
     gap: 7,
     backgroundColor: '#fff',
@@ -5546,10 +6073,10 @@ const styles = StyleSheet.create({
     borderColor: theme.brand,
     backgroundColor: theme.brandSoft,
   },
-  profileLegalCard: {
-    borderWidth: 1,
-    borderColor: theme.line,
-    borderRadius: 10,
+	  profileLegalCard: {
+	    borderWidth: 1,
+	    borderColor: theme.line,
+	    borderRadius: 0,
     padding: 10,
     gap: 7,
     backgroundColor: '#fff',
@@ -5577,11 +6104,11 @@ const styles = StyleSheet.create({
   addressSuggestionList: {
     gap: 6,
   },
-  addressSuggestionCard: {
-    borderWidth: 1,
-    borderColor: theme.line,
-    borderRadius: 8,
-    backgroundColor: '#f7f1e8',
+	  addressSuggestionCard: {
+	    borderWidth: 1,
+	    borderColor: theme.line,
+	    borderRadius: 0,
+	    backgroundColor: '#fff',
     paddingHorizontal: 10,
     paddingVertical: 8,
   },
@@ -5599,10 +6126,10 @@ const styles = StyleSheet.create({
     gap: 8,
     paddingVertical: 2,
   },
-  addressChip: {
-    borderWidth: 1,
-    borderColor: '#d8cab8',
-    borderRadius: 10,
+	  addressChip: {
+	    borderWidth: 1,
+	    borderColor: theme.line,
+	    borderRadius: 0,
     paddingHorizontal: 10,
     paddingVertical: 7,
     backgroundColor: '#fff',
@@ -5637,10 +6164,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
   },
-  shipmentCard: {
-    borderWidth: 1,
-    borderColor: theme.line,
-    borderRadius: 10,
+	  shipmentCard: {
+	    borderWidth: 1,
+	    borderColor: theme.line,
+	    borderRadius: 0,
     padding: 9,
     gap: 3,
     backgroundColor: '#fff',
@@ -5670,10 +6197,10 @@ const styles = StyleSheet.create({
   stepPillActive: { backgroundColor: theme.brand, borderColor: theme.brand },
   stepPillText: { color: '#524941', fontWeight: '600' },
   stepPillTextActive: { color: '#fff' },
-  editImagePanel: {
-    borderWidth: 1,
-    borderColor: theme.line,
-    borderRadius: 10,
+	  editImagePanel: {
+	    borderWidth: 1,
+	    borderColor: theme.line,
+	    borderRadius: 0,
     padding: 10,
     gap: 10,
     backgroundColor: '#fff',
@@ -5756,68 +6283,86 @@ const styles = StyleSheet.create({
   },
 
   label: { fontSize: 11, color: '#6c6359', fontWeight: '700', letterSpacing: 1, textTransform: 'uppercase' },
-  input: {
-    borderWidth: 1,
-    borderColor: '#d9cec0',
-    borderRadius: 10,
-    paddingHorizontal: 10,
-    paddingVertical: 9,
-    backgroundColor: '#fff',
-    color: '#1c1917',
-  },
+	  input: {
+	    borderWidth: 1,
+	    borderColor: 'rgba(31, 26, 23, 0.18)',
+	    borderRadius: 0,
+	    minHeight: 44,
+	    paddingHorizontal: 12,
+	    paddingVertical: 10,
+	    backgroundColor: '#fff',
+	    color: '#1c1917',
+	    fontSize: 15,
+	    fontWeight: '500',
+	  },
   multiInput: { minHeight: 74, textAlignVertical: 'top' },
 
   modeRow: { flexDirection: 'row', gap: 8, marginVertical: 2 },
-  modeBtn: {
-    flex: 1,
-    borderWidth: 1,
-    borderColor: '#d9cec0',
-    borderRadius: 9,
-    paddingVertical: 8,
-    alignItems: 'center',
-    backgroundColor: '#fff',
-  },
-  modeBtnActive: { borderColor: theme.brand, backgroundColor: theme.brandSoft },
-  modeBtnText: { color: '#4a4138', fontWeight: '700', fontSize: 12, textTransform: 'uppercase', letterSpacing: 1 },
-  modeBtnTextActive: { color: theme.brand },
+	  modeBtn: {
+	    flex: 1,
+	    borderWidth: 1,
+	    borderColor: theme.line,
+	    borderRadius: 0,
+	    minHeight: 44,
+	    paddingVertical: 10,
+	    alignItems: 'center',
+	    backgroundColor: '#fff',
+	    justifyContent: 'center',
+	  },
+	  modeBtnActive: { borderColor: theme.brand, backgroundColor: theme.brand },
+	  modeBtnText: { color: theme.text, fontWeight: '600', fontSize: 12, textTransform: 'uppercase', letterSpacing: 1.2 },
+	  modeBtnTextActive: { color: '#fff' },
 
-  primaryBtn: {
-    backgroundColor: theme.brand,
-    borderRadius: 10,
-    paddingVertical: 11,
+	  primaryBtn: {
+	    backgroundColor: '#111',
+	    borderRadius: 0,
+	    borderWidth: 1,
+	    borderColor: theme.lineStrong,
+	    minHeight: 44,
+	    paddingVertical: 11,
     paddingHorizontal: 14,
     alignItems: 'center',
-  },
-  primaryBtnText: { color: '#fff', fontWeight: '700', letterSpacing: 1, textTransform: 'uppercase', fontSize: 12 },
-  secondaryBtn: {
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#d8cab8',
+	  },
+	  primaryBtnText: { color: '#fff', fontWeight: '600', letterSpacing: 1.2, textTransform: 'uppercase', fontSize: 12 },
+	  secondaryBtn: {
+	    borderRadius: 0,
+	    borderWidth: 1,
+	    borderColor: theme.line,
+	    minHeight: 44,
     paddingVertical: 11,
     paddingHorizontal: 14,
     alignItems: 'center',
     backgroundColor: '#fff',
   },
-  primaryBtnCompact: {
-    alignSelf: 'flex-start',
-    marginTop: 6,
-    backgroundColor: theme.brand,
-    borderRadius: 8,
-    paddingVertical: 8,
+	  primaryBtnCompact: {
+	    alignSelf: 'flex-start',
+	    marginTop: 6,
+	    backgroundColor: '#111',
+	    borderRadius: 0,
+	    borderWidth: 1,
+	    borderColor: theme.lineStrong,
+	    paddingVertical: 8,
     paddingHorizontal: 10,
     alignItems: 'center',
   },
   primaryBtnDisabled: {
     opacity: 0.5,
   },
-  secondaryBtnCompact: {
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#d8cab8',
-    paddingVertical: 7,
+	  secondaryBtnCompact: {
+	    borderRadius: 0,
+	    borderWidth: 1,
+	    borderColor: theme.line,
+	    paddingVertical: 7,
     paddingHorizontal: 9,
     alignItems: 'center',
     backgroundColor: '#fff',
+  },
+  loadMoreButton: {
+    alignSelf: 'stretch',
+    justifyContent: 'center',
+    marginTop: 8,
+    marginBottom: 16,
+    minHeight: 44,
   },
   dangerBtnCompact: {
     borderColor: '#b42318',
@@ -5837,7 +6382,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: 0,
   },
-  secondaryBtnText: { color: '#4b433a', fontWeight: '700', letterSpacing: 1, textTransform: 'uppercase', fontSize: 12 },
+	  secondaryBtnText: { color: theme.text, fontWeight: '600', letterSpacing: 1.2, textTransform: 'uppercase', fontSize: 12 },
   actionRow: { flexDirection: 'row', gap: 8, marginTop: 4 },
   tradeCandidateRow: {
     flexDirection: 'row',
@@ -5884,10 +6429,10 @@ const styles = StyleSheet.create({
   },
 
   filterRow: { gap: 8 },
-  filterButton: {
-    borderWidth: 1,
-    borderColor: '#d8cab8',
-    borderRadius: 8,
+	  filterButton: {
+	    borderWidth: 1,
+	    borderColor: theme.line,
+	    borderRadius: 0,
     paddingHorizontal: 12,
     paddingVertical: 8,
     backgroundColor: '#fff',
@@ -5900,32 +6445,32 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: 8,
   },
-  tagChip: {
-    borderWidth: 1,
-    borderColor: '#d8cab8',
-    borderRadius: 999,
+	  tagChip: {
+	    borderWidth: 1,
+	    borderColor: theme.line,
+	    borderRadius: 0,
     paddingHorizontal: 10,
     paddingVertical: 6,
     backgroundColor: '#fff',
   },
-  tagChipActive: {
-    borderColor: theme.brand,
-    backgroundColor: theme.brandSoft,
+	  tagChipActive: {
+	    borderColor: theme.brand,
+	    backgroundColor: theme.brand,
   },
   sizeChartChip: {
     borderColor: theme.brand,
     backgroundColor: '#fffaf4',
   },
-  tagChipText: {
-    color: '#4d4339',
-    fontWeight: '700',
+	  tagChipText: {
+	    color: theme.text,
+	    fontWeight: '600',
     fontSize: 11,
     letterSpacing: 1,
     textTransform: 'uppercase',
   },
-  tagChipTextActive: {
-    color: theme.brand,
-  },
+	  tagChipTextActive: {
+	    color: '#fff',
+	  },
 
   helperText: { color: '#756b61' },
   loadingState: {

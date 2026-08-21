@@ -304,15 +304,35 @@ export function createApiClient(options) {
     createListing: (payload, auth = {}) => post("/v1/listings", payload, auth),
     updateListing: (listingId, payload, auth = {}) => put(`/v1/listings/${encodeURIComponent(listingId)}`, payload, auth),
     deleteListing: (listingId, auth = {}) => del(`/v1/listings/${encodeURIComponent(listingId)}`, auth),
-    listMyListings: (limit = 100, auth = {}) => get(`/v1/listings?mine=true&limit=${limit}`, auth),
-    listMarketplace: (limit = 50, auth = {}) => get(`/v1/listings?limit=${limit}&include_matches=true`, auth),
+    listMyListings: (limit = 100, auth = {}, options = {}) => {
+      const offset = Math.max(0, Number(options.offset || 0));
+      return get(`/v1/listings?mine=true&limit=${limit}&offset=${offset}`, auth);
+    },
+    listMarketplace: (limit = 50, auth = {}, options = {}) => {
+      const offset = Math.max(0, Number(options.offset || 0));
+      return get(`/v1/listings?limit=${limit}&offset=${offset}&include_matches=true`, auth);
+    },
     listOfferCandidates: (listingId, limit = 100, auth = {}) =>
       get(`/v1/listings/${encodeURIComponent(listingId)}/offer-candidates?limit=${limit}`, auth),
     createOffer: (payload, auth = {}) => post("/v1/offers", payload, auth),
     incomingOffers: (status = "pending", limit = 50, auth = {}) =>
       get(`/v1/offers/incoming?status=${encodeURIComponent(status)}&limit=${limit}`, auth),
-    offerAction: (offerId, status, receiveAddress = null, auth = {}) =>
-      post(`/v1/offers/${encodeURIComponent(offerId)}/action`, { status, receive_address: receiveAddress }, auth),
+    offerAction: (offerId, status, receiveAddress = null, selectedOfferedListingId = null, auth = {}) => {
+      const selectedIsAuth = selectedOfferedListingId
+        && typeof selectedOfferedListingId === "object"
+        && !Array.isArray(selectedOfferedListingId);
+      const resolvedAuth = selectedIsAuth ? selectedOfferedListingId : auth;
+      const resolvedSelectedId = selectedIsAuth ? null : selectedOfferedListingId;
+      return post(
+        `/v1/offers/${encodeURIComponent(offerId)}/action`,
+        {
+          status,
+          receive_address: receiveAddress,
+          selected_offered_listing_id: resolvedSelectedId || null,
+        },
+        resolvedAuth,
+      );
+    },
     profileQuiz: (auth = {}) => get("/v1/me/profile-quiz", auth),
     saveProfileQuiz: (payload, auth = {}) => put("/v1/me/profile-quiz", payload, auth),
     clientState: (auth = {}) => get("/v1/me/client-state", auth),

@@ -1,0 +1,29 @@
+### IDENTITY & SOURCES
+1. ITEM IDENTITY: Treat the provided Gemini identification (Brand, Model, Material, Season) as fixed ground truth. Do not reclassify brand or model unless hard visual or text evidence proves Gemini's identification is strictly impossible.
+2. RESALE SOURCES (Primary): Priority order for comp gathering:
+   - Luxury Handbags/Jewelry/Apparel: Fashionphile, Rebag, The RealReal, Vestiaire Collective.
+   - General Peer-to-Peer Resale: eBay (Sold listings ONLY), Poshmark, Depop, Vinted.
+
+3. MSRP / RETAIL SEARCH WATERFALL LOGIC:
+   - Tier 1 (Ultra-Luxury & Runway): Primary reference is Bergdorf Goodman or Neiman Marcus.
+   - Tier 2 (Contemporary & Premium Mall): Fall back to Saks Fifth Avenue, Net-A-Porter, Nordstrom, or the Brand Direct Webstore (e.g., Reformation.com, Theory.com).
+   - Tier 3 (Vintage / Archived Items): If current MSRP is not listed on active retail sites, retrieve historical MSRP from press records, catalog archives, or vintage listing documentation.
+   - Core MSRP Rule: ALWAYS use full, un-discounted original retail sticker price. NEVER use markdown, clearance, or outlet sale prices as the MSRP baseline.
+
+### VALUATION MODELING
+4. TRADE CONTEXT: Value for patient peer-to-peer luxury trade (target market clearing price within 30-60 days), NOT fast liquidation or wholesale trade-in values.
+5. SIZE & SEASON EXCLUSION: Size and season may be included as descriptive context only. Do not increase, decrease, discount, premium, or otherwise adjust valuation because of size, season, current-season status, off-season status, archive status, or common/outlier sizing.
+6. CONDITION & ACCESSORY MATRIX: Adjust base valuation for:
+   - Condition & visible wear (fading, pilling, structural shape, hardware scratching).
+   - Provenance & Accessories (Original tags, dust bag, box, authenticity cards, box/NIB signals add 5-15% premium).
+7. CONTEMPORARY VS. LUXURY DISCOUNT RULES:
+   - Contemporary Apparel (New With Tags):
+     - Use 45%-60% of MSRP unless sold comps explicitly prove lower. Do not change this range based on season.
+   - Luxury / Heritage Brands (Chanel, Hermes, Louis Vuitton, Rolex):
+     - Do NOT hard-cap at 60% MSRP. Anchor strictly to real-time secondary sold comps (may trade above or near MSRP).
+
+### OUTPUT DELIVERABLES
+8. CONDITION-TIER TABLE: Always provide a full multi-tier valuation table (NWT, EUC/Like New, GUC/Good, Fair) to establish a full market curve whenever comp evidence allows.
+9. LOGISTICS: Include an estimated packed shipping weight (e.g., 1.2 lbs / 0.55 kg) and box type recommendations.
+
+Return only the valuation JSON fields required by the schema.

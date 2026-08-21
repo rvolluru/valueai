@@ -189,18 +189,20 @@ export function createMobileApiClient({ apiBaseUrl }) {
         auth,
       });
     },
-    listMarketplace(limit = 50, auth = {}) {
+    listMarketplace(limit = 50, auth = {}, options = {}) {
+      const offset = Math.max(0, Number(options.offset || 0));
       return requestJson({
         apiBaseUrl,
-        path: `/v1/listings?limit=${limit}&include_matches=true`,
+        path: `/v1/listings?limit=${limit}&offset=${offset}&include_matches=true`,
         method: 'GET',
         auth,
       });
     },
-    listMyListings(limit = 100, auth = {}) {
+    listMyListings(limit = 100, auth = {}, options = {}) {
+      const offset = Math.max(0, Number(options.offset || 0));
       return requestJson({
         apiBaseUrl,
-        path: `/v1/listings?mine=true&limit=${limit}`,
+        path: `/v1/listings?mine=true&limit=${limit}&offset=${offset}`,
         method: 'GET',
         auth,
       });
@@ -231,14 +233,23 @@ export function createMobileApiClient({ apiBaseUrl }) {
         auth,
       });
     },
-    actionOffer(offerId, status, receiveAddress = null, auth = {}) {
+    actionOffer(offerId, status, receiveAddress = null, selectedOfferedListingId = null, auth = {}) {
+      const selectedIsAuth = selectedOfferedListingId
+        && typeof selectedOfferedListingId === 'object'
+        && !Array.isArray(selectedOfferedListingId);
+      const resolvedAuth = selectedIsAuth ? selectedOfferedListingId : auth;
+      const resolvedSelectedId = selectedIsAuth ? null : selectedOfferedListingId;
       return requestJson({
         apiBaseUrl,
         path: `/v1/offers/${encodeURIComponent(offerId)}/action`,
         method: 'POST',
-        auth,
+        auth: resolvedAuth,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status, receive_address: receiveAddress }),
+        body: JSON.stringify({
+          status,
+          receive_address: receiveAddress,
+          selected_offered_listing_id: resolvedSelectedId || null,
+        }),
       });
     },
     fetchShippingLabels(offerId, auth = {}) {
@@ -355,7 +366,7 @@ export function createMobileApiClient({ apiBaseUrl }) {
       if (postalCode) query.set('postal_code', postalCode);
       return requestJson({
         apiBaseUrl,
-        path: `/v1/usps/address-suggest?${query.toString()}`,
+        path: `/v1/google/places/address-suggest?${query.toString()}`,
         method: 'GET',
         auth,
       });

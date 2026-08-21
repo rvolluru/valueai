@@ -287,6 +287,7 @@ class Database:
               target_listing_id TEXT NOT NULL,
               offered_listing_id TEXT NOT NULL,
               offered_listing_ids_json TEXT NOT NULL DEFAULT '[]',
+              selected_offered_listing_id TEXT,
               from_subject TEXT NOT NULL,
               to_subject TEXT NOT NULL,
               status TEXT NOT NULL DEFAULT 'pending',
@@ -396,6 +397,11 @@ class Database:
               tracking_number TEXT,
               label_url TEXT,
               status TEXT NOT NULL DEFAULT 'label_created',
+              tracking_status TEXT,
+              tracking_status_details TEXT,
+              tracking_status_updated_at TEXT,
+              tracking_eta TEXT,
+              tracking_history_json TEXT NOT NULL DEFAULT '[]',
               created_at TEXT NOT NULL,
               updated_at TEXT NOT NULL
             )
@@ -437,6 +443,7 @@ class Database:
             "ALTER TABLE user_profiles ADD COLUMN subscription_renewal_date TEXT",
             "ALTER TABLE user_profiles ADD COLUMN payment_methods_json TEXT NOT NULL DEFAULT '[]'",
             "ALTER TABLE trade_offers ADD COLUMN offered_listing_ids_json TEXT NOT NULL DEFAULT '[]'",
+            "ALTER TABLE trade_offers ADD COLUMN selected_offered_listing_id TEXT",
             "ALTER TABLE trade_offers ADD COLUMN accepted_by_from INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE trade_offers ADD COLUMN accepted_by_to INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE trade_offers ADD COLUMN from_receive_address_json TEXT",
@@ -450,6 +457,11 @@ class Database:
             "ALTER TABLE trade_shipments ADD COLUMN shipped_at TEXT",
             "ALTER TABLE trade_shipments ADD COLUMN last_ship_reminder_at TEXT",
             "ALTER TABLE trade_shipments ADD COLUMN ship_reminder_count INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE trade_shipments ADD COLUMN tracking_status TEXT",
+            "ALTER TABLE trade_shipments ADD COLUMN tracking_status_details TEXT",
+            "ALTER TABLE trade_shipments ADD COLUMN tracking_status_updated_at TEXT",
+            "ALTER TABLE trade_shipments ADD COLUMN tracking_eta TEXT",
+            "ALTER TABLE trade_shipments ADD COLUMN tracking_history_json TEXT NOT NULL DEFAULT '[]'",
         ):
             try:
                 self.execute(alter)
@@ -674,24 +686,27 @@ class Database:
         offered_listing_ids: list[str],
         from_subject: str,
         to_subject: str,
+        from_receive_address: dict | None = None,
         message: str,
     ) -> dict:
         now = utc_now_iso()
+        from_receive = self._normalize_offer_address(from_receive_address or {})
         self.execute(
             f"""INSERT INTO trade_offers
-            (offer_id, target_listing_id, offered_listing_id, offered_listing_ids_json, from_subject, to_subject, status, accepted_by_from, accepted_by_to, from_receive_address_json, to_receive_address_json, message, created_at, updated_at)
-            VALUES ({self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param})""",
+            (offer_id, target_listing_id, offered_listing_id, offered_listing_ids_json, selected_offered_listing_id, from_subject, to_subject, status, accepted_by_from, accepted_by_to, from_receive_address_json, to_receive_address_json, message, created_at, updated_at)
+            VALUES ({self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param})""",
             (
                 offer_id,
                 target_listing_id,
                 offered_listing_id,
                 json.dumps(offered_listing_ids),
+                None,
                 from_subject,
                 to_subject,
                 "pending",
                 1,
                 0,
-                None,
+                json.dumps(from_receive) if from_receive else None,
                 None,
                 message or "",
                 now,
@@ -704,12 +719,13 @@ class Database:
             "target_listing_id": target_listing_id,
             "offered_listing_id": offered_listing_id,
             "offered_listing_ids": offered_listing_ids,
+            "selected_offered_listing_id": None,
             "from_subject": from_subject,
             "to_subject": to_subject,
             "status": "pending",
             "accepted_by_from": True,
             "accepted_by_to": False,
-            "from_receive_address": None,
+            "from_receive_address": from_receive,
             "to_receive_address": None,
             "message": message or "",
             "created_at": now,
@@ -740,7 +756,7 @@ class Database:
             data = dict(row)
         else:
             keys = [
-                "offer_id", "target_listing_id", "offered_listing_id", "from_subject", "to_subject", "status",
+                "offer_id", "target_listing_id", "offered_listing_id", "selected_offered_listing_id", "from_subject", "to_subject", "status",
                 "accepted_by_from", "accepted_by_to", "from_receive_address_json", "to_receive_address_json",
                 "message", "created_at", "updated_at", "offered_listing_ids_json",
             ]
@@ -773,6 +789,7 @@ class Database:
             "target_listing_id": data.get("target_listing_id"),
             "offered_listing_id": data.get("offered_listing_id"),
             "offered_listing_ids": offered_ids,
+            "selected_offered_listing_id": data.get("selected_offered_listing_id") or None,
             "from_subject": data.get("from_subject"),
             "to_subject": data.get("to_subject"),
             "status": status,
@@ -829,14 +846,14 @@ class Database:
         safe_limit = max(1, min(int(limit), 200))
         if status:
             query = (
-                f"SELECT offer_id, target_listing_id, offered_listing_id, from_subject, to_subject, status, accepted_by_from, accepted_by_to, from_receive_address_json, to_receive_address_json, message, created_at, updated_at, offered_listing_ids_json "
+                f"SELECT offer_id, target_listing_id, offered_listing_id, selected_offered_listing_id, from_subject, to_subject, status, accepted_by_from, accepted_by_to, from_receive_address_json, to_receive_address_json, message, created_at, updated_at, offered_listing_ids_json "
                 f"FROM trade_offers WHERE (to_subject = {self.param} OR from_subject = {self.param}) AND status = {self.param} "
                 f"ORDER BY created_at DESC LIMIT {self.param}"
             )
             params = (subject, subject, status, safe_limit)
         else:
             query = (
-                f"SELECT offer_id, target_listing_id, offered_listing_id, from_subject, to_subject, status, accepted_by_from, accepted_by_to, from_receive_address_json, to_receive_address_json, message, created_at, updated_at, offered_listing_ids_json "
+                f"SELECT offer_id, target_listing_id, offered_listing_id, selected_offered_listing_id, from_subject, to_subject, status, accepted_by_from, accepted_by_to, from_receive_address_json, to_receive_address_json, message, created_at, updated_at, offered_listing_ids_json "
                 f"FROM trade_offers WHERE (to_subject = {self.param} OR from_subject = {self.param}) "
                 f"ORDER BY created_at DESC LIMIT {self.param}"
             )
@@ -881,7 +898,7 @@ class Database:
             return None
         self.commit()
         query = (
-            f"SELECT offer_id, target_listing_id, offered_listing_id, from_subject, to_subject, status, accepted_by_from, accepted_by_to, from_receive_address_json, to_receive_address_json, message, created_at, updated_at, offered_listing_ids_json "
+            f"SELECT offer_id, target_listing_id, offered_listing_id, selected_offered_listing_id, from_subject, to_subject, status, accepted_by_from, accepted_by_to, from_receive_address_json, to_receive_address_json, message, created_at, updated_at, offered_listing_ids_json "
             f"FROM trade_offers WHERE offer_id = {self.param} LIMIT 1"
         )
         if self._sqlite_conn is not None:
@@ -902,6 +919,7 @@ class Database:
         actor_subject: str,
         status: str,
         receive_address: dict | None = None,
+        selected_offered_listing_id: str | None = None,
     ) -> dict | None:
         offer = self.get_trade_offer_by_id(offer_id)
         if not offer:
@@ -917,6 +935,7 @@ class Database:
         accepted_by_to = bool(offer.get("accepted_by_to"))
         from_receive = self._normalize_offer_address(offer.get("from_receive_address"))
         to_receive = self._normalize_offer_address(offer.get("to_receive_address"))
+        selected_offered_id = str(offer.get("selected_offered_listing_id") or "").strip() or None
 
         if status_norm == "accepted":
             normalized_addr = self._normalize_offer_address(receive_address or {})
@@ -930,6 +949,15 @@ class Database:
                 accepted_by_to = True
                 if normalized_addr:
                     to_receive = normalized_addr
+                offered_ids = [str(x).strip() for x in (offer.get("offered_listing_ids") or []) if isinstance(x, str) and str(x).strip()]
+                if not offered_ids and isinstance(offer.get("offered_listing_id"), str) and offer.get("offered_listing_id").strip():
+                    offered_ids = [offer["offered_listing_id"].strip()]
+                candidate_selected_id = str(selected_offered_listing_id or "").strip()
+                if not candidate_selected_id and len(offered_ids) == 1:
+                    candidate_selected_id = offered_ids[0]
+                if candidate_selected_id not in offered_ids:
+                    return None
+                selected_offered_id = candidate_selected_id
                 next_status = "accepted"
         else:
             next_status = status_norm
@@ -937,10 +965,11 @@ class Database:
             accepted_by_to = False
             from_receive = None
             to_receive = None
+            selected_offered_id = None
 
         sql = (
             f"UPDATE trade_offers SET status = {self.param}, accepted_by_from = {self.param}, accepted_by_to = {self.param}, "
-            f"from_receive_address_json = {self.param}, to_receive_address_json = {self.param}, updated_at = {self.param} "
+            f"from_receive_address_json = {self.param}, to_receive_address_json = {self.param}, selected_offered_listing_id = {self.param}, updated_at = {self.param} "
             f"WHERE offer_id = {self.param}"
         )
         self.execute(
@@ -951,6 +980,7 @@ class Database:
                 1 if accepted_by_to else 0,
                 json.dumps(from_receive) if from_receive else None,
                 json.dumps(to_receive) if to_receive else None,
+                selected_offered_id,
                 now,
                 offer_id,
             ),
@@ -972,7 +1002,7 @@ class Database:
 
     def get_trade_offer_by_id(self, offer_id: str) -> dict | None:
         query = (
-            f"SELECT offer_id, target_listing_id, offered_listing_id, from_subject, to_subject, status, accepted_by_from, accepted_by_to, from_receive_address_json, to_receive_address_json, message, created_at, updated_at, offered_listing_ids_json "
+            f"SELECT offer_id, target_listing_id, offered_listing_id, selected_offered_listing_id, from_subject, to_subject, status, accepted_by_from, accepted_by_to, from_receive_address_json, to_receive_address_json, message, created_at, updated_at, offered_listing_ids_json "
             f"FROM trade_offers WHERE offer_id = {self.param} LIMIT 1"
         )
         if self._sqlite_conn is not None:
@@ -1209,9 +1239,30 @@ class Database:
         images: list[object] | None,
         source_item_id: str | None,
     ) -> tuple[str | None, list[str]]:
-        normalized_images: list[str] = []
+        normalized_images: list[object] = []
         seen: set[str] = set()
         for value in images or []:
+            if isinstance(value, dict):
+                original = self._canonical_listing_image_url(
+                    value.get("p_img") or value.get("original_image") or value.get("source_image"),
+                    source_item_id,
+                )
+                display = self._canonical_listing_image_url(
+                    value.get("d_img") or value.get("display_image") or value.get("image") or original,
+                    source_item_id,
+                )
+                if not display:
+                    continue
+                key = listing_image_dedupe_key(display)
+                if key in seen:
+                    continue
+                normalized_images.append({
+                    "p_img": original or display,
+                    "d_img": display,
+                    "is_hero": bool(value.get("is_hero")),
+                })
+                seen.add(key)
+                continue
             normalized = self._canonical_listing_image_url(value, source_item_id)
             key = listing_image_dedupe_key(normalized)
             if normalized and key not in seen:
@@ -1224,7 +1275,8 @@ class Database:
             normalized_images.insert(0, normalized_image)
             seen.add(key)
         if not normalized_image and normalized_images:
-            normalized_image = normalized_images[0]
+            first = normalized_images[0]
+            normalized_image = first.get("d_img") if isinstance(first, dict) else first
         return normalized_image, normalized_images
 
     def get_first_image_id_for_item(self, item_id: str) -> str | None:
@@ -1315,13 +1367,43 @@ class Database:
                 hashes.append(value.strip())
         return hashes
 
-    def find_recent_analysis_by_image_hashes(self, hashes: list[str], limit: int = 50) -> dict | None:
+    def _item_has_listing_owner(self, item_id: str, owner_subject: str) -> bool:
+        if not item_id or not owner_subject:
+            return False
+        query = (
+            f"SELECT owner_subject FROM listings WHERE source_item_id = {self.param}"
+        )
+        if self._sqlite_conn is not None:
+            with self._sqlite_lock:
+                rows = self._sqlite_conn.execute(query, (item_id,)).fetchall()
+            if not rows:
+                return True
+            return any(
+                (row["owner_subject"] if isinstance(row, sqlite3.Row) else row[0]) == owner_subject
+                for row in rows
+            )
+        cur = self._pg_cursor()
+        cur.execute(query, (item_id,))
+        rows = cur.fetchall()
+        cur.close()
+        if not rows:
+            return True
+        return any(row[0] == owner_subject for row in rows)
+
+    def find_recent_analysis_by_image_hashes(
+        self,
+        hashes: list[str],
+        limit: int = 50,
+        owner_subject: str | None = None,
+    ) -> dict | None:
         target = sorted(h.strip() for h in hashes if isinstance(h, str) and h.strip())
         if not target:
             return None
         for analysis in self.list_recent_analyses(limit=limit):
             item_id = str(analysis.get("item_id") or "").strip()
             if not item_id:
+                continue
+            if owner_subject and not self._item_has_listing_owner(item_id, owner_subject):
                 continue
             candidate = sorted(self.list_image_content_hashes_for_item(item_id, limit=20))
             if candidate and candidate == target:
@@ -1343,7 +1425,7 @@ class Database:
         estimated_value: float,
         city: str,
         image: str | None,
-        images: list[str],
+        images: list[object],
         description: str,
         wants: str,
         tags: list[str],
@@ -1394,6 +1476,7 @@ class Database:
     def list_recent_listings(
         self,
         limit: int = 50,
+        offset: int = 0,
         include_analysis: bool = True,
         include_media: bool = True,
         active_only: bool = False,
@@ -1405,30 +1488,30 @@ class Database:
         query = (
             f"SELECT listing_id, owner_subject, owner_name, title, mode, category, brand, condition, "
             f"size, estimated_value, city, {image_select}, {images_select}, description, wants, tags_json, source_item_id, {analysis_select}, status, created_at, COALESCE(updated_at, created_at) AS updated_at "
-            f"FROM listings {where_clause} ORDER BY created_at DESC LIMIT {self.param}"
+            f"FROM listings {where_clause} ORDER BY created_at DESC LIMIT {self.param} OFFSET {self.param}"
         )
         if self._sqlite_conn is not None:
             with self._sqlite_lock:
-                rows = self._sqlite_conn.execute(query, (limit,)).fetchall()
+                rows = self._sqlite_conn.execute(query, (limit, offset)).fetchall()
             return [self._listing_row_to_dict(row) for row in rows]
         cur = self._pg_cursor()
-        cur.execute(query, (limit,))
+        cur.execute(query, (limit, offset))
         rows = cur.fetchall()
         cur.close()
         return [self._listing_row_to_dict(row) for row in rows]
 
-    def list_owner_listings(self, owner_subject: str, limit: int = 50) -> list[dict]:
+    def list_owner_listings(self, owner_subject: str, limit: int = 50, offset: int = 0) -> list[dict]:
         query = (
             f"SELECT listing_id, owner_subject, owner_name, title, mode, category, brand, condition, "
             f"size, estimated_value, city, image, images_json, description, wants, tags_json, source_item_id, analysis_json, status, created_at, COALESCE(updated_at, created_at) AS updated_at "
-            f"FROM listings WHERE owner_subject = {self.param} ORDER BY created_at DESC LIMIT {self.param}"
+            f"FROM listings WHERE owner_subject = {self.param} ORDER BY created_at DESC LIMIT {self.param} OFFSET {self.param}"
         )
         if self._sqlite_conn is not None:
             with self._sqlite_lock:
-                rows = self._sqlite_conn.execute(query, (owner_subject, limit)).fetchall()
+                rows = self._sqlite_conn.execute(query, (owner_subject, limit, offset)).fetchall()
             return [self._listing_row_to_dict(row) for row in rows]
         cur = self._pg_cursor()
-        cur.execute(query, (owner_subject, limit))
+        cur.execute(query, (owner_subject, limit, offset))
         rows = cur.fetchall()
         cur.close()
         return [self._listing_row_to_dict(row) for row in rows]
@@ -1447,7 +1530,7 @@ class Database:
         estimated_value: float,
         city: str,
         image: str | None,
-        images: list[str],
+        images: list[object],
         description: str,
         wants: str,
         tags: list[str],
@@ -1550,7 +1633,7 @@ class Database:
         statuses = ("pending", "accepted", "countered") if active_only else None
         like_value = f"%{listing_id}%"
         base_query = (
-            f"SELECT offer_id, target_listing_id, offered_listing_id, from_subject, to_subject, status, accepted_by_from, accepted_by_to, from_receive_address_json, to_receive_address_json, message, created_at, updated_at, offered_listing_ids_json "
+            f"SELECT offer_id, target_listing_id, offered_listing_id, selected_offered_listing_id, from_subject, to_subject, status, accepted_by_from, accepted_by_to, from_receive_address_json, to_receive_address_json, message, created_at, updated_at, offered_listing_ids_json "
             f"FROM trade_offers WHERE (target_listing_id = {self.param} OR offered_listing_id = {self.param} OR offered_listing_ids_json LIKE {self.param})"
         )
         params: tuple = (listing_id, listing_id, like_value)
@@ -1568,12 +1651,19 @@ class Database:
             rows = cur.fetchall()
             cur.close()
         offers = [self._trade_offer_row_to_dict(row) for row in rows]
-        return [
-            offer for offer in offers
-            if listing_id == str(offer.get("target_listing_id") or "")
-            or listing_id == str(offer.get("offered_listing_id") or "")
-            or listing_id in [str(x) for x in (offer.get("offered_listing_ids") or [])]
-        ]
+        filtered: list[dict] = []
+        for offer in offers:
+            if listing_id == str(offer.get("target_listing_id") or ""):
+                filtered.append(offer)
+                continue
+            selected_offered_id = str(offer.get("selected_offered_listing_id") or "").strip()
+            if str(offer.get("status") or "").lower() == "accepted" and selected_offered_id:
+                if listing_id == selected_offered_id:
+                    filtered.append(offer)
+                continue
+            if listing_id == str(offer.get("offered_listing_id") or "") or listing_id in [str(x) for x in (offer.get("offered_listing_ids") or [])]:
+                filtered.append(offer)
+        return filtered
 
     def listing_has_active_trade(self, listing_id: str) -> bool:
         return bool(self.list_trade_offers_for_listing(listing_id, active_only=True))
@@ -1647,7 +1737,7 @@ class Database:
             except Exception:
                 analysis = None
 
-            normalized_images: list[str] = []
+            normalized_images: list[object] = []
             seen_image_keys: set[str] = set()
             # Analysis uploads are the model inputs, not an additional display gallery.
             # Only fall back to them when the listing has no explicit images; otherwise
@@ -1658,6 +1748,18 @@ class Database:
                 else self._image_urls_from_analysis_uploads(analysis)
             )
             for url in image_candidates:
+                if isinstance(url, dict):
+                    original = resolve(url.get("p_img") or url.get("original_image") or url.get("source_image"), source_item_id)
+                    display = resolve(url.get("d_img") or url.get("display_image") or url.get("image") or original, source_item_id)
+                    key = listing_image_dedupe_key(display)
+                    if display and key not in seen_image_keys:
+                        normalized_images.append({
+                            "p_img": original or display,
+                            "d_img": display,
+                            "is_hero": bool(url.get("is_hero")),
+                        })
+                        seen_image_keys.add(key)
+                    continue
                 resolved = resolve(url, source_item_id)
                 key = listing_image_dedupe_key(resolved)
                 if resolved and key not in seen_image_keys:
@@ -1669,7 +1771,8 @@ class Database:
             if not normalized_images and isinstance(source_item_id, str) and source_item_id.strip():
                 normalized_images = [f"/v1/images/{image_id}" for image_id in self.list_image_ids_for_item(source_item_id, limit=20)]
             if not normalized_image and normalized_images:
-                normalized_image = normalized_images[0]
+                first = normalized_images[0]
+                normalized_image = first.get("d_img") if isinstance(first, dict) else first
 
             normalized_description = (description or "").strip() if isinstance(description, str) else ""
             if not normalized_description and analysis_json:
@@ -1800,12 +1903,33 @@ class Database:
         except Exception:
             images = []
         safe_images = []
+        safe_listed_images = []
         seen_image_keys: set[str] = set()
         for value in images:
+            if isinstance(value, dict):
+                original = self._canonical_listing_image_url(
+                    value.get("p_img") or value.get("original_image") or value.get("source_image"),
+                    source_item_id,
+                )
+                display = self._canonical_listing_image_url(
+                    value.get("d_img") or value.get("display_image") or value.get("image") or original,
+                    source_item_id,
+                )
+                key = listing_image_dedupe_key(display)
+                if display and key not in seen_image_keys:
+                    safe_images.append(display)
+                    safe_listed_images.append({
+                        "p_img": original or display,
+                        "d_img": display,
+                        "is_hero": False,
+                    })
+                    seen_image_keys.add(key)
+                continue
             normalized = self._canonical_listing_image_url(value, source_item_id)
             key = listing_image_dedupe_key(normalized)
             if normalized and key not in seen_image_keys:
                 safe_images.append(normalized)
+                safe_listed_images.append({"p_img": normalized, "d_img": normalized, "is_hero": False})
                 seen_image_keys.add(key)
 
         description = (data.get("description") or "").strip() if isinstance(data.get("description"), str) else ""
@@ -1835,8 +1959,13 @@ class Database:
             safe_images = _remove_analysis_uploads_when_display_gallery_exists(safe_images, analysis)
         if not safe_images and isinstance(source_item_id, str) and source_item_id.strip():
             safe_images = [f"/v1/images/{image_id}" for image_id in self.list_image_ids_for_item(source_item_id, limit=20)]
+            safe_listed_images = [{"p_img": url, "d_img": url, "is_hero": False} for url in safe_images]
+        elif not safe_listed_images:
+            safe_listed_images = [{"p_img": url, "d_img": url, "is_hero": False} for url in safe_images]
         if not image and safe_images:
             image = safe_images[0]
+        for entry in safe_listed_images:
+            entry["is_hero"] = bool(image and entry.get("d_img") == image)
 
         return {
             "listing_id": data["listing_id"],
@@ -1852,6 +1981,7 @@ class Database:
             "city": data["city"],
             "image": image,
             "images": safe_images,
+            "listed_images": safe_listed_images,
             "description": description,
             "wants": wants,
             "tags": tags,
@@ -2677,14 +2807,14 @@ class Database:
             f"SELECT shipment_id, offer_id, from_subject, to_subject, from_listing_id, to_listing_id, "
             f"from_name, from_address_line1, from_address_line2, from_city, from_state, from_postal_code, from_country, "
             f"to_name, to_address_line1, to_address_line2, to_city, to_state, to_postal_code, to_country, "
-            f"carrier, service_level, tracking_number, label_url, status, shipped_at, last_ship_reminder_at, ship_reminder_count, created_at, updated_at "
+            f"carrier, service_level, tracking_number, label_url, status, tracking_status, tracking_status_details, tracking_status_updated_at, tracking_eta, tracking_history_json, shipped_at, last_ship_reminder_at, ship_reminder_count, created_at, updated_at "
             f"FROM trade_shipments WHERE offer_id = {self.param} ORDER BY created_at ASC"
         )
         keys = [
             "shipment_id", "offer_id", "from_subject", "to_subject", "from_listing_id", "to_listing_id",
             "from_name", "from_address_line1", "from_address_line2", "from_city", "from_state", "from_postal_code", "from_country",
             "to_name", "to_address_line1", "to_address_line2", "to_city", "to_state", "to_postal_code", "to_country",
-            "carrier", "service_level", "tracking_number", "label_url", "status", "shipped_at", "last_ship_reminder_at", "ship_reminder_count", "created_at", "updated_at",
+            "carrier", "service_level", "tracking_number", "label_url", "status", "tracking_status", "tracking_status_details", "tracking_status_updated_at", "tracking_eta", "tracking_history_json", "shipped_at", "last_ship_reminder_at", "ship_reminder_count", "created_at", "updated_at",
         ]
         if self._sqlite_conn is not None:
             rows = self._sqlite_conn.execute(query, (offer_id,)).fetchall()
@@ -2695,7 +2825,13 @@ class Database:
             cur.close()
         out: list[dict] = []
         for row in rows:
-            out.append(dict(row) if isinstance(row, sqlite3.Row) else {k: row[idx] for idx, k in enumerate(keys)})
+            item = dict(row) if isinstance(row, sqlite3.Row) else {k: row[idx] for idx, k in enumerate(keys)}
+            try:
+                history = json.loads(item.get("tracking_history_json") or "[]")
+                item["tracking_history"] = history if isinstance(history, list) else []
+            except Exception:
+                item["tracking_history"] = []
+            out.append(item)
         return out
 
     def get_trade_shipment_by_id(self, shipment_id: str) -> dict | None:
@@ -2703,14 +2839,14 @@ class Database:
             f"SELECT shipment_id, offer_id, from_subject, to_subject, from_listing_id, to_listing_id, "
             f"from_name, from_address_line1, from_address_line2, from_city, from_state, from_postal_code, from_country, "
             f"to_name, to_address_line1, to_address_line2, to_city, to_state, to_postal_code, to_country, "
-            f"carrier, service_level, tracking_number, label_url, status, shipped_at, last_ship_reminder_at, ship_reminder_count, created_at, updated_at "
+            f"carrier, service_level, tracking_number, label_url, status, tracking_status, tracking_status_details, tracking_status_updated_at, tracking_eta, tracking_history_json, shipped_at, last_ship_reminder_at, ship_reminder_count, created_at, updated_at "
             f"FROM trade_shipments WHERE shipment_id = {self.param} LIMIT 1"
         )
         keys = [
             "shipment_id", "offer_id", "from_subject", "to_subject", "from_listing_id", "to_listing_id",
             "from_name", "from_address_line1", "from_address_line2", "from_city", "from_state", "from_postal_code", "from_country",
             "to_name", "to_address_line1", "to_address_line2", "to_city", "to_state", "to_postal_code", "to_country",
-            "carrier", "service_level", "tracking_number", "label_url", "status", "shipped_at", "last_ship_reminder_at", "ship_reminder_count", "created_at", "updated_at",
+            "carrier", "service_level", "tracking_number", "label_url", "status", "tracking_status", "tracking_status_details", "tracking_status_updated_at", "tracking_eta", "tracking_history_json", "shipped_at", "last_ship_reminder_at", "ship_reminder_count", "created_at", "updated_at",
         ]
         if self._sqlite_conn is not None:
             row = self._sqlite_conn.execute(query, (shipment_id,)).fetchone()
@@ -2721,7 +2857,13 @@ class Database:
             cur.close()
         if not row:
             return None
-        return dict(row) if isinstance(row, sqlite3.Row) else {k: row[idx] for idx, k in enumerate(keys)}
+        item = dict(row) if isinstance(row, sqlite3.Row) else {k: row[idx] for idx, k in enumerate(keys)}
+        try:
+            history = json.loads(item.get("tracking_history_json") or "[]")
+            item["tracking_history"] = history if isinstance(history, list) else []
+        except Exception:
+            item["tracking_history"] = []
+        return item
 
     def update_trade_shipment_label(
         self,
@@ -2768,6 +2910,48 @@ class Database:
         self.commit()
         return self.get_trade_shipment_by_id(shipment_id)
 
+    def update_trade_shipment_tracking(
+        self,
+        *,
+        shipment_id: str,
+        status: str,
+        tracking_status: str | None = None,
+        tracking_status_details: str | None = None,
+        tracking_status_updated_at: str | None = None,
+        tracking_eta: str | None = None,
+        tracking_history: list[dict] | None = None,
+        shipped_at: str | None = None,
+    ) -> dict | None:
+        shipment = self.get_trade_shipment_by_id(shipment_id)
+        if not shipment:
+            return None
+        next_shipped_at = shipped_at
+        if next_shipped_at is None and str(status or "").lower() in {"shipped", "delivered", "out_for_delivery"}:
+            next_shipped_at = str(shipment.get("shipped_at") or "") or utc_now_iso()
+        if next_shipped_at is None:
+            next_shipped_at = shipment.get("shipped_at")
+        history_json = json.dumps(tracking_history if isinstance(tracking_history, list) else shipment.get("tracking_history") or [])
+        self.execute(
+            f"""UPDATE trade_shipments
+            SET status = {self.param}, tracking_status = {self.param}, tracking_status_details = {self.param},
+                tracking_status_updated_at = {self.param}, tracking_eta = {self.param}, tracking_history_json = {self.param},
+                shipped_at = {self.param}, updated_at = {self.param}
+            WHERE shipment_id = {self.param}""",
+            (
+                status,
+                tracking_status,
+                tracking_status_details,
+                tracking_status_updated_at,
+                tracking_eta,
+                history_json,
+                next_shipped_at,
+                utc_now_iso(),
+                shipment_id,
+            ),
+        )
+        self.commit()
+        return self.get_trade_shipment_by_id(shipment_id)
+
     def mark_shipment_reminder_sent(self, shipment_id: str) -> dict | None:
         shipment = self.get_trade_shipment_by_id(shipment_id)
         if not shipment:
@@ -2786,6 +2970,7 @@ class Database:
     def list_shipments_pending_reminder(self) -> list[dict]:
         query = (
             f"SELECT shipment_id, offer_id, from_subject, to_subject, tracking_number, label_url, status, "
+            f"tracking_status, tracking_status_details, tracking_status_updated_at, tracking_eta, tracking_history_json, "
             f"carrier, service_level, created_at, shipped_at, last_ship_reminder_at, ship_reminder_count "
             f"FROM trade_shipments "
             f"WHERE COALESCE(label_url, '') <> '' "
@@ -2793,6 +2978,7 @@ class Database:
         )
         keys = [
             "shipment_id", "offer_id", "from_subject", "to_subject", "tracking_number", "label_url", "status",
+            "tracking_status", "tracking_status_details", "tracking_status_updated_at", "tracking_eta", "tracking_history_json",
             "carrier", "service_level", "created_at", "shipped_at", "last_ship_reminder_at", "ship_reminder_count",
         ]
         if self._sqlite_conn is not None:

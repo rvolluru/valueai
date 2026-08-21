@@ -260,6 +260,12 @@ class AuthMeResponse(BaseModel):
     claims: dict[str, Any] | None = None
 
 
+class ListedImage(BaseModel):
+    p_img: str | None = None
+    d_img: str | None = None
+    is_hero: bool = False
+
+
 class ListingCreateRequest(BaseModel):
     title: str
     mode: Literal["trade"] = "trade"
@@ -271,6 +277,7 @@ class ListingCreateRequest(BaseModel):
     city: str = "Your area"
     image: str | None = None
     images: list[str] = Field(default_factory=list)
+    listed_images: list[ListedImage] = Field(default_factory=list)
     description: str = ""
     wants: str = "Open to similar-value offers"
     tags: list[str] = Field(default_factory=list)
@@ -298,8 +305,11 @@ class OfferResponse(BaseModel):
     target_listing_id: str
     offered_listing_id: str
     offered_listing_ids: list[str] = Field(default_factory=list)
+    selected_offered_listing_id: str | None = None
     from_subject: str
     to_subject: str
+    from_name: str | None = None
+    to_name: str | None = None
     status: Literal["pending", "accepted", "declined", "countered", "cancelled"] = "pending"
     accepted_by_from: bool = False
     accepted_by_to: bool = False
@@ -352,6 +362,7 @@ class TradeMatchStatusUpdateRequest(BaseModel):
 class OfferActionRequest(BaseModel):
     status: Literal["accepted", "declined", "countered", "cancelled"]
     receive_address: ShippingAddress | None = None
+    selected_offered_listing_id: str | None = None
 
 
 class ShippingQuoteResponse(BaseModel):

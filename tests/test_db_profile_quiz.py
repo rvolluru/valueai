@@ -82,3 +82,84 @@ def test_get_user_profile_quiz_postgres_tuple_column_mapping() -> None:
     assert quiz["payment_methods"] == ["pm_123"]
     assert quiz["created_at"] == "2026-05-01T12:00:00+00:00"
     assert quiz["updated_at"] == "2026-05-02T12:00:00+00:00"
+
+
+def test_create_trade_offer_stores_sender_receive_address() -> None:
+    db = Database("sqlite:///:memory:")
+    db.initialize()
+
+    address = {
+        "label": "Home",
+        "full_name": "Jane Doe",
+        "address_line1": "1 Main St",
+        "address_line2": "Apt 1",
+        "city": "Miami",
+        "state": "FL",
+        "postal_code": "33101",
+        "country": "US",
+        "is_default": True,
+    }
+
+    offer = db.create_trade_offer(
+        offer_id="offer_123",
+        target_listing_id="target_listing",
+        offered_listing_id="offered_listing",
+        offered_listing_ids=["offered_listing"],
+        from_subject="sender",
+        to_subject="receiver",
+        from_receive_address=address,
+        message="Trade?",
+    )
+
+    assert offer["accepted_by_from"] is True
+    assert offer["from_receive_address"]["address_line1"] == "1 Main St"
+    assert offer["from_receive_address"]["city"] == "Miami"
+    assert offer["to_receive_address"] is None
+    assert offer["selected_offered_listing_id"] is None
+
+
+def test_trade_offer_acceptance_records_selected_offered_listing() -> None:
+    db = Database("sqlite:///:memory:")
+    db.initialize()
+
+    receive_address = {
+        "full_name": "Receiver",
+        "address_line1": "2 Main St",
+        "city": "Miami",
+        "state": "FL",
+        "postal_code": "33101",
+        "country": "US",
+    }
+    offer = db.create_trade_offer(
+        offer_id="offer_multi",
+        target_listing_id="target_listing",
+        offered_listing_id="offered_a",
+        offered_listing_ids=["offered_a", "offered_b"],
+        from_subject="sender",
+        to_subject="receiver",
+        from_receive_address=receive_address,
+        message="Choose one",
+    )
+
+    assert offer["selected_offered_listing_id"] is None
+
+    missing_selection = db.set_trade_offer_participant_action(
+        offer_id="offer_multi",
+        actor_subject="receiver",
+        status="accepted",
+        receive_address=receive_address,
+    )
+    assert missing_selection is None
+
+    accepted = db.set_trade_offer_participant_action(
+        offer_id="offer_multi",
+        actor_subject="receiver",
+        status="accepted",
+        receive_address=receive_address,
+        selected_offered_listing_id="offered_b",
+    )
+
+    assert accepted is not None
+    assert accepted["status"] == "accepted"
+    assert accepted["selected_offered_listing_id"] == "offered_b"
+    assert accepted["offered_listing_ids"] == ["offered_a", "offered_b"]

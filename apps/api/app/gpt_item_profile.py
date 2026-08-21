@@ -29,6 +29,7 @@ class GptItemProfiler:
         "therealreal.com",
         "vestiairecollective.com",
         "fashionphile.com",
+        "bergdorfgoodman.com",
         "1stdibs.com",
         "theoutnet.com",
         "net-a-porter.com",
@@ -390,13 +391,30 @@ class GptItemProfiler:
             {
                 "type": "input_text",
                 "text": (
-                    "Identify the specific brand and model of this item by searching Google."
+                    "First inspect every uploaded image for readable brand labels, care tags, size tags, hang tags, "
+                    "logos, embossed marks, sole stamps, hardware engravings, dust bags, boxes, receipts, or other text. "
+                    "Extract exact visible label/OCR text and identify which image contains it. Treat readable brand-label "
+                    "text as primary brand evidence before doing any style-based or web-search identification. "
+                    "Then identify the specific brand and model of this item by searching Google."
                 ),
             },
             {
                 "type": "input_text",
                 "text": (
                     "Also classify the item category and return exactly one of: clothes, shoes, handbag."
+                ),
+            },
+            {
+                "type": "input_text",
+                "text": (
+                    "Inspect every image for visible condition and accessory signals. Populate visual_condition_assessment "
+                    "from visible evidence plus the provided user condition, and keep those two concepts separate in the rationale. "
+                    "Look specifically for original tags attached, box, dust bag, authenticity card, receipt, branded packaging, "
+                    "sole wear, scuffs, stains, fading, pilling, creasing, scratches, hardware wear, structure/shape loss, and "
+                    "whether the item appears unworn, pristine, lightly used, or visibly worn. For NewWithTags, identify visible "
+                    "tag evidence when present. For New or LikeNew, explain whether the photos support or contradict that condition. "
+                    "Do not return unclear for wear_level, pricing_tier, or evidence when the photos contain visible condition "
+                    "or accessory evidence. Use unclear only when the image quality or crop truly prevents assessment."
                 ),
             },
             {
@@ -427,6 +445,212 @@ class GptItemProfiler:
             )
 
         return content
+
+    def _build_label_ocr_content(self, *, images: list[ImageInput]) -> list[dict[str, Any]]:
+        content: list[dict[str, Any]] = []
+        for idx, img in enumerate(images[: self.max_images], start=1):
+            media_type, image_bytes = self._prepare_image_for_llm(img.content_type or "image/jpeg", img.bytes_data)
+            b64 = base64.b64encode(image_bytes).decode("ascii")
+            image_id = img.image_id or f"image-{idx}"
+            content.append(
+                {
+                    "type": "input_text",
+                    "text": (
+                        f"Image {idx} id={image_id} filename={img.filename or ''}. "
+                        "Inspect this image for label or logo text."
+                    ),
+                }
+            )
+            content.append(
+                {
+                    "type": "input_image",
+                    "image_url": f"data:{media_type};base64,{b64}",
+                    "detail": self.image_detail,
+                }
+            )
+        return content
+
+    def _build_gemini_label_ocr_payload(self, *, content: list[dict[str, Any]]) -> dict[str, Any]:
+        gemini_parts = self._build_gemini_parts(content=content)
+        gemini_parts.append(
+            {
+                "text": (
+                    "Label/OCR pre-step. Inspect every image only for readable text on the item or its accessories: "
+                    "brand labels, care tags, size tags, hang tags, logos, embossed marks, sole stamps, hardware "
+                    "engravings, dust bags, boxes, receipts, or packaging. Do not identify style, do not estimate value, "
+                    "and do not use web search. Rotate images mentally when label text is sideways or upside down, "
+                    "and zoom into close-up tag photos before deciding text is unreadable. Return ONLY one JSON object, "
+                    "not an array, with keys exactly: "
+                    "brand_text, confidence, evidence_image_id, raw_visible_text, rationale. "
+                    "Use brand_text null when no readable brand is visible. If a tag clearly reads ALEXIS, return "
+                    "brand_text as ALEXIS. If a tag clearly reads L'Academie, L Academie, or Lacademie, return "
+                    "brand_text as L'Academie."
+                )
+            }
+        )
+        return {
+            "contents": [{"role": "user", "parts": gemini_parts}],
+            "generationConfig": {
+                "responseMimeType": "application/json",
+                "temperature": 0.0,
+            },
+        }
+
+    def _build_openai_label_ocr_payload(self, *, content: list[dict[str, Any]]) -> dict[str, Any]:
+        schema = {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "brand_text": {"type": ["string", "null"]},
+                "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                "evidence_image_id": {"type": ["string", "null"]},
+                "raw_visible_text": {"type": "array", "items": {"type": "string"}},
+                "rationale": {"type": "string"},
+            },
+            "required": ["brand_text", "confidence", "evidence_image_id", "raw_visible_text", "rationale"],
+        }
+        return {
+            "model": self.openai_model,
+            "input": [
+                {
+                    "role": "user",
+                    "content": [
+                        *content,
+                        {
+                            "type": "input_text",
+                            "text": (
+                                "Label/OCR fallback. Inspect the attached images only for readable brand text, labels, "
+                                "size tags, care tags, logos, stamps, hang tags, or packaging text. Rotate sideways or "
+                                "upside-down labels mentally and zoom into close-up tag photos. Return only JSON. "
+                                "If a tag reads L'Academie, L Academie, or Lacademie, normalize brand_text to L'Academie. "
+                                "If a tag reads ALEXIS, normalize brand_text to ALEXIS."
+                            ),
+                        },
+                    ],
+                }
+            ],
+            "text": {
+                "format": {
+                    "type": "json_schema",
+                    "name": "label_ocr_result",
+                    "strict": True,
+                    "schema": schema,
+                }
+            },
+        }
+
+    @staticmethod
+    def _brand_from_label_ocr(label_ocr: dict[str, Any] | None) -> str | None:
+        if not isinstance(label_ocr, dict):
+            return None
+        confidence = label_ocr.get("confidence")
+        if not isinstance(confidence, (int, float)) or float(confidence) < 0.65:
+            return None
+        brand = str(label_ocr.get("brand_text") or "").strip()
+        if not brand or brand.lower() in {"unknown", "unclear", "null", "none"}:
+            return None
+        return brand
+
+    def _content_with_label_context(
+        self,
+        content: list[dict[str, Any]],
+        *,
+        label_ocr: dict[str, Any] | None,
+    ) -> list[dict[str, Any]]:
+        detected_brand = self._brand_from_label_ocr(label_ocr)
+        if not detected_brand:
+            return content
+        return [
+            *content[:1],
+            {
+                "type": "input_text",
+                "text": (
+                    f"Known visible label brand from OCR pre-step: {detected_brand}. "
+                    "Treat this as primary brand evidence unless the label is clearly unrelated to the item. "
+                    f"Label OCR evidence: {json.dumps(label_ocr, ensure_ascii=True)}"
+                ),
+            },
+            *content[1:],
+        ]
+
+    def _call_gemini_label_ocr(self, *, images: list[ImageInput]) -> dict[str, Any] | None:
+        if not images:
+            return None
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.gemini_model}:generateContent"
+
+        def call_once(client: httpx.Client, candidate_images: list[ImageInput]) -> dict[str, Any] | None:
+            content = self._build_label_ocr_content(images=candidate_images)
+            resp = client.post(
+                url,
+                params={"key": self.gemini_api_key},
+                headers={"Content-Type": "application/json"},
+                json=self._build_gemini_label_ocr_payload(content=content),
+            )
+            if resp.status_code >= 400:
+                raise RuntimeError(f"gemini_label_ocr_http_{resp.status_code}: {resp.text[:600]}")
+            raw = resp.json()
+            text = self._extract_gemini_text(raw)
+            if not text:
+                return None
+            parsed = self._parse_json_relaxed(text)
+            if not isinstance(parsed, dict):
+                return None
+            if not parsed.get("evidence_image_id") and len(candidate_images) == 1:
+                parsed["evidence_image_id"] = candidate_images[0].image_id
+            return parsed
+
+        with httpx.Client(timeout=self.timeout_s) as client:
+            parsed = call_once(client, images)
+            if self._brand_from_label_ocr(parsed):
+                return parsed
+            for img in images[: self.max_images]:
+                single = call_once(client, [img])
+                if self._brand_from_label_ocr(single):
+                    return single
+            return parsed
+
+    def _call_openai_label_ocr(self, *, images: list[ImageInput]) -> dict[str, Any] | None:
+        if not images or not self.openai_api_key:
+            return None
+        content = self._build_label_ocr_content(images=images)
+        payload = self._build_openai_label_ocr_payload(content=content)
+        with httpx.Client(timeout=self.timeout_s) as client:
+            resp = client.post(
+                "https://api.openai.com/v1/responses",
+                headers={
+                    "Authorization": f"Bearer {self.openai_api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+            if resp.status_code >= 400:
+                raise RuntimeError(f"openai_label_ocr_http_{resp.status_code}: {resp.text[:600]}")
+            raw = resp.json()
+        text = self._extract_output_text(raw)
+        if not text:
+            return None
+        parsed = self._parse_json_relaxed(text)
+        if not isinstance(parsed, dict):
+            return None
+        if self._brand_from_label_ocr(parsed):
+            parsed["_provider"] = "openai"
+        return parsed
+
+    def _call_label_ocr(self, *, images: list[ImageInput]) -> dict[str, Any] | None:
+        label_ocr = self._call_gemini_label_ocr(images=images)
+        if self._brand_from_label_ocr(label_ocr):
+            if isinstance(label_ocr, dict):
+                label_ocr.setdefault("_provider", "gemini")
+            return label_ocr
+        try:
+            openai_label_ocr = self._call_openai_label_ocr(images=images)
+        except Exception as exc:
+            if isinstance(label_ocr, dict):
+                label_ocr["_fallback_error"] = f"openai_label_ocr: {exc}"
+            return label_ocr
+        if self._brand_from_label_ocr(openai_label_ocr):
+            return openai_label_ocr
+        return label_ocr
 
     @staticmethod
     def _prepare_image_for_llm(content_type: str, image_bytes: bytes) -> tuple[str, bytes]:
@@ -627,6 +851,21 @@ class GptItemProfiler:
                     },
                     "required": ["usually_provided", "typical_documents", "confidence", "notes"],
                 },
+                "shipping_profile": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "item_type": {"type": "string"},
+                        "weight_class": {
+                            "type": "string",
+                            "enum": ["light", "medium", "heavy", "oversize", "unclear"],
+                        },
+                        "estimated_weight_oz": {"type": ["number", "null"]},
+                        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                        "rationale": {"type": "string"},
+                    },
+                    "required": ["item_type", "weight_class", "estimated_weight_oz", "confidence", "rationale"],
+                },
             },
             "required": [
                 "model_identification",
@@ -645,6 +884,7 @@ class GptItemProfiler:
                 "resale_price_breakdown",
                 "receipt_present",
                 "expected_auth_docs",
+                "shipping_profile",
             ],
         }
 
@@ -675,6 +915,7 @@ class GptItemProfiler:
             "resale_price_estimate",
             "resale_price_breakdown",
             "expected_auth_docs",
+            "shipping_profile",
         ]
         return {
             "type": "object",
@@ -688,6 +929,7 @@ class GptItemProfiler:
         *,
         content: list[dict[str, Any]],
         gemini_profile: dict[str, Any],
+        valuation_prompt_override: str | None = None,
     ) -> dict[str, Any]:
         valuation_schema = self._build_valuation_schema()
         valuation_context = {
@@ -698,29 +940,49 @@ class GptItemProfiler:
             "visual_signatures": gemini_profile.get("visual_signatures"),
             "visual_condition_assessment": gemini_profile.get("visual_condition_assessment"),
         }
+        text_context = [part for part in content if part.get("type") == "input_text"]
+        default_prompt = (
+            "### IDENTITY & SOURCES\n"
+            "1. ITEM IDENTITY: Treat the provided Gemini identification (Brand, Model, Material, Season) as fixed ground truth. "
+            "Do not reclassify brand or model unless hard visual or text evidence proves Gemini's identification is strictly impossible.\n"
+            "2. RESALE SOURCES (Primary): Priority order for comp gathering:\n"
+            "   - Luxury Handbags/Jewelry/Apparel: Fashionphile, Rebag, The RealReal, Vestiaire Collective.\n"
+            "   - General Peer-to-Peer Resale: eBay (Sold listings ONLY), Poshmark, Depop, Vinted.\n\n"
+            "3. MSRP / RETAIL SEARCH WATERFALL LOGIC:\n"
+            "   - Tier 1 (Ultra-Luxury & Runway): Primary reference is Bergdorf Goodman or Neiman Marcus.\n"
+            "   - Tier 2 (Contemporary & Premium Mall): Fall back to Saks Fifth Avenue, Net-A-Porter, Nordstrom, "
+            "or the Brand Direct Webstore (e.g., Reformation.com, Theory.com).\n"
+            "   - Tier 3 (Vintage / Archived Items): If current MSRP is not listed on active retail sites, retrieve "
+            "historical MSRP from press records, catalog archives, or vintage listing documentation.\n"
+            "   - Core MSRP Rule: ALWAYS use full, un-discounted original retail sticker price. NEVER use markdown, "
+            "clearance, or outlet sale prices as the MSRP baseline.\n\n"
+            "### VALUATION MODELING\n"
+            "4. TRADE CONTEXT: Value for patient peer-to-peer luxury trade (target market clearing price within 30-60 days), "
+            "NOT fast liquidation or wholesale trade-in values.\n"
+            "5. SIZE & SEASON EXCLUSION: Size and season may be included as descriptive context only. "
+            "Do not increase, decrease, discount, premium, or otherwise adjust valuation because of size, season, "
+            "current-season status, off-season status, archive status, or common/outlier sizing.\n"
+            "6. CONDITION & ACCESSORY MATRIX: Adjust base valuation for:\n"
+            "   - Condition & visible wear (fading, pilling, structural shape, hardware scratching).\n"
+            "   - Provenance & Accessories (Original tags, dust bag, box, authenticity cards, box/NIB signals add 5-15% premium).\n"
+            "7. CONTEMPORARY VS. LUXURY DISCOUNT RULES:\n"
+            "   - Contemporary Apparel (New With Tags):\n"
+            "     - Use 45%-60% of MSRP unless sold comps explicitly prove lower. Do not change this range based on season.\n"
+            "   - Luxury / Heritage Brands (Chanel, Hermes, Louis Vuitton, Rolex):\n"
+            "     - Do NOT hard-cap at 60% MSRP. Anchor strictly to real-time secondary sold comps (may trade above or near MSRP).\n\n"
+            "### OUTPUT DELIVERABLES\n"
+            "8. CONDITION-TIER TABLE: Always provide a full multi-tier valuation table (NWT, EUC/Like New, GUC/Good, Fair) "
+            "to establish a full market curve whenever comp evidence allows.\n"
+            "9. LOGISTICS: Include an estimated packed shipping weight (e.g., 1.2 lbs / 0.55 kg) and box type recommendations.\n\n"
+            "Return only the valuation JSON fields required by the schema."
+        )
+        valuation_prompt = (valuation_prompt_override or default_prompt).strip()
         valuation_content = [
-            *content,
+            *text_context,
             {
                 "type": "input_text",
                 "text": (
-                    "Valuation task: Use the Gemini visual identification below as the fixed item identity. "
-                    "Do not reclassify the brand or model unless the valuation evidence clearly proves it impossible. "
-                    "Use web search to find resale-market pricing from trusted resale sources first: The RealReal, "
-                    "Vestiaire Collective, Fashionphile, Rebag, eBay sold/available comps, Poshmark, Depop, and Vinted. "
-                    "Value the item for a patient peer-to-peer luxury trade, not a liquidation, wholesale, or quick-sale price. "
-                    "Do not let one low eBay/Vinted sale dominate the estimate when stronger NWT/current-season or retail context exists. "
-                    "Account for size, stated condition, visible wear, tags, box/dust bag/accessories, and new-in-box or pristine signals "
-                    "from the images and Gemini assessment. "
-                    "For contemporary apparel with confirmed current-season or near-current MSRP and NewWithTags condition, use a patient "
-                    "peer-to-peer estimate around 45%-60% of MSRP unless same-condition sold comps clearly prove a lower market. "
-                    "For NewWithTags apparel that is not current-season, use a patient peer-to-peer estimate around 35%-50% of MSRP when "
-                    "trusted resale comps are thin or noisy. "
-                    "For resale_price_breakdown, always include condition-tier rows when evidence allows: "
-                    "'Without tags / excellent condition', 'New with tags / brand new', and "
-                    "'Current-season style with MSRP context'. Use range_low/range_high and an estimated midpoint for each tier. "
-                    "If the user condition is NewWithTags, make resale_price_estimate select the New with tags tier unless the photos "
-                    "or comps clearly contradict that condition. "
-                    "Return only the valuation JSON fields required by the schema.\n\n"
+                    f"{valuation_prompt}\n\n"
                     f"Gemini identification and condition:\n{json.dumps(valuation_context, ensure_ascii=True)}"
                 ),
             },
@@ -794,14 +1056,15 @@ class GptItemProfiler:
                     "whether an original branded box is shown, whether dust bags or accessories are shown, and whether "
                     "the item should be priced as new-in-box/pristine versus ordinary pre-owned.\n"
                     "2) Use Google grounding and prioritize: Rebag, Poshmark, The RealReal, Vestiaire Collective, "
-                    "1stdibs, Fashionphile. De-prioritize eBay unless needed.\n"
+                    "1stdibs, Fashionphile. Use Bergdorf Goodman for retail/MSRP context. De-prioritize eBay unless needed.\n"
                     "3) Compute resale pricing specifically for the identified category/model and current item condition.\n"
                     "4) Provide a resale breakdown including median and range by condition when available.\n"
-                    "5) Return ONLY JSON. No prose.\n\n"
+                    "5) Estimate packaged shipping weight from the item type and visible bulk.\n"
+                    "6) Return ONLY JSON. No prose.\n\n"
                     "JSON keys required:\n"
                     "category, candidate_brand, candidate_model, confidence, visual_signatures, grounding_sources, "
                     "dupe_risk_assessment, why_not_fast_fashion, model_identification, authenticity_screen, visual_condition_assessment, "
-                    "retail_price_estimate, resale_price_estimate, resale_price_breakdown, receipt_present, expected_auth_docs.\n"
+                    "retail_price_estimate, resale_price_estimate, resale_price_breakdown, receipt_present, expected_auth_docs, shipping_profile.\n"
                     "For resale_price_breakdown include rows close to: Good/Pre-owned Condition, "
                     "High-End/Excellent Condition, Original Retail Value (or closest equivalent labels).\n"
                     "Use numeric prices whenever possible; include rationale and confidence."
@@ -822,19 +1085,27 @@ class GptItemProfiler:
             {
                 "text": (
                     "Step 1/2 - Grounded Evidence Collection.\n"
-                    "Identify the exact category, brand, and model from the image. "
+                    "Before any generic style search, inspect all uploaded images for readable label/OCR evidence: "
+                    "brand labels, care tags, size tags, hang tags, logos, embossed marks, sole stamps, hardware engravings, "
+                    "dust bags, boxes, receipts, or other text. Extract exact text, name the image/evidence type, and treat "
+                    "readable brand-label text as primary brand evidence. If a visible label says ALEXIS, Chanel, Gucci, "
+                    "Louis Vuitton, Theory, or another brand, candidate_brand must use that label unless the label is clearly "
+                    "not part of the item. "
+                    "Identify the exact category, brand, and model from the images. "
                     "Derive visual condition and completeness from the image: pristine/unworn cues, visible wear, "
                     "original branded box, dust bags, and whether the item should be valued as new-in-box/pristine. "
                     "Use Google grounding and ONLY use these websites, in this strict priority order:\n"
                     "Tier 1: 1) The RealReal, 2) Vestiaire Collective, 3) Fashionphile, 4) Rebag.\n"
-                    "Tier 2: 5) eBay, 6) Poshmark.\n"
-                    "Tier 3: 7) Depop, 8) Vinted.\n"
+                    "Tier 2: 5) Bergdorf Goodman for retail/MSRP context, 6) eBay, 7) Poshmark.\n"
+                    "Tier 3: 8) Depop, 9) Vinted.\n"
                     "Search using explicit domain-limited queries such as: "
                     "site:therealreal.com OR site:vestiairecollective.com OR site:fashionphile.com OR site:rebag.com OR "
-                    "site:ebay.com OR site:poshmark.com OR site:depop.com OR site:vinted.com.\n"
+                    "site:bergdorfgoodman.com OR site:ebay.com OR site:poshmark.com OR site:depop.com OR site:vinted.com.\n"
                     "Prefer higher tiers first; only use lower tiers when higher-tier evidence is insufficient.\n"
                     "Collect pricing evidence relevant to the identified model and current condition, including "
                     "median-like central value and condition-based ranges when available.\n"
+                    "Also infer the specific shipping item type and realistic packaged weight from the photos "
+                    "(examples: dress, blouse, jeans, blazer, coat, heels, boots, handbag).\n"
                     "Return concise evidence text with sources and numeric price mentions."
                 )
             }
@@ -856,7 +1127,14 @@ class GptItemProfiler:
                     "Return ONLY a JSON object with keys exactly:\n"
                     "category, candidate_brand, candidate_model, confidence, visual_signatures, grounding_sources, "
                     "dupe_risk_assessment, why_not_fast_fashion, model_identification, authenticity_screen, visual_condition_assessment, "
-                    "retail_price_estimate, resale_price_estimate, resale_price_breakdown, receipt_present, expected_auth_docs.\n"
+                    "retail_price_estimate, resale_price_estimate, resale_price_breakdown, receipt_present, expected_auth_docs, shipping_profile.\n"
+                    "For visual_condition_assessment, copy condition and accessory evidence from the grounded evidence into "
+                    "the structured fields. If grounded evidence says the item is pristine/unworn, has original tags, "
+                    "has a box, has a dust bag, has pristine soles, or shows no visible wear, do not return unclear for "
+                    "wear_level, box_included, dust_bag_included, new_in_box_signal, pricing_tier, confidence, or evidence. "
+                    "Use evidence as short bullet-like strings such as 'original tag attached', 'original branded box visible', "
+                    "'pristine soles', or 'no visible wear'. Keep user-provided condition separate from visual evidence in the rationale. "
+                    "For shipping_profile, estimate packaged shipping weight in ounces from item_type and visible bulk. "
                     "Use numeric values for estimated_price/ranges whenever possible. No markdown, no prose."
                 )
             }
@@ -881,6 +1159,7 @@ class GptItemProfiler:
                     "Use only evidence retrieved from the configured Vertex AI Search datastore. "
                     "Collect pricing evidence relevant to the identified model and current item condition, including "
                     "median-like central value and condition-based ranges when available. "
+                    "Also infer the specific shipping item type and realistic packaged weight from the photos. "
                     "Return concise evidence text with source titles, URLs when present, and numeric price mentions."
                 )
             }
@@ -957,7 +1236,8 @@ class GptItemProfiler:
                     "Now return ONLY a strict JSON object with keys exactly: "
                     "category, candidate_brand, candidate_model, confidence, visual_signatures, grounding_sources, "
                     "dupe_risk_assessment, why_not_fast_fashion, model_identification, authenticity_screen, visual_condition_assessment, "
-                    "retail_price_estimate, resale_price_estimate, resale_price_breakdown, receipt_present, expected_auth_docs. "
+                    "retail_price_estimate, resale_price_estimate, resale_price_breakdown, receipt_present, expected_auth_docs, shipping_profile. "
+                    "For shipping_profile, estimate packaged shipping weight in ounces from item_type and visible bulk. "
                     "For resale_price_breakdown, include these rows when available from sources: "
                     "'Good/Pre-owned Condition', 'High-End/Excellent Condition', and 'Original Retail Value'. "
                     "If an exact row is unavailable, include the closest equivalent label and provide rationale. "
@@ -1014,8 +1294,13 @@ class GptItemProfiler:
         *,
         content: list[dict[str, Any]],
         gemini_profile: dict[str, Any],
+        valuation_prompt_override: str | None = None,
     ) -> dict[str, Any] | None:
-        payload = self._build_openai_valuation_payload(content=content, gemini_profile=gemini_profile)
+        payload = self._build_openai_valuation_payload(
+            content=content,
+            gemini_profile=gemini_profile,
+            valuation_prompt_override=valuation_prompt_override,
+        )
         with httpx.Client(timeout=self.timeout_s) as client:
             resp = client.post(
                 "https://api.openai.com/v1/responses",
@@ -1133,6 +1418,10 @@ class GptItemProfiler:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.gemini_model}:generateContent"
         grounding_metadata: dict[str, Any] | None = None
         workflow: dict[str, Any] = {}
+        label_ocr = self._call_label_ocr(images=images)
+        if isinstance(label_ocr, dict):
+            workflow["label_ocr"] = label_ocr
+            content = self._content_with_label_context(content, label_ocr=label_ocr)
         with httpx.Client(timeout=self.timeout_s) as client:
             # Step 1/2: grounded search with tool-use.
             search_resp = client.post(
@@ -1166,6 +1455,8 @@ class GptItemProfiler:
             if grounding_sources:
                 parsed_single["grounding_sources"] = grounding_sources
             parsed_single["_grounding_metadata"] = grounding_metadata
+        if isinstance(label_ocr, dict):
+            parsed_single["label_ocr"] = label_ocr
         parsed_single["_workflow"] = workflow
         return parsed_single
 
@@ -1309,6 +1600,12 @@ class GptItemProfiler:
         )
         normalized["receipt_present"] = self._normalize_receipt_present(normalized.get("receipt_present"))
         normalized["expected_auth_docs"] = self._normalize_expected_auth_docs(normalized.get("expected_auth_docs"))
+        normalized["shipping_profile"] = self._normalize_shipping_profile(
+            normalized.get("shipping_profile"),
+            category=normalized.get("category"),
+            model_identification=normalized.get("model_identification"),
+            visual_signatures=normalized.get("visual_signatures"),
+        )
         return normalized
 
     def _normalize_visual_condition_assessment(self, value: Any) -> dict[str, Any]:
@@ -1321,23 +1618,180 @@ class GptItemProfiler:
                     return normalized
             return default
 
+        evidence = self._as_str_list(data.get("evidence"))
+        evidence_text = " ".join(evidence).casefold()
+        wear_level = enum_value(
+            data.get("wear_level"),
+            {"pristine", "minimal", "visible", "heavy", "unclear"},
+            "unclear",
+        )
+        box_included = enum_value(data.get("box_included"), {"yes", "no", "unclear"}, "unclear")
+        dust_bag_included = enum_value(data.get("dust_bag_included"), {"yes", "no", "unclear"}, "unclear")
+        new_in_box_signal = enum_value(data.get("new_in_box_signal"), {"yes", "no", "unclear"}, "unclear")
+        pricing_tier = enum_value(
+            data.get("pricing_tier"),
+            {"new_in_box", "pristine", "excellent", "pre_owned", "worn", "unclear"},
+            "unclear",
+        )
+        confidence = self._normalize_confidence(data.get("confidence")) or 0.0
+
+        if evidence:
+            if wear_level == "unclear" and (
+                "pristine" in evidence_text
+                or "unworn" in evidence_text
+                or "no visible wear" in evidence_text
+                or "pristine soles" in evidence_text
+            ):
+                wear_level = "pristine"
+            if box_included == "unclear" and ("box visible" in evidence_text or "branded box" in evidence_text):
+                box_included = "yes"
+            if new_in_box_signal == "unclear" and (
+                "original tag" in evidence_text
+                or "tag visible" in evidence_text
+                or "sticker/tag" in evidence_text
+                or "branded box" in evidence_text
+            ):
+                new_in_box_signal = "yes"
+            if pricing_tier == "unclear":
+                if new_in_box_signal == "yes" and wear_level == "pristine":
+                    pricing_tier = "new_in_box"
+                elif wear_level == "pristine":
+                    pricing_tier = "pristine"
+            if confidence == 0.0 and any(
+                value != "unclear"
+                for value in (wear_level, box_included, dust_bag_included, new_in_box_signal, pricing_tier)
+            ):
+                confidence = 0.65
+
         return {
-            "wear_level": enum_value(
-                data.get("wear_level"),
-                {"pristine", "minimal", "visible", "heavy", "unclear"},
-                "unclear",
-            ),
-            "box_included": enum_value(data.get("box_included"), {"yes", "no", "unclear"}, "unclear"),
-            "dust_bag_included": enum_value(data.get("dust_bag_included"), {"yes", "no", "unclear"}, "unclear"),
-            "new_in_box_signal": enum_value(data.get("new_in_box_signal"), {"yes", "no", "unclear"}, "unclear"),
-            "pricing_tier": enum_value(
-                data.get("pricing_tier"),
-                {"new_in_box", "pristine", "excellent", "pre_owned", "worn", "unclear"},
-                "unclear",
-            ),
-            "confidence": self._normalize_confidence(data.get("confidence")) or 0.0,
-            "evidence": self._as_str_list(data.get("evidence")),
+            "wear_level": wear_level,
+            "box_included": box_included,
+            "dust_bag_included": dust_bag_included,
+            "new_in_box_signal": new_in_box_signal,
+            "pricing_tier": pricing_tier,
+            "confidence": confidence,
+            "evidence": evidence,
         }
+
+    def _normalize_shipping_profile(
+        self,
+        value: Any,
+        *,
+        category: Any,
+        model_identification: Any,
+        visual_signatures: Any,
+    ) -> dict[str, Any]:
+        data = value if isinstance(value, dict) else {}
+        item_type = self._as_nullable_str(data.get("item_type")) or self._infer_shipping_item_type(
+            category=category,
+            model_identification=model_identification,
+            visual_signatures=visual_signatures,
+        )
+        weight = self._coerce_weight_oz(data.get("estimated_weight_oz"))
+        inferred_weight = self._default_shipping_weight_oz(item_type=item_type, category=category)
+        if weight is None:
+            weight = inferred_weight
+        weight_class = self._as_nullable_str(data.get("weight_class")) or self._shipping_weight_class(weight)
+        normalized_class = weight_class.strip().casefold().replace("-", "_").replace(" ", "_") if weight_class else "unclear"
+        if normalized_class not in {"light", "medium", "heavy", "oversize", "unclear"}:
+            normalized_class = self._shipping_weight_class(weight)
+        return {
+            "item_type": item_type or "unknown",
+            "weight_class": normalized_class,
+            "estimated_weight_oz": weight,
+            "confidence": self._normalize_confidence(data.get("confidence")) or (0.45 if inferred_weight is not None else 0.0),
+            "rationale": self._as_nullable_str(data.get("rationale"))
+            or f"Estimated packaged weight for {item_type or category or 'item'} based on category and visible item type.",
+        }
+
+    @staticmethod
+    def _coerce_weight_oz(value: Any) -> float | None:
+        if isinstance(value, (int, float)):
+            weight = float(value)
+            return round(weight, 2) if 1 <= weight <= 240 else None
+        if isinstance(value, str):
+            text = value.strip().lower()
+            match = re.search(r"(\d+(?:\.\d+)?)", text)
+            if not match:
+                return None
+            amount = float(match.group(1))
+            if "lb" in text or "pound" in text:
+                amount *= 16
+            return round(amount, 2) if 1 <= amount <= 240 else None
+        return None
+
+    def _infer_shipping_item_type(self, *, category: Any, model_identification: Any, visual_signatures: Any) -> str:
+        text_parts: list[str] = [str(category or "")]
+        if isinstance(model_identification, dict):
+            text_parts.append(str(model_identification.get("name") or ""))
+            attrs = model_identification.get("attributes")
+            if isinstance(attrs, list):
+                text_parts.extend(str(x) for x in attrs if isinstance(x, str))
+        if isinstance(visual_signatures, list):
+            text_parts.extend(str(x) for x in visual_signatures if isinstance(x, str))
+        text = " ".join(text_parts).casefold()
+        checks = [
+            ("coat", ("coat", "parka", "overcoat", "trench")),
+            ("jacket", ("jacket", "blazer", "bomber")),
+            ("boots", ("boot", "boots")),
+            ("handbag", ("handbag", "bag", "tote", "satchel", "purse")),
+            ("jeans", ("jean", "denim", "pants", "trouser")),
+            ("dress", ("dress", "gown")),
+            ("skirt", ("skirt",)),
+            ("sweater", ("sweater", "cardigan", "knit")),
+            ("top", ("top", "blouse", "shirt", "tee", "tank")),
+            ("heels", ("heel", "pump", "sandal", "mule")),
+            ("sneakers", ("sneaker", "trainer")),
+        ]
+        for item_type, needles in checks:
+            if any(needle in text for needle in needles):
+                return item_type
+        normalized_category = str(category or "").strip().casefold()
+        if normalized_category == "shoes":
+            return "shoes"
+        if normalized_category == "clothes":
+            return "clothes"
+        return normalized_category or "unknown"
+
+    @staticmethod
+    def _default_shipping_weight_oz(*, item_type: Any, category: Any) -> float | None:
+        text = f"{item_type or ''} {category or ''}".casefold()
+        weights = [
+            ("coat", 72.0),
+            ("boots", 64.0),
+            ("handbag", 48.0),
+            ("jacket", 48.0),
+            ("blazer", 40.0),
+            ("jeans", 32.0),
+            ("pants", 28.0),
+            ("sweater", 24.0),
+            ("dress", 20.0),
+            ("skirt", 16.0),
+            ("heels", 32.0),
+            ("sandal", 24.0),
+            ("sneaker", 40.0),
+            ("shoes", 40.0),
+            ("top", 12.0),
+            ("blouse", 12.0),
+            ("shirt", 12.0),
+            ("clothes", 24.0),
+        ]
+        for needle, weight in weights:
+            if needle in text:
+                return weight
+        return None
+
+    @staticmethod
+    def _shipping_weight_class(weight_oz: float | None) -> str:
+        if weight_oz is None:
+            return "unclear"
+        if weight_oz <= 16:
+            return "light"
+        if weight_oz <= 48:
+            return "medium"
+        if weight_oz <= 80:
+            return "heavy"
+        return "oversize"
 
     @staticmethod
     def _as_nullable_str(value: Any) -> str | None:
@@ -1803,10 +2257,19 @@ class GptItemProfiler:
 
     @staticmethod
     def _parse_json_relaxed(text: str) -> dict[str, Any] | None:
+        def first_object(parsed: Any) -> dict[str, Any] | None:
+            if isinstance(parsed, dict):
+                return parsed
+            if isinstance(parsed, list):
+                for item in parsed:
+                    if isinstance(item, dict):
+                        return item
+            return None
+
         txt = text.strip()
         try:
             parsed = json.loads(txt)
-            return parsed if isinstance(parsed, dict) else None
+            return first_object(parsed)
         except Exception:
             pass
 
@@ -1814,7 +2277,7 @@ class GptItemProfiler:
         if fence:
             try:
                 parsed = json.loads(fence.group(1))
-                return parsed if isinstance(parsed, dict) else None
+                return first_object(parsed)
             except Exception:
                 pass
 

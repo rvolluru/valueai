@@ -108,6 +108,228 @@ def _override_gpt_profiler(profile: dict | None):
     return app
 
 
+def test_listing_title_from_analysis_uses_label_brand_for_generic_model() -> None:
+    from app.main import _listing_title_from_analysis
+
+    title = _listing_title_from_analysis(
+        "unknown unknown",
+        model_name="Unidentified tiered ruffle dress with lace detail",
+        profile={"shipping_profile": {"item_type": "dress"}},
+        brand="ALEXIS",
+        category="clothes",
+    )
+
+    assert title == "ALEXIS tiered ruffle dress with lace detail"
+
+
+def test_listing_title_from_analysis_preserves_specific_model_title() -> None:
+    from app.main import _listing_title_from_analysis
+
+    title = _listing_title_from_analysis(
+        "New listing",
+        model_name="Classic Flap Bag",
+        profile={},
+        brand="Chanel",
+        category="handbag",
+    )
+
+    assert title == "Classic Flap Bag"
+
+
+def test_shippo_flat_rate_quote_overrides_display_amount_but_keeps_rate_id() -> None:
+    from app.main import _apply_shippo_flat_rate_quote, _estimated_shipping_weight_oz_from_listing
+    from app.settings import Settings
+
+    settings = Settings(
+        shippo_flat_rate_enabled=True,
+        shippo_flat_rate_amount="6.49",
+        shippo_flat_rate_currency="USD",
+        shippo_flat_rate_max_weight_oz=32,
+        shippo_parcel_weight_oz=32,
+    )
+    quote = {
+        "status": "quoted",
+        "carrier": "USPS",
+        "service_level": "Priority Mail",
+        "amount": "12.34",
+        "currency": "USD",
+        "rate_id": "shippo-rate-123",
+        "parcel_weight_oz": str(_estimated_shipping_weight_oz_from_listing({
+            "analysis": {
+                "item_profile": {
+                    "shipping_profile": {
+                        "item_type": "dress",
+                        "estimated_weight_oz": 20,
+                    }
+                }
+            }
+        }, settings)),
+    }
+
+    display_quote = _apply_shippo_flat_rate_quote(settings=settings, quote=quote)
+
+    assert display_quote["amount"] == "6.49"
+    assert display_quote["currency"] == "USD"
+    assert display_quote["rate_id"] == "shippo-rate-123"
+    assert "shippo_rate=USD 12.34" in display_quote["debug"]
+    assert "jouft_flat_rate=USD 6.49" in display_quote["debug"]
+    assert "max_weight_oz=32" in display_quote["debug"]
+
+
+def test_shippo_flat_rate_quote_does_not_apply_above_weight_limit() -> None:
+    from app.main import _apply_shippo_flat_rate_quote
+    from app.settings import Settings
+
+    settings = Settings(
+        shippo_flat_rate_enabled=True,
+        shippo_flat_rate_amount="6.49",
+        shippo_flat_rate_max_weight_oz=32,
+        shippo_parcel_weight_oz=96,
+    )
+    quote = {
+        "status": "quoted",
+        "carrier": "USPS",
+        "service_level": "Priority Mail",
+        "amount": "14.50",
+        "currency": "USD",
+        "rate_id": "shippo-rate-456",
+    }
+
+    display_quote = _apply_shippo_flat_rate_quote(settings=settings, quote=quote)
+
+    assert display_quote == quote
+
+
+def test_google_places_address_suggest_parses_components(monkeypatch) -> None:
+    from app.main import _google_places_address_suggest
+    from app.settings import Settings
+
+    class FakeResponse:
+        status_code = 200
+        content = b"{}"
+
+        def __init__(self, payload: dict):
+            self._payload = payload
+
+        def json(self):
+            return self._payload
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def post(self, url, json, headers):
+            assert "places:autocomplete" in url
+            assert headers["X-Goog-Api-Key"] == "google-key"
+            assert json["includedRegionCodes"] == ["us"]
+            return FakeResponse({
+                "suggestions": [{
+                    "placePrediction": {
+                        "placeId": "places/abc123",
+                        "text": {"text": "120 Vantis Dr Suite 300, Aliso Viejo, CA 92656"},
+                    }
+                }]
+            })
+
+        def get(self, url, headers):
+            assert url.endswith("/places/abc123")
+            return FakeResponse({
+                "formattedAddress": "120 Vantis Dr Suite 300, Aliso Viejo, CA 92656, USA",
+                "addressComponents": [
+                    {"longText": "120", "shortText": "120", "types": ["street_number"]},
+                    {"longText": "Vantis Drive", "shortText": "Vantis Dr", "types": ["route"]},
+                    {"longText": "Aliso Viejo", "shortText": "Aliso Viejo", "types": ["locality"]},
+                    {"longText": "California", "shortText": "CA", "types": ["administrative_area_level_1"]},
+                    {"longText": "92656", "shortText": "92656", "types": ["postal_code"]},
+                    {"longText": "United States", "shortText": "US", "types": ["country"]},
+                ],
+            })
+
+    monkeypatch.setattr("app.main.httpx.Client", FakeClient)
+    result = _google_places_address_suggest(
+        q="120 Vantis",
+        city="Aliso Viejo",
+        state="CA",
+        postal_code="92656",
+        settings=Settings(
+            google_places_api_key="google-key",
+            google_places_autocomplete_url="https://places.googleapis.com/v1/places:autocomplete",
+            google_places_details_url="https://places.googleapis.com/v1/{place_id}",
+        ),
+    )
+
+    suggestions = result["suggestions"]
+    assert len(suggestions) == 1
+    assert suggestions[0]["street_address"] == "120 Vantis Drive"
+    assert suggestions[0]["city"] == "Aliso Viejo"
+    assert suggestions[0]["state"] == "CA"
+    assert suggestions[0]["postal_code"] == "92656"
+    assert suggestions[0]["country"] == "US"
+    assert suggestions[0]["provider"] == "google_places"
+
+
+def test_shippo_tracking_snapshot_parses_delivery_status(monkeypatch) -> None:
+    from app.main import _shippo_tracking_snapshot
+    from app.settings import Settings
+
+    class FakeResponse:
+        status_code = 200
+        content = b"{}"
+
+        def json(self):
+            return {
+                "eta": "2026-08-15T12:00:00Z",
+                "tracking_status": {
+                    "status": "OUT_FOR_DELIVERY",
+                    "status_details": "Out for delivery",
+                    "status_date": "2026-08-14T09:30:00Z",
+                },
+                "tracking_history": [
+                    {
+                        "status": "TRANSIT",
+                        "status_details": "Arrived at USPS facility",
+                        "status_date": "2026-08-13T20:00:00Z",
+                        "location": "Edison, NJ",
+                    }
+                ],
+            }
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def get(self, url, headers):
+            assert url == "https://api.goshippo.com/tracks/usps/940011189922385"
+            assert headers["Authorization"] == "ShippoToken shippo-key"
+            return FakeResponse()
+
+    monkeypatch.setattr("app.main.httpx.Client", FakeClient)
+    result = _shippo_tracking_snapshot(
+        settings=Settings(shippo_api_key="shippo-key", shippo_api_base_url="https://api.goshippo.com"),
+        carrier="USPS",
+        tracking_number="940011189922385",
+    )
+
+    assert result["status"] == "out_for_delivery"
+    assert result["tracking_status"] == "out_for_delivery"
+    assert result["tracking_status_details"] == "Out for delivery"
+    assert result["tracking_status_updated_at"] == "2026-08-14T09:30:00Z"
+    assert result["tracking_eta"] == "2026-08-15T12:00:00Z"
+    assert result["tracking_history"][0]["location"] == "Edison, NJ"
+
+
 def test_analyze_response_schema_and_debug_payload() -> None:
     client = _build_client()
     _override_gpt_profiler(_stub_item_profile())
@@ -347,6 +569,55 @@ def test_presigned_upload_confirm_persists_images() -> None:
     assert updated["images"] == [image_urls[1], image_urls[0]]
 
 
+def test_listings_support_limit_offset_pagination() -> None:
+    client = _build_client()
+    created_ids: list[str] = []
+    for idx in range(5):
+        payload = {
+            "title": f"Paged Listing {idx}",
+            "mode": "trade",
+            "category": "handbag",
+            "brand": "Chanel",
+            "condition": "LikeNew",
+            "size": "Medium",
+            "estimated_value": 1000 + idx,
+            "city": "Your area",
+            "image": f"https://example.test/paged-{idx}.jpg",
+            "images": [f"https://example.test/paged-{idx}.jpg"],
+            "description": "Pagination test listing.",
+            "wants": "Open to similar-value offers",
+            "tags": [],
+            "status": "Active",
+        }
+        res = client.post("/v1/listings", json=payload, headers={"x-api-key": "test-key"})
+        assert res.status_code == 200, res.text
+        created_ids.append(res.json()["listing_id"])
+
+    first = client.get("/v1/listings?mine=true&limit=2&offset=0", headers={"x-api-key": "test-key"})
+    second = client.get("/v1/listings?mine=true&limit=2&offset=2", headers={"x-api-key": "test-key"})
+    last = client.get("/v1/listings?mine=true&limit=2&offset=4", headers={"x-api-key": "test-key"})
+    assert first.status_code == 200, first.text
+    assert second.status_code == 200, second.text
+    assert last.status_code == 200, last.text
+
+    first_body = first.json()
+    second_body = second.json()
+    last_body = last.json()
+    assert first_body["has_more"] is True
+    assert first_body["next_offset"] == 2
+    assert second_body["has_more"] is True
+    assert second_body["next_offset"] == 4
+    assert last_body["has_more"] is False
+    assert last_body["next_offset"] is None
+
+    first_ids = [item["listing_id"] for item in first_body["items"]]
+    second_ids = [item["listing_id"] for item in second_body["items"]]
+    last_ids = [item["listing_id"] for item in last_body["items"]]
+    assert first_ids == list(reversed(created_ids[-2:]))
+    assert second_ids == list(reversed(created_ids[1:3]))
+    assert last_ids == [created_ids[0]]
+
+
 def test_create_listing_with_analyzing_status_queues_backend_analysis() -> None:
     client = _build_client()
     _override_gpt_profiler(
@@ -455,15 +726,22 @@ def test_create_listing_reuses_recent_analysis_for_same_uploaded_images() -> Non
     )
     assert create_res.status_code == 200, create_res.text
     body = create_res.json()
-    assert body["status"] == "Review"
-    assert body["title"] == "Looping MM"
-    assert body["brand"] == "Louis Vuitton"
-    assert body["estimated_value"] == 1150
+    assert body["status"] == "Analyzing"
     assert body["image"] == image_url
     assert body["images"] == [image_url]
-    assert body["analysis"]["item_id"] == "item-repeat-upload"
-    assert body["analysis"]["uploaded_images"][0]["image_url"] == image_url
-    assert body["analysis"]["debug"]["analysis_reuse"]["reused"] is True
+
+    list_res = client.get("/v1/listings?mine=true&limit=10", headers={"x-api-key": "test-key"})
+    assert list_res.status_code == 200, list_res.text
+    listing = next(item for item in list_res.json()["items"] if item["listing_id"] == body["listing_id"])
+    assert listing["status"] == "Review"
+    assert listing["title"] == "Looping MM"
+    assert listing["brand"] == "Louis Vuitton"
+    assert listing["estimated_value"] == 1150
+    assert listing["image"] == image_url
+    assert listing["images"] == [image_url]
+    assert listing["analysis"]["item_id"] == "item-repeat-upload"
+    assert listing["analysis"]["uploaded_images"][0]["image_url"] == image_url
+    assert listing["analysis"]["debug"]["analysis_reuse"]["reused"] is True
 
 
 def test_create_listing_with_analyzing_status_marks_failed_when_images_are_unreadable() -> None:
@@ -494,8 +772,7 @@ def test_create_listing_with_analyzing_status_marks_failed_when_images_are_unrea
     )
     assert create_res.status_code == 200, create_res.text
     created = create_res.json()
-    assert created["status"] == "AnalysisFailed"
-    assert created["tags"] == ["Analysis failed"]
+    assert created["status"] == "Analyzing"
 
     list_res = client.get("/v1/listings?mine=true&limit=10", headers={"x-api-key": "test-key"})
     assert list_res.status_code == 200, list_res.text
@@ -1037,6 +1314,7 @@ def test_gpt_pricing_is_used_as_primary_when_available() -> None:
 
 def test_crawler_pricing_is_used_as_fallback_when_gpt_has_no_price() -> None:
     os.environ["VALUATION_PROVIDERS"] = "stub"
+    os.environ["VALUATION_COMPS_ENABLED"] = "true"
     client = _build_client()
     from app.deps import get_gpt_item_profiler, get_valuation_service
     from app.main import app
@@ -1100,6 +1378,7 @@ def test_crawler_pricing_is_used_as_fallback_when_gpt_has_no_price() -> None:
         assert body["debug"]["valuation"]["pricing_fallback_used"] is True
     finally:
         app.dependency_overrides.clear()
+        os.environ["VALUATION_COMPS_ENABLED"] = "false"
 
 
 def test_create_and_list_listing_with_api_key() -> None:
@@ -1399,6 +1678,82 @@ def test_listing_media_dedupes_absolute_and_relative_api_image_urls() -> None:
     assert list_res.status_code == 200, list_res.text
     listed = next(item for item in list_res.json()["items"] if item["listing_id"] == created["listing_id"])
     assert listed["images"] == ["/v1/images/image-one", "/v1/images/image-two"]
+
+
+def test_create_listing_does_not_append_analysis_uploads_to_display_gallery() -> None:
+    client = _build_client()
+    display_images = [
+        "/v1/images/photoroom-front",
+        "/v1/images/photoroom-side",
+        "/v1/images/photoroom-sole",
+    ]
+    create_payload = {
+        "title": "Three Photo Boots",
+        "mode": "trade",
+        "category": "shoes",
+        "brand": "Chanel",
+        "condition": "NewWithTags",
+        "estimated_value": 1495.0,
+        "city": "New York, NY",
+        "image": display_images[0],
+        "images": display_images,
+        "analysis": {
+            "uploaded_images": [
+                {"image_url": "/v1/images/original-front"},
+                {"image_url": "/v1/images/original-side"},
+                {"image_url": "/v1/images/original-sole"},
+            ],
+        },
+        "status": "Active",
+    }
+
+    create_res = client.post("/v1/listings", json=create_payload, headers={"x-api-key": "test-key"})
+    assert create_res.status_code == 200, create_res.text
+    created = create_res.json()
+    assert created["images"] == display_images
+
+    list_res = client.get("/v1/listings?limit=10", headers={"x-api-key": "test-key"})
+    assert list_res.status_code == 200, list_res.text
+    listed = next(item for item in list_res.json()["items"] if item["listing_id"] == created["listing_id"])
+    assert listed["images"] == display_images
+
+
+def test_create_listing_stores_listed_image_pairs() -> None:
+    client = _build_client()
+    create_payload = {
+        "title": "Paired Image Listing",
+        "mode": "trade",
+        "category": "shoes",
+        "brand": "Chanel",
+        "condition": "NewWithTags",
+        "estimated_value": 1495.0,
+        "city": "New York, NY",
+        "image": "/v1/images/processed-front",
+        "images": ["/v1/images/processed-front", "/v1/images/processed-side"],
+        "listed_images": [
+            {"p_img": "/v1/images/original-front", "d_img": "/v1/images/processed-front", "is_hero": True},
+            {"p_img": "/v1/images/original-side", "d_img": "/v1/images/processed-side"},
+        ],
+        "status": "Active",
+    }
+
+    create_res = client.post("/v1/listings", json=create_payload, headers={"x-api-key": "test-key"})
+    assert create_res.status_code == 200, create_res.text
+    created = create_res.json()
+    assert created["image"] == "/v1/images/processed-front"
+    assert created["images"] == ["/v1/images/processed-front", "/v1/images/processed-side"]
+    assert created["listed_images"] == [
+        {"p_img": "/v1/images/original-front", "d_img": "/v1/images/processed-front", "is_hero": True},
+        {"p_img": "/v1/images/original-side", "d_img": "/v1/images/processed-side", "is_hero": False},
+    ]
+
+    list_res = client.get("/v1/listings?limit=10", headers={"x-api-key": "test-key"})
+    assert list_res.status_code == 200, list_res.text
+    listed = next(item for item in list_res.json()["items"] if item["listing_id"] == created["listing_id"])
+    assert listed["images"] == ["/v1/images/processed-front", "/v1/images/processed-side"]
+    assert listed["listed_images"][0]["p_img"] == "/v1/images/original-front"
+    assert listed["listed_images"][0]["d_img"] == "/v1/images/processed-front"
+    assert listed["listed_images"][0]["is_hero"] is True
 
 
 def test_listing_media_dedupes_upload_url_variants_to_image_ids() -> None:

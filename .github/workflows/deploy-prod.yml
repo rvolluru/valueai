@@ -71,6 +71,7 @@ jobs:
       - name: Write production tfvars from secret
         env:
           TFVARS_PROD_B64: ${{ secrets.TFVARS_PROD_B64 }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
           STRIPE_PUBLISHABLE_KEY: ${{ secrets.STRIPE_PUBLISHABLE_KEY }}
         run: |
@@ -102,6 +103,13 @@ jobs:
               echo "stripe_publishable_key             = \"${STRIPE_PUBLISHABLE_KEY}\"" >> "${TF_DIR}/terraform.tfvars"
             fi
           fi
+          if [ -n "${OPENAI_API_KEY:-}" ]; then
+            if grep -qE '^[[:space:]]*openai_api_key[[:space:]]*=' "${TF_DIR}/terraform.tfvars"; then
+              sed -i.bak -E "s#^[[:space:]]*openai_api_key[[:space:]]*=.*#openai_api_key                    = \"${OPENAI_API_KEY}\"#" "${TF_DIR}/terraform.tfvars"
+            else
+              echo "openai_api_key                    = \"${OPENAI_API_KEY}\"" >> "${TF_DIR}/terraform.tfvars"
+            fi
+          fi
 
       - name: Decide deploy mode (fast ECS vs full Terraform)
         id: mode
@@ -130,6 +138,7 @@ jobs:
         env:
           IMAGE_URI: ${{ steps.image.outputs.image_uri }}
           PROJECT_NAME: ${{ steps.mode.outputs.project_name }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
           STRIPE_PUBLISHABLE_KEY: ${{ secrets.STRIPE_PUBLISHABLE_KEY }}
         run: |
@@ -143,6 +152,7 @@ jobs:
             --output text)
           aws ecs describe-task-definition --task-definition "${CURRENT_TASK_DEF_ARN}" > /tmp/current-td.json
           jq --arg IMAGE "${IMAGE_URI}" \
+             --arg OPENAI_API_KEY "${OPENAI_API_KEY:-}" \
              --arg STRIPE_SECRET_KEY "${STRIPE_SECRET_KEY:-}" \
              --arg STRIPE_PUBLISHABLE_KEY "${STRIPE_PUBLISHABLE_KEY:-}" '
             def upsert_env($n; $v):
@@ -165,6 +175,9 @@ jobs:
                 if .name == "api"
                 then
                   (.image = $IMAGE
+                  | upsert_env("OPENAI_API_KEY"; $OPENAI_API_KEY)
+                  | upsert_env("GPT_ITEM_PROFILE_PROVIDER_ORDER"; "hybrid,gemini,openai")
+                  | upsert_env("GPT_ITEM_PROFILE_TIMEOUT_S"; "120")
                   | upsert_env("STRIPE_SECRET_KEY"; $STRIPE_SECRET_KEY)
                   | upsert_env("STRIPE_PUBLISHABLE_KEY"; $STRIPE_PUBLISHABLE_KEY))
                 else . end
@@ -179,7 +192,74 @@ jobs:
             --service "${SERVICE}" \
             --task-definition "${NEW_TASK_DEF_ARN}" \
             --force-new-deployment >/dev/null
-          echo "Fast ECS deploy started on ${SERVICE} with ${IMAGE_URI}"
+          aws ecs wait services-stable --cluster "${CLUSTER}" --services "${SERVICE}"
+
+          SUBNETS=$(aws ecs describe-services --cluster "${CLUSTER}" --services "${SERVICE}" \
+            --query 'services[0].networkConfiguration.awsvpcConfiguration.subnets' --output text | tr '\t' ',')
+          SECURITY_GROUPS=$(aws ecs describe-services --cluster "${CLUSTER}" --services "${SERVICE}" \
+            --query 'services[0].networkConfiguration.awsvpcConfiguration.securityGroups' --output text | tr '\t' ',')
+          ASSIGN_PUBLIC_IP=$(aws ecs describe-services --cluster "${CLUSTER}" --services "${SERVICE}" \
+            --query 'services[0].networkConfiguration.awsvpcConfiguration.assignPublicIp' --output text)
+          cat > /tmp/openai-smoke.py <<'PY'
+          import json
+          import os
+          import sys
+
+          import httpx
+
+          key = os.getenv("OPENAI_API_KEY", "").strip()
+          result = {"openai_key_configured": bool(key), "status_code": None, "error": None}
+          exit_code = 1
+          if not key:
+              result["error"] = "OPENAI_API_KEY missing"
+          else:
+              try:
+                  resp = httpx.post(
+                      "https://api.openai.com/v1/responses",
+                      headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                      json={"model": "gpt-5-nano", "input": "Return only OK."},
+                      timeout=60,
+                  )
+                  result["status_code"] = resp.status_code
+                  if resp.status_code < 400:
+                      exit_code = 0
+                  else:
+                      result["error"] = resp.text[:800]
+              except Exception as exc:
+                  result["error"] = str(exc)
+
+          print("OPENAI_DEPLOY_SMOKE=" + json.dumps(result))
+          error = str(result.get("error") or "")
+          if "insufficient_quota" in error or "credit_balance_exhausted" in error:
+              sys.exit(86)
+          sys.exit(exit_code)
+          PY
+          jq -n --rawfile code /tmp/openai-smoke.py \
+            '{containerOverrides:[{name:"api",command:["python","-c",$code]}]}' > /tmp/openai-smoke-overrides.json
+          SMOKE_TASK_ARN=$(aws ecs run-task \
+            --cluster "${CLUSTER}" \
+            --task-definition "${NEW_TASK_DEF_ARN}" \
+            --launch-type FARGATE \
+            --network-configuration "awsvpcConfiguration={subnets=[${SUBNETS}],securityGroups=[${SECURITY_GROUPS}],assignPublicIp=${ASSIGN_PUBLIC_IP}}" \
+            --overrides file:///tmp/openai-smoke-overrides.json \
+            --query 'tasks[0].taskArn' \
+            --output text)
+          set +e
+          aws ecs wait tasks-stopped --cluster "${CLUSTER}" --tasks "${SMOKE_TASK_ARN}"
+          SMOKE_EXIT=$(aws ecs describe-tasks --cluster "${CLUSTER}" --tasks "${SMOKE_TASK_ARN}" \
+            --query 'tasks[0].containers[0].exitCode' --output text)
+          set -e
+          if [ "${SMOKE_EXIT}" != "0" ]; then
+            echo "OpenAI post-deploy smoke test failed with exit code ${SMOKE_EXIT}; rolling back to ${CURRENT_TASK_DEF_ARN}" >&2
+            aws ecs update-service \
+              --cluster "${CLUSTER}" \
+              --service "${SERVICE}" \
+              --task-definition "${CURRENT_TASK_DEF_ARN}" \
+              --force-new-deployment >/dev/null
+            aws ecs wait services-stable --cluster "${CLUSTER}" --services "${SERVICE}"
+            exit 1
+          fi
+          echo "Fast ECS deploy completed on ${SERVICE} with ${IMAGE_URI}"
 
       - name: Setup Terraform
         if: steps.mode.outputs.use_terraform == 'true'

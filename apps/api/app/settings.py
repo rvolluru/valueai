@@ -78,7 +78,7 @@ class Settings(BaseSettings):
     gpt_item_profile_provider_order: str = "hybrid,gemini,openai"
     gpt_item_profile_model: str = "gpt-5"
     gpt_item_profile_gemini_model: str = "gemini-2.5-flash"
-    gpt_item_profile_timeout_s: float = 25.0
+    gpt_item_profile_timeout_s: float = 120.0
     gpt_item_profile_max_images: int = Field(default=6, ge=1, le=6)
     gpt_item_profile_image_detail: str = "auto"
     gpt_item_profile_reasoning_effort: str = "low"
@@ -128,6 +128,7 @@ class Settings(BaseSettings):
     )
 
     valuation_enabled: bool = True
+    valuation_comps_enabled: bool = False
     valuation_providers: str = "stub"
     valuation_min_comps: int = 3
     valuation_max_comps: int = 25
@@ -145,12 +146,20 @@ class Settings(BaseSettings):
     usps_addresses_api_url: str = "https://apis.usps.com/addresses/v3/address"
     usps_bearer_token: str | None = None
     usps_timeout_s: float = 8.0
+    google_places_api_key: str | None = None
+    google_places_autocomplete_url: str = "https://places.googleapis.com/v1/places:autocomplete"
+    google_places_details_url: str = "https://places.googleapis.com/v1/places/{place_id}"
+    google_places_timeout_s: float = 8.0
     stripe_secret_key: str | None = None
     stripe_publishable_key: str | None = None
     paypal_client_id: str | None = None
     shippo_api_key: str | None = None
     shippo_api_base_url: str = "https://api.goshippo.com"
     shippo_parcel_weight_oz: float = 32.0
+    shippo_flat_rate_enabled: bool = True
+    shippo_flat_rate_amount: str = "6.49"
+    shippo_flat_rate_currency: str = "USD"
+    shippo_flat_rate_max_weight_oz: float = 32.0
     shippo_default_contact_email: str | None = None
     shippo_default_contact_phone: str | None = None
     email_provider: str = "auto"  # auto|ses|smtp
@@ -166,6 +175,7 @@ class Settings(BaseSettings):
     ses_template_forgot_password: str | None = "jouft-forgot-password-v1"
     ses_template_offer_update: str | None = "jouft-offer-update-v1"
     ses_template_shipping_reminder: str | None = "jouft-shipping-reminder-v1"
+    ses_template_shipping_tracking_update: str | None = "jouft-shipping-tracking-update-v1"
     smtp_host: str | None = None
     smtp_port: int = 587
     smtp_username: str | None = None

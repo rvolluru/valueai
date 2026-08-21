@@ -133,6 +133,52 @@ variable "photoroom_output_size" {
   default = "full"
 }
 
+variable "shippo_api_key" {
+  type      = string
+  default   = ""
+  sensitive = true
+}
+
+variable "shippo_api_base_url" {
+  type    = string
+  default = "https://api.goshippo.com"
+}
+
+variable "shippo_parcel_weight_oz" {
+  type    = number
+  default = 32
+}
+
+variable "shippo_flat_rate_enabled" {
+  type    = bool
+  default = true
+}
+
+variable "shippo_flat_rate_amount" {
+  type    = string
+  default = "6.49"
+}
+
+variable "shippo_flat_rate_currency" {
+  type    = string
+  default = "USD"
+}
+
+variable "shippo_flat_rate_max_weight_oz" {
+  type    = number
+  default = 80
+}
+
+variable "shippo_default_contact_email" {
+  type    = string
+  default = ""
+}
+
+variable "shippo_default_contact_phone" {
+  type    = string
+  default = ""
+}
+
 variable "clerk_enabled" {
   type    = bool
   default = false
@@ -191,7 +237,7 @@ variable "gpt_item_profile_gemini_model" {
 
 variable "gpt_item_profile_timeout_s" {
   type    = number
-  default = 25
+  default = 120
 }
 
 variable "gpt_item_profile_max_images" {
@@ -272,6 +318,11 @@ variable "valuation_enabled" {
   default = true
 }
 
+variable "valuation_comps_enabled" {
+  type    = bool
+  default = false
+}
+
 variable "valuation_min_comps" {
   type    = number
   default = 3
@@ -319,6 +370,12 @@ variable "stripe_secret_key" {
 }
 
 variable "stripe_publishable_key" {
+  type      = string
+  default   = ""
+  sensitive = true
+}
+
+variable "google_places_api_key" {
   type      = string
   default   = ""
   sensitive = true

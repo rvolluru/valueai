@@ -34,7 +34,7 @@ from valuation import ValuationConfig, ValuationService
 from valuation.types import ValuationRequest
 
 from .auth import AuthPrincipal, get_request_principal, require_clerk_user
-from .db import Database, PersistedImage
+from .db import Database, PersistedImage, utc_now_iso
 from .deps import (
     get_db,
     get_gpt_item_profiler,
@@ -348,9 +348,9 @@ def _normalize_listing_media_for_storage(
     *,
     db: Database,
     image: str | None,
-    images: list[str] | None,
+    images: list[object] | None,
     source_item_id: str | None,
-) -> tuple[str | None, list[str]]:
+) -> tuple[str | None, list[object]]:
     def resolve(value: object) -> str | None:
         if not isinstance(value, str):
             return None
@@ -370,10 +370,22 @@ def _normalize_listing_media_for_storage(
             return None
         return None
 
-    normalized_images: list[str] = []
+    normalized_images: list[object] = []
     seen_image_keys: set[str] = set()
     if isinstance(images, list):
         for entry in images:
+            if isinstance(entry, dict):
+                original = resolve(entry.get("p_img") or entry.get("original_image") or entry.get("source_image"))
+                display = resolve(entry.get("d_img") or entry.get("display_image") or entry.get("image") or original)
+                key = _image_url_dedupe_key(display)
+                if display and key not in seen_image_keys:
+                    normalized_images.append({
+                        "p_img": original or display,
+                        "d_img": display,
+                        "is_hero": bool(entry.get("is_hero")),
+                    })
+                    seen_image_keys.add(key)
+                continue
             url = resolve(entry)
             key = _image_url_dedupe_key(url)
             if url and key not in seen_image_keys:
@@ -387,9 +399,25 @@ def _normalize_listing_media_for_storage(
         seen_image_keys.add(normalized_image_key)
 
     if not normalized_image and normalized_images:
-        normalized_image = normalized_images[0]
+        first = normalized_images[0]
+        normalized_image = first.get("d_img") if isinstance(first, dict) else first
 
     return normalized_image, normalized_images
+
+
+def _display_image_urls_from_storage_images(images: list[object] | None) -> list[str]:
+    urls: list[str] = []
+    seen: set[str] = set()
+    for entry in images or []:
+        value = entry.get("d_img") if isinstance(entry, dict) else entry
+        if not isinstance(value, str) or not value.strip():
+            continue
+        key = _image_url_dedupe_key(value)
+        if key in seen:
+            continue
+        urls.append(value.strip())
+        seen.add(key)
+    return urls
 
 
 def _same_listing_image_urls(left: list[str] | None, right: list[str] | None) -> bool:
@@ -416,6 +444,19 @@ def _profile_owner_display_name(db: Database, owner_subject: object, fallback: o
     fallback_name = str(fallback or "").strip()
     if fallback_name and fallback_name != subject and not fallback_name.lower().startswith("user_"):
         return fallback_name
+    return "Member"
+
+
+def _profile_subject_first_name(db: Database, owner_subject: object, fallback: object = None) -> str:
+    subject = str(owner_subject or "").strip()
+    profile = db.get_user_profile_quiz(subject) if subject else None
+    if profile:
+        first_name = profile.get("first_name")
+        if isinstance(first_name, str) and first_name.strip():
+            return first_name.strip()
+    fallback_name = str(fallback or "").strip()
+    if fallback_name and fallback_name != subject and not fallback_name.lower().startswith("user_"):
+        return fallback_name.split()[0]
     return "Member"
 
 
@@ -448,6 +489,46 @@ def _uploaded_image_urls_from_analysis(analysis: object) -> list[str]:
         if normalized and normalized not in urls:
             urls.append(normalized)
     return urls
+
+
+def _listing_storage_images(
+    payload_images: list[str] | None,
+    analysis: object,
+    listed_images: list[object] | None = None,
+) -> list[object]:
+    explicit_listed_images: list[dict[str, object]] = []
+    for entry in listed_images or []:
+        if hasattr(entry, "model_dump"):
+            entry = entry.model_dump()
+        if not isinstance(entry, dict):
+            continue
+        original = entry.get("p_img") or entry.get("original_image") or entry.get("source_image")
+        display = entry.get("d_img") or entry.get("display_image") or entry.get("image") or original
+        if isinstance(display, str) and display.strip() and _normalize_public_image_url(display):
+            explicit_listed_images.append({
+                "p_img": original if isinstance(original, str) and original.strip() else display,
+                "d_img": display,
+                "is_hero": bool(entry.get("is_hero")),
+            })
+    if explicit_listed_images:
+        return explicit_listed_images
+
+    explicit_images = [
+        url
+        for url in (payload_images or [])
+        if isinstance(url, str) and url.strip() and _normalize_public_image_url(url)
+    ]
+    if explicit_images:
+        original_images = _uploaded_image_urls_from_analysis(analysis)
+        return [
+            {
+                "p_img": original_images[idx] if idx < len(original_images) else url,
+                "d_img": url,
+                "is_hero": idx == 0,
+            }
+            for idx, url in enumerate(explicit_images)
+        ]
+    return _uploaded_image_urls_from_analysis(analysis)
 
 
 def _uploaded_images_for_item(db: Database, item_id: str | None) -> list[dict]:
@@ -485,6 +566,69 @@ def _profile_description_from_analysis(response_payload: dict) -> tuple[str, str
     return model_name, profile_description
 
 
+_DEFAULT_LISTING_TITLES = {"", "new listing", "unknown", "unknown unknown", "n/a", "none"}
+
+
+def _listing_title_from_analysis(
+    current_title: object,
+    *,
+    model_name: str,
+    profile: dict,
+    brand: str,
+    category: str,
+) -> str:
+    existing = str(current_title or "").strip()
+    if existing.casefold() not in _DEFAULT_LISTING_TITLES:
+        return existing
+
+    normalized_brand = str(brand or "").strip()
+    if normalized_brand.casefold() in {"", "unknown", "n/a", "none"}:
+        normalized_brand = ""
+
+    model = str(model_name or "").strip()
+    if model.casefold() in _DEFAULT_LISTING_TITLES:
+        model = ""
+    unidentified_prefix = "unidentified "
+    model_was_generic = model.casefold().startswith(unidentified_prefix)
+    if model_was_generic:
+        model = model[len(unidentified_prefix):].strip()
+
+    if model:
+        if model_was_generic and normalized_brand and not model.casefold().startswith(normalized_brand.casefold()):
+            return f"{normalized_brand} {model}".strip()
+        return model
+
+    shipping_profile = profile.get("shipping_profile") if isinstance(profile.get("shipping_profile"), dict) else {}
+    item_type = str(shipping_profile.get("item_type") or "").strip()
+    if not item_type or item_type.casefold() in {"unknown", "item"}:
+        item_type = str(category or "").strip()
+    if item_type.casefold() in {"", "unknown", "clothes", "accessories"}:
+        item_type = "item"
+    if normalized_brand:
+        return f"{normalized_brand} {item_type}".strip()
+    return "New listing"
+
+
+def _normalize_condition_for_analysis_reuse(value: object) -> str:
+    normalized = str(value or "").strip().replace("-", "").replace("_", "").replace(" ", "").casefold()
+    return VALID_CONDITION_GRADES.get(normalized, "")
+
+
+def _cached_analysis_is_strong_enough_for_reuse(response_payload: dict) -> bool:
+    brand = response_payload.get("brand") if isinstance(response_payload.get("brand"), dict) else {}
+    brand_name = str(brand.get("name") or "").strip()
+    brand_confidence = float(brand.get("confidence") or 0)
+    profile = response_payload.get("item_profile") if isinstance(response_payload.get("item_profile"), dict) else {}
+    model = profile.get("model_identification") if isinstance(profile.get("model_identification"), dict) else {}
+    model_name = str(model.get("name") or "").strip()
+    unknown_values = {"", "unknown", "unknown unknown", "n/a", "none"}
+    if brand_name.casefold() in unknown_values:
+        return False
+    if model_name.casefold() in unknown_values:
+        return False
+    return brand_confidence >= 0.7
+
+
 def _reuse_recent_analysis_for_listing(
     *,
     db: Database,
@@ -498,8 +642,39 @@ def _reuse_recent_analysis_for_listing(
     image_hashes = db.list_image_content_hashes_for_item(source_item_id, limit=20)
     if not image_hashes:
         return None
-    cached = db.find_recent_analysis_by_image_hashes(image_hashes, limit=50)
+    cached = db.find_recent_analysis_by_image_hashes(
+        image_hashes,
+        limit=50,
+        owner_subject=owner_subject,
+    )
     if not cached or not isinstance(cached.get("response"), dict):
+        return None
+    if not _cached_analysis_is_strong_enough_for_reuse(cached["response"]):
+        brand = cached["response"].get("brand") if isinstance(cached["response"].get("brand"), dict) else {}
+        log_json(
+            "listing_analysis_reuse_skipped_weak_cached_analysis",
+            listing_id=listing_id,
+            actor=owner_subject,
+            source_item_id=source_item_id,
+            source_analysis_id=cached.get("analysis_id"),
+            cached_brand=brand.get("name"),
+            cached_brand_confidence=brand.get("confidence"),
+            image_count=len(image_hashes),
+        )
+        return None
+    cached_condition = _normalize_condition_for_analysis_reuse(cached["response"].get("user_condition"))
+    current_condition = _normalize_condition_for_analysis_reuse(current.get("condition"))
+    if not cached_condition or not current_condition or cached_condition != current_condition:
+        log_json(
+            "listing_analysis_reuse_skipped_condition_mismatch",
+            listing_id=listing_id,
+            actor=owner_subject,
+            source_item_id=source_item_id,
+            source_analysis_id=cached.get("analysis_id"),
+            cached_condition=cached_condition or None,
+            current_condition=current_condition or None,
+            image_count=len(image_hashes),
+        )
         return None
     response_payload = copy.deepcopy(cached["response"])
     response_payload["item_id"] = source_item_id
@@ -527,9 +702,13 @@ def _reuse_recent_analysis_for_listing(
         image_urls = [url for url in existing_images if isinstance(url, str) and url.strip()]
     if not image_urls and isinstance(current.get("image"), str) and current.get("image"):
         image_urls = [str(current["image"])]
-    title = str(current.get("title") or "").strip()
-    if title == "New listing":
-        title = model_name or title
+    title = _listing_title_from_analysis(
+        current.get("title"),
+        model_name=model_name,
+        profile=profile,
+        brand=brand,
+        category=resolved_category,
+    )
     description = str(current.get("description") or "").strip() or profile_description
     db.update_listing(
         listing_id=listing_id,
@@ -688,6 +867,7 @@ def _image_file_from_listing_url(
         "filename": f"listing-image-{index + 1}{ext}",
         "content_type": content_type,
         "data": data,
+        "source_url": f"/v1/images/{image_id}",
     }
 
 
@@ -2563,6 +2743,125 @@ def _usps_address_suggest(
     }
 
 
+def _google_places_address_suggest(
+    *,
+    q: str,
+    city: str | None,
+    state: str | None,
+    postal_code: str | None,
+    settings: Settings,
+) -> dict:
+    key = (settings.google_places_api_key or "").strip()
+    query = " ".join(
+        part
+        for part in [
+            (q or "").strip(),
+            (city or "").strip(),
+            (state or "").strip().upper(),
+            (postal_code or "").strip(),
+        ]
+        if part
+    )
+    if not key or len((q or "").strip()) < 3:
+        return {"suggestions": []}
+    headers = {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": key,
+        "X-Goog-FieldMask": "suggestions.placePrediction.placeId,suggestions.placePrediction.text",
+    }
+    payload = {
+        "input": query,
+        "includedPrimaryTypes": ["street_address", "premise"],
+        "includedRegionCodes": ["us"],
+        "languageCode": "en-US",
+    }
+    try:
+        with httpx.Client(timeout=settings.google_places_timeout_s) as client:
+            resp = client.post(settings.google_places_autocomplete_url, json=payload, headers=headers)
+        if resp.status_code >= 400:
+            return {"suggestions": []}
+        body = resp.json() if resp.content else {}
+    except Exception:
+        return {"suggestions": []}
+    raw_suggestions = body.get("suggestions") if isinstance(body, dict) else None
+    if not isinstance(raw_suggestions, list):
+        return {"suggestions": []}
+
+    suggestions: list[dict[str, str | None]] = []
+    with httpx.Client(timeout=settings.google_places_timeout_s) as client:
+        for raw in raw_suggestions[:5]:
+            prediction = raw.get("placePrediction") if isinstance(raw, dict) else None
+            if not isinstance(prediction, dict):
+                continue
+            place_id = str(prediction.get("placeId") or "").strip()
+            text_obj = prediction.get("text") if isinstance(prediction.get("text"), dict) else {}
+            formatted = str(text_obj.get("text") or "").strip()
+            if not place_id:
+                continue
+            detail_headers = {
+                "X-Goog-Api-Key": key,
+                "X-Goog-FieldMask": "formattedAddress,addressComponents",
+            }
+            try:
+                detail_resp = client.get(
+                    settings.google_places_details_url.format(place_id=place_id),
+                    headers=detail_headers,
+                )
+                if detail_resp.status_code >= 400:
+                    continue
+                detail = detail_resp.json() if detail_resp.content else {}
+            except Exception:
+                continue
+            components = detail.get("addressComponents") if isinstance(detail, dict) else None
+            if not isinstance(components, list):
+                continue
+            by_type: dict[str, dict] = {}
+            for component in components:
+                if not isinstance(component, dict):
+                    continue
+                for ctype in component.get("types") or []:
+                    by_type[str(ctype)] = component
+
+            def comp_long(name: str) -> str:
+                component = by_type.get(name) or {}
+                return str(component.get("longText") or component.get("long_name") or "").strip()
+
+            def comp_short(name: str) -> str:
+                component = by_type.get(name) or {}
+                return str(component.get("shortText") or component.get("short_name") or comp_long(name)).strip()
+
+            street_number = comp_long("street_number")
+            route = comp_long("route")
+            street_line = " ".join(part for part in [street_number, route] if part).strip()
+            city_name = (
+                comp_long("locality")
+                or comp_long("postal_town")
+                or comp_long("sublocality")
+                or comp_long("administrative_area_level_3")
+            )
+            state_code = comp_short("administrative_area_level_1").upper()
+            zip_code = comp_long("postal_code")
+            zip_suffix = comp_long("postal_code_suffix")
+            postal = zip_code if not zip_suffix else f"{zip_code}-{zip_suffix}"
+            country = comp_short("country").upper() or "US"
+            formatted_address = str(detail.get("formattedAddress") or formatted).strip()
+            if not street_line:
+                continue
+            suggestions.append(
+                {
+                    "street_address": street_line,
+                    "city": city_name,
+                    "state": state_code,
+                    "postal_code": postal,
+                    "country": country,
+                    "formatted": formatted_address or ", ".join([x for x in [street_line, city_name, state_code, postal] if x]),
+                    "place_id": place_id,
+                    "provider": "google_places",
+                }
+            )
+    return {"suggestions": suggestions}
+
+
 @app.get("/v1/shippo/address-suggest")
 def shippo_address_suggest(
     q: str = Query(default="", min_length=0, max_length=120),
@@ -2572,6 +2871,23 @@ def shippo_address_suggest(
     settings: Settings = Depends(get_settings),
 ):
     return _shippo_address_suggest(
+        q=q,
+        city=city,
+        state=state,
+        postal_code=postal_code,
+        settings=settings,
+    )
+
+
+@app.get("/v1/google/places/address-suggest")
+def google_places_address_suggest(
+    q: str = Query(default="", min_length=0, max_length=120),
+    city: str | None = Query(default=None, max_length=80),
+    state: str | None = Query(default=None, max_length=2),
+    postal_code: str | None = Query(default=None, max_length=10),
+    settings: Settings = Depends(get_settings),
+):
+    return _google_places_address_suggest(
         q=q,
         city=city,
         state=state,
@@ -2727,11 +3043,10 @@ def create_listing(
     valuation_service: ValuationService = Depends(get_valuation_service),
     gpt_item_profiler=Depends(get_gpt_item_profiler),
 ):
-    analysis_image_urls = _uploaded_image_urls_from_analysis(payload.analysis)
     normalized_image, normalized_images = _normalize_listing_media_for_storage(
         db=db,
         image=payload.image,
-        images=[*(payload.images or []), *analysis_image_urls],
+        images=_listing_storage_images(payload.images, payload.analysis, payload.listed_images),
         source_item_id=payload.source_item_id,
     )
     listing_id = str(uuid.uuid4())
@@ -2786,68 +3101,27 @@ def create_listing(
     )
     response_payload = payload.model_dump()
     response_payload["image"] = normalized_image
-    response_payload["images"] = normalized_images
+    response_payload["images"] = _display_image_urls_from_storage_images(normalized_images)
+    response_payload["listed_images"] = [
+        entry if isinstance(entry, dict) else {"p_img": entry, "d_img": entry, "is_hero": entry == normalized_image}
+        for entry in normalized_images
+    ]
     if str(payload.status or "").lower() == "analyzing":
-        listing_for_analysis = {
-            "listing_id": listing_id,
-            "owner_subject": principal.subject,
-            "title": payload.title,
-            "category": payload.category,
-            "brand": payload.brand,
-            "condition": payload.condition,
-            "size": payload.size,
-            "estimated_value": payload.estimated_value,
-            "city": payload.city,
-            "image": normalized_image,
-            "images": normalized_images,
-            "description": payload.description,
-            "wants": payload.wants,
-            "source_item_id": payload.source_item_id,
-            "analysis": payload.analysis,
-        }
-        reused_payload = _reuse_recent_analysis_for_listing(
-            db=db,
+        background_tasks.add_task(
+            _run_listing_analysis_for_existing_listing_job,
             listing_id=listing_id,
             owner_subject=principal.subject,
-            current=listing_for_analysis,
+            category=payload.category,
+            item_size=payload.size,
+            user_condition=payload.condition,
+            item_description=payload.description,
+            debug=True,
+            settings=settings,
+            valuation_service=valuation_service,
+            gpt_item_profiler=gpt_item_profiler,
+            stage_images_after_analysis=True,
         )
-        if reused_payload:
-            response_payload.update(reused_payload)
-            return ListingResponse(
-                listing_id=listing_id,
-                owner_subject=principal.subject,
-                owner_name=owner_name,
-                created_at=created_at,
-                **response_payload,
-            )
-        files = _collect_listing_analysis_files(db=db, settings=settings, listing=listing_for_analysis)
-        if files:
-            background_tasks.add_task(
-                _run_listing_analysis_job,
-                listing_id=listing_id,
-                owner_subject=principal.subject,
-                files=files,
-                category=payload.category,
-                item_size=payload.size,
-                user_condition=payload.condition,
-                item_description=payload.description,
-                debug=True,
-                settings=settings,
-                valuation_service=valuation_service,
-                gpt_item_profiler=gpt_item_profiler,
-                stage_images_after_analysis=True,
-            )
-            log_json(
-                "listing_analysis_auto_queued",
-                listing_id=listing_id,
-                actor=principal.subject,
-                image_count=len(files),
-            )
-        else:
-            _mark_listing_analysis_failed(db, listing_for_analysis, principal.subject)
-            response_payload["status"] = "AnalysisFailed"
-            response_payload["tags"] = ["Analysis failed"]
-            log_json("listing_analysis_auto_queue_no_files", listing_id=listing_id, actor=principal.subject)
+        log_json("listing_analysis_auto_queued", listing_id=listing_id, actor=principal.subject)
     return ListingResponse(
         listing_id=listing_id,
         owner_subject=principal.subject,
@@ -2860,6 +3134,7 @@ def create_listing(
 @app.get("/v1/listings")
 def list_recent_listings(
     limit: int = 50,
+    offset: int = 0,
     mine: bool = False,
     include_matches: bool = False,
     principal: AuthPrincipal = Depends(get_request_principal),
@@ -2911,6 +3186,7 @@ def list_recent_listings(
         return record
 
     safe_limit = max(1, min(limit, 100))
+    safe_offset = max(0, offset)
     cutoff = (datetime.now(timezone.utc) - timedelta(minutes=15)).isoformat()
     try:
         stale_count = db.mark_stale_analyzing_listings_failed(cutoff)
@@ -2919,10 +3195,12 @@ def list_recent_listings(
     except Exception as exc:
         log_json("stale_analyzing_cleanup_error", error=str(exc))
     records = (
-        db.list_owner_listings(principal.subject, limit=safe_limit)
+        db.list_owner_listings(principal.subject, limit=safe_limit + 1, offset=safe_offset)
         if mine
-        else db.list_recent_listings(limit=safe_limit, include_analysis=False, include_media=True, active_only=True)
+        else db.list_recent_listings(limit=safe_limit + 1, offset=safe_offset, include_analysis=False, include_media=True, active_only=True)
     )
+    has_more = len(records) > safe_limit
+    records = records[:safe_limit]
     records = [_normalize_listing_media(record) for record in records]
 
     if include_matches and not mine:
@@ -2976,6 +3254,10 @@ def list_recent_listings(
             record["matches"] = matches
     return {
         "count": len(records),
+        "limit": safe_limit,
+        "offset": safe_offset,
+        "next_offset": safe_offset + len(records) if has_more else None,
+        "has_more": has_more,
         "items": records,
         "actor": {"auth_type": principal.auth_type, "subject": principal.subject},
     }
@@ -3184,11 +3466,10 @@ def update_listing(
     gpt_item_profiler=Depends(get_gpt_item_profiler),
 ):
     previous_record = next((r for r in db.list_owner_listings(principal.subject, limit=500) if r["listing_id"] == listing_id), None)
-    analysis_image_urls = _uploaded_image_urls_from_analysis(payload.analysis)
     normalized_image, normalized_images = _normalize_listing_media_for_storage(
         db=db,
         image=payload.image,
-        images=[*(payload.images or []), *analysis_image_urls],
+        images=_listing_storage_images(payload.images, payload.analysis, payload.listed_images),
         source_item_id=payload.source_item_id,
     )
     updated = db.update_listing(
@@ -3220,7 +3501,7 @@ def update_listing(
         previous_images = previous_record.get("images") if isinstance(previous_record, dict) and isinstance(previous_record.get("images"), list) else []
         if not previous_images and isinstance(previous_record, dict) and isinstance(previous_record.get("image"), str) and previous_record.get("image"):
             previous_images = [str(previous_record["image"])]
-        stage_images_after_analysis = not _same_listing_image_urls(previous_images, normalized_images)
+        stage_images_after_analysis = not _same_listing_image_urls(previous_images, _display_image_urls_from_storage_images(normalized_images))
         files = _collect_listing_analysis_files(db=db, settings=settings, listing=record)
         if files:
             background_tasks.add_task(
@@ -3297,7 +3578,7 @@ def create_offer(
     target_value = float(target.get("estimated_value") or 0)
     if target_value <= 0:
         raise HTTPException(status_code=400, detail="Target listing must have a valid estimated value")
-    offered_value_total = 0.0
+    tolerance, _ = _trade_match_tolerance(target_value)
     for offered_id in offered_ids:
         offered = db.get_listing_by_id(offered_id)
         if not offered:
@@ -3309,10 +3590,8 @@ def create_offer(
         offered_value = float(offered.get("estimated_value") or 0)
         if offered_value <= 0:
             raise HTTPException(status_code=400, detail="All offered listings must have a valid estimated value")
-        offered_value_total += offered_value
-    tolerance, _ = _trade_match_tolerance(target_value)
-    if abs(offered_value_total - target_value) > tolerance:
-        raise HTTPException(status_code=400, detail="Offered total is outside the trade price band")
+        if abs(offered_value - target_value) > tolerance:
+            raise HTTPException(status_code=400, detail="Each offered listing must be within the trade price band")
 
     offer = db.create_trade_offer(
         offer_id=str(uuid.uuid4()),
@@ -3321,8 +3600,11 @@ def create_offer(
         offered_listing_ids=offered_ids,
         from_subject=principal.subject,
         to_subject=target["owner_subject"],
+        from_receive_address=_profile_primary_shipping_address_for_offer(db, principal.subject, settings),
         message=(payload.message or "").strip(),
     )
+    offer["from_name"] = _profile_subject_first_name(db, offer.get("from_subject"))
+    offer["to_name"] = _profile_subject_first_name(db, offer.get("to_subject"))
     return OfferResponse(**offer)
 
 
@@ -3348,6 +3630,9 @@ def list_incoming_offers(
         if not offered_ids and isinstance(offer.get("offered_listing_id"), str):
             offered_ids = [offer["offered_listing_id"]]
         listing_ids.extend(offered_ids)
+        selected_offered_id = str(offer.get("selected_offered_listing_id") or "").strip()
+        if selected_offered_id:
+            listing_ids.append(selected_offered_id)
     listing_map = db.get_listings_by_ids(listing_ids)
     items: list[OfferWithListingsResponse] = []
     for offer in offers:
@@ -3355,7 +3640,9 @@ def list_incoming_offers(
         offered_ids = [x for x in (offer.get("offered_listing_ids") or []) if isinstance(x, str) and x.strip()]
         offered_listings = [listing_map.get(str(x)) for x in offered_ids]
         offered_listings = [x for x in offered_listings if x]
-        offered = offered_listings[0] if offered_listings else listing_map.get(str(offer["offered_listing_id"]))
+        selected_offered_id = str(offer.get("selected_offered_listing_id") or "").strip()
+        offered = listing_map.get(selected_offered_id) if selected_offered_id else None
+        offered = offered or (offered_listings[0] if offered_listings else listing_map.get(str(offer["offered_listing_id"])))
         if not target or not offered:
             continue
         items.append(
@@ -3364,8 +3651,11 @@ def list_incoming_offers(
                 target_listing_id=offer["target_listing_id"],
                 offered_listing_id=offer["offered_listing_id"],
                 offered_listing_ids=offered_ids or [offer["offered_listing_id"]],
+                selected_offered_listing_id=offer.get("selected_offered_listing_id"),
                 from_subject=offer["from_subject"],
                 to_subject=offer["to_subject"],
+                from_name=_profile_subject_first_name(db, offer.get("from_subject")),
+                to_name=_profile_subject_first_name(db, offer.get("to_subject")),
                 status=offer["status"],
                 message=offer.get("message") or "",
                 created_at=offer["created_at"],
@@ -3401,25 +3691,35 @@ def action_offer(
         raise HTTPException(status_code=400, detail="Add a complete shipping address in Profile before accepting trade")
     if payload.status == "accepted" and payload.receive_address is None:
         raise HTTPException(status_code=400, detail="Select receive shipping address while accepting trade")
+    if payload.status == "accepted" and principal.subject == str(offer.get("to_subject") or ""):
+        offered_ids = [x for x in (offer.get("offered_listing_ids") or []) if isinstance(x, str) and x.strip()]
+        if not offered_ids and isinstance(offer.get("offered_listing_id"), str) and offer["offered_listing_id"].strip():
+            offered_ids = [offer["offered_listing_id"].strip()]
+        selected_offered_id = str(payload.selected_offered_listing_id or "").strip()
+        if not selected_offered_id and len(offered_ids) == 1:
+            selected_offered_id = offered_ids[0]
+        if selected_offered_id not in offered_ids:
+            raise HTTPException(status_code=400, detail="Select one offered item to accept for this trade")
     receive_address_payload = payload.receive_address.model_dump() if payload.receive_address else None
     updated = db.set_trade_offer_participant_action(
         offer_id=offer_id,
         actor_subject=principal.subject,
         status=payload.status,
         receive_address=receive_address_payload,
+        selected_offered_listing_id=payload.selected_offered_listing_id,
     )
     if not updated:
         raise HTTPException(status_code=404, detail="Offer not found")
     if str(updated.get("status") or "").lower() == "accepted":
-        offered_ids = [x for x in (updated.get("offered_listing_ids") or []) if isinstance(x, str) and x.strip()]
-        if not offered_ids and isinstance(updated.get("offered_listing_id"), str):
-            offered_ids = [updated["offered_listing_id"]]
-        db.mark_listings_traded([updated["target_listing_id"], *offered_ids])
+        accepted_offered_id = str(updated.get("selected_offered_listing_id") or updated.get("offered_listing_id") or "").strip()
+        db.mark_listings_traded([updated["target_listing_id"], accepted_offered_id])
         try:
             _auto_create_labels_for_accepted_offer_and_notify(db=db, offer=updated, settings=settings)
         except Exception:
             # Do not block offer acceptance if shipping providers/email providers are temporarily unavailable.
             pass
+    updated["from_name"] = _profile_subject_first_name(db, updated.get("from_subject"))
+    updated["to_name"] = _profile_subject_first_name(db, updated.get("to_subject"))
     return OfferResponse(**updated)
 
 
@@ -3465,16 +3765,56 @@ def _receive_address_snapshot_from_offer(*, offer: dict, subject: str, db: Datab
     return _subject_shipping_snapshot(db, subject, settings)
 
 
+def _profile_primary_shipping_address_for_offer(db: Database, subject: str, settings: Settings) -> dict[str, object] | None:
+    snapshot = _subject_shipping_snapshot(db, subject, settings)
+    if not _address_complete(snapshot):
+        return None
+    return {
+        "full_name": snapshot.get("name"),
+        "address_line1": snapshot.get("line1"),
+        "address_line2": snapshot.get("line2"),
+        "city": snapshot.get("city"),
+        "state": snapshot.get("state"),
+        "postal_code": snapshot.get("postal"),
+        "country": snapshot.get("country") or "US",
+        "is_default": True,
+    }
+
+
 def _outbound_leg_for_subject(offer: dict, subject: str) -> tuple[str, str, str, str]:
     from_subject_offer = str(offer.get("from_subject") or "")
     to_subject_offer = str(offer.get("to_subject") or "")
     offered_ids = [x for x in (offer.get("offered_listing_ids") or []) if isinstance(x, str) and x.strip()]
     if not offered_ids and isinstance(offer.get("offered_listing_id"), str):
         offered_ids = [offer["offered_listing_id"]]
+    selected_offered_id = str(offer.get("selected_offered_listing_id") or "").strip()
+    if selected_offered_id in offered_ids:
+        offered_ids = [selected_offered_id]
     target_listing_id = str(offer.get("target_listing_id") or "")
     if subject == from_subject_offer:
         return from_subject_offer, to_subject_offer, (offered_ids[0] if offered_ids else ""), target_listing_id
     return to_subject_offer, from_subject_offer, target_listing_id, (offered_ids[0] if offered_ids else "")
+
+
+def _estimated_shipping_weight_oz_from_listing(listing: dict | None, settings: Settings) -> float:
+    if isinstance(listing, dict):
+        analysis = listing.get("analysis") if isinstance(listing.get("analysis"), dict) else {}
+        profile = analysis.get("item_profile") if isinstance(analysis.get("item_profile"), dict) else {}
+        shipping_profile = profile.get("shipping_profile") if isinstance(profile.get("shipping_profile"), dict) else {}
+        weight = shipping_profile.get("estimated_weight_oz")
+        if isinstance(weight, (int, float)):
+            numeric = float(weight)
+            if 1 <= numeric <= 240:
+                return numeric
+        if isinstance(weight, str):
+            match = re.search(r"(\d+(?:\.\d+)?)", weight.lower())
+            if match:
+                numeric = float(match.group(1))
+                if "lb" in weight.lower() or "pound" in weight.lower():
+                    numeric *= 16
+                if 1 <= numeric <= 240:
+                    return numeric
+    return float(settings.shippo_parcel_weight_oz)
 
 
 def _hydrate_shipment_party_fields(db: Database, shipment: dict) -> dict:
@@ -3559,13 +3899,26 @@ def _parse_iso_dt(value: str | None) -> datetime | None:
         return None
 
 
-def _shippo_tracking_delivery_status(*, settings: Settings, carrier: str | None, tracking_number: str | None) -> str | None:
+def _shippo_carrier_token(carrier: str | None) -> str:
+    raw = str(carrier or "").strip().lower()
+    aliases = {
+        "usps": "usps",
+        "united states postal service": "usps",
+        "ups": "ups",
+        "fedex": "fedex",
+        "dhl express": "dhl_express",
+        "dhl": "dhl_express",
+    }
+    return aliases.get(raw, raw.replace(" ", "_"))
+
+
+def _shippo_tracking_snapshot(*, settings: Settings, carrier: str | None, tracking_number: str | None) -> dict | None:
     key = (settings.shippo_api_key or "").strip()
     carrier_raw = str(carrier or "").strip()
     tracking_raw = str(tracking_number or "").strip()
     if not key or not carrier_raw or not tracking_raw:
         return None
-    carrier_token = carrier_raw.lower().replace(" ", "")
+    carrier_token = _shippo_carrier_token(carrier_raw)
     base = settings.shippo_api_base_url.rstrip("/")
     headers = {"Authorization": f"ShippoToken {key}"}
     try:
@@ -3575,31 +3928,250 @@ def _shippo_tracking_delivery_status(*, settings: Settings, carrier: str | None,
             return None
         body = resp.json() if resp.content else {}
         status_obj = body.get("tracking_status") if isinstance(body, dict) else None
-        status_code = str((status_obj or {}).get("status") or "").strip().upper()
-        if status_code == "DELIVERED":
-            return "delivered"
-        if status_code in {"TRANSIT", "OUT_FOR_DELIVERY"}:
-            return "shipped"
-        return None
+        if not isinstance(status_obj, dict):
+            status_obj = {}
+        status_code = str(status_obj.get("status") or body.get("tracking_status") or "").strip().upper()
+        status_map = {
+            "UNKNOWN": "label_created",
+            "PRE_TRANSIT": "label_created",
+            "TRANSIT": "shipped",
+            "OUT_FOR_DELIVERY": "out_for_delivery",
+            "DELIVERED": "delivered",
+            "RETURNED": "returned",
+            "FAILURE": "exception",
+        }
+        events = body.get("tracking_history") if isinstance(body, dict) else []
+        history = []
+        if isinstance(events, list):
+            for event in events[:20]:
+                if not isinstance(event, dict):
+                    continue
+                history.append({
+                    "status": str(event.get("status") or "").strip(),
+                    "status_details": str(event.get("status_details") or "").strip(),
+                    "status_date": str(event.get("status_date") or "").strip(),
+                    "location": str(event.get("location") or "").strip(),
+                })
+        return {
+            "status": status_map.get(status_code, "label_created"),
+            "tracking_status": status_code.lower(),
+            "tracking_status_details": str(status_obj.get("status_details") or "").strip() or None,
+            "tracking_status_updated_at": str(status_obj.get("status_date") or "").strip() or None,
+            "tracking_eta": str(body.get("eta") or "").strip() or None,
+            "tracking_history": history,
+        }
     except Exception:
         return None
 
 
-def _refresh_shipment_tracking_status(*, db: Database, settings: Settings, shipment: dict) -> dict:
+def _tracking_status_label(value: str | None) -> str:
+    normalized = str(value or "").strip().lower()
+    labels = {
+        "label_created": "Label created",
+        "pre_transit": "Label created",
+        "shipped": "In transit",
+        "transit": "In transit",
+        "out_for_delivery": "Out for delivery",
+        "delivered": "Delivered",
+        "returned": "Returned",
+        "exception": "Delivery exception",
+    }
+    return labels.get(normalized, normalized.replace("_", " ").title() if normalized else "Tracking updated")
+
+
+def _send_tracking_update_email_if_configured(
+    *,
+    settings: Settings,
+    to_email: str | None,
+    customer_name: str | None,
+    offer_id: str,
+    tracking_number: str | None,
+    carrier: str | None,
+    service_level: str | None,
+    status_label: str,
+    status_details: str | None = None,
+    tracking_eta: str | None = None,
+) -> str:
+    recipient = str(to_email or "").strip()
+    if not recipient:
+        return "skipped_no_recipient"
+
+    subject = f"Shipping update: {status_label}"
+    optional_lines: list[str] = []
+    if status_details:
+        optional_lines.append(f"Details: {status_details}")
+    if tracking_eta:
+        optional_lines.append(f"Estimated delivery: {tracking_eta}")
+    optional_text = ("\n".join(optional_lines) + "\n") if optional_lines else ""
+    text_body = (
+        f"Hi {customer_name or 'there'},\n\n"
+        f"Shipping status for offer {offer_id}: {status_label}.\n"
+        f"Carrier: {carrier or 'USPS'}\n"
+        f"Service: {service_level or 'Priority Mail'}\n"
+        f"Tracking: {tracking_number or 'pending'}\n"
+        f"{optional_text}"
+    )
+
+    def _send_via_ses(recipient_email: str) -> str:
+        from_email = str(settings.ses_from_email or settings.smtp_from_email or "").strip()
+        template_name = str(settings.ses_template_shipping_tracking_update or "").strip()
+        region = str(settings.ses_region or settings.aws_region or "us-east-1").strip()
+        if not from_email:
+            return "skipped_ses_not_configured"
+        try:
+            session = boto3.session.Session(
+                aws_access_key_id=(settings.ses_access_key_id or None),
+                aws_secret_access_key=(settings.ses_secret_access_key or None),
+                aws_session_token=(settings.ses_session_token or None),
+                region_name=region,
+            )
+            client = session.client("ses", endpoint_url=(settings.ses_endpoint_url or None))
+            if template_name:
+                client.send_templated_email(
+                    Source=from_email,
+                    Destination={"ToAddresses": [recipient_email]},
+                    Template=template_name,
+                    TemplateData=json.dumps({
+                        "customer_name": str(customer_name or "there"),
+                        "offer_id": str(offer_id or ""),
+                        "tracking_number": str(tracking_number or ""),
+                        "carrier": str(carrier or "USPS"),
+                        "service_level": str(service_level or "Priority Mail"),
+                        "status_label": status_label,
+                        "status_details": str(status_details or ""),
+                        "tracking_eta": str(tracking_eta or ""),
+                    }),
+                )
+            else:
+                client.send_email(
+                    Source=from_email,
+                    Destination={"ToAddresses": [recipient_email]},
+                    Message={
+                        "Subject": {"Data": subject, "Charset": "UTF-8"},
+                        "Body": {"Text": {"Data": text_body, "Charset": "UTF-8"}},
+                    },
+                )
+            return "sent_ses"
+        except Exception:
+            return "failed_ses"
+
+    def _send_via_smtp(recipient_email: str) -> str:
+        host = str(settings.smtp_host or "").strip()
+        from_email = str(settings.smtp_from_email or settings.ses_from_email or "").strip()
+        if not host or not from_email:
+            return "skipped_smtp_not_configured"
+        msg = EmailMessage()
+        msg["Subject"] = subject
+        msg["From"] = from_email
+        msg["To"] = recipient_email
+        msg.set_content(text_body)
+        try:
+            with smtplib.SMTP(host, int(settings.smtp_port), timeout=20) as smtp:
+                if settings.smtp_use_tls:
+                    smtp.starttls()
+                if settings.smtp_username:
+                    smtp.login(settings.smtp_username, settings.smtp_password or "")
+                smtp.send_message(msg)
+            return "sent_smtp"
+        except Exception:
+            return "failed_smtp"
+
+    provider = str(settings.email_provider or "auto").strip().lower()
+    if provider == "ses":
+        return _send_via_ses(recipient)
+    if provider == "smtp":
+        return _send_via_smtp(recipient)
+    ses_result = _send_via_ses(recipient)
+    if ses_result == "sent_ses":
+        return ses_result
+    smtp_result = _send_via_smtp(recipient)
+    if smtp_result == "sent_smtp":
+        return smtp_result
+    if ses_result.startswith("failed"):
+        return ses_result
+    if smtp_result.startswith("failed"):
+        return smtp_result
+    return "skipped_not_configured"
+
+
+def _notify_shipment_tracking_update(*, db: Database, settings: Settings, shipment: dict, previous_status: str | None, next_status: str | None) -> None:
+    if str(previous_status or "").strip().lower() == str(next_status or "").strip().lower():
+        return
+    status_label = _tracking_status_label(next_status)
+    offer_id = str(shipment.get("offer_id") or "")
+    tracking_number = str(shipment.get("tracking_number") or "").strip()
+    title = f"Shipment {status_label.lower()}"
+    body = f"{shipment.get('carrier') or 'Carrier'} tracking {tracking_number or 'is'}: {status_label}."
+    for owner_subject in {str(shipment.get("from_subject") or ""), str(shipment.get("to_subject") or "")}:
+        if not owner_subject:
+            continue
+        db.create_user_notification(
+            notification_id=str(uuid.uuid4()),
+            owner_subject=owner_subject,
+            actor_subject=str(shipment.get("from_subject") or "") or None,
+            type="shipping-tracking",
+            title=title,
+            body=body,
+            entity_id=offer_id,
+            action_tab="inbox",
+        )
+        snapshot = _subject_shipping_snapshot(db, owner_subject, settings)
+        email_status = _send_tracking_update_email_if_configured(
+            settings=settings,
+            to_email=snapshot.get("email"),
+            customer_name=snapshot.get("name"),
+            offer_id=offer_id,
+            tracking_number=tracking_number,
+            carrier=str(shipment.get("carrier") or ""),
+            service_level=str(shipment.get("service_level") or ""),
+            status_label=status_label,
+            status_details=str(shipment.get("tracking_status_details") or "") or None,
+            tracking_eta=str(shipment.get("tracking_eta") or "") or None,
+        )
+        log_json(
+            "shipping_tracking_update_notified",
+            shipment_id=shipment.get("shipment_id"),
+            offer_id=offer_id,
+            owner_subject=owner_subject,
+            previous_status=previous_status,
+            next_status=next_status,
+            email_status=email_status,
+        )
+
+
+def _refresh_shipment_tracking_status(*, db: Database, settings: Settings, shipment: dict, notify: bool = True) -> dict:
     current_status = str(shipment.get("status") or "").strip().lower()
-    if current_status in {"shipped", "delivered", "cancelled"}:
+    if current_status in {"delivered", "cancelled"}:
         return shipment
-    tracked_status = _shippo_tracking_delivery_status(
+    snapshot = _shippo_tracking_snapshot(
         settings=settings,
         carrier=str(shipment.get("carrier") or ""),
         tracking_number=str(shipment.get("tracking_number") or ""),
     )
-    if tracked_status in {"shipped", "delivered"}:
-        updated = db.update_trade_shipment_status(
+    if not snapshot:
+        return shipment
+    tracked_status = str(snapshot.get("status") or "").strip().lower()
+    if tracked_status in {"label_created", "shipped", "out_for_delivery", "delivered", "returned", "exception"}:
+        previous_tracking_status = str(shipment.get("tracking_status") or shipment.get("status") or "").strip().lower()
+        updated = db.update_trade_shipment_tracking(
             shipment_id=str(shipment.get("shipment_id") or ""),
             status=tracked_status,
+            tracking_status=str(snapshot.get("tracking_status") or "").strip().lower() or None,
+            tracking_status_details=snapshot.get("tracking_status_details"),
+            tracking_status_updated_at=snapshot.get("tracking_status_updated_at"),
+            tracking_eta=snapshot.get("tracking_eta"),
+            tracking_history=snapshot.get("tracking_history") if isinstance(snapshot.get("tracking_history"), list) else [],
         )
         if updated:
+            next_tracking_status = str(updated.get("tracking_status") or updated.get("status") or "").strip().lower()
+            if notify:
+                _notify_shipment_tracking_update(
+                    db=db,
+                    settings=settings,
+                    shipment=updated,
+                    previous_status=previous_tracking_status,
+                    next_status=next_tracking_status,
+                )
             return updated
     return shipment
 
@@ -3609,6 +4181,7 @@ def _shippo_quote_rate(
     settings: Settings,
     from_addr: dict[str, str | None],
     to_addr: dict[str, str | None],
+    parcel_weight_oz: float | None = None,
 ) -> dict[str, str]:
     key = (settings.shippo_api_key or "").strip()
     if not key:
@@ -3620,6 +4193,7 @@ def _shippo_quote_rate(
 
     base = settings.shippo_api_base_url.rstrip("/")
     headers = {"Authorization": f"ShippoToken {key}", "Content-Type": "application/json"}
+    package_weight_oz = float(parcel_weight_oz or settings.shippo_parcel_weight_oz)
     shipment_payload = {
         "address_from": {
             "name": from_addr.get("name"),
@@ -3645,7 +4219,7 @@ def _shippo_quote_rate(
         },
         "parcels": [{
             "length": "12", "width": "10", "height": "6", "distance_unit": "in",
-            "weight": str(settings.shippo_parcel_weight_oz), "mass_unit": "oz",
+            "weight": str(package_weight_oz), "mass_unit": "oz",
         }],
         "async": False,
     }
@@ -3667,9 +4241,39 @@ def _shippo_quote_rate(
                 "amount": str(chosen.get("amount") or ""),
                 "currency": str(chosen.get("currency") or "USD"),
                 "rate_id": rate_id,
+                "parcel_weight_oz": str(package_weight_oz),
             }
     except Exception:
         return {"status": "shippo_unavailable", "carrier": "USPS", "service_level": "Priority Mail", "debug": "exception while calling Shippo API"}
+
+
+def _apply_shippo_flat_rate_quote(*, settings: Settings, quote: dict[str, str]) -> dict[str, str]:
+    if str(quote.get("status") or "").lower() != "quoted":
+        return quote
+    if not bool(getattr(settings, "shippo_flat_rate_enabled", False)):
+        return quote
+    try:
+        parcel_weight_oz = float(quote.get("parcel_weight_oz") or settings.shippo_parcel_weight_oz)
+        max_weight_oz = float(settings.shippo_flat_rate_max_weight_oz)
+    except (TypeError, ValueError):
+        return quote
+    if parcel_weight_oz > max_weight_oz:
+        return quote
+
+    real_amount = str(quote.get("amount") or "").strip()
+    real_currency = str(quote.get("currency") or "").strip() or "USD"
+    debug_parts = [str(quote.get("debug") or "").strip()] if quote.get("debug") else []
+    if real_amount:
+        debug_parts.append(f"shippo_rate={real_currency} {real_amount}")
+    debug_parts.append(
+        f"jouft_flat_rate={settings.shippo_flat_rate_currency} {settings.shippo_flat_rate_amount}; max_weight_oz={max_weight_oz:g}"
+    )
+    return {
+        **quote,
+        "amount": str(settings.shippo_flat_rate_amount),
+        "currency": str(settings.shippo_flat_rate_currency or real_currency or "USD"),
+        "debug": "; ".join(debug_parts),
+    }
 
 
 def _shippo_buy_label_from_rate(*, settings: Settings, rate_id: str) -> dict[str, str]:
@@ -3981,9 +4585,21 @@ async def _shipping_reminder_worker() -> None:
         await asyncio.sleep(poll_seconds)
 
 
+def _repair_listing_media_gallery_once(*, settings: Settings) -> None:
+    try:
+        db = Database(settings.database_url)
+        db.initialize()
+        changed = db.migrate_listing_media_urls_to_http()
+        if changed:
+            log_json("listing_media_gallery_repaired", changed=changed)
+    except Exception as exc:
+        log_json("listing_media_gallery_repair_failed", error=str(exc))
+
+
 @app.on_event("startup")
 async def _start_shipping_reminder_worker() -> None:
     settings = get_settings()
+    await asyncio.to_thread(_repair_listing_media_gallery_once, settings=settings)
     if not settings.shipping_reminder_enabled:
         return
     app.state.shipping_reminder_task = asyncio.create_task(_shipping_reminder_worker())
@@ -4055,6 +4671,7 @@ def _shippo_buy_label(
     settings: Settings,
     from_addr: dict[str, str | None],
     to_addr: dict[str, str | None],
+    parcel_weight_oz: float | None = None,
 ) -> dict[str, str]:
     key = (settings.shippo_api_key or "").strip()
     if not key:
@@ -4083,6 +4700,7 @@ def _shippo_buy_label(
         "Authorization": f"ShippoToken {key}",
         "Content-Type": "application/json",
     }
+    package_weight_oz = float(parcel_weight_oz or settings.shippo_parcel_weight_oz)
     shipment_payload = {
         "address_from": {
             "name": from_addr.get("name"),
@@ -4112,7 +4730,7 @@ def _shippo_buy_label(
                 "width": "10",
                 "height": "6",
                 "distance_unit": "in",
-                "weight": str(settings.shippo_parcel_weight_oz),
+                "weight": str(package_weight_oz),
                 "mass_unit": "oz",
             }
         ],
@@ -4241,6 +4859,9 @@ def _create_trade_shipments_if_missing(*, db: Database, offer: dict, settings: S
     offered_ids = [x for x in (offer.get("offered_listing_ids") or []) if isinstance(x, str) and x.strip()]
     if not offered_ids and isinstance(offer.get("offered_listing_id"), str):
         offered_ids = [offer["offered_listing_id"]]
+    selected_offered_id = str(offer.get("selected_offered_listing_id") or "").strip()
+    if selected_offered_id in offered_ids:
+        offered_ids = [selected_offered_id]
     if not offered_ids:
         return []
     from_subject = str(offer.get("from_subject") or "")
@@ -4251,10 +4872,12 @@ def _create_trade_shipments_if_missing(*, db: Database, offer: dict, settings: S
 
     created: list[dict] = []
     for offered_id in offered_ids:
+        offered_listing = db.get_listing_by_id(offered_id)
         label_result_offer = _shippo_buy_label(
             settings=settings,
             from_addr=sender_profile,
             to_addr=receiver_profile,
+            parcel_weight_oz=_estimated_shipping_weight_oz_from_listing(offered_listing, settings),
         )
         tracking_offer = label_result_offer.get("tracking_number") or f"TRD{uuid.uuid4().hex[:12].upper()}"
         shipment_id_offer = str(uuid.uuid4())
@@ -4288,10 +4911,12 @@ def _create_trade_shipments_if_missing(*, db: Database, offer: dict, settings: S
         )
         created_offer["label_debug"] = label_result_offer.get("debug")
         created.append(created_offer)
+    target_listing = db.get_listing_by_id(target_listing_id)
     label_result_return = _shippo_buy_label(
         settings=settings,
         from_addr=receiver_profile,
         to_addr=sender_profile,
+        parcel_weight_oz=_estimated_shipping_weight_oz_from_listing(target_listing, settings),
     )
     tracking_return = label_result_return.get("tracking_number") or f"TRD{uuid.uuid4().hex[:12].upper()}"
     shipment_id_return = str(uuid.uuid4())
@@ -4346,6 +4971,8 @@ def _create_or_refresh_trade_shipment_for_subject(
     receiver_profile = _receive_address_snapshot_from_offer(offer=offer, subject=to_subject, db=db, settings=settings)
     receiver_profile["email"] = _subject_shipping_snapshot(db, to_subject, settings).get("email")
     receiver_profile["phone"] = _subject_shipping_snapshot(db, to_subject, settings).get("phone")
+    outbound_listing = db.get_listing_by_id(from_listing_id)
+    parcel_weight_oz = _estimated_shipping_weight_oz_from_listing(outbound_listing, settings)
 
     existing_shipments = db.list_shipments_for_offer(offer_id)
     existing_leg = next(
@@ -4358,7 +4985,12 @@ def _create_or_refresh_trade_shipment_for_subject(
     if existing_leg and str(existing_leg.get("status") or "").lower() == "label_created" and str(existing_leg.get("label_url") or "").strip():
         return _hydrate_shipment_party_fields(db, existing_leg)
 
-    quote = _shippo_quote_rate(settings=settings, from_addr=sender_profile, to_addr=receiver_profile)
+    quote = _shippo_quote_rate(
+        settings=settings,
+        from_addr=sender_profile,
+        to_addr=receiver_profile,
+        parcel_weight_oz=parcel_weight_oz,
+    )
     chosen_rate_id = str(rate_id or quote.get("rate_id") or "").strip()
     label_result = _shippo_buy_label_from_rate(settings=settings, rate_id=chosen_rate_id)
     if not chosen_rate_id:
@@ -4430,23 +5062,30 @@ def get_shipping_quote(
     status_norm = str(offer.get("status") or "").lower()
     if status_norm in {"declined", "cancelled"}:
         raise HTTPException(status_code=400, detail="Shipping quote is unavailable for declined or cancelled offers")
-    from_subject, to_subject, _, _ = _outbound_leg_for_subject(offer, principal.subject)
+    from_subject, to_subject, from_listing_id, _ = _outbound_leg_for_subject(offer, principal.subject)
     from_addr = _subject_shipping_snapshot(db, from_subject, settings)
     to_addr = _receive_address_snapshot_from_offer(offer=offer, subject=to_subject, db=db, settings=settings)
     to_full = _subject_shipping_snapshot(db, to_subject, settings)
     to_addr["email"] = to_full.get("email")
     to_addr["phone"] = to_full.get("phone")
-    quote = _shippo_quote_rate(settings=settings, from_addr=from_addr, to_addr=to_addr)
+    outbound_listing = db.get_listing_by_id(from_listing_id)
+    quote = _shippo_quote_rate(
+        settings=settings,
+        from_addr=from_addr,
+        to_addr=to_addr,
+        parcel_weight_oz=_estimated_shipping_weight_oz_from_listing(outbound_listing, settings),
+    )
+    display_quote = _apply_shippo_flat_rate_quote(settings=settings, quote=quote)
     return ShippingQuoteResponse(
         offer_id=offer_id,
         actor_subject=principal.subject,
-        status=quote.get("status") or "unknown",
-        carrier=quote.get("carrier") or "USPS",
-        service_level=quote.get("service_level") or "Priority Mail",
-        amount=quote.get("amount"),
-        currency=quote.get("currency"),
-        rate_id=quote.get("rate_id"),
-        debug=quote.get("debug"),
+        status=display_quote.get("status") or "unknown",
+        carrier=display_quote.get("carrier") or "USPS",
+        service_level=display_quote.get("service_level") or "Priority Mail",
+        amount=display_quote.get("amount"),
+        currency=display_quote.get("currency"),
+        rate_id=display_quote.get("rate_id"),
+        debug=display_quote.get("debug"),
     )
 
 
@@ -4537,6 +5176,12 @@ def get_shipping_label_document(
         "service_level": shipment.get("service_level"),
         "tracking_number": shipment.get("tracking_number"),
         "label_url": shipment.get("label_url"),
+        "status": shipment.get("status"),
+        "tracking_status": shipment.get("tracking_status"),
+        "tracking_status_details": shipment.get("tracking_status_details"),
+        "tracking_status_updated_at": shipment.get("tracking_status_updated_at"),
+        "tracking_eta": shipment.get("tracking_eta"),
+        "tracking_history": shipment.get("tracking_history") or [],
         "from": {
             "name": shipment.get("from_name"),
             "line1": shipment.get("from_address_line1"),
@@ -4563,16 +5208,30 @@ def mark_shipping_shipped(
     shipment_id: str,
     principal: AuthPrincipal = Depends(get_request_principal),
     db: Database = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ):
     shipment = db.get_trade_shipment_by_id(shipment_id)
     if not shipment:
         raise HTTPException(status_code=404, detail="Shipment not found")
     if principal.subject != shipment.get("from_subject"):
         raise HTTPException(status_code=403, detail="Forbidden")
-    updated = db.update_trade_shipment_status(
+    previous_status = str(shipment.get("tracking_status") or shipment.get("status") or "").strip().lower()
+    updated = db.update_trade_shipment_tracking(
         shipment_id=shipment_id,
         status="shipped",
+        tracking_status="transit",
+        tracking_status_details="Marked shipped by sender",
+        tracking_status_updated_at=utc_now_iso(),
+        tracking_history=shipment.get("tracking_history") or [],
     )
+    if updated:
+        _notify_shipment_tracking_update(
+            db=db,
+            settings=settings,
+            shipment=updated,
+            previous_status=previous_status,
+            next_status=str(updated.get("tracking_status") or updated.get("status") or "").strip().lower(),
+        )
     return {"shipment": updated or shipment}
 
 
@@ -4833,6 +5492,7 @@ async def _run_listing_image_staging_job(
             ]
         )
         staged_urls: list[str] = []
+        listed_images: list[dict[str, object]] = []
         for idx, (entry, staged) in enumerate(zip(stage_inputs, staged_entries)):
             staged_raw, staged_content_type, stage_debug = staged
             if not isinstance(stage_debug, dict) or not stage_debug.get("applied"):
@@ -4862,7 +5522,14 @@ async def _run_listing_image_staging_job(
                 filename=f"{image_uuid}_staging.json",
                 data=json.dumps(stage_debug, indent=2).encode("utf-8"),
             )
-            staged_urls.append(f"/v1/images/{image_uuid}")
+            display_url = f"/v1/images/{image_uuid}"
+            staged_urls.append(display_url)
+            source_url = entry.get("source_url")
+            listed_images.append({
+                "p_img": source_url if isinstance(source_url, str) and source_url.strip() else display_url,
+                "d_img": display_url,
+                "is_hero": idx == 0,
+            })
 
         if not staged_urls:
             log_json("listing_image_staging_no_processed_images", listing_id=listing_id, actor=owner_subject)
@@ -4881,7 +5548,7 @@ async def _run_listing_image_staging_job(
             estimated_value=float(current.get("estimated_value") or 0),
             city=str(current.get("city") or "Your area"),
             image=staged_urls[0],
-            images=staged_urls,
+            images=listed_images,
             description=str(current.get("description") or ""),
             wants=str(current.get("wants") or "Open to similar-value offers"),
             tags=current.get("tags") if isinstance(current.get("tags"), list) else [],
@@ -4977,9 +5644,13 @@ async def _run_listing_analysis_job(
         image_urls = [url for url in existing_images if isinstance(url, str) and url.strip()]
         if not image_urls and isinstance(current.get("image"), str) and current.get("image"):
             image_urls = [str(current["image"])]
-        title = str(current.get("title") or "").strip()
-        if title == "New listing":
-            title = model_name or title
+        title = _listing_title_from_analysis(
+            current.get("title"),
+            model_name=model_name,
+            profile=profile,
+            brand=brand,
+            category=resolved_category,
+        )
         description = str(current.get("description") or "").strip() or profile_description
         job_db.update_listing(
             listing_id=listing_id,
@@ -5023,6 +5694,98 @@ async def _run_listing_analysis_job(
         current = next((r for r in job_db.list_owner_listings(owner_subject, limit=500) if r["listing_id"] == listing_id), None)
         log_json("listing_analysis_job_error", listing_id=listing_id, actor=owner_subject, error=str(exc))
         _mark_listing_analysis_failed(job_db, current, owner_subject)
+
+
+def _run_listing_analysis_job_threaded(
+    *,
+    listing_id: str,
+    owner_subject: str,
+    files: list[dict[str, object]],
+    category: str | None,
+    item_size: str | None,
+    user_condition: str | None,
+    item_description: str | None,
+    debug: bool,
+    settings: Settings,
+    valuation_service: ValuationService,
+    gpt_item_profiler,
+    stage_images_after_analysis: bool = False,
+) -> None:
+    asyncio.run(
+        _run_listing_analysis_job(
+            listing_id=listing_id,
+            owner_subject=owner_subject,
+            files=files,
+            category=category,
+            item_size=item_size,
+            user_condition=user_condition,
+            item_description=item_description,
+            debug=debug,
+            settings=settings,
+            valuation_service=valuation_service,
+            gpt_item_profiler=gpt_item_profiler,
+            stage_images_after_analysis=stage_images_after_analysis,
+        )
+    )
+
+
+def _run_listing_analysis_for_existing_listing_job(
+    *,
+    listing_id: str,
+    owner_subject: str,
+    category: str | None,
+    item_size: str | None,
+    user_condition: str | None,
+    item_description: str | None,
+    debug: bool,
+    settings: Settings,
+    valuation_service: ValuationService,
+    gpt_item_profiler,
+    stage_images_after_analysis: bool = False,
+) -> None:
+    job_db = Database(settings.database_url)
+    job_db.initialize()
+    current = next((r for r in job_db.list_owner_listings(owner_subject, limit=500) if r["listing_id"] == listing_id), None)
+    if current is None:
+        log_json("listing_analysis_job_missing_listing", listing_id=listing_id, actor=owner_subject)
+        return
+
+    reused_payload = _reuse_recent_analysis_for_listing(
+        db=job_db,
+        listing_id=listing_id,
+        owner_subject=owner_subject,
+        current=current,
+    )
+    if reused_payload:
+        log_json("listing_analysis_reused_in_background", listing_id=listing_id, actor=owner_subject)
+        return
+
+    files = _collect_listing_analysis_files(db=job_db, settings=settings, listing=current)
+    if not files:
+        _mark_listing_analysis_failed(job_db, current, owner_subject)
+        log_json("listing_analysis_auto_queue_no_files", listing_id=listing_id, actor=owner_subject)
+        return
+
+    log_json(
+        "listing_analysis_auto_queue_files_collected",
+        listing_id=listing_id,
+        actor=owner_subject,
+        image_count=len(files),
+    )
+    _run_listing_analysis_job_threaded(
+        listing_id=listing_id,
+        owner_subject=owner_subject,
+        files=files,
+        category=category,
+        item_size=item_size,
+        user_condition=user_condition,
+        item_description=item_description,
+        debug=debug,
+        settings=settings,
+        valuation_service=valuation_service,
+        gpt_item_profiler=gpt_item_profiler,
+        stage_images_after_analysis=stage_images_after_analysis,
+    )
 
 
 @app.post("/v1/listings/{listing_id}/analysis-jobs")
@@ -5097,7 +5860,7 @@ async def queue_listing_analysis(
         raise HTTPException(status_code=400, detail="No readable images uploaded")
 
     background_tasks.add_task(
-        _run_listing_analysis_job,
+        _run_listing_analysis_job_threaded,
         listing_id=listing_id,
         owner_subject=principal.subject,
         files=files,
@@ -5315,7 +6078,7 @@ async def analyze(
                 "pricing_source": "gpt_primary",
                 "pricing_fallback_used": False,
             }
-        if valuation_payload is None:
+        if valuation_payload is None and settings.valuation_comps_enabled:
             valuation_request = ValuationRequest(
                 item_id=item_id,
                 brand=brand_out.name,
@@ -5340,6 +6103,13 @@ async def analyze(
                         "status": "queued",
                         "provider": "firecrawl_agent",
                     }
+        elif valuation_payload is None and debug:
+            valuation_debug = {
+                "pricing_source": "none",
+                "pricing_fallback_used": False,
+                "comps_fallback_skipped": True,
+                "reason": "valuation_comps_disabled",
+            }
         if debug:
             valuation_debug = valuation_debug or {}
             valuation_debug["condition_source"] = "user_input" if user_condition_grade is not None else "model"

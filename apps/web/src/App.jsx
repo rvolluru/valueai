@@ -16,8 +16,9 @@ const API_DEFAULT =
   (typeof window !== 'undefined' ? window.location.origin : 'http://127.0.0.1:8000')
 const CLERK_ENABLED = Boolean(import.meta.env.VITE_CLERK_PUBLISHABLE_KEY)
 const IS_PROD = Boolean(import.meta.env.PROD)
-const VALID_TABS = new Set(['market', 'portfolio', 'inbox', 'profile', 'profile_setup', 'admin', 'trade', 'edit_listing'])
+const VALID_TABS = new Set(['market', 'portfolio', 'inbox', 'profile', 'profile_setup', 'admin', 'trade', 'edit_listing', 'review_listing'])
 const TEMP_SHOW_PROFILE_QUESTIONNAIRE_ON_LOGIN = false
+const LISTINGS_PAGE_SIZE = 24
 
 function tabFromLocation() {
   if (typeof window === 'undefined') return 'market'
@@ -35,6 +36,31 @@ function hasExplicitTabInLocation() {
 
 function tabHref(tab) {
   return `/?tab=${encodeURIComponent(tab)}`
+}
+
+function editListingHref(listingId) {
+  return `/?tab=edit_listing&listing=${encodeURIComponent(listingId || '')}`
+}
+
+function reviewListingHref(listingId) {
+  return `/?tab=review_listing&listing=${encodeURIComponent(listingId || '')}`
+}
+
+function marketListingHref(listingId) {
+  return `/?tab=market&listing=${encodeURIComponent(listingId || '')}`
+}
+
+function listingIdFromLocation() {
+  if (typeof window === 'undefined') return ''
+  const params = new URLSearchParams(window.location.search)
+  return String(params.get('listing') || '').trim()
+}
+
+function ownerFirstName(name, fallback = 'Member') {
+  const value = String(name || '').trim()
+  if (!value) return fallback
+  const first = value.split(/\s+/).find(Boolean)
+  return first || fallback
 }
 
 const seedListings = [
@@ -66,12 +92,64 @@ function confidenceLabel(value) {
   return `${Math.round(value * 100)}%`
 }
 
+function VisualConditionDebug({ assessment }) {
+  if (!assessment || typeof assessment !== 'object') return null
+  const evidence = Array.isArray(assessment.evidence)
+    ? assessment.evidence.filter((entry) => typeof entry === 'string' && entry.trim())
+    : []
+  const fields = [
+    ['Wear level', assessment.wear_level],
+    ['Box included', assessment.box_included],
+    ['Dust bag', assessment.dust_bag_included],
+    ['New-in-box signal', assessment.new_in_box_signal],
+    ['Pricing tier', assessment.pricing_tier],
+    ['Confidence', assessment.confidence == null ? null : confidenceLabel(assessment.confidence)],
+  ].filter(([, value]) => value != null && String(value).trim())
+  if (fields.length === 0 && evidence.length === 0) return null
+  return (
+    <div className="visual-condition-debug">
+      <p className="eyebrow">Visual Condition Assessment</p>
+      {fields.length > 0 && (
+        <div className="metric-grid visual-condition-grid">
+          {fields.map(([label, value]) => (
+            <div key={label}>
+              <span>{label}</span>
+              <strong>{String(value).includes('_') ? titleCase(String(value).replace(/_/g, ' ')) : String(value)}</strong>
+            </div>
+          ))}
+        </div>
+      )}
+      {evidence.length > 0 && (
+        <div className="visual-condition-evidence">
+          <span>Evidence</span>
+          <ul>
+            {evidence.slice(0, 8).map((entry, idx) => (
+              <li key={`${entry}-${idx}`}>{entry}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function makeId(prefix) {
   const cryptoApi = typeof globalThis !== 'undefined' ? globalThis.crypto : undefined
   if (cryptoApi && typeof cryptoApi.randomUUID === 'function') {
     return `${prefix}-${cryptoApi.randomUUID()}`
   }
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+}
+
+function listingRecordId(listing) {
+  return String(listing?.listing_id || listing?.id || '').trim()
+}
+
+function offerParticipantName(offer, role = 'from') {
+  const direct = String(role === 'to' ? offer?.to_name || '' : offer?.from_name || '').trim()
+  if (direct && !direct.toLowerCase().startsWith('user_')) return direct.split(/\s+/)[0]
+  const subject = String(role === 'to' ? offer?.to_subject || '' : offer?.from_subject || '').trim()
+  return subject && !subject.toLowerCase().startsWith('user_') ? subject.split(/\s+/)[0] : 'Member'
 }
 
 function emptyShippingAddress() {
@@ -289,8 +367,16 @@ function ListingDescriptionParagraphs({ item, fallback = 'No description provide
 
 function getListingGallery(item) {
   if (!item) return []
-  if (Array.isArray(item.images) && item.images.length > 0) return item.images.filter(Boolean)
-  return [item.image].filter(Boolean)
+  const raw = Array.isArray(item.listedImages) && item.listedImages.length > 0
+    ? item.listedImages.map((entry) => entry?.d_img || entry?.display_image || entry?.image)
+    : Array.isArray(item.images) && item.images.length > 0 ? item.images : [item.image]
+  const seen = new Set()
+  return raw.filter((src) => {
+    const value = typeof src === 'string' ? src.trim() : ''
+    if (!value || seen.has(value)) return false
+    seen.add(value)
+    return true
+  })
 }
 
 function missingPublishFields(listing) {
@@ -388,6 +474,21 @@ function displayConditionLabel(input) {
   return String(input || 'Unknown condition').trim() || 'Unknown condition'
 }
 
+function shipmentTrackingLabel(shipment) {
+  const raw = String(shipment?.tracking_status || shipment?.status || '').trim().toLowerCase()
+  const labels = {
+    label_created: 'Label created',
+    pre_transit: 'Label created',
+    shipped: 'In transit',
+    transit: 'In transit',
+    out_for_delivery: 'Out for delivery',
+    delivered: 'Delivered',
+    returned: 'Returned',
+    exception: 'Delivery exception',
+  }
+  return labels[raw] || (raw ? raw.replace(/_/g, ' ') : 'Tracking pending')
+}
+
 function buildListingShareCaption(item) {
   const title = String(item?.title || 'Listing').trim()
   const brand = String(item?.brand || 'Unknown brand').trim()
@@ -430,7 +531,7 @@ const JOUFT_GOAL_OPTIONS = [
   'Connect With Fashion Enthusiasts',
   'Trade Instead of Sell',
 ]
-const PROFILE_SETUP_TOTAL_STEPS = 4
+const PROFILE_SETUP_TOTAL_STEPS = 5
 const SUBSCRIPTION_PLANS = [
   { id: 'free', name: 'Free Tier', monthlyPrice: 0, listingsPerMonth: 3, description: '3 listings per month' },
   { id: 'starter', name: 'Starter', monthlyPrice: 15, listingsPerMonth: 25, description: 'Up to 25 listings per month' },
@@ -467,8 +568,23 @@ function subscriptionPlanIdForApi(plan) {
   return 'free'
 }
 
+function normalizeSelectableSubscriptionPlanId(plan) {
+  const normalized = normalizeSubscriptionPlanId(plan)
+  return SUBSCRIPTION_PLANS.some((entry) => entry.id === normalized)
+    ? normalized
+    : 'free'
+}
+
 function normalizeBillingCycle(cycle) {
   return String(cycle || '').toLowerCase() === 'annual' ? 'annual' : 'monthly'
+}
+
+function titleCase(input) {
+  return String(input || '')
+    .split(/[_\s-]+/)
+    .filter(Boolean)
+    .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1).toLowerCase()}`)
+    .join(' ')
 }
 
 function resolveSignupFullName(session, profileData) {
@@ -485,7 +601,19 @@ function isProfileSetupRequired(profile) {
   const firstName = String(profile?.first_name || profile?.firstName || '').trim()
   const lastName = String(profile?.last_name || profile?.lastName || '').trim()
   const email = String(profile?.email || '').trim()
-  return !firstName || !lastName || !email
+  const gender = String(profile?.gender || '').trim()
+  const birthday = String(profile?.birthday || '').trim()
+  const addresses = completeShippingAddresses(normalizeShippingAddresses(profile?.shipping_addresses, profile))
+  const hasSizes = normalizeMultiSizeValue(profile?.tops_size).length > 0
+    || normalizeMultiSizeValue(profile?.dresses_size).length > 0
+    || normalizeMultiSizeValue(profile?.bottoms_size).length > 0
+    || normalizeMultiSizeValue(profile?.shoes_size).length > 0
+  const hasStyle = Array.isArray(profile?.style_descriptors) && profile.style_descriptors.length > 0
+  const hasGoal = Array.isArray(profile?.jouft_goals) && profile.jouft_goals.length > 0
+  const plan = normalizeSubscriptionPlanId(profile?.subscription_plan)
+  const status = String(profile?.subscription_status || '').trim().toLowerCase()
+  const hasSubscription = plan === 'free' || ['active', 'trialing'].includes(status)
+  return !firstName || !lastName || !email || !gender || !birthday || addresses.length === 0 || !hasSizes || !hasStyle || !hasGoal || !hasSubscription
 }
 
 function brandSizeChartUrl(brand, category) {
@@ -721,16 +849,24 @@ async function fetchAdminAnalyses({ apiBaseUrl, apiKey, bearerToken, limit = 50 
   return payload
 }
 
-async function fetchMyListings({ apiBaseUrl, apiKey, bearerToken, limit = 100 }) {
+async function fetchMyListings({ apiBaseUrl, apiKey, bearerToken, limit = 100, offset = 0 }) {
   const { client, authContext } = createWebApiClient({ apiBaseUrl, apiKey })
-  const payload = await client.listMyListings(limit, authContext(bearerToken))
-  return payload?.items || []
+  const payload = await client.listMyListings(limit, authContext(bearerToken), { offset })
+  return {
+    items: payload?.items || [],
+    hasMore: Boolean(payload?.has_more),
+    nextOffset: Number.isFinite(Number(payload?.next_offset)) ? Number(payload.next_offset) : null,
+  }
 }
 
-async function fetchMarketplaceListings({ apiBaseUrl, apiKey, bearerToken, limit = 50 }) {
+async function fetchMarketplaceListings({ apiBaseUrl, apiKey, bearerToken, limit = 50, offset = 0 }) {
   const { client, authContext } = createWebApiClient({ apiBaseUrl, apiKey })
-  const payload = await client.listMarketplace(limit, authContext(bearerToken))
-  return payload?.items || []
+  const payload = await client.listMarketplace(limit, authContext(bearerToken), { offset })
+  return {
+    items: payload?.items || [],
+    hasMore: Boolean(payload?.has_more),
+    nextOffset: Number.isFinite(Number(payload?.next_offset)) ? Number(payload.next_offset) : null,
+  }
 }
 
 async function fetchOfferCandidates({ apiBaseUrl, apiKey, bearerToken, targetListingId, limit = 100 }) {
@@ -793,14 +929,14 @@ async function likeListingRemote({ apiBaseUrl, apiKey, bearerToken, listingId })
   return client.likeListing(listingId, authContext(bearerToken))
 }
 
-async function fetchUspsAddressSuggestionsRemote({ apiBaseUrl, apiKey, bearerToken, q, city, state, postalCode }) {
+async function fetchGooglePlacesAddressSuggestionsRemote({ apiBaseUrl, apiKey, bearerToken, q, city, state, postalCode }) {
   const params = new URLSearchParams()
   if (q) params.set('q', q)
   if (city) params.set('city', city)
   if (state) params.set('state', state)
   if (postalCode) params.set('postal_code', postalCode)
   const { client, authContext } = createWebApiClient({ apiBaseUrl, apiKey })
-  const data = await client.get(`/v1/usps/address-suggest?${params.toString()}`, authContext(bearerToken))
+  const data = await client.get(`/v1/google/places/address-suggest?${params.toString()}`, authContext(bearerToken))
   return Array.isArray(data?.suggestions) ? data.suggestions : []
 }
 
@@ -867,9 +1003,9 @@ async function fetchIncomingOffersRemote({ apiBaseUrl, apiKey, bearerToken, stat
   return client.incomingOffers(status, limit, authContext(bearerToken))
 }
 
-async function actionOfferRemote({ apiBaseUrl, apiKey, bearerToken, offerId, status, receiveAddress = null }) {
+async function actionOfferRemote({ apiBaseUrl, apiKey, bearerToken, offerId, status, receiveAddress = null, selectedOfferedListingId = null }) {
   const { client, authContext } = createWebApiClient({ apiBaseUrl, apiKey })
-  return client.offerAction(offerId, status, receiveAddress, authContext(bearerToken))
+  return client.offerAction(offerId, status, receiveAddress, selectedOfferedListingId, authContext(bearerToken))
 }
 
 async function fetchShippingQuoteRemote({ apiBaseUrl, apiKey, bearerToken, offerId }) {
@@ -1554,6 +1690,12 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   const [marketListings, setMarketListings] = useState([])
   const [myListingsLoading, setMyListingsLoading] = useState(false)
   const [marketListingsLoading, setMarketListingsLoading] = useState(false)
+  const [myListingsHasMore, setMyListingsHasMore] = useState(false)
+  const [marketListingsHasMore, setMarketListingsHasMore] = useState(false)
+  const [myListingsNextOffset, setMyListingsNextOffset] = useState(0)
+  const [marketListingsNextOffset, setMarketListingsNextOffset] = useState(0)
+  const [myListingsPageLoading, setMyListingsPageLoading] = useState(false)
+  const [marketListingsPageLoading, setMarketListingsPageLoading] = useState(false)
   const [activeTab, setActiveTab] = useState(() => (shouldAutoOpenProfileSetupRef.current ? 'profile_setup' : tabFromLocation()))
   const [marketSearch, setMarketSearch] = useState('')
   const [itemTitle, setItemTitle] = useState('')
@@ -1578,11 +1720,14 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   const [receiptPromptPending, setReceiptPromptPending] = useState(false)
   const [receiptPromptDismissed, setReceiptPromptDismissed] = useState(false)
   const [editingListingId, setEditingListingId] = useState(null)
+  const [reviewListingId, setReviewListingId] = useState(null)
   const [showCreateListingModal, setShowCreateListingModal] = useState(false)
   const [listingModalMode, setListingModalMode] = useState('create')
   const [modalEditingListing, setModalEditingListing] = useState(null)
   const [savedListingNotice, setSavedListingNotice] = useState('')
   const [appAlert, setAppAlert] = useState(null)
+  const [offerActionBusyById, setOfferActionBusyById] = useState({})
+  const [offerAcceptedListingById, setOfferAcceptedListingById] = useState({})
   const [selectedShippingLabel, setSelectedShippingLabel] = useState(null)
   const [profileQuiz, setProfileQuiz] = useState({
     first_name: profileData?.firstName || '', last_name: profileData?.lastName || '', email: profileData?.email || session?.email || '',
@@ -1594,9 +1739,13 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     subscription_plan: 'free', subscription_billing_cycle: 'monthly', subscription_status: '', subscription_renewal_date: '', payment_methods: [],
   })
   const [profileSetupStep, setProfileSetupStep] = useState(1)
+  const [profileSetupRequired, setProfileSetupRequired] = useState(false)
   const [activeShippingAddressIdx, setActiveShippingAddressIdx] = useState(0)
   const [addressSuggestions, setAddressSuggestions] = useState([])
+  const [addressAutocompleteActive, setAddressAutocompleteActive] = useState(false)
   const [profileSaveMsg, setProfileSaveMsg] = useState('')
+  const [profileTabReloading, setProfileTabReloading] = useState(false)
+  const [profileTabReloadKey, setProfileTabReloadKey] = useState(0)
   const [profileHydrationRetry, setProfileHydrationRetry] = useState(0)
   const [paymentMethods, setPaymentMethods] = useState([])
   const [profileHydrationError, setProfileHydrationError] = useState('')
@@ -1606,7 +1755,9 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   const [paymentActionMsg, setPaymentActionMsg] = useState('')
   const [paymentDeleteBusyId, setPaymentDeleteBusyId] = useState('')
   const [selectedSubscriptionPaymentMethodId, setSelectedSubscriptionPaymentMethodId] = useState('')
+  const [subscriptionSelectionDirty, setSubscriptionSelectionDirty] = useState(false)
   const [showStripePaymentModal, setShowStripePaymentModal] = useState(false)
+  const [subscriptionConfirmRequest, setSubscriptionConfirmRequest] = useState(null)
   const [stripeUiBusy, setStripeUiBusy] = useState(false)
   const [stripeUiError, setStripeUiError] = useState('')
   const [stripeUiReady, setStripeUiReady] = useState(false)
@@ -1614,6 +1765,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   const stripeRef = useRef(null)
   const stripeElementsRef = useRef(null)
   const stripePaymentElementRef = useRef(null)
+  const subscriptionConfirmResolverRef = useRef(null)
   const [incomingOffers, setIncomingOffers] = useState([])
   const [offersActorSubject, setOffersActorSubject] = useState('')
   const [tradeNotification, setTradeNotification] = useState(null)
@@ -1625,6 +1777,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   const [selectedMarketImageIndex, setSelectedMarketImageIndex] = useState(0)
   const [selectedCreateImageIndex, setSelectedCreateImageIndex] = useState(0)
   const [selectedEditImageIndex, setSelectedEditImageIndex] = useState(0)
+  const [selectedReviewImageIndex, setSelectedReviewImageIndex] = useState(0)
   const [selectedEditHeroImageIndex, setSelectedEditHeroImageIndex] = useState(null)
   const [tradeOfferCandidates, setTradeOfferCandidates] = useState([])
   const [tradeOfferListingIds, setTradeOfferListingIds] = useState([])
@@ -1632,6 +1785,9 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   const [tradeOfferError, setTradeOfferError] = useState('')
   const [tradeOfferBusy, setTradeOfferBusy] = useState(false)
   const [tradeDetailListing, setTradeDetailListing] = useState(null)
+  const [tradeDetailImageIndex, setTradeDetailImageIndex] = useState(0)
+  const [zoomedListingImage, setZoomedListingImage] = useState(null)
+  const [zoomedListingImageScale, setZoomedListingImageScale] = useState(1)
   const [offerStatusFilter, setOfferStatusFilter] = useState('all')
   const [closetFilter, setClosetFilter] = useState('all')
   const [profileSection, setProfileSection] = useState(TEMP_SHOW_PROFILE_QUESTIONNAIRE_ON_LOGIN ? 'style' : 'general')
@@ -1703,11 +1859,42 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   }
 
   function navigateToTab(tab) {
-    setActiveTab(tab)
+    if (!VALID_TABS.has(tab)) return
+    const nextTab = profileSetupRequired && tab !== 'profile_setup' ? 'profile_setup' : tab
+    setActiveTab(nextTab)
     if (typeof window !== 'undefined') {
-      window.history.pushState({}, '', tabHref(tab))
+      window.history.pushState({}, '', tabHref(nextTab))
     }
   }
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined
+    function handlePopState() {
+      const requestedTab = tabFromLocation()
+      const nextTab = profileSetupRequired && requestedTab !== 'profile_setup' ? 'profile_setup' : requestedTab
+      if (nextTab !== 'edit_listing') {
+        setEditingListingId(null)
+        setModalEditingListing(null)
+        setImages([])
+        setEditPreviewUrls([])
+        setSelectedEditHeroImageIndex(null)
+        setAnalysisError('')
+      }
+      if (nextTab !== 'review_listing') {
+        setReviewListingId(null)
+      }
+      if (!(nextTab === 'market' && listingIdFromLocation())) {
+        setSelectedMarketListingIndex(null)
+        setSelectedMarketImageIndex(0)
+      }
+      setActiveTab(nextTab)
+      if (nextTab !== requestedTab) {
+        window.history.replaceState({}, '', tabHref(nextTab))
+      }
+    }
+    window.addEventListener('popstate', handlePopState)
+    return () => window.removeEventListener('popstate', handlePopState)
+  }, [profileSetupRequired])
 
   const unreadNotificationCount = notifications.filter((entry) => !entry.read).length
 
@@ -1756,6 +1943,44 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
         navigateToTab('profile')
       },
       secondaryLabel: 'Cancel',
+    })
+  }
+
+  function confirmTradeAcceptance(offer, quoteOverride = null, selectedOfferedListing = null) {
+    const offeredTitle = selectedOfferedListing?.title || offer?.offered_listing?.title || 'the offered item'
+    const targetTitle = offer?.target_listing?.title || 'your item'
+    const quote = quoteOverride || shippingQuoteByOffer[offer?.offer_id]
+    const shippingCost = quote?.status === 'quoted' && quote?.amount
+      ? `${quote.currency || 'USD'} ${quote.amount}`
+      : 'unavailable'
+    return new Promise((resolve) => {
+      setAppAlert({
+        title: 'Accept Trade?',
+        message: `Accept this trade for ${targetTitle} in exchange for ${offeredTitle}? Shipping cost charged to you: ${shippingCost}.`,
+        primaryLabel: 'Accept Trade',
+        onPrimary: () => {
+          setAppAlert(null)
+          resolve(true)
+        },
+        secondaryLabel: 'Cancel',
+        onSecondary: () => resolve(false),
+      })
+    })
+  }
+
+  function confirmListingDelete(listing) {
+    return new Promise((resolve) => {
+      setAppAlert({
+        title: 'Delete Listing?',
+        message: `Delete "${listing?.title || 'this listing'}" from your closet? This cannot be undone.`,
+        primaryLabel: 'Delete Listing',
+        onPrimary: () => {
+          setAppAlert(null)
+          resolve(true)
+        },
+        secondaryLabel: 'Cancel',
+        onSecondary: () => resolve(false),
+      })
     })
   }
 
@@ -1937,7 +2162,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
         shipping_postal_code: primaryShippingAddress.postal_code || '',
         shipping_country: primaryShippingAddress.country || '',
         shipping_addresses: hydratedShippingAddresses,
-        subscription_plan: normalizeSubscriptionPlanId(data?.subscription_plan),
+        subscription_plan: normalizeSelectableSubscriptionPlanId(data?.subscription_plan),
         subscription_billing_cycle: normalizeBillingCycle(data?.subscription_billing_cycle),
         subscription_status: data?.subscription_status || '',
         subscription_renewal_date: data?.subscription_renewal_date || '',
@@ -1949,6 +2174,30 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     return data
   }
 
+  async function reloadProfileTabAfterSuccess(message = '', { navigateToProfileTab = false } = {}) {
+    setProfileTabReloading(true)
+    try {
+      setActiveTab('profile')
+      setProfileSection('general')
+      const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
+      await loadProfileQuizIntoState({ force: true })
+      const methods = await fetchPaymentMethodsRemote({
+        apiBaseUrl,
+        apiKey: clerkEnabled ? '' : apiKey.trim(),
+        bearerToken,
+      })
+      setPaymentMethods(methods)
+      setPaymentLoadError('')
+      setProfileTabReloadKey((key) => key + 1)
+      if (message) setProfileSaveMsg(message)
+      if (navigateToProfileTab && typeof window !== 'undefined') {
+        window.location.assign(tabHref('profile'))
+      }
+    } finally {
+      setProfileTabReloading(false)
+    }
+  }
+
   useEffect(() => {
     let cancelled = false
     let retryTimer = null
@@ -1958,9 +2207,9 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
         if (!cancelled) {
           if (!data) return
           const profileSetupRequired = isProfileSetupRequired(data)
+          setProfileSetupRequired(profileSetupRequired)
           const shouldOpenSetup = (
-            !hasExplicitTabInLocation()
-            && (profileSetupRequired || shouldAutoOpenProfileSetupRef.current)
+            profileSetupRequired || (!hasExplicitTabInLocation() && shouldAutoOpenProfileSetupRef.current)
           )
           if (!profileSetupRequired) {
             shouldAutoOpenProfileSetupRef.current = false
@@ -1971,7 +2220,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
           }
           if (shouldOpenSetup && !profileSetupAutoOpenedRef.current) {
             profileSetupAutoOpenedRef.current = true
-            setActiveTab('profile_setup')
+            navigateToTab('profile_setup')
           }
         }
       } catch {
@@ -2145,11 +2394,46 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   const profileCategoryOptions = normalizedProfileGender === 'male'
     ? PROFILE_CATEGORY_OPTIONS.filter((c) => c !== 'Dresses')
     : PROFILE_CATEGORY_OPTIONS
-  const selectedSubscriptionPlanId = normalizeSubscriptionPlanId(profileQuiz.subscription_plan)
+  const selectedSubscriptionPlanId = normalizeSelectableSubscriptionPlanId(profileQuiz.subscription_plan)
+  const selectedSubscriptionPlan = SUBSCRIPTION_PLANS.find((plan) => plan.id === selectedSubscriptionPlanId) || SUBSCRIPTION_PLANS[0]
+  const selectedSubscriptionPlanIsPaid = Number(selectedSubscriptionPlan?.monthlyPrice || 0) > 0
   const selectedBillingCycle = normalizeBillingCycle(profileQuiz.subscription_billing_cycle)
   const shippingAddresses = normalizeShippingAddresses(profileQuiz.shipping_addresses, profileQuiz)
   const completeProfileShippingAddresses = completeShippingAddresses(shippingAddresses)
   const primaryShippingAddressId = shippingAddresses[0]?.id || ''
+  const subscriptionStatus = String(profileQuiz.subscription_status || '').trim().toLowerCase()
+  const hasActiveSubscription = ['active', 'trialing'].includes(subscriptionStatus)
+  const subscriptionSelectionIsCurrent = hasActiveSubscription && !subscriptionSelectionDirty
+
+  function currentProfileSetupStepError(step = profileSetupStep) {
+    const payload = profilePayloadForSave()
+    const primaryAddress = normalizeShippingAddresses(payload.shipping_addresses, payload)[0] || emptyShippingAddress()
+    if (step === 1) {
+      if (!payload.first_name) return 'First name is required.'
+      if (!payload.last_name) return 'Last name is required.'
+      if (!payload.email) return 'Email address is required.'
+      if (!payload.birthday) return 'Birthday is required.'
+      if (!payload.gender) return 'Gender is required.'
+      if (!isCompleteShippingAddress(primaryAddress)) return 'Complete shipping address is required.'
+    }
+    if (step === 2) {
+      const hasSize = ['tops_size', 'dresses_size', 'bottoms_size', 'shoes_size']
+        .some((field) => normalizeMultiSizeValue(payload[field]).length > 0)
+      if (!hasSize) return 'Select at least one size.'
+    }
+    if (step === 3 && (!Array.isArray(payload.style_descriptors) || payload.style_descriptors.length === 0)) {
+      return 'Choose at least one style.'
+    }
+    if (step === 4 && (!Array.isArray(payload.jouft_goals) || payload.jouft_goals.length === 0)) {
+      return 'Choose at least one reason.'
+    }
+    if (step === 5) {
+      if (!selectedSubscriptionPlan) return 'Select a subscription plan.'
+      if (selectedSubscriptionPlanIsPaid && paymentMethods.length === 0) return 'Add a payment method before activating your subscription.'
+      if (selectedSubscriptionPlanIsPaid && !selectedSubscriptionPaymentMethodId) return 'Select the payment method for your subscription.'
+    }
+    return ''
+  }
 
   const loadIncomingOffers = useCallback(async ({ status = offerStatusFilter, updateInbox = true } = {}) => {
     const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
@@ -2445,6 +2729,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
 
   function applySavedProfileQuiz(saved) {
     profileSetupDirtyRef.current = false
+    setSubscriptionSelectionDirty(false)
     const savedShippingAddresses = normalizeShippingAddresses(saved?.shipping_addresses, saved)
     setProfileQuiz({
       first_name: saved?.first_name || profileData?.firstName || '',
@@ -2469,13 +2754,15 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
       shipping_postal_code: savedShippingAddresses[0]?.postal_code || '',
       shipping_country: savedShippingAddresses[0]?.country || '',
       shipping_addresses: savedShippingAddresses,
-      subscription_plan: normalizeSubscriptionPlanId(saved?.subscription_plan),
+      subscription_plan: normalizeSelectableSubscriptionPlanId(saved?.subscription_plan),
       subscription_billing_cycle: normalizeBillingCycle(saved?.subscription_billing_cycle),
       subscription_status: saved?.subscription_status || '',
       subscription_renewal_date: saved?.subscription_renewal_date || '',
       payment_methods: Array.isArray(saved?.payment_methods) ? saved.payment_methods : [],
     })
     setActiveShippingAddressIdx(0)
+    setAddressSuggestions([])
+    setAddressAutocompleteActive(false)
   }
 
   async function saveProfileQuiz() {
@@ -2491,27 +2778,49 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     return saved
   }
 
+  function requestSubscriptionConfirmation(details) {
+    return new Promise((resolve) => {
+      subscriptionConfirmResolverRef.current = resolve
+      setSubscriptionConfirmRequest(details)
+    })
+  }
+
+  function resolveSubscriptionConfirmation(confirmed) {
+    const resolver = subscriptionConfirmResolverRef.current
+    subscriptionConfirmResolverRef.current = null
+    setSubscriptionConfirmRequest(null)
+    if (resolver) resolver(Boolean(confirmed))
+  }
+
   async function activateSelectedSubscription() {
     const selectedPlan = SUBSCRIPTION_PLANS.find((plan) => plan.id === selectedSubscriptionPlanId) || SUBSCRIPTION_PLANS[0]
+    if (!selectedPlan) {
+      setProfileSaveMsg('Select a subscription plan.')
+      return null
+    }
     const billingCycle = selectedBillingCycle
-    const annualTotal = selectedPlan.monthlyPrice > 0 ? Math.round(selectedPlan.monthlyPrice * 12 * 0.9) : 0
+    const annualTotal = Math.round(selectedPlan.monthlyPrice * 12 * 0.9)
     const amount = billingCycle === 'annual' ? annualTotal : selectedPlan.monthlyPrice
     const selectedPaymentMethod = paymentMethods.find((method) => method.payment_method_id === selectedSubscriptionPaymentMethodId)
       || paymentMethods.find((method) => method.is_default)
       || paymentMethods[0]
 
     if (amount > 0 && !selectedPaymentMethod) {
-      setProfileSaveMsg('Add a payment method before activating a paid plan.')
+      setProfileSaveMsg('Add a payment method before activating your subscription.')
       return null
     }
 
+    const paymentLabel = selectedPaymentMethod?.label
+      || [selectedPaymentMethod?.brand, selectedPaymentMethod?.last4 ? `•••• ${selectedPaymentMethod.last4}` : ''].filter(Boolean).join(' ')
+      || 'Selected payment method'
+    const amountLabel = `$${amount}${billingCycle === 'annual' ? ' / year' : ' / month'}`
     if (amount > 0) {
-      const paymentLabel = selectedPaymentMethod?.label
-        || [selectedPaymentMethod?.brand, selectedPaymentMethod?.last4 ? `•••• ${selectedPaymentMethod.last4}` : ''].filter(Boolean).join(' ')
-        || 'Selected payment method'
-      const confirmed = window.confirm(
-        `Confirm subscription\n\nPlan: ${selectedPlan.name}\nAmount: $${amount}${billingCycle === 'annual' ? ' / year' : ' / month'}\nPayment: ${paymentLabel}`,
-      )
+      const confirmed = await requestSubscriptionConfirmation({
+        planName: selectedPlan.name,
+        amountLabel,
+        billingCycle,
+        paymentLabel,
+      })
       if (!confirmed) {
         setProfileSaveMsg('Subscription activation canceled.')
         return null
@@ -2525,8 +2834,13 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
       bearerToken,
       plan: selectedSubscriptionPlanId,
       billingCycle,
-      paymentMethodId: amount > 0 ? selectedPaymentMethod?.payment_method_id : '',
+      paymentMethodId: amount > 0 ? selectedPaymentMethod?.payment_method_id || '' : '',
     })
+    const activatedStatus = String(activated?.status || '').trim().toLowerCase()
+    if (amount > 0 && !['active', 'trialing'].includes(activatedStatus)) {
+      const statusLabel = activatedStatus ? titleCase(activatedStatus) : 'not active'
+      throw new Error(`Payment was not processed. Subscription status is ${statusLabel}. Please update your payment details.`)
+    }
     setProfileQuiz((prev) => ({
       ...prev,
       subscription_plan: normalizeSubscriptionPlanId(activated?.plan || selectedSubscriptionPlanId),
@@ -2534,7 +2848,8 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
       subscription_status: activated?.status || prev.subscription_status || '',
       subscription_renewal_date: activated?.renewal_date || '',
     }))
-    setProfileSaveMsg(activated?.message || (amount > 0 ? 'Subscription active.' : 'Free plan active.'))
+    setSubscriptionSelectionDirty(false)
+    setProfileSaveMsg(activated?.message || 'Subscription active.')
     return activated
   }
 
@@ -2544,6 +2859,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     setProfileQuiz((prev) => ({ ...prev, shipping_addresses: updated }))
     setActiveShippingAddressIdx(updated.length - 1)
     setAddressSuggestions([])
+    setAddressAutocompleteActive(false)
   }
 
   function removeActiveShippingAddress() {
@@ -2551,6 +2867,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
       setProfileQuiz((prev) => ({ ...prev, shipping_addresses: [emptyShippingAddress()] }))
       setActiveShippingAddressIdx(0)
       setAddressSuggestions([])
+      setAddressAutocompleteActive(false)
       return
     }
     const idx = safeActiveShippingAddressIdx
@@ -2558,15 +2875,16 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     setProfileQuiz((prev) => ({ ...prev, shipping_addresses: updated }))
     setActiveShippingAddressIdx(Math.max(0, idx - 1))
     setAddressSuggestions([])
+    setAddressAutocompleteActive(false)
   }
 
   useEffect(() => {
     let cancelled = false
     const line1 = (activeShippingAddress?.address_line1 || '').trim()
-    const primaryAddress = shippingAddresses[0] || emptyShippingAddress()
-    const state = ((activeShippingAddress?.state || '').trim() || (safeActiveShippingAddressIdx === 0 ? '' : (primaryAddress.state || '').trim())).toUpperCase()
-    const city = (activeShippingAddress?.city || '').trim() || (safeActiveShippingAddressIdx === 0 ? '' : (primaryAddress.city || '').trim())
-    const postalCode = (activeShippingAddress?.postal_code || '').trim() || (safeActiveShippingAddressIdx === 0 ? '' : (primaryAddress.postal_code || '').trim())
+    if (!addressAutocompleteActive) {
+      setAddressSuggestions([])
+      return undefined
+    }
     if (line1.length < 3) {
       setAddressSuggestions([])
       return undefined
@@ -2574,33 +2892,27 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     const timer = setTimeout(async () => {
       try {
         const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
-        const suggestions = await fetchUspsAddressSuggestionsRemote({
+        const suggestions = await fetchGooglePlacesAddressSuggestionsRemote({
           apiBaseUrl,
           apiKey: clerkEnabled ? '' : apiKey.trim(),
           bearerToken,
           q: line1,
-          city,
-          state,
-          postalCode,
+          city: '',
+          state: '',
+          postalCode: '',
         })
         if (!cancelled) setAddressSuggestions(suggestions.slice(0, 5))
       } catch {
         if (!cancelled) setAddressSuggestions([])
       }
-    }, 350)
+    }, 150)
     return () => {
       cancelled = true
       clearTimeout(timer)
     }
   }, [
     activeShippingAddress?.address_line1,
-    activeShippingAddress?.city,
-    activeShippingAddress?.state,
-    activeShippingAddress?.postal_code,
-    shippingAddresses[0]?.city,
-    shippingAddresses[0]?.state,
-    shippingAddresses[0]?.postal_code,
-    safeActiveShippingAddressIdx,
+    addressAutocompleteActive,
     apiBaseUrl,
     apiKey,
     clerkEnabled,
@@ -2641,13 +2953,24 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
       ? item.images.map(resolveUrl).filter(Boolean)
       : []
     const listedCover = resolveUrl(item.image)
-    const fromAnalysisUploads = Array.isArray(item.analysis?.uploaded_images)
-      ? item.analysis.uploaded_images.map((u) => resolveUrl(u?.image_url)).filter(Boolean)
-      : []
-    const targetCount = fromAnalysisUploads.length > 0 ? fromAnalysisUploads.length : null
-    let normalizedImages = listedImages.length > 0
-      ? listedImages
-      : (listedCover ? [listedCover] : [])
+	    const fromAnalysisUploads = Array.isArray(item.analysis?.uploaded_images)
+	      ? item.analysis.uploaded_images.map((u) => resolveUrl(u?.image_url)).filter(Boolean)
+	      : []
+	    const normalizedListedImages = Array.isArray(item.listed_images)
+	      ? item.listed_images.map((entry, idx) => {
+	        if (!entry || typeof entry !== 'object') return null
+	        const display = resolveUrl(entry.d_img || entry.display_image || entry.image || entry.p_img)
+	        const original = resolveUrl(entry.p_img || entry.original_image || entry.source_image) || display
+	        if (!display) return null
+	        return { p_img: original, d_img: display, is_hero: Boolean(entry.is_hero) || display === listedCover || idx === 0 }
+	      }).filter(Boolean)
+	      : []
+	    const targetCount = fromAnalysisUploads.length > 0 ? fromAnalysisUploads.length : null
+	    let normalizedImages = normalizedListedImages.length > 0
+	      ? normalizedListedImages.map((entry) => entry.d_img)
+	      : listedImages.length > 0
+	      ? listedImages
+	      : (listedCover ? [listedCover] : [])
     if (targetCount && normalizedImages.length > targetCount) {
       normalizedImages = normalizedImages.slice(0, targetCount)
     }
@@ -2666,9 +2989,12 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
       size: typeof item.size === 'string' ? item.size : '',
       estimatedValue: Number(item.estimated_value ?? item.estimatedValue ?? 0),
       city: item.city || 'Your area',
-      image: normalizedImages[0] || null,
-      images: normalizedImages,
-      description: typeof item.description === 'string' ? item.description : '',
+	      image: normalizedImages[0] || null,
+	      images: normalizedImages,
+	      listedImages: normalizedListedImages.length > 0
+	        ? normalizedListedImages
+	        : normalizedImages.map((url, idx) => ({ p_img: url, d_img: url, is_hero: idx === 0 })),
+	      description: typeof item.description === 'string' ? item.description : '',
       wants: item.wants || 'Open to similar-value offers',
       tags: Array.isArray(item.tags) ? item.tags : [],
       sourceItemId: item.source_item_id || item.sourceItemId || null,
@@ -2682,12 +3008,23 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     return normalized
   }
 
-  function toRemoteListingPayload(listing) {
+	  function toRemoteListingPayload(listing) {
     const allowedCategories = ['clothes', 'shoes', 'handbag']
     const allowedConditions = ['NewWithTags', 'New', 'LikeNew']
-    const uploadedImageUrls = getUploadedImageUrlsFromAnalysis(listing.analysis)
-    const listingImageUrls = persistableImageUrls([...(Array.isArray(listing.images) ? listing.images : []), listing.image])
-    const imageUrls = listingImageUrls.length > 0 ? listingImageUrls : uploadedImageUrls
+	    const uploadedImageUrls = getUploadedImageUrlsFromAnalysis(listing.analysis)
+	    const listingImageUrls = persistableImageUrls([...(Array.isArray(listing.images) ? listing.images : []), listing.image])
+	    const imageUrls = listingImageUrls.length > 0 ? listingImageUrls : uploadedImageUrls
+	    const listedImages = Array.isArray(listing.listedImages)
+	      ? listing.listedImages
+	        .map((entry, idx) => {
+	          if (!entry || typeof entry !== 'object') return null
+	          const display = persistableImageUrls([entry.d_img || entry.display_image || entry.image])[0]
+	          const original = persistableImageUrls([entry.p_img || entry.original_image || entry.source_image])[0] || display
+	          if (!display) return null
+	          return { p_img: original, d_img: display, is_hero: Boolean(entry.is_hero) || display === imageUrls[0] || idx === 0 }
+	        })
+	        .filter(Boolean)
+	      : imageUrls.map((url, idx) => ({ p_img: uploadedImageUrls[idx] || url, d_img: url, is_hero: idx === 0 }))
     const normalizedCategory = allowedCategories.includes(listing.category)
       ? listing.category
       : (allowedCategories.includes(listing.analysis?.category) ? listing.analysis.category : 'handbag')
@@ -2703,8 +3040,9 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
       size: listing.size || null,
       estimated_value: Number(listing.estimatedValue || 0),
       city: listing.city || 'Your area',
-      image: imageUrls[0] || null,
-      images: imageUrls,
+	      image: imageUrls[0] || null,
+	      images: imageUrls,
+	      listed_images: listedImages,
       wants: listing.wants || 'Open to similar-value offers',
       tags: Array.isArray(listing.tags) ? listing.tags : [],
       source_item_id: listing.sourceItemId || null,
@@ -2726,17 +3064,23 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
           apiBaseUrl,
           apiKey: clerkEnabled ? '' : apiKey.trim(),
           bearerToken,
-          limit: 100,
+          limit: LISTINGS_PAGE_SIZE,
+          offset: 0,
         }),
         fetchMarketplaceListings({
           apiBaseUrl,
           apiKey: clerkEnabled ? '' : apiKey.trim(),
           bearerToken,
-          limit: 50,
+          limit: LISTINGS_PAGE_SIZE,
+          offset: 0,
         }),
       ])
-      setMyListings(myItems.map(fromRemoteListing).filter(Boolean))
-      setMarketListings(marketItems.map(fromRemoteListing).filter(Boolean))
+      setMyListings(myItems.items.map(fromRemoteListing).filter(Boolean))
+      setMyListingsHasMore(myItems.hasMore)
+      setMyListingsNextOffset(myItems.nextOffset || 0)
+      setMarketListings(marketItems.items.map(fromRemoteListing).filter(Boolean))
+      setMarketListingsHasMore(marketItems.hasMore)
+      setMarketListingsNextOffset(marketItems.nextOffset || 0)
     } catch {
       // Keep current listings visible if a background refresh fails.
     } finally {
@@ -2746,6 +3090,68 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
       }
     }
   }, [apiBaseUrl, apiKey, clerkEnabled, getBearerToken])
+
+  const loadMoreMyListings = useCallback(async () => {
+    if (myListingsPageLoading || myListingsLoading || !myListingsHasMore) return
+    setMyListingsPageLoading(true)
+    try {
+      const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
+      const page = await fetchMyListings({
+        apiBaseUrl,
+        apiKey: clerkEnabled ? '' : apiKey.trim(),
+        bearerToken,
+        limit: LISTINGS_PAGE_SIZE,
+        offset: myListingsNextOffset,
+      })
+      const nextItems = page.items.map(fromRemoteListing).filter(Boolean)
+      setMyListings((prev) => {
+        const seen = new Set(prev.map((item) => String(item?.id || '')))
+        return [...prev, ...nextItems.filter((item) => {
+          const id = String(item?.id || '')
+          if (!id || seen.has(id)) return false
+          seen.add(id)
+          return true
+        })]
+      })
+      setMyListingsHasMore(page.hasMore)
+      setMyListingsNextOffset(page.nextOffset || 0)
+    } catch {
+      // Keep existing listings visible when lazy loading fails.
+    } finally {
+      setMyListingsPageLoading(false)
+    }
+  }, [apiBaseUrl, apiKey, clerkEnabled, getBearerToken, myListingsHasMore, myListingsLoading, myListingsNextOffset, myListingsPageLoading])
+
+  const loadMoreMarketListings = useCallback(async () => {
+    if (marketListingsPageLoading || marketListingsLoading || !marketListingsHasMore) return
+    setMarketListingsPageLoading(true)
+    try {
+      const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
+      const page = await fetchMarketplaceListings({
+        apiBaseUrl,
+        apiKey: clerkEnabled ? '' : apiKey.trim(),
+        bearerToken,
+        limit: LISTINGS_PAGE_SIZE,
+        offset: marketListingsNextOffset,
+      })
+      const nextItems = page.items.map(fromRemoteListing).filter(Boolean)
+      setMarketListings((prev) => {
+        const seen = new Set(prev.map((item) => String(item?.id || '')))
+        return [...prev, ...nextItems.filter((item) => {
+          const id = String(item?.id || '')
+          if (!id || seen.has(id)) return false
+          seen.add(id)
+          return true
+        })]
+      })
+      setMarketListingsHasMore(page.hasMore)
+      setMarketListingsNextOffset(page.nextOffset || 0)
+    } catch {
+      // Keep existing listings visible when lazy loading fails.
+    } finally {
+      setMarketListingsPageLoading(false)
+    }
+  }, [apiBaseUrl, apiKey, clerkEnabled, getBearerToken, marketListingsHasMore, marketListingsLoading, marketListingsNextOffset, marketListingsPageLoading])
 
   function scheduleListingRefreshes() {
     if (typeof window === 'undefined') return
@@ -2763,9 +3169,14 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
           apiBaseUrl,
           apiKey: clerkEnabled ? '' : apiKey.trim(),
           bearerToken,
-          limit: 100,
+          limit: LISTINGS_PAGE_SIZE,
+          offset: 0,
         })
-        if (!cancelled) setMyListings(items.map(fromRemoteListing).filter(Boolean))
+        if (!cancelled) {
+          setMyListings(items.items.map(fromRemoteListing).filter(Boolean))
+          setMyListingsHasMore(items.hasMore)
+          setMyListingsNextOffset(items.nextOffset || 0)
+        }
       } catch {
         // Keep local state fallback if API fetch fails.
       } finally {
@@ -2787,9 +3198,14 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
           apiBaseUrl,
           apiKey: clerkEnabled ? '' : apiKey.trim(),
           bearerToken,
-          limit: 50,
+          limit: LISTINGS_PAGE_SIZE,
+          offset: 0,
         })
-        if (!cancelled) setMarketListings(items.map(fromRemoteListing).filter(Boolean))
+        if (!cancelled) {
+          setMarketListings(items.items.map(fromRemoteListing).filter(Boolean))
+          setMarketListingsHasMore(items.hasMore)
+          setMarketListingsNextOffset(items.nextOffset || 0)
+        }
       } catch {
         // Keep local state fallback if API fetch fails.
       } finally {
@@ -2949,9 +3365,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     const imagesChanged = images.length > 0 || !sameStringList(keptImages, originalImages)
     const originalCondition = String(listing.condition || 'n/a').trim()
     const nextCondition = String(userCondition || listing.condition || 'n/a').trim()
-    const originalSize = String(listing.size || '').trim()
-    const nextSize = String(itemSize || '').trim()
-    return imagesChanged || nextCondition !== originalCondition || nextSize !== originalSize
+    return imagesChanged || nextCondition !== originalCondition
   }
 
   function buildEditedListingPayload(listing, overrides = {}) {
@@ -3029,6 +3443,15 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [marketMatchesTarget])
 
+  useEffect(() => {
+    if (!zoomedListingImage) return
+    function onKeyDown(e) {
+      if (e.key === 'Escape') closeZoomedListingImage()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [zoomedListingImage])
+
   const latestActiveListings = useMemo(
     () => allListings.filter((item) => String(item?.status || '').toLowerCase() === 'active').slice(0, 6),
     [allListings],
@@ -3047,11 +3470,26 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     })
   }, [filteredListings, selectedMarketListingIndex])
 
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    if (activeTab !== 'market') return
+    const requestedListingId = listingIdFromLocation()
+    if (!requestedListingId) return
+    const idx = filteredListings.findIndex((entry) => String(entry?.id || entry?.listing_id || '') === requestedListingId)
+    if (idx >= 0 && idx !== selectedMarketListingIndex) {
+      setSelectedMarketListingIndex(idx)
+      setSelectedMarketImageIndex(0)
+    }
+  }, [activeTab, filteredListings, selectedMarketListingIndex])
+
   function openMarketplaceListingDetails(item) {
     const idx = filteredListings.findIndex((entry) => entry?.id === item?.id)
     if (idx >= 0) {
       setSelectedMarketListingIndex(idx)
       setSelectedMarketImageIndex(0)
+      if (typeof window !== 'undefined') {
+        window.history.pushState({}, '', marketListingHref(item?.id || item?.listing_id))
+      }
     }
   }
 
@@ -3143,6 +3581,36 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     }
     return myListings
   }, [myListings, incomingOffers, closetFilter])
+
+  const reviewListing = useMemo(() => {
+    const requestedId = reviewListingId || (activeTab === 'review_listing' ? listingIdFromLocation() : '')
+    if (!requestedId) return null
+    return myListings.find((item) => String(item?.id || '') === String(requestedId)) || null
+  }, [activeTab, myListings, reviewListingId])
+
+  const reviewListingGallery = useMemo(
+    () => (reviewListing ? getListingGallery(reviewListing) : []),
+    [reviewListing],
+  )
+
+  useEffect(() => {
+    if (activeTab !== 'review_listing') return
+    const requestedId = listingIdFromLocation()
+    if (requestedId && requestedId !== reviewListingId) {
+      setReviewListingId(requestedId)
+    }
+  }, [activeTab, reviewListingId])
+
+  useEffect(() => {
+    setSelectedReviewImageIndex(0)
+  }, [reviewListing?.id])
+
+  useEffect(() => {
+    setSelectedReviewImageIndex((idx) => {
+      if (reviewListingGallery.length <= 0) return 0
+      return Math.max(0, Math.min(idx, reviewListingGallery.length - 1))
+    })
+  }, [reviewListingGallery.length])
 
   async function loadAdminAnalyses() {
     if (!clerkEnabled && !apiKey.trim()) {
@@ -3240,7 +3708,30 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     setActiveTab('market')
   }
 
-  async function respondToOffer(offerId, status, receiveAddress = null) {
+  function openTradeDetailListing(listing) {
+    setTradeDetailListing(listing || null)
+    setTradeDetailImageIndex(0)
+  }
+
+  function openZoomedListingImage(image) {
+    setZoomedListingImage(image || null)
+    setZoomedListingImageScale(0.5)
+  }
+
+  function closeZoomedListingImage() {
+    setZoomedListingImage(null)
+    setZoomedListingImageScale(0.5)
+  }
+
+  function adjustZoomedListingImageScale(delta) {
+    setZoomedListingImageScale((current) => {
+      const next = Math.round((current + delta) * 100) / 100
+      return Math.max(0.5, Math.min(3, next))
+    })
+  }
+
+  async function respondToOffer(offerId, status, receiveAddress = null, selectedOfferedListingId = null) {
+    const currentOffer = incomingOffers.find((offer) => offer.offer_id === offerId) || null
     try {
       if (status === 'accepted' && completeProfileShippingAddresses.length === 0) {
         showShippingAddressRequiredAlert('Add shipping address to profile.')
@@ -3250,6 +3741,40 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
         showShippingAddressRequiredAlert('Select a shipping address before accepting trade.')
         return
       }
+      if (status === 'accepted') {
+        const offeredChoices = Array.isArray(currentOffer?.offered_listings) && currentOffer.offered_listings.length > 0
+          ? currentOffer.offered_listings
+          : (currentOffer?.offered_listing ? [currentOffer.offered_listing] : [])
+        const selectedId = selectedOfferedListingId || (offeredChoices.length === 1 ? listingRecordId(offeredChoices[0]) : '')
+        if (!selectedId || !offeredChoices.some((listing) => listingRecordId(listing) === selectedId)) {
+          setSavedListingNotice('Select one offered item to accept for this trade.')
+          return
+        }
+        selectedOfferedListingId = selectedId
+      }
+      if (status === 'accepted') {
+        const selectedOfferedListing = (Array.isArray(currentOffer?.offered_listings) ? currentOffer.offered_listings : [])
+          .find((listing) => listingRecordId(listing) === selectedOfferedListingId) || currentOffer?.offered_listing || null
+        let acceptanceQuote = shippingQuoteByOffer[offerId] || null
+        if (!shippingQuoteByOffer[offerId]) {
+          try {
+            acceptanceQuote = await loadShippingQuoteForOffer(offerId)
+          } catch (err) {
+            acceptanceQuote = {
+              status: 'unavailable',
+              debug: err.message || 'Shipping quote unavailable',
+            }
+            setShippingQuoteByOffer((prev) => ({
+              ...prev,
+              [offerId]: acceptanceQuote,
+            }))
+          }
+        }
+        const confirmed = await confirmTradeAcceptance(currentOffer, acceptanceQuote, selectedOfferedListing)
+        if (!confirmed) return
+      }
+      setOfferActionBusyById((prev) => ({ ...prev, [offerId]: status }))
+      setSavedListingNotice(status === 'accepted' ? 'Accepting trade...' : 'Updating trade offer...')
       const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
       const updatedOffer = await actionOfferRemote({
         apiBaseUrl,
@@ -3258,6 +3783,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
         offerId,
         status,
         receiveAddress,
+        selectedOfferedListingId,
       })
       setIncomingOffers((prev) => prev.map((o) => (o.offer_id === offerId ? { ...o, ...updatedOffer } : o)))
       if (status === 'accepted') {
@@ -3272,36 +3798,54 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
           apiBaseUrl,
           apiKey: clerkEnabled ? '' : apiKey.trim(),
           bearerToken,
-          limit: 100,
+          limit: LISTINGS_PAGE_SIZE,
+          offset: 0,
         })
         const marketItems = await fetchMarketplaceListings({
           apiBaseUrl,
           apiKey: clerkEnabled ? '' : apiKey.trim(),
           bearerToken,
-          limit: 50,
+          limit: LISTINGS_PAGE_SIZE,
+          offset: 0,
         })
-        setMyListings(myItems.map(fromRemoteListing).filter(Boolean))
-        setMarketListings(marketItems.map(fromRemoteListing).filter(Boolean))
+        setMyListings(myItems.items.map(fromRemoteListing).filter(Boolean))
+        setMyListingsHasMore(myItems.hasMore)
+        setMyListingsNextOffset(myItems.nextOffset || 0)
+        setMarketListings(marketItems.items.map(fromRemoteListing).filter(Boolean))
+        setMarketListingsHasMore(marketItems.hasMore)
+        setMarketListingsNextOffset(marketItems.nextOffset || 0)
         if (updatedOffer?.status === 'accepted') {
-          setSavedListingNotice('Trade accepted by both users. Shipping labels are being generated automatically and can be downloaded here even if email is unavailable.')
+          setSavedListingNotice('Trade accepted successfully. This trade is now in Accepted.')
+          setOfferStatusFilter('accepted')
           try {
             await loadShippingLabelsForOffer(offerId)
           } catch {}
         } else if (actorAccepted) {
           setSavedListingNotice('Your acceptance is recorded. Waiting for the other user to accept.')
+          setOfferStatusFilter('accepted')
         }
       }
+      if (status === 'declined') {
+        setSavedListingNotice('Trade offer declined.')
+      }
+      const nextOfferStatusFilter = status === 'accepted' ? 'accepted' : offerStatusFilter
       const refreshed = await fetchIncomingOffersRemote({
         apiBaseUrl,
         apiKey: clerkEnabled ? '' : apiKey.trim(),
         bearerToken,
-        status: offerStatusFilter,
+        status: nextOfferStatusFilter,
         limit: 50,
       })
       setIncomingOffers(Array.isArray(refreshed?.items) ? refreshed.items : [])
       setOffersActorSubject(typeof refreshed?.actor?.subject === 'string' ? refreshed.actor.subject : '')
     } catch (err) {
       setSavedListingNotice(err.message || 'Failed to update trade offer.')
+    } finally {
+      setOfferActionBusyById((prev) => {
+        const next = { ...prev }
+        delete next[offerId]
+        return next
+      })
     }
   }
 
@@ -3337,6 +3881,38 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     return () => { cancelled = true }
   }, [activeTab, incomingOffers, shippingLabelsByOffer])
 
+  useEffect(() => {
+    if (activeTab !== 'inbox') return
+    const pendingReceivedOfferIds = incomingOffers
+      .filter((offer) => String(offer?.status || '').toLowerCase() === 'pending')
+      .filter((offer) => {
+        const actorSubject = resolveOfferActorSubject(offer)
+        return actorSubject && actorSubject === offer.to_subject
+      })
+      .map((offer) => offer.offer_id)
+      .filter((offerId) => offerId && !shippingQuoteByOffer[offerId])
+    if (!pendingReceivedOfferIds.length) return
+    let cancelled = false
+    ;(async () => {
+      for (const offerId of pendingReceivedOfferIds) {
+        if (cancelled) return
+        try {
+          await loadShippingQuoteForOffer(offerId)
+        } catch (err) {
+          if (cancelled) return
+          setShippingQuoteByOffer((prev) => ({
+            ...prev,
+            [offerId]: {
+              status: 'unavailable',
+              debug: err.message || 'Shipping quote unavailable',
+            },
+          }))
+        }
+      }
+    })()
+    return () => { cancelled = true }
+  }, [activeTab, incomingOffers, shippingQuoteByOffer])
+
   async function createShippingLabelsForOffer(offerId) {
     const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
     const quote = shippingQuoteByOffer[offerId] || null
@@ -3353,6 +3929,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   }
 
   async function loadShippingQuoteForOffer(offerId) {
+    setShippingQuoteByOffer((prev) => ({ ...prev, [offerId]: prev[offerId] || { status: 'loading' } }))
     const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
     const quote = await fetchShippingQuoteRemote({
       apiBaseUrl,
@@ -3413,6 +3990,9 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
         carrier: shipment?.carrier || payload?.carrier || 'Carrier',
         serviceLevel: shipment?.service_level || payload?.service_level || '',
         trackingNumber: shipment?.tracking_number || payload?.tracking_number || '',
+        trackingStatus: shipmentTrackingLabel(payload || shipment),
+        trackingDetails: payload?.tracking_status_details || shipment?.tracking_status_details || '',
+        trackingEta: payload?.tracking_eta || shipment?.tracking_eta || '',
       })
     } catch (err) {
       const msg = err.message || 'Failed to open label.'
@@ -3421,12 +4001,12 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     }
   }
 
-  const offeredTotalValue = tradeOfferCandidates
+  const selectedTradeOfferListings = tradeOfferCandidates
     .filter((x) => tradeOfferListingIds.includes(x.id))
-    .reduce((sum, x) => sum + Number(x.estimatedValue || 0), 0)
   const composerTargetValue = Number(tradeComposerTarget?.estimatedValue || 0)
-  const composerGapPct = composerTargetValue > 0 ? Math.abs(offeredTotalValue - composerTargetValue) / composerTargetValue : null
-  const composerWithinBand = composerGapPct !== null ? composerGapPct <= 0.30 : false
+  const composerWithinBand = composerTargetValue > 0 && selectedTradeOfferListings.length > 0
+    ? selectedTradeOfferListings.every((x) => Math.abs(Number(x.estimatedValue || 0) - composerTargetValue) / composerTargetValue <= 0.30)
+    : false
 
   async function analyzeUploadedPhotosForWizard({ analysisImages = images } = {}) {
     if (!clerkEnabled && !apiKey.trim()) {
@@ -3497,6 +4077,10 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
       setAnalysisError('Upload 1 to 6 images before continuing.')
       return false
     }
+    if (!category) {
+      setAnalysisError('Select item category before continuing.')
+      return false
+    }
     if (!userCondition) {
       setAnalysisError('Select item condition before continuing.')
       return false
@@ -3527,7 +4111,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
         owner: session.name || 'You',
         title: itemTitle.trim() || draftDescription || 'New listing',
         mode: 'trade',
-        category: category || 'handbag',
+        category,
         brand: 'unknown',
         condition: draftCondition,
         size: itemSize || null,
@@ -3694,10 +4278,8 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
 
   async function removeListingFromCloset(listing) {
     if (!listing?.id) return
-    if (typeof window !== 'undefined') {
-      const confirmed = window.confirm(`Remove "${listing.title || 'this listing'}" from your closet? This cannot be undone.`)
-      if (!confirmed) return
-    }
+    const confirmed = await confirmListingDelete(listing)
+    if (!confirmed) return
     setAnalysisError('')
     setSavedListingNotice('')
     try {
@@ -3754,6 +4336,20 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     setSavedListingNotice('')
     setShowCreateListingModal(false)
     setActiveTab('edit_listing')
+    if (typeof window !== 'undefined') {
+      window.history.pushState({}, '', editListingHref(listing.id))
+    }
+  }
+
+  function openReviewListing(listing) {
+    if (!listing?.id) return
+    setReviewListingId(listing.id)
+    setAnalysisError('')
+    setSavedListingNotice('')
+    setActiveTab('review_listing')
+    if (typeof window !== 'undefined') {
+      window.history.pushState({}, '', reviewListingHref(listing.id))
+    }
   }
 
   function removeEditListingImageAtIndex(imageIndex) {
@@ -3788,10 +4384,10 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
               </div>
             </div>
             <div className="app-brand-links" aria-label="Primary app sections">
-              <a href={tabHref('market')} onClick={(event) => { event.preventDefault(); navigateToTab('market') }} className={activeTab === 'market' ? 'app-brand-link active' : 'app-brand-link'}>Marketplace</a>
-              <a href={tabHref('portfolio')} onClick={(event) => { event.preventDefault(); navigateToTab('portfolio') }} className={activeTab === 'portfolio' ? 'app-brand-link active' : 'app-brand-link'}>My Closet</a>
-              <a href={tabHref('inbox')} onClick={(event) => { event.preventDefault(); navigateToTab('inbox') }} className={activeTab === 'inbox' ? 'app-brand-link active' : 'app-brand-link'}>Trade Inbox</a>
-              <a href={tabHref('profile')} onClick={(event) => { event.preventDefault(); navigateToTab('profile') }} className={activeTab === 'profile' || activeTab === 'profile_setup' ? 'app-brand-link active' : 'app-brand-link'}>Profile</a>
+              <a href={tabHref('market')} className={activeTab === 'market' ? 'app-brand-link active' : 'app-brand-link'}>Marketplace</a>
+              <a href={tabHref('portfolio')} className={activeTab === 'portfolio' ? 'app-brand-link active' : 'app-brand-link'}>My Closet</a>
+              <a href={tabHref('inbox')} className={activeTab === 'inbox' ? 'app-brand-link active' : 'app-brand-link'}>Trade Inbox</a>
+              <a href={tabHref('profile')} className={activeTab === 'profile' || activeTab === 'profile_setup' ? 'app-brand-link active' : 'app-brand-link'}>Profile</a>
             </div>
           </div>
         </div>
@@ -3870,14 +4466,22 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
       )}
 
       {appAlert && (
-        <div className="app-alert-overlay" role="presentation" onClick={() => setAppAlert(null)}>
+        <div className="app-alert-overlay" role="presentation" onClick={() => {
+          const onSecondary = appAlert.onSecondary
+          setAppAlert(null)
+          if (typeof onSecondary === 'function') onSecondary()
+        }}>
           <section className="app-alert-card" role="dialog" aria-modal="true" aria-labelledby="app-alert-title" onClick={(event) => event.stopPropagation()}>
             <p className="eyebrow">JOUFT</p>
             <h3 id="app-alert-title">{appAlert.title}</h3>
             <p>{appAlert.message}</p>
             <div className="button-row app-alert-actions">
               {appAlert.secondaryLabel && (
-                <button className="ghost" type="button" onClick={() => setAppAlert(null)}>{appAlert.secondaryLabel}</button>
+                <button className="ghost" type="button" onClick={() => {
+                  const onSecondary = appAlert.onSecondary
+                  setAppAlert(null)
+                  if (typeof onSecondary === 'function') onSecondary()
+                }}>{appAlert.secondaryLabel}</button>
               )}
               {appAlert.primaryLabel && (
                 <button className="primary" type="button" onClick={() => (typeof appAlert.onPrimary === 'function' ? appAlert.onPrimary() : setAppAlert(null))}>
@@ -3898,6 +4502,13 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                 <h3 id="shipping-label-title">{selectedShippingLabel.carrier} {selectedShippingLabel.serviceLevel}</h3>
                 {selectedShippingLabel.trackingNumber ? (
                   <p className="tiny-note">Tracking: {selectedShippingLabel.trackingNumber}</p>
+                ) : null}
+                <p className="tiny-note">Status: {selectedShippingLabel.trackingStatus || 'Tracking pending'}</p>
+                {selectedShippingLabel.trackingDetails ? (
+                  <p className="tiny-note">{selectedShippingLabel.trackingDetails}</p>
+                ) : null}
+                {selectedShippingLabel.trackingEta ? (
+                  <p className="tiny-note">Estimated delivery: {selectedShippingLabel.trackingEta}</p>
                 ) : null}
               </div>
               <button className="ghost small" type="button" onClick={() => setSelectedShippingLabel(null)}>Close</button>
@@ -3938,7 +4549,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                 </div>
                 <div className="latest-meta">
                   <h3 className="editorial-title latest-title">{item.title || 'Untitled listing'}</h3>
-                  <p className="editorial-byline">BY {String(item.owner || 'Unknown member').toUpperCase()}</p>
+                  <p className="editorial-byline">BY {ownerFirstName(item.owner, 'Member').toUpperCase()}</p>
                   <p className="editorial-meta">
                     EST. {money(item.estimatedValue)}
                   </p>
@@ -3961,6 +4572,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                   {profileSetupStep === 2 && 'Your Browse Profile'}
                   {profileSetupStep === 3 && 'Describe Your Style'}
                   {profileSetupStep === 4 && 'What Brings You to JOUFT?'}
+                  {profileSetupStep === 5 && 'Subscription & Payment'}
                 </h3>
               </div>
               <div className="profile-setup-progress">
@@ -3972,103 +4584,112 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
 
             {profileSetupStep === 1 && (
               <div className="profile-setup-body">
-                <div className="field-grid two">
-                  <label>
-                    <span>First Name</span>
-                    <input
-                      value={profileQuiz.first_name || ''}
-                      onChange={(e) => {
-                        profileSetupDirtyRef.current = true
-                        setProfileQuiz((p) => ({ ...p, first_name: e.target.value }))
-                      }}
-                      required
-                    />
-                  </label>
-                  <label>
-                    <span>Last Name</span>
-                    <input
-                      value={profileQuiz.last_name || ''}
-                      onChange={(e) => {
-                        profileSetupDirtyRef.current = true
-                        setProfileQuiz((p) => ({ ...p, last_name: e.target.value }))
-                      }}
-                      required
-                    />
-                  </label>
-                  <label>
-                    <span>Email Address</span>
-                    <input
-                      type="email"
-                      value={profileQuiz.email || ''}
-                      onChange={(e) => {
-                        profileSetupDirtyRef.current = true
-                        setProfileQuiz((p) => ({ ...p, email: e.target.value }))
-                      }}
-                      required
-                    />
-                  </label>
-                  <label>
-                    <span>Shipping Full Name</span>
-                    <input value={primaryProfileAddress.full_name || ''} onChange={(e) => updatePrimaryShippingAddress({ full_name: e.target.value })} />
-                  </label>
-                  <label>
-                    <span>Birthday</span>
-                    <input
-                      type="date"
-                      value={profileQuiz.birthday || ''}
-                      onChange={(e) => {
-                        profileSetupDirtyRef.current = true
-                        setProfileQuiz((p) => ({ ...p, birthday: e.target.value }))
-                      }}
-                    />
-                  </label>
-                  <label>
-                    <span>Address Line 1</span>
-                    <input value={primaryProfileAddress.address_line1 || ''} onChange={(e) => updatePrimaryShippingAddress({ address_line1: e.target.value })} />
-                  </label>
-                  <label>
-                    <span>Address Line 2</span>
-                    <input value={primaryProfileAddress.address_line2 || ''} onChange={(e) => updatePrimaryShippingAddress({ address_line2: e.target.value })} />
-                  </label>
-                  <label>
-                    <span>City</span>
-                    <input value={primaryProfileAddress.city || ''} onChange={(e) => updatePrimaryShippingAddress({ city: e.target.value })} />
-                  </label>
-                  <label>
-                    <span>State</span>
-                    <input value={primaryProfileAddress.state || ''} onChange={(e) => updatePrimaryShippingAddress({ state: e.target.value })} />
-                  </label>
-                  <label>
-                    <span>Postal Code</span>
-                    <input value={primaryProfileAddress.postal_code || ''} onChange={(e) => updatePrimaryShippingAddress({ postal_code: e.target.value })} />
-                  </label>
-                  <label>
-                    <span>Country</span>
-                    <input value={primaryProfileAddress.country || ''} onChange={(e) => updatePrimaryShippingAddress({ country: e.target.value })} />
-                  </label>
-                  <label>
-                    <span>Gender</span>
-                    <select
-                      value={profileQuiz.gender || ''}
-                      onChange={(e) => {
-                        profileSetupDirtyRef.current = true
-                        const nextGender = e.target.value
-                        setProfileQuiz((p) => ({
-                          ...p,
-                          gender: nextGender,
-                          dresses_size: nextGender === 'male' ? [] : p.dresses_size,
-                          category_preferences: nextGender === 'male'
-                            ? p.category_preferences.filter((x) => x !== 'Dresses')
-                            : p.category_preferences,
-                        }))
-                      }}
-                    >
-                      <option value="">Select gender</option>
-                      <option value="female">Female</option>
-                      <option value="male">Male</option>
-                      <option value="other">Other</option>
-                    </select>
-                  </label>
+                <div className="profile-setup-field-group">
+                  <p className="eyebrow">Account</p>
+                  <div className="field-grid two">
+                    <label>
+                      <span>First Name</span>
+                      <input
+                        value={profileQuiz.first_name || ''}
+                        onChange={(e) => {
+                          profileSetupDirtyRef.current = true
+                          setProfileQuiz((p) => ({ ...p, first_name: e.target.value }))
+                        }}
+                        required
+                      />
+                    </label>
+                    <label>
+                      <span>Last Name</span>
+                      <input
+                        value={profileQuiz.last_name || ''}
+                        onChange={(e) => {
+                          profileSetupDirtyRef.current = true
+                          setProfileQuiz((p) => ({ ...p, last_name: e.target.value }))
+                        }}
+                        required
+                      />
+                    </label>
+                    <label>
+                      <span>Email Address</span>
+                      <input
+                        type="email"
+                        value={profileQuiz.email || ''}
+                        onChange={(e) => {
+                          profileSetupDirtyRef.current = true
+                          setProfileQuiz((p) => ({ ...p, email: e.target.value }))
+                        }}
+                        required
+                      />
+                    </label>
+                    <label>
+                      <span>Birthday</span>
+                      <input
+                        type="date"
+                        value={profileQuiz.birthday || ''}
+                        onChange={(e) => {
+                          profileSetupDirtyRef.current = true
+                          setProfileQuiz((p) => ({ ...p, birthday: e.target.value }))
+                        }}
+                      />
+                    </label>
+                    <label>
+                      <span>Gender</span>
+                      <select
+                        value={profileQuiz.gender || ''}
+                        onChange={(e) => {
+                          profileSetupDirtyRef.current = true
+                          const nextGender = e.target.value
+                          setProfileQuiz((p) => ({
+                            ...p,
+                            gender: nextGender,
+                            dresses_size: nextGender === 'male' ? [] : p.dresses_size,
+                            category_preferences: nextGender === 'male'
+                              ? p.category_preferences.filter((x) => x !== 'Dresses')
+                              : p.category_preferences,
+                          }))
+                        }}
+                      >
+                        <option value="">Select gender</option>
+                        <option value="female">Female</option>
+                        <option value="male">Male</option>
+                        <option value="other">Other</option>
+                      </select>
+                    </label>
+                  </div>
+                </div>
+
+                <div className="profile-setup-field-group">
+                  <p className="eyebrow">Shipping Address</p>
+                  <div className="field-grid two">
+                    <label>
+                      <span>Shipping Full Name</span>
+                      <input value={primaryProfileAddress.full_name || ''} onChange={(e) => updatePrimaryShippingAddress({ full_name: e.target.value })} />
+                    </label>
+                    <label>
+                      <span>Address Line 1</span>
+                      <input value={primaryProfileAddress.address_line1 || ''} onChange={(e) => updatePrimaryShippingAddress({ address_line1: e.target.value })} />
+                    </label>
+                    <label>
+                      <span>Address Line 2</span>
+                      <input value={primaryProfileAddress.address_line2 || ''} onChange={(e) => updatePrimaryShippingAddress({ address_line2: e.target.value })} />
+                    </label>
+                    <label>
+                      <span>City</span>
+                      <input value={primaryProfileAddress.city || ''} onChange={(e) => updatePrimaryShippingAddress({ city: e.target.value })} />
+                    </label>
+                    <label>
+                      <span>State</span>
+                      <input value={primaryProfileAddress.state || ''} onChange={(e) => updatePrimaryShippingAddress({ state: e.target.value })} />
+                    </label>
+                    <label>
+                      <span>Postal Code</span>
+                      <input value={primaryProfileAddress.postal_code || ''} onChange={(e) => updatePrimaryShippingAddress({ postal_code: e.target.value })} />
+                    </label>
+                    <label>
+                      <span>Country</span>
+                      <input value={primaryProfileAddress.country || ''} onChange={(e) => updatePrimaryShippingAddress({ country: e.target.value })} />
+                    </label>
+                  </div>
                 </div>
               </div>
             )}
@@ -4171,30 +4792,178 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
               </div>
             )}
 
+            {profileSetupStep === 5 && (
+              <div className="profile-setup-body">
+                <p className="tiny-note">Choose a plan to start using JOUFT. Payment details are only required for paid plans.</p>
+                <div className="billing-cycle-toggle">
+                  <button
+                    className={selectedBillingCycle === 'monthly' ? 'nav-item active' : 'nav-item'}
+                    type="button"
+                    onClick={() => {
+                      profileSetupDirtyRef.current = true
+                      setProfileQuiz((p) => ({ ...p, subscription_billing_cycle: 'monthly' }))
+                    }}
+                  >
+                    Monthly Billing
+                  </button>
+                  <button
+                    className={selectedBillingCycle === 'annual' ? 'nav-item active' : 'nav-item'}
+                    type="button"
+                    onClick={() => {
+                      profileSetupDirtyRef.current = true
+                      setProfileQuiz((p) => ({ ...p, subscription_billing_cycle: 'annual' }))
+                    }}
+                  >
+                    Annual Billing (10% Off)
+                  </button>
+                </div>
+                <div className="subscription-plan-grid">
+                  {SUBSCRIPTION_PLANS.map((plan) => {
+                    const isSelected = selectedSubscriptionPlanId === plan.id
+                    const annualTotal = Math.round(plan.monthlyPrice * 12 * 0.9)
+                    const annualMonthlyEquivalent = annualTotal / 12
+                    const priceLabel = plan.monthlyPrice <= 0
+                      ? 'Free'
+                      : selectedBillingCycle === 'annual'
+                      ? `$${annualTotal}/year ($${annualMonthlyEquivalent.toFixed(2)}/month)`
+                      : `$${plan.monthlyPrice}/month`
+                    return (
+                      <button
+                        key={`setup-plan-${plan.id}`}
+                        type="button"
+                        className={isSelected ? 'subscription-plan-card active' : 'subscription-plan-card'}
+                        onClick={() => {
+                          profileSetupDirtyRef.current = true
+                          setProfileQuiz((p) => ({ ...p, subscription_plan: plan.id, subscription_status: '' }))
+                        }}
+                      >
+                        <span className="subscription-plan-name">{plan.name}</span>
+                        <strong className="subscription-plan-price">{priceLabel}</strong>
+                        <span className="subscription-plan-limit">{plan.description}</span>
+                      </button>
+                    )
+                  })}
+                </div>
+                <div style={{ marginTop: 16 }}>
+                  {selectedSubscriptionPlanIsPaid ? (
+                    <>
+                      <p className="eyebrow" style={{ marginBottom: 8 }}>Payment Method</p>
+                      <span className="tiny-note">Payments are managed by Stripe. JOUFT does not store raw card numbers.</span>
+                      <div className="button-row" style={{ marginBottom: 8 }}>
+                        <button className="ghost small" type="button" onClick={() => setShowStripePaymentModal(true)}>
+                          + Add Payment Method
+                        </button>
+                        <button
+                          className="ghost small"
+                          type="button"
+                          disabled={paymentSyncBusy}
+                          onClick={async () => {
+                            setPaymentSyncBusy(true)
+                            try {
+                              const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
+                              const synced = await syncStripePaymentMethodsRemote({
+                                apiBaseUrl,
+                                apiKey: clerkEnabled ? '' : apiKey.trim(),
+                                bearerToken,
+                              })
+                              setPaymentMethods(synced)
+                              setPaymentActionMsg('Payment methods synced.')
+                              setPaymentLoadError('')
+                            } catch (err) {
+                              setPaymentLoadError(err?.message || 'Failed to sync payment methods.')
+                            } finally {
+                              setPaymentSyncBusy(false)
+                            }
+                          }}
+                        >
+                          {paymentSyncBusy ? 'Syncing...' : 'Sync From Stripe'}
+                        </button>
+                      </div>
+                      {paymentActionMsg && <span className="tiny-note" style={{ color: '#067647' }}>{paymentActionMsg}</span>}
+                      {paymentLoadError && <span className="tiny-note" style={{ color: '#b42318' }}>{paymentLoadError}</span>}
+                      {paymentMethods.length === 0 ? (
+                        <p className="tiny-note">Add a payment method before activating your subscription.</p>
+                      ) : (
+                        <div style={{ display: 'grid', gap: 8 }}>
+                          {paymentMethods.map((method) => {
+                            const selectedForSubscription = method.payment_method_id === selectedSubscriptionPaymentMethodId
+                            return (
+                              <button
+                                key={`setup-payment-${method.payment_method_id}`}
+                                type="button"
+                                className={selectedForSubscription ? 'subscription-plan-card active' : 'subscription-plan-card'}
+                                onClick={() => setSelectedSubscriptionPaymentMethodId(method.payment_method_id)}
+                                style={{ textAlign: 'left' }}
+                              >
+                                <span className="subscription-plan-name">{method.label || method.method_type || 'Payment method'}</span>
+                                <span className="tiny-note">
+                                  {method.provider}{method.is_default ? ' • Default' : ''}{selectedForSubscription ? ' • Subscription' : ''}
+                                </span>
+                                {(method.last4 || method.email) && (
+                                  <span className="tiny-note">{method.last4 ? `•••• ${method.last4}` : method.email}</span>
+                                )}
+                              </button>
+                            )
+                          })}
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <p className="tiny-note">Free plan selected. No payment method is required.</p>
+                  )}
+                </div>
+              </div>
+            )}
+
             <div className="profile-setup-actions">
-              <button
-                className="ghost small"
-                type="button"
-                onClick={() => {
-                  navigateToTab('market')
-                }}
-              >
-                Skip for now
-              </button>
               <div className="button-row" style={{ margin: 0 }}>
                 <button className="ghost small" type="button" disabled={profileSetupStep === 1} onClick={() => setProfileSetupStep((step) => Math.max(1, step - 1))}>Back</button>
                 {profileSetupStep < PROFILE_SETUP_TOTAL_STEPS ? (
-                  <button className="primary" type="button" onClick={() => setProfileSetupStep((step) => Math.min(PROFILE_SETUP_TOTAL_STEPS, step + 1))}>Next</button>
+                  <button
+                    className="primary"
+                    type="button"
+                    onClick={() => {
+                      const error = currentProfileSetupStepError(profileSetupStep)
+                      if (error) {
+                        setProfileSaveMsg(error)
+                        return
+                      }
+                      setProfileSaveMsg('')
+                      setProfileSetupStep((step) => Math.min(PROFILE_SETUP_TOTAL_STEPS, step + 1))
+                    }}
+                  >
+                    Next
+                  </button>
                 ) : (
                   <button
                     className="primary"
                     type="button"
                     onClick={async () => {
                       try {
+                        const error = currentProfileSetupStepError(PROFILE_SETUP_TOTAL_STEPS)
+                        if (error) {
+                          setProfileSaveMsg(error)
+                          return
+                        }
                         await saveProfileQuiz()
-                        navigateToTab('market')
+                        const activated = await activateSelectedSubscription()
+                        if (!activated) return
+                        profileSetupDirtyRef.current = false
+                        setProfileSetupRequired(false)
+                        setAppAlert({
+                          title: selectedSubscriptionPlanIsPaid ? 'Subscription Active' : 'Free Plan Active',
+                          message: selectedSubscriptionPlanIsPaid
+                            ? 'Payment processed successfully. Your JOUFT subscription is active.'
+                            : 'Your free JOUFT plan is active.',
+                          primaryLabel: 'Continue',
+                        })
+                        setActiveTab('market')
+                        if (typeof window !== 'undefined') {
+                          window.history.pushState({}, '', tabHref('market'))
+                        }
                       } catch (err) {
-                        setProfileSaveMsg(err.message || 'Failed to save profile.')
+                        setProfileSetupStep(PROFILE_SETUP_TOTAL_STEPS)
+                        setProfileSaveMsg(err.message || 'Payment was not processed. Please update your payment details.')
                       }
                     }}
                   >
@@ -4210,11 +4979,19 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
 
       {activeTab === 'profile' ? (
         <main className="content" style={{ marginTop: 12 }}>
-          <section className="panel">
+          <section className="panel" key={`profile-tab-${profileTabReloadKey}`}>
             <div style={{ maxWidth: 980 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-	                <h3 className="profile-tab-heading">Profile</h3>
+		                <h3 className="profile-tab-heading">Profile</h3>
               </div>
+              {profileTabReloading ? (
+                <div className="loading-panel" role="status" aria-live="polite">
+                  <span className="spinner" aria-hidden="true" />
+                  <h3>Reloading profile...</h3>
+                  <p>We are refreshing your saved profile details.</p>
+                </div>
+              ) : (
+              <>
               <div style={{ display: 'grid', gridTemplateColumns: '220px 1fr', gap: 16 }}>
                 <aside className="profile-nav" style={{ border: '1px solid var(--line)', borderRadius: 12, padding: 10, alignSelf: 'start' }}>
                   <button className={profileSection === 'general' ? 'nav-item active' : 'nav-item'} type="button" onClick={() => setProfileSection('general')}>General</button>
@@ -4415,14 +5192,20 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                         <button
                           className={selectedBillingCycle === 'monthly' ? 'nav-item active' : 'nav-item'}
                           type="button"
-                          onClick={() => setProfileQuiz((p) => ({ ...p, subscription_billing_cycle: 'monthly' }))}
+                          onClick={() => {
+                            setSubscriptionSelectionDirty(true)
+                            setProfileQuiz((p) => ({ ...p, subscription_billing_cycle: 'monthly' }))
+                          }}
                         >
                           Monthly Billing
                         </button>
                         <button
                           className={selectedBillingCycle === 'annual' ? 'nav-item active' : 'nav-item'}
                           type="button"
-                          onClick={() => setProfileQuiz((p) => ({ ...p, subscription_billing_cycle: 'annual' }))}
+                          onClick={() => {
+                            setSubscriptionSelectionDirty(true)
+                            setProfileQuiz((p) => ({ ...p, subscription_billing_cycle: 'annual' }))
+                          }}
                         >
                           Annual Billing (10% Off)
                         </button>
@@ -4430,23 +5213,25 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                       <div className="subscription-plan-grid">
                         {SUBSCRIPTION_PLANS.map((plan) => {
                           const isSelected = selectedSubscriptionPlanId === plan.id
-                          const annualTotal = plan.monthlyPrice > 0 ? Math.round(plan.monthlyPrice * 12 * 0.9) : 0
-                          const annualMonthlyEquivalent = plan.monthlyPrice > 0 ? (annualTotal / 12) : 0
-                          const priceLabel = selectedBillingCycle === 'annual'
-                            ? (plan.monthlyPrice > 0
-                              ? `$${annualTotal}/year ($${annualMonthlyEquivalent.toFixed(2)}/month)`
-                              : '$0/year')
-                            : (plan.monthlyPrice > 0 ? `$${plan.monthlyPrice}/month` : '$0/month')
+                          const annualTotal = Math.round(plan.monthlyPrice * 12 * 0.9)
+                          const annualMonthlyEquivalent = annualTotal / 12
+                          const priceLabel = plan.monthlyPrice <= 0
+                            ? 'Free'
+                            : selectedBillingCycle === 'annual'
+                            ? `$${annualTotal}/year ($${annualMonthlyEquivalent.toFixed(2)}/month)`
+                            : `$${plan.monthlyPrice}/month`
                           return (
                             <button
                               key={plan.id}
                               type="button"
                               className={isSelected ? 'subscription-plan-card active' : 'subscription-plan-card'}
-                              onClick={() => setProfileQuiz((p) => ({
-                                ...p,
-                                subscription_plan: plan.id,
-                                subscription_status: 'active',
-                              }))}
+                              onClick={() => {
+                                setSubscriptionSelectionDirty(true)
+                                setProfileQuiz((p) => ({
+                                  ...p,
+                                  subscription_plan: plan.id,
+                                }))
+                              }}
                             >
                               <span className="subscription-plan-name">{plan.name}</span>
                               <strong className="subscription-plan-price">{priceLabel}</strong>
@@ -4455,46 +5240,33 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                           )
                         })}
                       </div>
-                      <div className="field-grid two">
-                        <label>
-                          <span>Status</span>
-                          <select
-                            value={profileQuiz.subscription_status || ''}
-                            onChange={(e) => setProfileQuiz((p) => ({ ...p, subscription_status: e.target.value }))}
-                          >
-                            <option value="">Select status</option>
-                            <option value="active">Active</option>
-                            <option value="trialing">Trialing</option>
-                            <option value="paused">Paused</option>
-                            <option value="canceled">Canceled</option>
-                          </select>
-                        </label>
-                      </div>
-                      {(() => {
-                        const selectedPlan = SUBSCRIPTION_PLANS.find((plan) => plan.id === selectedSubscriptionPlanId) || SUBSCRIPTION_PLANS[0]
-                        if (!selectedPlan || selectedPlan.monthlyPrice <= 0) return null
-                        return (
-                          <div className="field-grid two" style={{ marginTop: 12 }}>
-                            <label>
-                              <span>Payment method for this subscription</span>
-                              <select
-                                value={selectedSubscriptionPaymentMethodId}
-                                onChange={(e) => setSelectedSubscriptionPaymentMethodId(e.target.value)}
-                              >
-                                {paymentMethods.length === 0 ? (
-                                  <option value="">Add a payment method first</option>
-                                ) : (
-                                  paymentMethods.map((method) => (
-                                    <option key={method.payment_method_id} value={method.payment_method_id}>
-                                      {method.label || method.method_type || 'Payment method'}{method.is_default ? ' (default)' : ''}
-                                    </option>
-                                  ))
-                                )}
-                              </select>
-                            </label>
-                          </div>
-                        )
-                      })()}
+                      <span className="tiny-note">Current status: {profileQuiz.subscription_status ? titleCase(profileQuiz.subscription_status) : 'Not active'}</span>
+                      {selectedSubscriptionPlanIsPaid ? (
+                        <div className="field-grid two" style={{ marginTop: 12 }}>
+                          <label>
+                            <span>Payment method for this subscription</span>
+                            <select
+                              value={selectedSubscriptionPaymentMethodId}
+                              onChange={(e) => {
+                                setSubscriptionSelectionDirty(true)
+                                setSelectedSubscriptionPaymentMethodId(e.target.value)
+                              }}
+                            >
+                              {paymentMethods.length === 0 ? (
+                                <option value="">Add a payment method first</option>
+                              ) : (
+                                paymentMethods.map((method) => (
+                                  <option key={method.payment_method_id} value={method.payment_method_id}>
+                                    {method.label || method.method_type || 'Payment method'}{method.is_default ? ' (default)' : ''}
+                                  </option>
+                                ))
+                              )}
+                            </select>
+                          </label>
+                        </div>
+                      ) : (
+                        <span className="tiny-note">Free plan selected. No payment method is required.</span>
+                      )}
                       <div style={{ marginTop: 14 }}>
                         <p className="eyebrow" style={{ marginBottom: 8 }}>Payment Methods ({paymentMethods.length})</p>
                         <span className="tiny-note">Payments are fully managed by Stripe. No raw card data is collected or stored by this app.</span>
@@ -4525,7 +5297,10 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                                   <button
                                     className="ghost small"
                                     type="button"
-                                    onClick={() => setSelectedSubscriptionPaymentMethodId(method.payment_method_id)}
+                                    onClick={() => {
+                                      setSubscriptionSelectionDirty(true)
+                                      setSelectedSubscriptionPaymentMethodId(method.payment_method_id)
+                                    }}
                                   >
                                     Use for Subscription
                                   </button>
@@ -4545,14 +5320,8 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                                           bearerToken,
                                           paymentMethodId: method.payment_method_id,
                                         })
-                                        const refreshed = await fetchPaymentMethodsRemote({
-                                          apiBaseUrl,
-                                          apiKey: clerkEnabled ? '' : apiKey.trim(),
-                                          bearerToken,
-                                        })
-                                        setPaymentMethods(refreshed)
+                                        await reloadProfileTabAfterSuccess('Default payment method updated.')
                                         setPaymentActionMsg('Default payment method updated.')
-                                        setPaymentLoadError('')
                                       } catch (err) {
                                         setPaymentActionMsg('')
                                         setPaymentLoadError(err?.message || 'Failed to set default method.')
@@ -4582,14 +5351,8 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                                         bearerToken,
                                         paymentMethodId: method.payment_method_id,
                                       })
-                                      const refreshed = await fetchPaymentMethodsRemote({
-                                        apiBaseUrl,
-                                        apiKey: clerkEnabled ? '' : apiKey.trim(),
-                                        bearerToken,
-                                      })
-                                      setPaymentMethods(refreshed)
+                                      await reloadProfileTabAfterSuccess('Payment method removed.')
                                       setPaymentActionMsg('Payment method removed.')
-                                      setPaymentLoadError('')
                                     } catch (err) {
                                       setPaymentActionMsg('')
                                       setPaymentLoadError(err?.message || 'Failed to remove method.')
@@ -4627,6 +5390,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                             onClick={() => {
                               setActiveShippingAddressIdx(idx)
                               setAddressSuggestions([])
+                              setAddressAutocompleteActive(false)
                             }}
                           >
                             {address.label?.trim() || `Address ${idx + 1}`}
@@ -4644,7 +5408,14 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                         </label>
                         <label>
                           <span>Address Line 1</span>
-                          <input value={activeShippingAddress?.address_line1 || ''} onChange={(e) => updateActiveShippingAddress({ address_line1: e.target.value })} />
+                          <input
+                            value={activeShippingAddress?.address_line1 || ''}
+                            onChange={(e) => {
+                              setAddressAutocompleteActive(true)
+                              updateActiveShippingAddress({ address_line1: e.target.value })
+                            }}
+                            autoComplete="off"
+                          />
                         </label>
                         {addressSuggestions.length > 0 && (
                           <div style={{ gridColumn: '1 / -1', border: '1px solid var(--line)', borderRadius: 10, background: 'var(--panel)' }}>
@@ -4660,9 +5431,10 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                                     city: s.city || activeShippingAddress?.city || '',
                                     state: s.state || activeShippingAddress?.state || '',
                                     postal_code: s.postal_code || activeShippingAddress?.postal_code || '',
-                                    country: activeShippingAddress?.country || 'US',
+                                    country: s.country || activeShippingAddress?.country || 'US',
                                   })
                                   setAddressSuggestions([])
+                                  setAddressAutocompleteActive(false)
                                 }}
                               >
                                 {s.formatted || s.street_address}
@@ -4713,24 +5485,46 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                   Cancel
                 </button>
                 <button
-                  className="primary"
+                  className={profileSection === 'subscription' && subscriptionSelectionIsCurrent ? 'primary disabled' : 'primary'}
                   type="button"
+                  disabled={profileSection === 'subscription' && subscriptionSelectionIsCurrent}
                   onClick={async () => {
                     try {
                       if (profileSection === 'subscription') {
-                        await activateSelectedSubscription()
+                        const activated = await activateSelectedSubscription()
+                        if (activated) {
+                          await reloadProfileTabAfterSuccess('Subscription active.')
+                          setAppAlert({
+                            title: selectedSubscriptionPlanIsPaid ? 'Subscription Active' : 'Free Plan Active',
+                            message: selectedSubscriptionPlanIsPaid
+                              ? 'Payment processed successfully. Your JOUFT subscription is active.'
+                              : 'Your free JOUFT plan is active.',
+                            primaryLabel: 'Continue',
+                          })
+                        }
                       } else {
                         await saveProfileQuiz()
+                        await reloadProfileTabAfterSuccess('Profile saved.', { navigateToProfileTab: true })
                       }
                     } catch (err) {
+                      if (profileSection === 'subscription') {
+                        setProfileSection('payments')
+                        setPaymentLoadError(err.message || 'Payment was not processed. Please update your payment details.')
+                      }
                       setProfileSaveMsg(err.message || 'Failed to save profile.')
                     }
                   }}
                 >
-                  {profileSection === 'subscription' ? 'Activate Subscription' : 'Save Profile'}
+                  {profileSection === 'subscription'
+                    ? (subscriptionSelectionIsCurrent
+                      ? 'Subscription Active'
+                      : (hasActiveSubscription ? 'Update Subscription' : (selectedSubscriptionPlanIsPaid ? 'Activate Subscription' : 'Use Free Plan')))
+                    : 'Save Profile'}
                 </button>
                 {profileSaveMsg && <span className="tiny-note">{profileSaveMsg}</span>}
               </div>
+              </>
+              )}
             </div>
           </section>
         </main>
@@ -4747,6 +5541,10 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                     className="ghost"
                     type="button"
                     onClick={() => {
+                      if (typeof window !== 'undefined' && tabFromLocation() === 'edit_listing' && window.history.length > 1) {
+                        window.history.back()
+                        return
+                      }
                       setActiveTab('portfolio')
                       setEditingListingId(null)
                       setModalEditingListing(null)
@@ -4766,7 +5564,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                 <div className="empty-state">
                   <h3>No listing selected</h3>
                   <p>Select a listing from your closet to edit it.</p>
-                  <button className="primary" type="button" onClick={() => setActiveTab('portfolio')}>Go to Closet</button>
+                  <button className="primary" type="button" onClick={() => navigateToTab('portfolio')}>Go to Closet</button>
                 </div>
               ) : (
                 <div className="listing-edit-layout">
@@ -4862,7 +5660,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                       <label>
                         <span>Category</span>
                         <select value={category} onChange={(e) => setCategory(e.target.value)}>
-                          <option value="">Auto detect</option>
+                          <option value="">Select category</option>
                           <option value="clothes">Clothes</option>
                           <option value="shoes">Shoes</option>
                           <option value="handbag">Handbag</option>
@@ -4980,6 +5778,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                             <code>{modalEditingListing.analysis.item_profile.model_identification.name}</code>
                           </div>
                         )}
+                        <VisualConditionDebug assessment={modalEditingListing.analysis.item_profile?.visual_condition_assessment} />
                         {modalEditingListing.analysis.valuation ? (
                           <div className="valuation-band">
                             <div><span>Estimated value</span><strong>{money(modalEditingListing.analysis.valuation.estimated_value)}</strong></div>
@@ -4990,6 +5789,80 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                       </article>
                       </section>
                     )}
+                  </div>
+                </div>
+              )}
+            </section>
+          )}
+
+          {activeTab === 'review_listing' && (
+            <section className="panel listing-review-page">
+              <div className="panel-header">
+                <div>
+                  <p className="eyebrow">Review Listing</p>
+                </div>
+                <div className="header-actions">
+                  <button
+                    className="ghost"
+                    type="button"
+                    onClick={() => {
+                      if (typeof window !== 'undefined' && tabFromLocation() === 'review_listing' && window.history.length > 1) {
+                        window.history.back()
+                        return
+                      }
+                      setReviewListingId(null)
+                      navigateToTab('portfolio')
+                    }}
+                  >
+                    Back to Closet
+                  </button>
+                </div>
+              </div>
+
+              {!reviewListing ? (
+                <div className="empty-state">
+                  <h3>No listing selected</h3>
+                  <p>Select a listing from your closet to review it.</p>
+                  <button className="primary" type="button" onClick={() => navigateToTab('portfolio')}>Go to Closet</button>
+                </div>
+              ) : (
+                <div className="listing-review-layout">
+                  <div className={`listing-review-gallery ${reviewListingGallery.length <= 1 ? 'single-image' : ''}`}>
+                    {reviewListingGallery.length > 1 && (
+                      <div className="listing-review-thumbnails" aria-label="Listing image thumbnails">
+                        {reviewListingGallery.map((src, idx) => (
+                          <button
+                            key={`${reviewListing.id}-review-thumb-${idx}`}
+                            type="button"
+                            className={idx === selectedReviewImageIndex ? 'active' : ''}
+                            onClick={() => setSelectedReviewImageIndex(idx)}
+                            aria-label={`Show image ${idx + 1}`}
+                            aria-current={idx === selectedReviewImageIndex ? 'true' : undefined}
+                          >
+                            <img src={src} alt="" />
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    {reviewListingGallery[selectedReviewImageIndex] ? (
+                      <img src={reviewListingGallery[selectedReviewImageIndex]} alt={`${reviewListing.title || 'Listing'} image ${selectedReviewImageIndex + 1}`} />
+                    ) : (
+                      <div className="listing-image-fallback">Image unavailable</div>
+                    )}
+                  </div>
+                  <div className="listing-review-details">
+                    <h2>{reviewListing.title || 'Untitled listing'}</h2>
+                    <p className="editorial-byline">BY {ownerFirstName(reviewListing.owner, 'Member').toUpperCase()}</p>
+                    <p className="editorial-meta">
+                      EST. {money(reviewListing.estimatedValue)} · {String(reviewListing.brand || 'Unknown').toUpperCase()} · {displayConditionLabel(reviewListing.condition).toUpperCase()} · SIZE {String(reviewListing.size || 'N/A').toUpperCase()}
+                    </p>
+                    <p className="listing-review-description">{getListingDescription(reviewListing) || 'No description provided.'}</p>
+                    {analysisError && <p className="error-text">{analysisError}</p>}
+                    {savedListingNotice && <p className="ok-text">{savedListingNotice}</p>}
+                    <div className="button-row listing-review-actions">
+                      <button className="ghost" type="button" onClick={() => openEditListingModal(reviewListing)}>Edit</button>
+                      <button className="primary" type="button" onClick={() => publishListingToMarketplace(reviewListing)}>Publish</button>
+                    </div>
                   </div>
                 </div>
               )}
@@ -5025,7 +5898,14 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                 <>
                   {analysisError && <p className="error-text">{analysisError}</p>}
                   {savedListingNotice && <p className="ok-text">{savedListingNotice}</p>}
-                  <div className="listing-grid closet-listing-grid">{filteredClosetListings.map((item) => <ListingCard key={item.id} item={item} own onEditDraft={openEditListingModal} onPublishListing={publishListingToMarketplace} onRemoveListing={removeListingFromCloset} editorialStyle />)}</div>
+                  <div className="listing-grid closet-listing-grid">{filteredClosetListings.map((item) => <ListingCard key={item.id} item={item} own onEditDraft={openEditListingModal} onReviewListing={openReviewListing} onPublishListing={publishListingToMarketplace} onRemoveListing={removeListingFromCloset} editorialStyle />)}</div>
+                  {closetFilter === 'all' && myListingsHasMore ? (
+                    <div className="load-more-row">
+                      <button className="ghost" type="button" onClick={loadMoreMyListings} disabled={myListingsPageLoading}>
+                        {myListingsPageLoading ? 'Loading...' : 'Load More Listings'}
+                      </button>
+                    </div>
+                  ) : null}
                 </>
               )}
             </section>
@@ -5038,6 +5918,8 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                 <div className="market-controls">
                   <button className={offerStatusFilter === 'all' ? 'primary' : 'ghost small'} type="button" onClick={() => setOfferStatusFilter('all')}>All</button>
                   <button className={offerStatusFilter === 'pending' ? 'primary' : 'ghost small'} type="button" onClick={() => setOfferStatusFilter('pending')}>Pending</button>
+                  <button className={offerStatusFilter === 'accepted' ? 'primary' : 'ghost small'} type="button" onClick={() => setOfferStatusFilter('accepted')}>Accepted</button>
+                  <button className={offerStatusFilter === 'declined' ? 'primary' : 'ghost small'} type="button" onClick={() => setOfferStatusFilter('declined')}>Declined</button>
                 </div>
               </div>
               {incomingOffers.length === 0 ? (
@@ -5056,7 +5938,14 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                     const selectableAddresses = completeProfileShippingAddresses
                     const selectedAddressId = offerReceiveAddressById[offer.offer_id] || (selectableAddresses.length === 1 ? selectableAddresses[0].id : '')
                     const selectedAddress = selectableAddresses.find((a) => a.id === selectedAddressId) || null
+                    const offeredChoices = Array.isArray(offer.offered_listings) && offer.offered_listings.length > 0
+                      ? offer.offered_listings
+                      : (offer.offered_listing ? [offer.offered_listing] : [])
+                    const selectedOfferedListingId = offerAcceptedListingById[offer.offer_id]
+                      || offer.selected_offered_listing_id
+                      || (offeredChoices.length === 1 ? listingRecordId(offeredChoices[0]) : '')
                     const quote = shippingQuoteByOffer[offer.offer_id]
+                    const offerActionBusy = offerActionBusyById[offer.offer_id] || ''
                     const targetThumbs = (Array.isArray(offer.target_listing?.images) && offer.target_listing.images.length > 0
                       ? offer.target_listing.images
                       : [offer.target_listing?.image].filter(Boolean)
@@ -5069,7 +5958,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                     <article key={offer.offer_id} className="inbox-editorial-card">
                       <div className="inbox-editorial-frame">
                         <div className="inbox-editorial-media">
-                          <button type="button" className="inbox-target-hero" onClick={() => setTradeDetailListing(offer.target_listing || null)}>
+                          <button type="button" className="inbox-target-hero" onClick={() => openTradeDetailListing(offer.target_listing || null)}>
                             {targetHero ? (
                               <img src={targetHero} alt={offer.target_listing?.title || 'Your listing'} />
                             ) : (
@@ -5081,7 +5970,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                             <p className="inbox-lane-label">Offered Items</p>
                             <div className="inbox-offered-grid">
                               {offeredThumbs.map(({ url, listing }) => (
-                                <button key={`offered-${offer.offer_id}-${listing?.listing_id || 'listing'}-${url}`} type="button" className="inbox-thumb-btn" onClick={() => setTradeDetailListing(listing || null)}>
+                                <button key={`offered-${offer.offer_id}-${listing?.listing_id || 'listing'}-${url}`} type="button" className="inbox-thumb-btn" onClick={() => openTradeDetailListing(listing || null)}>
                                   <img src={url} alt="Offered listing" className="inbox-thumb" />
                                 </button>
                               ))}
@@ -5094,103 +5983,134 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                             <span className={`inbox-status-pill inbox-status-${String(offer.status || '').toLowerCase() || 'pending'}`}>{offer.status || 'pending'}</span>
                           </div>
                           <h3 className="inbox-editorial-title">
-                            {offer.from_subject} wants to trade {offer.offered_listing?.title || 'their listing'}
+                            {offerParticipantName(offer, 'from')} wants to trade {offer.offered_listing?.title || 'their listing'}
                           </h3>
                           <p className="inbox-editorial-subtitle">For your {offer.target_listing?.title || 'listing'}</p>
-                        </div>
-                      </div>
-                      {offer.message ? <p className="inbox-offer-message">Message: {offer.message}</p> : null}
-                      {offer.status === 'pending' && (
-                        <div className="button-row inbox-editorial-actions">
-                          {canReceiverAccept && !actorAccepted ? (
-                            <>
-                              <label className="inbox-address-select">
-                                <span>Receive At Address</span>
-                                <select
-                                  value={selectedAddressId}
-                                  onChange={(e) => setOfferReceiveAddressById((prev) => ({ ...prev, [offer.offer_id]: e.target.value }))}
-                                >
-                                  <option value="">
-                                    {selectableAddresses.length === 0 ? 'Add complete address in Profile' : 'Select shipping address'}
-                                  </option>
-                                  {selectableAddresses.map((addr, idx) => (
-                                    <option key={addr.id} value={addr.id}>{addr.label?.trim() || `Address ${idx + 1}`} - {addr.city || 'City'} {addr.state || ''}</option>
-                                  ))}
-                                </select>
-                              </label>
-                              <button
-                                className="primary"
-                                type="button"
-                                onClick={() => respondToOffer(
-                                  offer.offer_id,
-                                  'accepted',
-                                  selectedAddress ? {
-                                    label: selectedAddress.label || null,
-                                    full_name: selectedAddress.full_name || null,
-                                    address_line1: selectedAddress.address_line1 || null,
-                                    address_line2: selectedAddress.address_line2 || null,
-                                    city: selectedAddress.city || null,
-                                    state: selectedAddress.state || null,
-                                    postal_code: selectedAddress.postal_code || null,
-                                    country: selectedAddress.country || null,
-                                    is_default: false,
-                                  } : null,
-                                )}
-                              >
-                                Accept Trade
-                              </button>
-                              <button className="ghost" type="button" onClick={() => respondToOffer(offer.offer_id, 'declined')}>Decline</button>
-                            </>
-                          ) : isSender ? (
-                            <span className="tiny-note inbox-flow-note">Offer sent. Waiting for receiver to accept.</span>
-                          ) : (
-                            <span className="tiny-note inbox-flow-note">You accepted this trade. Finalizing shipment labels.</span>
-                          )}
-                        </div>
-                      )}
-                      {quote?.amount ? (
-                        <p className="tiny-note inbox-flow-note">
-                          Quote: {quote.currency || 'USD'} {quote.amount} • {quote.carrier || 'USPS'} {quote.service_level || ''}
-                        </p>
-                      ) : null}
-                      {(offer.status === 'accepted' || bothAccepted) && (
-                        <div className="inbox-label-section">
-                          {!hasLoadedShipments ? (
-                            <p className="tiny-note inbox-flow-note">Loading shipping labels...</p>
-                          ) : null}
-                          {hasShipments && (
-                            <div className="inbox-label-list">
-                              {offerShipments.map((s) => (
-                                <div key={s.shipment_id} className="inbox-label-card">
-                                  <strong>{s.carrier} • {s.service_level}</strong>
-                                  <div className="tiny-note">Tracking: {s.tracking_number || 'pending'}</div>
-                                  <div className="tiny-note">Status: {String(s.status || 'label_created').replace(/_/g, ' ')}</div>
-                                  <div className="tiny-note">From: {s.from_name || 'n/a'} • {s.from_city || ''} {s.from_state || ''}</div>
-                                  <div className="tiny-note">To: {s.to_name || 'n/a'} • {s.to_city || ''} {s.to_state || ''}</div>
-                                  <button type="button" className="ghost small" onClick={() => openShippingLabel(s)}>
-                                    Download label
+                          {offer.message ? <p className="inbox-offer-message">Message: {offer.message}</p> : null}
+                          {offer.status === 'pending' && (
+                            <div className="button-row inbox-editorial-actions">
+                              {canReceiverAccept && !actorAccepted ? (
+                                <>
+                                  <p className="tiny-note inbox-flow-note">
+                                    Shipping cost to send your item: {
+                                      quote?.status === 'quoted' && quote?.amount
+                                        ? `${quote.currency || 'USD'} ${quote.amount} • ${quote.carrier || 'USPS'} ${quote.service_level || ''}`
+                                        : quote?.status === 'loading'
+                                          ? 'Calculating...'
+                                          : 'Unavailable until shipping addresses are complete.'
+                                    }
+                                  </p>
+                                  <label className="inbox-address-select">
+                                    <span>Receive At Address</span>
+                                    <select
+                                      value={selectedAddressId}
+                                      onChange={(e) => setOfferReceiveAddressById((prev) => ({ ...prev, [offer.offer_id]: e.target.value }))}
+                                    >
+                                      <option value="">
+                                        {selectableAddresses.length === 0 ? 'Add complete address in Profile' : 'Select shipping address'}
+                                      </option>
+                                      {selectableAddresses.map((addr, idx) => (
+                                        <option key={addr.id} value={addr.id}>{addr.label?.trim() || `Address ${idx + 1}`} - {addr.city || 'City'} {addr.state || ''}</option>
+                                      ))}
+                                    </select>
+                                  </label>
+                                  <label className="inbox-address-select">
+                                    <span>Accepted Offered Item</span>
+                                    <select
+                                      value={selectedOfferedListingId || ''}
+                                      onChange={(e) => setOfferAcceptedListingById((prev) => ({ ...prev, [offer.offer_id]: e.target.value }))}
+                                    >
+                                      <option value="">
+                                        {offeredChoices.length === 0 ? 'No offered items available' : 'Select offered item'}
+                                      </option>
+                                      {offeredChoices.map((listing, idx) => (
+                                        <option key={`${offer.offer_id}-choice-${listingRecordId(listing) || idx}`} value={listingRecordId(listing)}>
+                                          {listing?.title || `Offered item ${idx + 1}`} - {money(listing?.estimated_value)}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </label>
+                                  <button
+                                    className="primary"
+                                    type="button"
+                                    onClick={() => respondToOffer(
+                                      offer.offer_id,
+                                      'accepted',
+                                      selectedAddress ? {
+                                        label: selectedAddress.label || null,
+                                        full_name: selectedAddress.full_name || null,
+                                        address_line1: selectedAddress.address_line1 || null,
+                                        address_line2: selectedAddress.address_line2 || null,
+                                        city: selectedAddress.city || null,
+                                        state: selectedAddress.state || null,
+                                        postal_code: selectedAddress.postal_code || null,
+                                        country: selectedAddress.country || null,
+                                        is_default: false,
+                                      } : null,
+                                      selectedOfferedListingId,
+                                    )}
+                                    disabled={Boolean(offerActionBusy) || !selectedOfferedListingId}
+                                  >
+                                    {offerActionBusy === 'accepted' ? 'Accepting...' : 'Accept Trade'}
                                   </button>
-                                </div>
-                              ))}
+                                  <button className="ghost" type="button" onClick={() => respondToOffer(offer.offer_id, 'declined')} disabled={Boolean(offerActionBusy)}>
+                                    {offerActionBusy === 'declined' ? 'Declining...' : 'Decline'}
+                                  </button>
+                                </>
+                              ) : isSender ? (
+                                <span className="tiny-note inbox-flow-note">Offer sent. Waiting for receiver to accept.</span>
+                              ) : (
+                                <span className="tiny-note inbox-flow-note">You accepted this trade. Finalizing shipment labels.</span>
+                              )}
                             </div>
                           )}
-                          <div className="button-row inbox-editorial-actions">
-                            <button
-                              className="ghost small"
-                              type="button"
-                              onClick={async () => {
-                                try {
-                                  await loadShippingLabelsForOffer(offer.offer_id)
-                                } catch (err) {
-                                  setSavedListingNotice(err.message || 'Failed to load shipping labels.')
-                                }
-                              }}
-                            >
-                              Refresh Labels
-                            </button>
-                          </div>
+                          {quote?.amount ? (
+                            <p className="tiny-note inbox-flow-note">
+                              Quote: {quote.currency || 'USD'} {quote.amount} • {quote.carrier || 'USPS'} {quote.service_level || ''}
+                            </p>
+                          ) : null}
+                          {(offer.status === 'accepted' || bothAccepted) && (
+                            <div className="inbox-label-section">
+                              {!hasLoadedShipments ? (
+                                <p className="tiny-note inbox-flow-note">Loading shipping labels...</p>
+                              ) : null}
+                              {hasShipments && (
+                                <div className="inbox-label-list">
+                                  {offerShipments.map((s) => (
+                                    <div key={s.shipment_id} className="inbox-label-card">
+                                      <strong>{s.carrier} • {s.service_level}</strong>
+                                      <div className="tiny-note">Tracking: {s.tracking_number || 'pending'}</div>
+                                      <div className="tiny-note">Status: {shipmentTrackingLabel(s)}</div>
+                                      {s.tracking_status_details ? <div className="tiny-note">{s.tracking_status_details}</div> : null}
+                                      {s.tracking_eta ? <div className="tiny-note">Estimated delivery: {s.tracking_eta}</div> : null}
+                                      <div className="tiny-note">From: {s.from_name || 'n/a'} • {s.from_city || ''} {s.from_state || ''}</div>
+                                      <div className="tiny-note">To: {s.to_name || 'n/a'} • {s.to_city || ''} {s.to_state || ''}</div>
+                                      <button type="button" className="ghost small" onClick={() => openShippingLabel(s)}>
+                                        Download label
+                                      </button>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                              <div className="button-row inbox-editorial-actions">
+                                <button
+                                  className="ghost small"
+                                  type="button"
+                                  onClick={async () => {
+                                    try {
+                                      await loadShippingLabelsForOffer(offer.offer_id)
+                                    } catch (err) {
+                                      setSavedListingNotice(err.message || 'Failed to load shipping labels.')
+                                    }
+                                  }}
+                                >
+                                  Refresh Labels
+                                </button>
+                              </div>
+                            </div>
+                          )}
                         </div>
-                      )}
+                      </div>
                     </article>
                   )})}
                 </div>
@@ -5227,10 +6147,21 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                     return (
                       <article className="market-selected-detail" key={`market-selected-${item.id}`}>
                         <div className="market-selected-viewer">
-                          <div className="market-selected-gallery" aria-label={`${item.title || 'Listing'} images`}>
+                          <div className={`market-selected-gallery ${gallery.length <= 1 ? 'single-image' : ''}`} aria-label={`${item.title || 'Listing'} images`}>
                             <div className="market-selected-main-image">
                               {selectedImage ? (
-                                <img src={selectedImage} alt={`${item.title || 'Listing'} image ${selectedImageIdx + 1}`} />
+                                <button
+                                  type="button"
+                                  className="listing-image-zoom-trigger"
+                                  onClick={() => openZoomedListingImage({
+                                    src: selectedImage,
+                                    alt: `${item.title || 'Listing'} image ${selectedImageIdx + 1}`,
+                                  })}
+                                  aria-label={`Magnify ${item.title || 'listing'} image ${selectedImageIdx + 1}`}
+                                >
+                                  <img src={selectedImage} alt={`${item.title || 'Listing'} image ${selectedImageIdx + 1}`} />
+                                  <span className="listing-image-zoom-label">Magnify</span>
+                                </button>
                               ) : (
                                 <div className="listing-image-fallback">Image unavailable</div>
                               )}
@@ -5257,6 +6188,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                             <div className="market-selected-head">
                               <div>
                                 <h3>{item.title || 'Untitled listing'}</h3>
+                                <p className="editorial-byline">BY {ownerFirstName(item.owner, 'Member').toUpperCase()}</p>
                                 <p className="editorial-meta">
                                   EST. {money(item.estimatedValue)} · {String(item.brand || 'Unknown').toUpperCase()} · {displayConditionLabel(item.condition).toUpperCase()} · SIZE {String(item.size || 'N/A').toUpperCase()}
                                 </p>
@@ -5273,22 +6205,23 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                                     <LikeIcon liked={isLiked} />
                                   </button>
                                 )}
-                                <button className="ghost small" type="button" onClick={() => setSelectedMarketListingIndex(null)}>Back</button>
-                              </div>
-                            </div>
-
-                            <div className="market-selected-info">
-                              <div>
-                                <span>Listed by</span>
-                                <strong>{item.owner || 'Member'}</strong>
-                              </div>
-                              <div>
-                                <span>Category</span>
-                                <strong>{item.category || 'Listing'}</strong>
-                              </div>
-                              <div>
-                                <span>Location</span>
-                                <strong>{item.city || 'Your area'}</strong>
+                                <button
+                                  className="ghost small"
+                                  type="button"
+                                  onClick={() => {
+                                    if (typeof window !== 'undefined' && tabFromLocation() === 'market' && listingIdFromLocation() && window.history.length > 1) {
+                                      window.history.back()
+                                      return
+                                    }
+                                    setSelectedMarketListingIndex(null)
+                                    setSelectedMarketImageIndex(0)
+                                    if (typeof window !== 'undefined') {
+                                      window.history.replaceState({}, '', tabHref('market'))
+                                    }
+                                  }}
+                                >
+                                  Back
+                                </button>
                               </div>
                             </div>
 
@@ -5297,19 +6230,36 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                             {similarMatches.length > 0 ? (
                               <div className="market-selected-matches">
                                 <span className="market-selected-matches-label">Matched Items</span>
-                                <span className="match-thumb-strip" aria-hidden="true">
+                                <span className="match-thumb-strip market-selected-match-thumbs">
                                   {matchPreviewListings.slice(0, 3).map(({ candidate, thumb }, idx) => (
                                     thumb ? (
-                                      <img
+                                      <button
                                         key={`${item.id}-selected-match-${idx}`}
-                                        src={thumb}
-                                        alt=""
-                                        className="match-thumb"
-                                      />
+                                        type="button"
+                                        className="match-thumb-button"
+                                        onClick={() => {
+                                          openTradeDetailListing(candidate)
+                                        }}
+                                        aria-label={`View matched item ${candidate?.title || idx + 1}`}
+                                      >
+                                        <img
+                                          src={thumb}
+                                          alt=""
+                                          className="match-thumb"
+                                        />
+                                      </button>
                                     ) : (
-                                      <span key={`${item.id}-selected-match-${idx}`} className="match-thumb market-selected-match-placeholder">
+                                      <button
+                                        key={`${item.id}-selected-match-${idx}`}
+                                        type="button"
+                                        className="match-thumb match-thumb-button market-selected-match-placeholder"
+                                        onClick={() => {
+                                          openTradeDetailListing(candidate)
+                                        }}
+                                        aria-label={`View matched item ${candidate?.title || idx + 1}`}
+                                      >
                                         Match
-                                      </span>
+                                      </button>
                                     )
                                   ))}
                                 </span>
@@ -5329,39 +6279,60 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                   })()
                 ) : filteredListings.length === 0 ? (
                   <div className="empty-state">
-                    <h3>No matched marketplace listings yet</h3>
-                    <p>Create or publish a closet listing to see marketplace items that match your closet.</p>
-                    <button className="primary" type="button" onClick={openCreateListingFromCloset}>Create Listing</button>
+                    {marketListingsHasMore && !marketSearch.trim() ? (
+                      <>
+                        <h3>Looking for matched listings...</h3>
+                        <p>More marketplace listings are available to check.</p>
+                        <button className="ghost" type="button" onClick={loadMoreMarketListings} disabled={marketListingsPageLoading}>
+                          {marketListingsPageLoading ? 'Loading...' : 'Load More Listings'}
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <h3>No matched marketplace listings yet</h3>
+                        <p>Create or publish a closet listing to see marketplace items that match your closet.</p>
+                        <button className="primary" type="button" onClick={openCreateListingFromCloset}>Create Listing</button>
+                      </>
+                    )}
                   </div>
                 ) : (
-                  <div className="listing-grid market-listing-grid market-editorial-grid">
-                    {filteredListings.map((item) => {
-                      const isOwnListing = isOwnedByCurrentUser(item)
-                      const baseValue = Number(item.estimatedValue || 0)
-                      const similarMatches = getCrossOwnerMatches(item)
-                      const matchPreviewListings = similarMatches
-                        .map((candidate) => ({ candidate, thumb: getListingGallery(candidate)[0] }))
-                        .filter((entry) => Boolean(entry.thumb))
-                      const myTradeCandidates = myListings
-                        .filter((mine) => String(mine.status || '').toLowerCase() === 'active')
-                        .filter((mine) => Math.abs(Number(mine.estimatedValue || 0) - baseValue) <= Math.max(50, baseValue * 0.3))
-                      return (
-                        <ListingCard
-                          key={item.id}
-                          item={item}
-                          marketplaceCompact
-                          onOpenTrade={openTradeComposer}
-                          myTradeCandidates={myTradeCandidates}
-                          onOpenMatches={openMarketMatches}
-                          matchPreviewImages={matchPreviewListings.map((entry) => entry.thumb)}
-                          onOpenDetails={openMarketplaceListingDetails}
-                          isOwnListing={isOwnListing}
-                          liked={likedListingIds.includes(String(item.id))}
-                          onToggleLike={() => toggleMarketplaceLike(item.id)}
-                        />
-                      )
-                    })}
-                  </div>
+                  <>
+                    <div className="listing-grid market-listing-grid market-editorial-grid">
+                      {filteredListings.map((item) => {
+                        const isOwnListing = isOwnedByCurrentUser(item)
+                        const baseValue = Number(item.estimatedValue || 0)
+                        const similarMatches = getCrossOwnerMatches(item)
+                        const matchPreviewListings = similarMatches
+                          .map((candidate) => ({ candidate, thumb: getListingGallery(candidate)[0] }))
+                          .filter((entry) => Boolean(entry.thumb))
+                        const myTradeCandidates = myListings
+                          .filter((mine) => String(mine.status || '').toLowerCase() === 'active')
+                          .filter((mine) => Math.abs(Number(mine.estimatedValue || 0) - baseValue) <= Math.max(50, baseValue * 0.3))
+                        return (
+                          <ListingCard
+                            key={item.id}
+                            item={item}
+                            marketplaceCompact
+                            onOpenTrade={openTradeComposer}
+                            myTradeCandidates={myTradeCandidates}
+                            onOpenMatches={openMarketMatches}
+                            matchPreviewImages={matchPreviewListings.map((entry) => entry.thumb)}
+                            onOpenDetails={openMarketplaceListingDetails}
+                            isOwnListing={isOwnListing}
+                            liked={likedListingIds.includes(String(item.id))}
+                            onToggleLike={() => toggleMarketplaceLike(item.id)}
+                          />
+                        )
+                      })}
+                    </div>
+                    {marketListingsHasMore && !marketSearch.trim() ? (
+                      <div className="load-more-row">
+                        <button className="ghost" type="button" onClick={loadMoreMarketListings} disabled={marketListingsPageLoading}>
+                          {marketListingsPageLoading ? 'Loading...' : 'Load More Listings'}
+                        </button>
+                      </div>
+                    ) : null}
+                  </>
                 )}
               </div>
             </section>
@@ -5408,7 +6379,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                     <p className="tiny-note">{tradeComposerTarget.brand || 'Unknown brand'} • {tradeComposerTarget.condition || 'Unknown condition'} • {tradeComposerTarget.city || 'Unknown city'}</p>
                     <div className="value-chip">{money(tradeComposerTarget.estimatedValue)}</div>
                     <div className="button-row trade-target-actions">
-                      <button className="ghost small" type="button" onClick={() => setTradeDetailListing(tradeComposerTarget)}>View details</button>
+                      <button className="ghost small" type="button" onClick={() => openTradeDetailListing(tradeComposerTarget)}>View details</button>
                     </div>
                   </article>
 
@@ -5441,10 +6412,10 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                     </div>
                     <div className="trade-offer-metrics">
                       <p className="tiny-note trade-metric-line">
-                        Offered total: {money(offeredTotalValue)} • Target: {money(composerTargetValue)}
+                        Selected choices: {selectedTradeOfferListings.length} • Target: {money(composerTargetValue)}
                       </p>
                     <p className={composerWithinBand ? 'ok-text trade-band-line' : 'error-text trade-band-line'}>
-                      {composerGapPct === null ? 'Select target listing.' : (composerWithinBand ? 'Within 30% trade band' : 'Outside 30% trade band')}
+                      {composerWithinBand ? 'Each selected item is within the 30% trade band' : 'Select at least one item within the 30% trade band'}
                     </p>
                     </div>
                     <label className="trade-message-field">
@@ -5493,34 +6464,123 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
       )}
 
       {tradeDetailListing && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.45)', display: 'grid', alignItems: 'start', justifyItems: 'center', zIndex: 1150, overflowY: 'auto', padding: '24px 12px' }}>
-          <div style={{ width: 'min(640px, 92vw)', maxHeight: 'calc(100vh - 48px)', overflowY: 'auto', background: '#fff', borderRadius: 14, padding: 16, boxShadow: '0 24px 80px rgba(0,0,0,.25)' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-              <h3 style={{ margin: 0 }}>Item Details</h3>
-              <button className="ghost small" type="button" onClick={() => setTradeDetailListing(null)}>Close</button>
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))', gap: 8, marginBottom: 12 }}>
-              {(Array.isArray(tradeDetailListing.images) && tradeDetailListing.images.length > 0
-                ? tradeDetailListing.images
-                : [tradeDetailListing.image].filter(Boolean)
-              ).map((url) => (
-                <img
-                  key={url}
-                  src={url}
-                  alt={tradeDetailListing.title || 'Listing image'}
-                  style={{ width: '100%', height: 110, objectFit: 'cover', borderRadius: 10, border: '1px solid rgba(18,26,36,0.12)' }}
-                />
-              ))}
-            </div>
-            <div className="metric-grid">
-              <div><span>Title</span><strong>{tradeDetailListing.title || 'n/a'}</strong></div>
-              <div><span>Estimated value</span><strong>{money(tradeDetailListing.estimatedValue ?? tradeDetailListing.estimated_value)}</strong></div>
-              <div><span>Brand</span><strong>{tradeDetailListing.brand || 'n/a'}</strong></div>
-              <div><span>Category</span><strong>{tradeDetailListing.category || 'n/a'}</strong></div>
-              <div><span>Condition</span><strong>{tradeDetailListing.condition || 'n/a'}</strong></div>
-              <div><span>Status</span><strong>{tradeDetailListing.status || 'n/a'}</strong></div>
-            </div>
-            <p className="listing-notes" style={{ marginTop: 12 }}>{getListingDescription(tradeDetailListing) || 'No additional notes.'}</p>
+        <div className="trade-detail-backdrop">
+          <div className="trade-detail-shell">
+            {(() => {
+              const detailGallery = getListingGallery(tradeDetailListing)
+              const activeDetailImageIndex = detailGallery.length > 0 ? Math.min(tradeDetailImageIndex, detailGallery.length - 1) : 0
+              const activeDetailImage = detailGallery[activeDetailImageIndex]
+              const ownerName = tradeDetailListing.owner || tradeDetailListing.owner_name || 'Member'
+              const detailValue = tradeDetailListing.estimatedValue ?? tradeDetailListing.estimated_value
+              return (
+                <article className="market-selected-detail trade-detail-market-view">
+                  <div className="market-selected-viewer">
+                    <div className={`market-selected-gallery ${detailGallery.length <= 1 ? 'single-image' : ''}`} aria-label={`${tradeDetailListing.title || 'Listing'} images`}>
+                      <div className="market-selected-main-image trade-detail-main-image">
+                        {activeDetailImage ? (
+                          <button
+                            type="button"
+                            className="listing-image-zoom-trigger"
+                            onClick={() => openZoomedListingImage({
+                              src: activeDetailImage,
+                              alt: `${tradeDetailListing.title || 'Listing'} image ${activeDetailImageIndex + 1}`,
+                            })}
+                            aria-label={`Magnify ${tradeDetailListing.title || 'listing'} image ${activeDetailImageIndex + 1}`}
+                          >
+                            <img src={activeDetailImage} alt={`${tradeDetailListing.title || 'Listing'} image ${activeDetailImageIndex + 1}`} />
+                            <span className="listing-image-zoom-label">Magnify</span>
+                          </button>
+                        ) : (
+                          <div className="listing-image-fallback">Image unavailable</div>
+                        )}
+                      </div>
+                      {detailGallery.length > 1 && (
+                        <div className="market-selected-thumbnails" aria-label="Listing image thumbnails">
+                          {detailGallery.map((url, idx) => (
+                            <button
+                              key={`${tradeDetailListing.id || tradeDetailListing.listing_id}-detail-thumb-${idx}`}
+                              type="button"
+                              className={idx === activeDetailImageIndex ? 'active' : ''}
+                              onClick={() => setTradeDetailImageIndex(idx)}
+                              aria-label={`Show image ${idx + 1}`}
+                              aria-current={idx === activeDetailImageIndex ? 'true' : undefined}
+                            >
+                              <img src={url} alt="" />
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="market-selected-details">
+                      <div className="market-selected-head">
+                        <div>
+                          <h3>{tradeDetailListing.title || 'Untitled listing'}</h3>
+                          <p className="editorial-byline">BY {ownerFirstName(ownerName, 'Member').toUpperCase()}</p>
+                          <p className="editorial-meta">
+                            EST. {money(detailValue)} · {String(tradeDetailListing.brand || 'Unknown').toUpperCase()} · {displayConditionLabel(tradeDetailListing.condition).toUpperCase()} · SIZE {String(tradeDetailListing.size || 'N/A').toUpperCase()}
+                          </p>
+                        </div>
+                        <div className="market-selected-actions">
+                          <button className="ghost small" type="button" onClick={() => setTradeDetailListing(null)}>
+                            Back
+                          </button>
+                        </div>
+                      </div>
+
+                      <ListingDescriptionParagraphs item={tradeDetailListing} className="market-selected-description" />
+                    </div>
+                  </div>
+                </article>
+              )
+            })()}
+          </div>
+        </div>
+      )}
+
+      {zoomedListingImage && (
+        <div
+          className="listing-image-zoom-backdrop"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Magnified listing image"
+          onClick={closeZoomedListingImage}
+        >
+          <div className="listing-image-zoom-toolbar" onClick={(e) => e.stopPropagation()}>
+            <button
+              type="button"
+              onClick={() => adjustZoomedListingImageScale(-0.25)}
+              disabled={zoomedListingImageScale <= 0.5}
+              aria-label="Zoom out"
+            >
+              -
+            </button>
+            <span>{Math.round(zoomedListingImageScale * 100)}%</span>
+            <button
+              type="button"
+              onClick={() => adjustZoomedListingImageScale(0.25)}
+              disabled={zoomedListingImageScale >= 3}
+              aria-label="Zoom in"
+            >
+              +
+            </button>
+            <button type="button" onClick={() => setZoomedListingImageScale(0.5)}>
+              Reset
+            </button>
+            <button
+              type="button"
+              onClick={closeZoomedListingImage}
+            >
+              Close
+            </button>
+          </div>
+          <div className="listing-image-zoom-stage" onClick={(e) => e.stopPropagation()}>
+            <img
+              src={zoomedListingImage.src}
+              alt={zoomedListingImage.alt || 'Magnified listing image'}
+              style={{ width: `${zoomedListingImageScale * 100}%` }}
+              onClick={() => adjustZoomedListingImageScale(0.25)}
+            />
           </div>
         </div>
       )}
@@ -5561,7 +6621,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                       <p>{sim.title || 'Untitled item'}</p>
                       <small>{sim.brand || 'Unknown brand'} • {sim.condition || 'Unknown condition'} • {sim.city || 'Unknown city'}</small>
                       <div className="listing-actions">
-                        <button className="ghost small" type="button" onClick={() => setTradeDetailListing(sim)}>View details</button>
+                        <button className="ghost small" type="button" onClick={() => openTradeDetailListing(sim)}>View details</button>
                         <button
                           className="ghost small"
                           type="button"
@@ -5623,7 +6683,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                   if (itemSize && !sizeOptionsForCategory(nextCategory).includes(itemSize)) setItemSize('')
                 }}
               >
-                <option value="">Auto detect</option>
+                <option value="">Select category</option>
                 <option value="clothes">Clothes</option>
                 <option value="shoes">Shoes</option>
                 <option value="handbag">Handbag</option>
@@ -5726,15 +6786,13 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                     })
                     if (result?.error) throw new Error(result.error.message || 'Failed to save payment method.')
                     const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
-                    const methods = await syncStripePaymentMethodsRemote({
+                    await syncStripePaymentMethodsRemote({
                       apiBaseUrl,
                       apiKey: clerkEnabled ? '' : apiKey.trim(),
                       bearerToken,
                     })
-                    setPaymentMethods(methods)
-                    setPaymentLoadError('')
+                    await reloadProfileTabAfterSuccess('Payment method added via Stripe.')
                     setPaymentActionMsg('Payment method added.')
-                    setProfileSaveMsg('Payment method added via Stripe.')
                     setShowStripePaymentModal(false)
                   } catch (err) {
                     setPaymentActionMsg('')
@@ -5752,6 +6810,44 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {subscriptionConfirmRequest && (
+        <div className="app-alert-overlay" role="presentation" onClick={() => resolveSubscriptionConfirmation(false)}>
+          <section
+            className="app-alert-card subscription-confirm-card"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="subscription-confirm-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <p className="eyebrow">JOUFT MEMBERSHIP</p>
+            <h3 id="subscription-confirm-title">Confirm Subscription</h3>
+            <p>Review your plan and payment method before we process your subscription.</p>
+            <dl className="subscription-confirm-details">
+              <div>
+                <dt>Plan</dt>
+                <dd>{subscriptionConfirmRequest.planName}</dd>
+              </div>
+              <div>
+                <dt>Amount</dt>
+                <dd>{subscriptionConfirmRequest.amountLabel}</dd>
+              </div>
+              <div>
+                <dt>Payment</dt>
+                <dd>{subscriptionConfirmRequest.paymentLabel}</dd>
+              </div>
+            </dl>
+            <div className="button-row app-alert-actions">
+              <button className="ghost" type="button" onClick={() => resolveSubscriptionConfirmation(false)}>
+                Cancel
+              </button>
+              <button className="primary" type="button" onClick={() => resolveSubscriptionConfirmation(true)}>
+                Process Payment
+              </button>
+            </div>
+          </section>
         </div>
       )}
     </div>
@@ -5852,7 +6948,7 @@ function ListingImage({ src, alt, onFailed }) {
   )
 }
 
-function ListingCard({ item, own = false, onEditDraft = null, onPublishListing = null, onRemoveListing = null, marketplaceCompact = false, onOpenTrade = null, myTradeCandidates = [], onOpenMatches = null, matchPreviewImages = [], editorialStyle = false, onOpenDetails = null, isOwnListing = false, liked = false, onToggleLike = null }) {
+function ListingCard({ item, own = false, onEditDraft = null, onReviewListing = null, onPublishListing = null, onRemoveListing = null, marketplaceCompact = false, onOpenTrade = null, myTradeCandidates = [], onOpenMatches = null, matchPreviewImages = [], editorialStyle = false, onOpenDetails = null, isOwnListing = false, liked = false, onToggleLike = null }) {
   const rawGallery = Array.isArray(item.images) && item.images.length > 0
     ? item.images
     : [item.image].filter(Boolean)
@@ -5870,9 +6966,8 @@ function ListingCard({ item, own = false, onEditDraft = null, onPublishListing =
   const analysisInProgress = normalizedStatus === 'analyzing'
   const cardDisabled = own && analysisInProgress
   const editDisabled = own && analysisInProgress
-  const publishDisabled = own && analysisInProgress
-  const canPublishListing = own && typeof onPublishListing === 'function' && !['active', 'analyzing'].includes(normalizedStatus)
   const analysisFailed = normalizedStatus === 'analysisfailed'
+  const canReviewAndPublish = own && typeof onReviewListing === 'function' && !['active', 'analyzing', 'analysisfailed'].includes(normalizedStatus)
   const badgeLabel = item.status || 'Active'
   const badgeClass = `status-${String(badgeLabel).toLowerCase().replace(/\s+/g, '')}`
   const brandLabel = String(item.brand || '').trim() || 'Unknown brand'
@@ -5983,7 +7078,7 @@ function ListingCard({ item, own = false, onEditDraft = null, onPublishListing =
                 </button>
               )}
             </div>
-            <p className="editorial-byline">BY {String(item.owner || 'Unknown member').toUpperCase()}</p>
+            <p className="editorial-byline">BY {ownerFirstName(item.owner, 'Member').toUpperCase()}</p>
             <p className="editorial-meta">
               EST. {money(item.estimatedValue)} · {brandLabel.toUpperCase()} · {conditionLabel.toUpperCase()} · SIZE {sizeLabel.toUpperCase()}
             </p>
@@ -6024,22 +7119,8 @@ function ListingCard({ item, own = false, onEditDraft = null, onPublishListing =
                         if (!editDisabled) onEditDraft?.(item)
                       }}
                     >
-                      <span>{editDisabled ? 'EDIT LISTING' : 'EDIT LISTING'}</span>
+                      <span>EDIT LISTING</span>
                     </button>
-                    {canPublishListing && (
-                      <button
-                        className="editorial-match-btn"
-                        type="button"
-                        disabled={publishDisabled}
-                        title={publishDisabled ? 'Cannot publish while analysis is running' : 'Publish listing to Marketplace'}
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          if (!publishDisabled) onPublishListing?.(item)
-                        }}
-                      >
-                        <span>PUBLISH LISTING</span>
-                      </button>
-                    )}
                     {typeof onRemoveListing === 'function' && (
                       <button
                         className="editorial-match-btn listing-remove-btn listing-icon-btn"
@@ -6098,7 +7179,7 @@ function ListingCard({ item, own = false, onEditDraft = null, onPublishListing =
             {(!marketplaceCompact || !own) && (
               <div className="listing-footer">
                 <div className="listing-footer-meta">
-                  <small>{own ? 'Your listing' : `Listed by ${item.owner}`}</small>
+                  <small>{own ? 'Your listing' : `Listed by ${ownerFirstName(item.owner, 'Member')}`}</small>
                 </div>
                 <div className="listing-actions">
                   {!own && matchPreviewImages.length > 0 && (
@@ -6147,20 +7228,6 @@ function ListingCard({ item, own = false, onEditDraft = null, onPublishListing =
                       >
                         Edit Listing
                       </button>
-                      {canPublishListing && (
-                        <button
-                          className="ghost small"
-                          type="button"
-                          disabled={publishDisabled}
-                          title={publishDisabled ? 'Cannot publish while analysis is running' : 'Publish listing to Marketplace'}
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            if (!publishDisabled) onPublishListing?.(item)
-                          }}
-                        >
-                          Publish Listing
-                        </button>
-                      )}
                       {typeof onRemoveListing === 'function' && (
                         <button
                           className="ghost small listing-remove-btn listing-icon-btn"
@@ -6201,6 +7268,21 @@ function ListingCard({ item, own = false, onEditDraft = null, onPublishListing =
           </>
         )}
       </div>
+      {cardDisabled && (
+        <span className="listing-review-overlay" aria-hidden="true">Pending Review</span>
+      )}
+      {canReviewAndPublish && (
+        <button
+          className="listing-review-overlay listing-review-overlay-button"
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation()
+            onReviewListing?.(item)
+          }}
+        >
+          Review and Publish
+        </button>
+      )}
       </article>
     </>
   )
@@ -6209,6 +7291,7 @@ function ListingCard({ item, own = false, onEditDraft = null, onPublishListing =
 function AdminAnalysisCard({ entry }) {
   const response = entry.response || {}
   const debug = response.debug || {}
+  const profile = response.item_profile || {}
   return (
     <article className="admin-card">
       <div className="admin-card-head">
@@ -6229,6 +7312,7 @@ function AdminAnalysisCard({ entry }) {
         {(response.requested_photos || []).map((tag) => <span key={tag}>{tag}</span>)}
         {(response.warnings || []).map((tag) => <span key={tag}>{tag}</span>)}
       </div>
+      <VisualConditionDebug assessment={profile.visual_condition_assessment} />
       <details className="debug-block" open={false}>
         <summary>Debug payload</summary>
         <pre>{JSON.stringify(debug, null, 2)}</pre>
