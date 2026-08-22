@@ -150,6 +150,20 @@ def test_listing_title_from_analysis_replaces_unclear_placeholder() -> None:
     assert title == "Sylvie Crochet Top (style LCDE-WS1076)"
 
 
+def test_listing_title_from_analysis_replaces_unidentified_with_brand_category() -> None:
+    from app.main import _listing_title_from_analysis
+
+    title = _listing_title_from_analysis(
+        "unidentified",
+        model_name="unidentified",
+        profile={},
+        brand="HERVE LEGER PARIS",
+        category="clothes",
+    )
+
+    assert title == "HERVE LEGER PARIS clothing item"
+
+
 def test_shippo_flat_rate_quote_overrides_display_amount_but_keeps_rate_id() -> None:
     from app.main import _apply_shippo_flat_rate_quote, _estimated_shipping_weight_oz_from_listing
     from app.settings import Settings

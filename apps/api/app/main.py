@@ -566,7 +566,16 @@ def _profile_description_from_analysis(response_payload: dict) -> tuple[str, str
     return model_name, profile_description
 
 
-_DEFAULT_LISTING_TITLES = {"", "new listing", "unknown", "unknown unknown", "unclear", "n/a", "none"}
+_DEFAULT_LISTING_TITLES = {
+    "",
+    "new listing",
+    "unknown",
+    "unknown unknown",
+    "unclear",
+    "unidentified",
+    "n/a",
+    "none",
+}
 
 
 def _listing_title_from_analysis(
@@ -602,8 +611,10 @@ def _listing_title_from_analysis(
     item_type = str(shipping_profile.get("item_type") or "").strip()
     if not item_type or item_type.casefold() in {"unknown", "item"}:
         item_type = str(category or "").strip()
-    if item_type.casefold() in {"", "unknown", "clothes", "accessories"}:
+    if item_type.casefold() in {"", "unknown", "accessories"}:
         item_type = "item"
+    elif item_type.casefold() == "clothes":
+        item_type = "clothing item"
     if normalized_brand:
         return f"{normalized_brand} {item_type}".strip()
     return "New listing"
