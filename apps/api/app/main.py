@@ -1558,13 +1558,7 @@ def valuation_from_gpt_item_profile(
         str(condition_grade or "").strip().casefold() == "new"
         and breakdown_estimated_value is not None
         and isinstance(resale, dict)
-        and _uses_nwt_or_full_set_language(
-            {
-                "condition_assumption": resale.get("condition_assumption"),
-                "rationale": resale.get("rationale"),
-                "references": resale.get("references"),
-            }
-        )
+        and _uses_nwt_or_full_set_language(resale.get("condition_assumption"))
     ):
         estimated_value = breakdown_estimated_value
         range_low = breakdown_range_low
