@@ -482,9 +482,8 @@ class GptItemProfiler:
                     "and zoom into close-up tag photos before deciding text is unreadable. Return ONLY one JSON object, "
                     "not an array, with keys exactly: "
                     "brand_text, confidence, evidence_image_id, raw_visible_text, rationale. "
-                    "Use brand_text null when no readable brand is visible. If a tag clearly reads ALEXIS, return "
-                    "brand_text as ALEXIS. If a tag clearly reads L'Academie, L Academie, or Lacademie, return "
-                    "brand_text as L'Academie."
+                    "Use brand_text null when no readable brand is visible. Do not infer a brand from style, color, "
+                    "or partially readable text. Return a brand only when readable text directly supports it."
                 )
             }
         )
@@ -522,8 +521,8 @@ class GptItemProfiler:
                                 "Label/OCR fallback. Inspect the attached images only for readable brand text, labels, "
                                 "size tags, care tags, logos, stamps, hang tags, or packaging text. Rotate sideways or "
                                 "upside-down labels mentally and zoom into close-up tag photos. Return only JSON. "
-                                "If a tag reads L'Academie, L Academie, or Lacademie, normalize brand_text to L'Academie. "
-                                "If a tag reads ALEXIS, normalize brand_text to ALEXIS."
+                                "Do not infer a brand from style, color, or partially readable text. Return a brand "
+                                "only when readable text directly supports it."
                             ),
                         },
                     ],
@@ -550,6 +549,53 @@ class GptItemProfiler:
         if not brand or brand.lower() in {"unknown", "unclear", "null", "none"}:
             return None
         return brand
+
+    @staticmethod
+    def _label_ocr_raw_text(label_ocr: dict[str, Any] | None) -> str:
+        if not isinstance(label_ocr, dict):
+            return ""
+        raw = label_ocr.get("raw_visible_text")
+        if isinstance(raw, list):
+            return " ".join(str(part or "") for part in raw).strip()
+        if isinstance(raw, str):
+            return raw.strip()
+        return ""
+
+    @classmethod
+    def _label_ocr_selection_score(
+        cls,
+        label_ocr: dict[str, Any] | None,
+        *,
+        image: ImageInput | None = None,
+        batch: bool = False,
+    ) -> float:
+        brand = cls._brand_from_label_ocr(label_ocr)
+        if not brand:
+            return -1.0
+        try:
+            confidence = float(label_ocr.get("confidence"))  # type: ignore[union-attr]
+        except Exception:
+            confidence = 0.0
+
+        score = confidence
+        raw_text = cls._label_ocr_raw_text(label_ocr)
+        if raw_text:
+            score += 0.08
+            if brand.casefold() in raw_text.casefold():
+                score += 0.12
+        if image is not None:
+            evidence_id = str(label_ocr.get("evidence_image_id") or "").strip()  # type: ignore[union-attr]
+            if evidence_id and evidence_id == image.image_id:
+                score += 0.08
+            role_hint = str(image.role_hint or "").casefold()
+            filename = str(image.filename or "").casefold()
+            if role_hint in {"close_up", "tag", "label", "logo"}:
+                score += 0.08
+            if any(token in filename for token in ("tag", "label", "logo", "receipt", "auth")):
+                score += 0.04
+        if batch:
+            score -= 0.12
+        return score
 
     def _content_with_label_context(
         self,
@@ -600,14 +646,22 @@ class GptItemProfiler:
             return parsed
 
         with httpx.Client(timeout=self.timeout_s) as client:
-            parsed = call_once(client, images)
-            if self._brand_from_label_ocr(parsed):
-                return parsed
+            batch_result = call_once(client, images)
+            candidates: list[tuple[float, dict[str, Any]]] = []
             for img in images[: self.max_images]:
                 single = call_once(client, [img])
-                if self._brand_from_label_ocr(single):
-                    return single
-            return parsed
+                if isinstance(single, dict):
+                    score = self._label_ocr_selection_score(single, image=img)
+                    if score >= 0:
+                        candidates.append((score, single))
+            if candidates:
+                best = max(candidates, key=lambda item: item[0])[1]
+                if isinstance(batch_result, dict):
+                    best["_batch_ocr_result"] = batch_result
+                return best
+            if self._brand_from_label_ocr(batch_result):
+                return batch_result
+            return batch_result
 
     def _call_openai_label_ocr(self, *, images: list[ImageInput]) -> dict[str, Any] | None:
         if not images or not self.openai_api_key:
@@ -929,10 +983,12 @@ class GptItemProfiler:
         *,
         content: list[dict[str, Any]],
         gemini_profile: dict[str, Any],
+        condition_grade: str | None = None,
         valuation_prompt_override: str | None = None,
     ) -> dict[str, Any]:
         valuation_schema = self._build_valuation_schema()
         valuation_context = {
+            "user_condition": condition_grade,
             "category": gemini_profile.get("category"),
             "candidate_brand": gemini_profile.get("candidate_brand"),
             "candidate_model": gemini_profile.get("candidate_model"),
@@ -962,18 +1018,24 @@ class GptItemProfiler:
             "5. SIZE & SEASON EXCLUSION: Size and season may be included as descriptive context only. "
             "Do not increase, decrease, discount, premium, or otherwise adjust valuation because of size, season, "
             "current-season status, off-season status, archive status, or common/outlier sizing.\n"
-            "6. CONDITION & ACCESSORY MATRIX: Adjust base valuation for:\n"
+            "6. USER CONDITION IS AUTHORITATIVE: The user-selected condition is provided as user_condition. "
+            "Use that exact condition for the final resale_price_estimate. Do not override it based on visible tags, packaging, "
+            "box, dust bag, or inferred accessory cues. If user_condition is New, do NOT value the item as NewWithTags, NWT, "
+            "new-in-box/NIB, full set, with tags, or with a box/dust-bag/full-set premium. Only apply NewWithTags/NWT/NIB/"
+            "full-set premiums when user_condition is exactly NewWithTags. The condition-tier table may include NWT as a "
+            "separate row, but resale_price_estimate must not use that row unless user_condition is NewWithTags.\n"
+            "7. CONDITION & ACCESSORY MATRIX: Adjust base valuation for:\n"
             "   - Condition & visible wear (fading, pilling, structural shape, hardware scratching).\n"
             "   - Provenance & Accessories (Original tags, dust bag, box, authenticity cards, box/NIB signals add 5-15% premium).\n"
-            "7. CONTEMPORARY VS. LUXURY DISCOUNT RULES:\n"
+            "8. CONTEMPORARY VS. LUXURY DISCOUNT RULES:\n"
             "   - Contemporary Apparel (New With Tags):\n"
             "     - Use 45%-60% of MSRP unless sold comps explicitly prove lower. Do not change this range based on season.\n"
             "   - Luxury / Heritage Brands (Chanel, Hermes, Louis Vuitton, Rolex):\n"
             "     - Do NOT hard-cap at 60% MSRP. Anchor strictly to real-time secondary sold comps (may trade above or near MSRP).\n\n"
             "### OUTPUT DELIVERABLES\n"
-            "8. CONDITION-TIER TABLE: Always provide a full multi-tier valuation table (NWT, EUC/Like New, GUC/Good, Fair) "
+            "9. CONDITION-TIER TABLE: Always provide a full multi-tier valuation table (NWT, EUC/Like New, GUC/Good, Fair) "
             "to establish a full market curve whenever comp evidence allows.\n"
-            "9. LOGISTICS: Include an estimated packed shipping weight (e.g., 1.2 lbs / 0.55 kg) and box type recommendations.\n\n"
+            "10. LOGISTICS: Include an estimated packed shipping weight (e.g., 1.2 lbs / 0.55 kg) and box type recommendations.\n\n"
             "Return only the valuation JSON fields required by the schema."
         )
         valuation_prompt = (valuation_prompt_override or default_prompt).strip()
@@ -1088,9 +1150,9 @@ class GptItemProfiler:
                     "Before any generic style search, inspect all uploaded images for readable label/OCR evidence: "
                     "brand labels, care tags, size tags, hang tags, logos, embossed marks, sole stamps, hardware engravings, "
                     "dust bags, boxes, receipts, or other text. Extract exact text, name the image/evidence type, and treat "
-                    "readable brand-label text as primary brand evidence. If a visible label says ALEXIS, Chanel, Gucci, "
-                    "Louis Vuitton, Theory, or another brand, candidate_brand must use that label unless the label is clearly "
-                    "not part of the item. "
+                    "readable brand-label text as primary brand evidence. Do not infer label text from style, color, or "
+                    "partially readable marks. If readable label text clearly names a brand, candidate_brand must use that "
+                    "exact label brand unless the label is clearly not part of the item. "
                     "Identify the exact category, brand, and model from the images. "
                     "Derive visual condition and completeness from the image: pristine/unworn cues, visible wear, "
                     "original branded box, dust bags, and whether the item should be valued as new-in-box/pristine. "
@@ -1294,11 +1356,13 @@ class GptItemProfiler:
         *,
         content: list[dict[str, Any]],
         gemini_profile: dict[str, Any],
+        condition_grade: str | None = None,
         valuation_prompt_override: str | None = None,
     ) -> dict[str, Any] | None:
         payload = self._build_openai_valuation_payload(
             content=content,
             gemini_profile=gemini_profile,
+            condition_grade=condition_grade,
             valuation_prompt_override=valuation_prompt_override,
         )
         with httpx.Client(timeout=self.timeout_s) as client:
@@ -1378,7 +1442,11 @@ class GptItemProfiler:
         )
         if not isinstance(gemini_profile, dict):
             return None
-        openai_valuation = self._call_openai_valuation(content=content, gemini_profile=gemini_profile)
+        openai_valuation = self._call_openai_valuation(
+            content=content,
+            gemini_profile=gemini_profile,
+            condition_grade=condition_grade,
+        )
         if not isinstance(openai_valuation, dict):
             workflow = dict(gemini_profile.get("_workflow") or {})
             workflow["hybrid"] = {

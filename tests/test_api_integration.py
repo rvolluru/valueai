@@ -1003,14 +1003,44 @@ def test_gpt_profile_uses_visual_condition_signals_for_retail_resale_fallback() 
         "resale_price_breakdown": [],
     }
 
-    valuation = valuation_from_gpt_item_profile(profile, default_currency="USD", condition_grade="New")
+    valuation = valuation_from_gpt_item_profile(profile, default_currency="USD", condition_grade="NewWithTags")
 
-    assert valuation["estimated_value"] == 1463.2
+    assert valuation["estimated_value"] == 1609.52
     assert valuation["retail_reference_value"] == 1550.0
     assert valuation["basis"] == "gpt_retail_reference_resale_fallback"
     assert valuation["visual_condition_adjustment"]["applied"] is True
     assert valuation["visual_condition_adjustment"]["multiplier"] == 1.18
     assert "new_in_box_pricing_tier" in valuation["visual_condition_adjustment"]["reasons"]
+
+
+def test_gpt_profile_does_not_apply_nib_visual_premium_for_plain_new() -> None:
+    from app.main import valuation_from_gpt_item_profile
+
+    profile = {
+        "category": "shoes",
+        "visual_condition_assessment": {
+            "wear_level": "pristine",
+            "box_included": "yes",
+            "dust_bag_included": "yes",
+            "new_in_box_signal": "yes",
+            "pricing_tier": "new_in_box",
+            "confidence": 0.82,
+            "evidence": ["Original branded box visible", "No visible sole wear"],
+        },
+        "retail_price_estimate": {"estimated_price": 1550, "currency": "USD", "confidence": 0.5},
+        "resale_price_estimate": {"estimated_price": None, "currency": "USD", "confidence": 0.5},
+        "resale_price_breakdown": [],
+    }
+
+    valuation = valuation_from_gpt_item_profile(profile, default_currency="USD", condition_grade="New")
+
+    assert valuation["estimated_value"] == 1240.0
+    assert valuation["retail_reference_value"] == 1550.0
+    assert valuation["basis"] == "gpt_retail_reference_resale_fallback"
+    assert valuation["visual_condition_adjustment"] == {
+        "applied": False,
+        "reason": "user_condition_new_excludes_new_with_tags_nib_full_set_premium",
+    }
 
 
 def test_new_with_tags_condition_normalization_and_breakdown_selection() -> None:
@@ -1066,6 +1096,74 @@ def test_new_with_tags_condition_normalization_and_breakdown_selection() -> None
     assert new_with_tags["selected_breakdown_label"] == "Current-season style with MSRP context"
     assert plain_new["estimated_value"] == 75.0
     assert plain_new["selected_breakdown_label"] == "Without tags / excellent condition"
+
+
+def test_plain_new_condition_ignores_nwt_breakdown_row_when_primary_missing() -> None:
+    from app.main import valuation_from_gpt_item_profile
+
+    profile = {
+        "category": "shoes",
+        "retail_price_estimate": {"estimated_price": 900, "currency": "USD", "confidence": 0.8},
+        "resale_price_estimate": {"estimated_price": None, "currency": "USD", "confidence": 0.7},
+        "resale_price_breakdown": [
+            {
+                "label": "NWT / New in box full set",
+                "estimated_price": 560,
+                "range_low": 520,
+                "range_high": 600,
+                "rationale": "NWT full-set examples with box and dust bag.",
+            },
+            {
+                "label": "EUC / Like New",
+                "estimated_price": 380,
+                "range_low": 340,
+                "range_high": 420,
+                "rationale": "Clean peer-to-peer examples without tags or box premium.",
+            },
+        ],
+    }
+
+    valuation = valuation_from_gpt_item_profile(profile, default_currency="USD", condition_grade="New")
+
+    assert valuation["estimated_value"] == 380.0
+    assert valuation["selected_breakdown_label"] == "EUC / Like New"
+
+
+def test_plain_new_condition_replaces_primary_nwt_framing_with_non_nwt_breakdown() -> None:
+    from app.main import valuation_from_gpt_item_profile
+
+    profile = {
+        "category": "shoes",
+        "retail_price_estimate": {"estimated_price": 900, "currency": "USD", "confidence": 0.8},
+        "resale_price_estimate": {
+            "estimated_price": 520,
+            "currency": "USD",
+            "confidence": 0.72,
+            "condition_assumption": "NWT / new-in-box full set",
+            "rationale": "The valuation uses new with tags and box/dust bag premium comps.",
+        },
+        "resale_price_breakdown": [
+            {
+                "label": "NWT / New in box full set",
+                "estimated_price": 560,
+                "range_low": 520,
+                "range_high": 600,
+                "rationale": "NWT full-set examples.",
+            },
+            {
+                "label": "EUC / Like New",
+                "estimated_price": 380,
+                "range_low": 340,
+                "range_high": 420,
+                "rationale": "Clean examples without tags or full-set premium.",
+            },
+        ],
+    }
+
+    valuation = valuation_from_gpt_item_profile(profile, default_currency="USD", condition_grade="New")
+
+    assert valuation["estimated_value"] == 380.0
+    assert valuation["selected_breakdown_label"] == "EUC / Like New"
 
 
 def test_analyze_skips_crawler_when_gemini_retail_reference_can_be_derived(monkeypatch) -> None:
@@ -1147,10 +1245,10 @@ def test_analyze_skips_crawler_when_gemini_retail_reference_can_be_derived(monke
         )
         assert res.status_code == 200, res.text
         body = res.json()
-        assert body["valuation"]["estimated_value"] == 1463.2
+        assert body["valuation"]["estimated_value"] == 1240.0
+        assert body["valuation"]["visual_condition_adjustment"]["applied"] is False
         assert body["valuation"]["retail_reference_value"] == 1550.0
         assert body["valuation"]["basis"] == "gpt_retail_reference_resale_fallback"
-        assert body["valuation"]["visual_condition_adjustment"]["applied"] is True
         assert body["debug"]["enrichment"]["gpt_item_profile"]["retail_reference_extracted"]["applied"] is True
         assert body["debug"]["valuation"]["pricing_source"] == "gpt_primary"
         assert body["debug"]["valuation"]["pricing_fallback_used"] is False

@@ -1,4 +1,5 @@
 import io
+import json
 
 from PIL import Image
 
@@ -124,8 +125,9 @@ def test_gemini_label_ocr_payload_is_narrow_and_structured() -> None:
     assert "Rotate images mentally" in prompt
     assert "not an array" in prompt
     assert "brand_text, confidence, evidence_image_id, raw_visible_text, rationale" in prompt
-    assert "ALEXIS" in prompt
-    assert "L'Academie" in prompt
+    assert "Do not infer a brand from style" in prompt
+    assert "ALEXIS" not in prompt
+    assert "L'Academie" not in prompt
     assert "tools" not in payload
     assert payload["generationConfig"]["responseMimeType"] == "application/json"
     assert payload["generationConfig"]["temperature"] == 0.0
@@ -183,8 +185,83 @@ def test_openai_label_ocr_payload_is_structured() -> None:
     assert payload["text"]["format"]["name"] == "label_ocr_result"
     assert schema["required"] == ["brand_text", "confidence", "evidence_image_id", "raw_visible_text", "rationale"]
     assert "Label/OCR fallback" in prompt
-    assert "L'Academie" in prompt
-    assert "ALEXIS" in prompt
+    assert "Do not infer a brand from style" in prompt
+    assert "L'Academie" not in prompt
+    assert "ALEXIS" not in prompt
+
+
+def test_gemini_label_ocr_prefers_best_single_image_over_batch(monkeypatch) -> None:
+    profiler = _profiler(max_images=6)
+    images = [
+        ImageInput(
+            image_id="full-item",
+            filename="full.jpg",
+            content_type="image/jpeg",
+            bytes_data=_jpeg_bytes(),
+            role_hint="full_item",
+        ),
+        ImageInput(
+            image_id="small-tag",
+            filename="small-tag.jpg",
+            content_type="image/jpeg",
+            bytes_data=_jpeg_bytes(),
+            role_hint="close_up",
+        ),
+        ImageInput(
+            image_id="clear-label",
+            filename="clear-label.jpg",
+            content_type="image/jpeg",
+            bytes_data=_jpeg_bytes(),
+            role_hint="close_up",
+        ),
+    ]
+    responses = [
+        {"brand_text": "ALEXIS", "confidence": 0.8, "evidence_image_id": "small-tag", "raw_visible_text": "ALEXIS", "rationale": "batch"},
+        {"brand_text": None, "confidence": 1.0, "evidence_image_id": "full-item", "raw_visible_text": "", "rationale": "none"},
+        {"brand_text": "ALEXIS", "confidence": 0.8, "evidence_image_id": "small-tag", "raw_visible_text": "ALEXIS", "rationale": "small text"},
+        {"brand_text": "HERVE LEGER PARIS", "confidence": 0.92, "evidence_image_id": "clear-label", "raw_visible_text": "HERVE LEGER PARIS", "rationale": "clear close-up label"},
+    ]
+
+    class FakeResponse:
+        status_code = 200
+
+        def __init__(self, payload):
+            self._payload = payload
+
+        def json(self):
+            return {
+                "candidates": [
+                    {
+                        "content": {
+                            "parts": [
+                                {"text": json.dumps(self._payload)},
+                            ]
+                        }
+                    }
+                ]
+            }
+
+    class FakeClient:
+        def __init__(self, timeout):
+            self.timeout = timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def post(self, *args, **kwargs):
+            return FakeResponse(responses.pop(0))
+
+    monkeypatch.setattr("app.gpt_item_profile.httpx.Client", FakeClient)
+
+    parsed = profiler._call_gemini_label_ocr(images=images)
+
+    assert parsed is not None
+    assert parsed["brand_text"] == "HERVE LEGER PARIS"
+    assert parsed["evidence_image_id"] == "clear-label"
+    assert parsed["_batch_ocr_result"]["brand_text"] == "ALEXIS"
 
 
 def test_label_ocr_uses_openai_fallback_when_gemini_misses_brand() -> None:
@@ -248,8 +325,9 @@ def test_gemini_grounded_search_prompt_prioritizes_label_before_style_search() -
 
     assert "Before any generic style search" in prompt
     assert "readable label/OCR evidence" in prompt
-    assert "candidate_brand must use that label" in prompt
-    assert "ALEXIS" in prompt
+    assert "candidate_brand must use that exact label brand" in prompt
+    assert "Do not infer label text from style" in prompt
+    assert "ALEXIS" not in prompt
 
 
 def test_gemini_formatter_prompt_preserves_condition_evidence() -> None:
@@ -516,6 +594,7 @@ def test_openai_valuation_payload_uses_gemini_context_without_images() -> None:
     ]
     payload = profiler._build_openai_valuation_payload(
         content=content,
+        condition_grade="NewWithTags",
         gemini_profile={
             "category": "clothes",
             "candidate_brand": "Theory",
@@ -536,6 +615,7 @@ def test_openai_valuation_payload_uses_candidate_prompt_by_default() -> None:
     profiler = _profiler(max_images=6)
     payload = profiler._build_openai_valuation_payload(
         content=[{"type": "input_text", "text": "Known context: category=shoes; condition=NewWithTags"}],
+        condition_grade="New",
         gemini_profile={
             "category": "shoes",
             "candidate_brand": "Chanel",
@@ -551,6 +631,9 @@ def test_openai_valuation_payload_uses_candidate_prompt_by_default() -> None:
     assert "MSRP / RETAIL SEARCH WATERFALL LOGIC" in valuation_prompt
     assert "SIZE & SEASON EXCLUSION" in valuation_prompt
     assert "Do not increase, decrease, discount, premium, or otherwise adjust valuation because of size, season" in valuation_prompt
+    assert '"user_condition": "New"' in valuation_prompt
+    assert "USER CONDITION IS AUTHORITATIVE" in valuation_prompt
+    assert "If user_condition is New, do NOT value the item as NewWithTags, NWT" in valuation_prompt
     assert "common/in-demand sizes vs. extreme outlier sizes" not in valuation_prompt
     assert "Current / Near-Current Season" not in valuation_prompt
     assert "Off-Season / Older Archive" not in valuation_prompt

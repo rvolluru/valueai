@@ -1423,6 +1423,36 @@ def _visual_condition_pricing_multiplier(item_profile: dict[str, object]) -> tup
     }
 
 
+def _is_nwt_or_full_set_label(value: object) -> bool:
+    label = str(value or "").strip().casefold()
+    if not label:
+        return False
+    phrases = (
+        "nwt",
+        "new with tags",
+        "new-with-tags",
+        "brand new with tags",
+        "with tags",
+        "tags/box",
+        "nib",
+        "new in box",
+        "new-in-box",
+        "full set",
+        "full-set",
+        "box and dust bag",
+        "box/dust bag",
+    )
+    return any(phrase in label for phrase in phrases)
+
+
+def _uses_nwt_or_full_set_language(value: object) -> bool:
+    if isinstance(value, (dict, list)):
+        text = json.dumps(value, ensure_ascii=True)
+    else:
+        text = str(value or "")
+    return _is_nwt_or_full_set_label(text)
+
+
 def _select_breakdown_row(
     breakdown: object,
     *,
@@ -1435,6 +1465,10 @@ def _select_breakdown_row(
     rows = [r for r in breakdown if isinstance(r, dict)]
     if not rows:
         return None, None, None, "default"
+    if target == "new":
+        non_nwt_rows = [r for r in rows if not _is_nwt_or_full_set_label(r.get("label"))]
+        if non_nwt_rows:
+            rows = non_nwt_rows
 
     def score(label: str) -> int:
         lbl = label.casefold()
@@ -1520,6 +1554,22 @@ def valuation_from_gpt_item_profile(
         range_low = breakdown_range_low
         range_high = breakdown_range_high
         pricing_row_label = breakdown_row_label
+    if (
+        str(condition_grade or "").strip().casefold() == "new"
+        and breakdown_estimated_value is not None
+        and isinstance(resale, dict)
+        and _uses_nwt_or_full_set_language(
+            {
+                "condition_assumption": resale.get("condition_assumption"),
+                "rationale": resale.get("rationale"),
+                "references": resale.get("references"),
+            }
+        )
+    ):
+        estimated_value = breakdown_estimated_value
+        range_low = breakdown_range_low
+        range_high = breakdown_range_high
+        pricing_row_label = breakdown_row_label
     if estimated_value is None:
         estimated_value = breakdown_estimated_value
         range_low = breakdown_range_low
@@ -1532,7 +1582,14 @@ def valuation_from_gpt_item_profile(
     if estimated_value is None and retail_reference is not None:
         factor = _retail_to_resale_factor_for_category(item_profile.get("category"))
         condition_multiplier = _condition_multiplier_for_retail_fallback(condition_grade)
-        visual_multiplier, visual_condition_adjustment = _visual_condition_pricing_multiplier(item_profile)
+        if str(condition_grade or "").strip().casefold() == "new":
+            visual_multiplier = 1.0
+            visual_condition_adjustment = {
+                "applied": False,
+                "reason": "user_condition_new_excludes_new_with_tags_nib_full_set_premium",
+            }
+        else:
+            visual_multiplier, visual_condition_adjustment = _visual_condition_pricing_multiplier(item_profile)
         estimated_value = retail_reference * factor * condition_multiplier * visual_multiplier
         range_low = estimated_value * 0.85
         range_high = estimated_value * 1.15
