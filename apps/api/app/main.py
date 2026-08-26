@@ -656,7 +656,6 @@ def _reuse_recent_analysis_for_listing(
     cached = db.find_recent_analysis_by_image_hashes(
         image_hashes,
         limit=50,
-        owner_subject=owner_subject,
     )
     if not cached or not isinstance(cached.get("response"), dict):
         return None
@@ -698,6 +697,7 @@ def _reuse_recent_analysis_for_listing(
         "source_analysis_id": cached.get("analysis_id"),
         "source_item_id": cached.get("item_id"),
         "matched_image_count": len(image_hashes),
+        "scope": "global",
     }
     response_payload["debug"] = debug_payload
 

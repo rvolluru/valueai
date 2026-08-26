@@ -770,6 +770,85 @@ def test_create_listing_reuses_recent_analysis_for_same_uploaded_images() -> Non
     assert listing["analysis"]["item_id"] == "item-repeat-upload"
     assert listing["analysis"]["uploaded_images"][0]["image_url"] == image_url
     assert listing["analysis"]["debug"]["analysis_reuse"]["reused"] is True
+    assert listing["analysis"]["debug"]["analysis_reuse"]["scope"] == "global"
+
+
+def test_create_listing_reuses_recent_analysis_across_accounts_for_same_uploaded_images() -> None:
+    client = _build_client()
+    _override_gpt_profiler(
+        _stub_item_profile(
+            brand="Herve Leger",
+            model="Bandage Dress",
+            category="clothes",
+            estimated_price=475,
+        )
+    )
+
+    from app.auth import AuthPrincipal, get_request_principal
+    from app.main import app
+
+    def principal_for(subject: str):
+        return lambda: AuthPrincipal(auth_type="clerk", subject=subject, claims={"sub": subject})
+
+    image_bytes = _make_image("HL")
+    app.dependency_overrides[get_request_principal] = principal_for("user-one")
+    analyze_res = client.post(
+        "/v1/analyze",
+        data={"item_id": "item-account-one-analysis", "user_condition": "New", "debug": "true"},
+        files=[("images", ("dress.jpg", image_bytes, "image/jpeg"))],
+    )
+    assert analyze_res.status_code == 200, analyze_res.text
+
+    app.dependency_overrides[get_request_principal] = principal_for("user-two")
+    upload = client.post(
+        "/v1/uploads/images",
+        data={"item_id": "item-account-two-upload"},
+        files=[("images", ("dress-repeat.jpg", image_bytes, "image/jpeg"))],
+    )
+    assert upload.status_code == 200, upload.text
+    image_url = upload.json()["uploaded_images"][0]["image_url"]
+
+    create_res = client.post(
+        "/v1/listings",
+        json={
+            "title": "New listing",
+            "mode": "trade",
+            "category": "clothes",
+            "brand": "unknown",
+            "condition": "New",
+            "size": "Small",
+            "estimated_value": 0,
+            "city": "Your area",
+            "image": image_url,
+            "images": [image_url],
+            "description": "",
+            "wants": "Open to similar-value offers",
+            "tags": ["Analyzing"],
+            "source_item_id": "item-account-two-upload",
+            "analysis": None,
+            "status": "Analyzing",
+        },
+    )
+    assert create_res.status_code == 200, create_res.text
+    body = create_res.json()
+
+    list_res = client.get("/v1/listings?mine=true&limit=10")
+    assert list_res.status_code == 200, list_res.text
+    listing = next(item for item in list_res.json()["items"] if item["listing_id"] == body["listing_id"])
+    assert listing["owner_subject"] == "user-two"
+    assert listing["status"] == "Review"
+    assert listing["title"] == "Bandage Dress"
+    assert listing["brand"] == "Herve Leger"
+    assert listing["condition"] == "New"
+    assert listing["estimated_value"] == 475
+    assert listing["image"] == image_url
+    assert listing["images"] == [image_url]
+    assert listing["analysis"]["item_id"] == "item-account-two-upload"
+    assert listing["analysis"]["uploaded_images"][0]["image_url"] == image_url
+    reuse_debug = listing["analysis"]["debug"]["analysis_reuse"]
+    assert reuse_debug["reused"] is True
+    assert reuse_debug["scope"] == "global"
+    assert reuse_debug["source_item_id"] == "item-account-one-analysis"
 
 
 def test_create_listing_with_analyzing_status_marks_failed_when_images_are_unreadable() -> None:
