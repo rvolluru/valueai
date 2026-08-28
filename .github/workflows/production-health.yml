@@ -1,0 +1,30 @@
+name: Production Health
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  health:
+    runs-on: ubuntu-latest
+    env:
+      PROD_HEALTH_URL: https://api.jouft.com
+      PROD_HEALTH_API_KEY: ${{ secrets.PROD_HEALTH_API_KEY }}
+      HEALTH_ALERT_WEBHOOK_URL: ${{ secrets.HEALTH_ALERT_WEBHOOK_URL }}
+      HEALTH_ALERT_EMAIL_FROM: admin@jouft.com
+      HEALTH_ALERT_EMAIL_TO: leavethemessage@gmail.com
+      HEALTH_ALERT_SMTP_HOST: ${{ secrets.HEALTH_ALERT_SMTP_HOST }}
+      HEALTH_ALERT_SMTP_PORT: ${{ secrets.HEALTH_ALERT_SMTP_PORT }}
+      HEALTH_ALERT_SMTP_USERNAME: ${{ secrets.HEALTH_ALERT_SMTP_USERNAME }}
+      HEALTH_ALERT_SMTP_PASSWORD: ${{ secrets.HEALTH_ALERT_SMTP_PASSWORD }}
+      REQUIRE_DEPENDENCY_HEALTH: "true"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Check production health
+        run: python scripts/check_production_health.py

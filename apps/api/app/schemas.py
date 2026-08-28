@@ -97,6 +97,19 @@ class HealthResponse(BaseModel):
     status: str
 
 
+class DependencyHealthCheck(BaseModel):
+    name: str
+    status: Literal["ok", "degraded", "down", "not_configured"]
+    latency_ms: float | None = None
+    message: str | None = None
+    checked_at: str
+
+
+class DependencyHealthResponse(BaseModel):
+    status: Literal["ok", "degraded", "down"]
+    checks: list[DependencyHealthCheck] = Field(default_factory=list)
+
+
 class VersionResponse(BaseModel):
     version: str
 

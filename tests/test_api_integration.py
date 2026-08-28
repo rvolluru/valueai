@@ -28,6 +28,15 @@ def _build_client():
     os.environ["GEMINI_API_KEY"] = ""
     os.environ["OPENAI_API_KEY"] = ""
     os.environ["PHOTOROOM_API_KEY"] = ""
+    os.environ["STRIPE_SECRET_KEY"] = ""
+    os.environ["STRIPE_PUBLISHABLE_KEY"] = ""
+    os.environ["SHIPPO_API_KEY"] = ""
+    os.environ["GOOGLE_PLACES_API_KEY"] = ""
+    os.environ["CLERK_ENABLED"] = "false"
+    os.environ["CLERK_JWKS_URL"] = ""
+    os.environ["SES_FROM_EMAIL"] = ""
+    os.environ["SMTP_HOST"] = ""
+    os.environ["SMTP_FROM_EMAIL"] = ""
     os.environ["IMAGE_STAGING_ENABLED"] = "true"
     os.environ["IMAGE_STAGING_PHOTOROOM_ENABLED"] = "false"
     os.environ["IMAGE_STAGING_GEMINI_ENABLED"] = "false"
@@ -45,6 +54,45 @@ def _build_client():
 
     app.dependency_overrides.clear()
     return TestClient(app)
+
+
+def test_health_endpoint_remains_public_and_lightweight():
+    client = _build_client()
+
+    res = client.get("/v1/health")
+
+    assert res.status_code == 200
+    assert res.json() == {"status": "ok"}
+
+
+def test_dependency_health_requires_authentication():
+    client = _build_client()
+
+    res = client.get("/v1/health/dependencies")
+
+    assert res.status_code == 401
+
+
+def test_dependency_health_reports_core_services_and_redacts_secrets():
+    client = _build_client()
+
+    res = client.get("/v1/health/dependencies", headers={"x-api-key": "test-key"})
+
+    assert res.status_code == 200
+    body = res.json()
+    assert body["status"] == "ok"
+    checks = {check["name"]: check for check in body["checks"]}
+    assert checks["database"]["status"] == "ok"
+    assert checks["storage"]["status"] == "ok"
+    assert checks["openai"]["status"] == "not_configured"
+    assert checks["gemini"]["status"] == "not_configured"
+    assert checks["photoroom"]["status"] == "not_configured"
+    assert checks["stripe"]["status"] == "not_configured"
+    assert checks["shippo"]["status"] == "not_configured"
+    assert checks["google_places"]["status"] == "not_configured"
+    assert checks["clerk"]["status"] == "not_configured"
+    assert checks["email"]["status"] == "not_configured"
+    assert "test-key" not in str(body)
 
 
 def _stub_item_profile(

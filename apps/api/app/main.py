@@ -52,6 +52,8 @@ from .schemas import (
     ConfirmPresignedImageUploadRequest,
     ConditionGrade,
     ConditionOut,
+    DependencyHealthCheck,
+    DependencyHealthResponse,
     HealthResponse,
     ListingCreateRequest,
     ListingResponse,
@@ -1813,6 +1815,270 @@ def enrich_analysis_with_firecrawl_agent(
 @app.get("/v1/health", response_model=HealthResponse)
 def health() -> HealthResponse:
     return HealthResponse(status="ok")
+
+
+def _health_checked_at() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _dependency_health_check(
+    name: str,
+    status: str,
+    *,
+    started_at: float | None = None,
+    message: str | None = None,
+) -> DependencyHealthCheck:
+    latency_ms = None
+    if started_at is not None:
+        latency_ms = round((time.perf_counter() - started_at) * 1000, 2)
+    safe_message = str(message or "").strip() or None
+    if safe_message and len(safe_message) > 240:
+        safe_message = f"{safe_message[:237]}..."
+    return DependencyHealthCheck(
+        name=name,
+        status=status,  # type: ignore[arg-type]
+        latency_ms=latency_ms,
+        message=safe_message,
+        checked_at=_health_checked_at(),
+    )
+
+
+def _health_http_message(response: httpx.Response) -> str:
+    return f"HTTP {response.status_code}: {response.text[:180]}"
+
+
+def _check_database_health(db: Database) -> DependencyHealthCheck:
+    started = time.perf_counter()
+    try:
+        db.execute("SELECT 1")
+        return _dependency_health_check("database", "ok", started_at=started)
+    except Exception as exc:
+        return _dependency_health_check("database", "down", started_at=started, message=str(exc))
+
+
+def _check_storage_health(settings: Settings, storage: Storage) -> DependencyHealthCheck:
+    started = time.perf_counter()
+    try:
+        if settings.storage_backend == "s3":
+            session = boto3.session.Session()
+            client = session.client(
+                "s3",
+                region_name=settings.s3_region,
+                endpoint_url=settings.s3_endpoint_url,
+                aws_access_key_id=settings.s3_access_key_id,
+                aws_secret_access_key=settings.s3_secret_access_key,
+            )
+            client.head_bucket(Bucket=settings.s3_bucket)
+        else:
+            Path(settings.local_storage_dir).mkdir(parents=True, exist_ok=True)
+        return _dependency_health_check("storage", "ok", started_at=started)
+    except Exception as exc:
+        return _dependency_health_check("storage", "down", started_at=started, message=str(exc))
+
+
+def _check_openai_health(settings: Settings) -> DependencyHealthCheck:
+    if not str(settings.openai_api_key or "").strip():
+        return _dependency_health_check(
+            "openai", "not_configured", message="OPENAI_API_KEY missing"
+        )
+    started = time.perf_counter()
+    try:
+        with httpx.Client(timeout=15.0) as client:
+            response = client.post(
+                "https://api.openai.com/v1/responses",
+                headers={
+                    "Authorization": f"Bearer {settings.openai_api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={"model": "gpt-5-nano", "input": "Return only OK."},
+            )
+        if response.status_code < 400:
+            return _dependency_health_check("openai", "ok", started_at=started)
+        status = "down" if response.status_code in {401, 403, 429} else "degraded"
+        return _dependency_health_check(
+            "openai", status, started_at=started, message=_health_http_message(response)
+        )
+    except Exception as exc:
+        return _dependency_health_check("openai", "down", started_at=started, message=str(exc))
+
+
+def _check_gemini_health(settings: Settings) -> DependencyHealthCheck:
+    if not str(settings.gemini_api_key or "").strip():
+        return _dependency_health_check(
+            "gemini", "not_configured", message="GEMINI_API_KEY missing"
+        )
+    started = time.perf_counter()
+    model = str(settings.gpt_item_profile_gemini_model or "gemini-2.5-flash").strip()
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+    try:
+        with httpx.Client(timeout=15.0) as client:
+            response = client.post(
+                url,
+                params={"key": settings.gemini_api_key},
+                json={"contents": [{"parts": [{"text": "Return only OK."}]}]},
+            )
+        if response.status_code < 400:
+            return _dependency_health_check("gemini", "ok", started_at=started)
+        status = "down" if response.status_code in {400, 401, 403, 429} else "degraded"
+        return _dependency_health_check(
+            "gemini", status, started_at=started, message=_health_http_message(response)
+        )
+    except Exception as exc:
+        return _dependency_health_check("gemini", "down", started_at=started, message=str(exc))
+
+
+def _check_photoroom_health(settings: Settings) -> DependencyHealthCheck:
+    if not settings.image_staging_photoroom_enabled:
+        return _dependency_health_check(
+            "photoroom", "not_configured", message="Photoroom staging disabled"
+        )
+    if not str(settings.photoroom_api_key or "").strip():
+        return _dependency_health_check(
+            "photoroom", "not_configured", message="PHOTOROOM_API_KEY missing"
+        )
+    return _dependency_health_check(
+        "photoroom", "ok", message="configured; live processing probe skipped"
+    )
+
+
+def _check_stripe_health(settings: Settings) -> DependencyHealthCheck:
+    if not str(settings.stripe_secret_key or "").strip():
+        return _dependency_health_check(
+            "stripe", "not_configured", message="STRIPE_SECRET_KEY missing"
+        )
+    started = time.perf_counter()
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            response = client.get(
+                "https://api.stripe.com/v1/balance",
+                auth=(settings.stripe_secret_key or "", ""),
+            )
+        if response.status_code < 400:
+            return _dependency_health_check("stripe", "ok", started_at=started)
+        status = "down" if response.status_code in {401, 403} else "degraded"
+        return _dependency_health_check(
+            "stripe", status, started_at=started, message=_health_http_message(response)
+        )
+    except Exception as exc:
+        return _dependency_health_check("stripe", "down", started_at=started, message=str(exc))
+
+
+def _check_shippo_health(settings: Settings) -> DependencyHealthCheck:
+    if not str(settings.shippo_api_key or "").strip():
+        return _dependency_health_check(
+            "shippo", "not_configured", message="SHIPPO_API_KEY missing"
+        )
+    started = time.perf_counter()
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            response = client.get(
+                f"{settings.shippo_api_base_url.rstrip('/')}/tracks/",
+                headers={"Authorization": f"ShippoToken {settings.shippo_api_key}"},
+                params={"page": 1, "results": 1},
+            )
+        if response.status_code < 400:
+            return _dependency_health_check("shippo", "ok", started_at=started)
+        status = "down" if response.status_code in {401, 403} else "degraded"
+        return _dependency_health_check(
+            "shippo", status, started_at=started, message=_health_http_message(response)
+        )
+    except Exception as exc:
+        return _dependency_health_check("shippo", "down", started_at=started, message=str(exc))
+
+
+def _check_google_places_health(settings: Settings) -> DependencyHealthCheck:
+    if not str(settings.google_places_api_key or "").strip():
+        return _dependency_health_check(
+            "google_places", "not_configured", message="GOOGLE_PLACES_API_KEY missing"
+        )
+    started = time.perf_counter()
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            response = client.post(
+                settings.google_places_autocomplete_url,
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Goog-Api-Key": settings.google_places_api_key or "",
+                    "X-Goog-FieldMask": "suggestions.placePrediction.placeId",
+                },
+                json={"input": "2652 wildberry", "includedRegionCodes": ["us"]},
+            )
+        if response.status_code < 400:
+            return _dependency_health_check("google_places", "ok", started_at=started)
+        status = "down" if response.status_code in {400, 401, 403, 429} else "degraded"
+        return _dependency_health_check(
+            "google_places", status, started_at=started, message=_health_http_message(response)
+        )
+    except Exception as exc:
+        return _dependency_health_check(
+            "google_places", "down", started_at=started, message=str(exc)
+        )
+
+
+def _check_clerk_health(settings: Settings) -> DependencyHealthCheck:
+    if not settings.clerk_enabled:
+        return _dependency_health_check("clerk", "not_configured", message="Clerk disabled")
+    if not str(settings.clerk_jwks_url or "").strip():
+        return _dependency_health_check("clerk", "not_configured", message="CLERK_JWKS_URL missing")
+    started = time.perf_counter()
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            response = client.get(settings.clerk_jwks_url or "")
+        if response.status_code < 400:
+            return _dependency_health_check("clerk", "ok", started_at=started)
+        status = "down" if response.status_code in {401, 403, 404} else "degraded"
+        return _dependency_health_check(
+            "clerk", status, started_at=started, message=_health_http_message(response)
+        )
+    except Exception as exc:
+        return _dependency_health_check("clerk", "down", started_at=started, message=str(exc))
+
+
+def _check_email_health(settings: Settings) -> DependencyHealthCheck:
+    provider = str(settings.email_provider or "auto").strip().lower()
+    ses_configured = bool((settings.ses_from_email or "").strip())
+    smtp_configured = bool(
+        (settings.smtp_host or "").strip()
+        and (settings.smtp_from_email or settings.ses_from_email or "").strip()
+    )
+    if provider == "ses" and not ses_configured:
+        return _dependency_health_check("email", "not_configured", message="SES sender missing")
+    if provider == "smtp" and not smtp_configured:
+        return _dependency_health_check("email", "not_configured", message="SMTP host/from missing")
+    if provider == "auto" and not (ses_configured or smtp_configured):
+        return _dependency_health_check(
+            "email", "not_configured", message="No email provider configured"
+        )
+    return _dependency_health_check("email", "ok", message=f"provider={provider}")
+
+
+@app.get("/v1/health/dependencies", response_model=DependencyHealthResponse)
+def dependency_health(
+    _: AuthPrincipal = Depends(get_request_principal),
+    db: Database = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+    storage: Storage = Depends(get_storage),
+) -> DependencyHealthResponse:
+    checks = [
+        _check_database_health(db),
+        _check_storage_health(settings, storage),
+        _check_openai_health(settings),
+        _check_gemini_health(settings),
+        _check_photoroom_health(settings),
+        _check_stripe_health(settings),
+        _check_shippo_health(settings),
+        _check_google_places_health(settings),
+        _check_clerk_health(settings),
+        _check_email_health(settings),
+    ]
+    blocking_statuses = {check.status for check in checks if check.status != "not_configured"}
+    if "down" in blocking_statuses:
+        overall = "down"
+    elif "degraded" in blocking_statuses:
+        overall = "degraded"
+    else:
+        overall = "ok"
+    return DependencyHealthResponse(status=overall, checks=checks)
 
 
 @app.get("/")
