@@ -15,7 +15,7 @@ jobs:
       PROD_HEALTH_URL: https://api.jouft.com
       PROD_HEALTH_API_KEY: ${{ secrets.PROD_HEALTH_API_KEY }}
       HEALTH_ALERT_WEBHOOK_URL: ${{ secrets.HEALTH_ALERT_WEBHOOK_URL }}
-      HEALTH_ALERT_EMAIL_FROM: admin@jouft.com
+      HEALTH_ALERT_EMAIL_FROM: system@yourdomain.com
       HEALTH_ALERT_EMAIL_TO: leavethemessage@gmail.com
       HEALTH_ALERT_SMTP_HOST: ${{ secrets.HEALTH_ALERT_SMTP_HOST }}
       HEALTH_ALERT_SMTP_PORT: ${{ secrets.HEALTH_ALERT_SMTP_PORT }}

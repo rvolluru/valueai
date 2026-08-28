@@ -14,7 +14,7 @@ def _send_email_alert(subject: str, body: str) -> None:
     smtp_username = (os.environ.get("HEALTH_ALERT_SMTP_USERNAME") or "").strip()
     smtp_password = (os.environ.get("HEALTH_ALERT_SMTP_PASSWORD") or "").strip()
     smtp_port = int(os.environ.get("HEALTH_ALERT_SMTP_PORT") or "587")
-    email_from = (os.environ.get("HEALTH_ALERT_EMAIL_FROM") or "admin@jouft.com").strip()
+    email_from = (os.environ.get("HEALTH_ALERT_EMAIL_FROM") or "system@yourdomain.com").strip()
     email_to = (os.environ.get("HEALTH_ALERT_EMAIL_TO") or "leavethemessage@gmail.com").strip()
     if not smtp_host or not smtp_username or not smtp_password:
         print("email alert skipped: SMTP health alert secrets are not configured")

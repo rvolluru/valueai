@@ -3826,6 +3826,16 @@ def update_listing(
     record = next((r for r in db.list_owner_listings(principal.subject, limit=500) if r["listing_id"] == listing_id), None)
     if record is None:
         raise HTTPException(status_code=404, detail="listing not found")
+    previous_status = str(previous_record.get("status") or "").strip().lower() if isinstance(previous_record, dict) else ""
+    next_status = str(record.get("status") or payload.status or "").strip().lower()
+    if previous_status != "active" and next_status == "active":
+        background_tasks.add_task(
+            _send_listing_published_email_if_configured,
+            settings=settings,
+            owner_subject=principal.subject,
+            listing_id=listing_id,
+            title=str(record.get("title") or payload.title or ""),
+        )
     if str(payload.status or "").lower() == "analyzing":
         previous_images = previous_record.get("images") if isinstance(previous_record, dict) and isinstance(previous_record.get("images"), list) else []
         if not previous_images and isinstance(previous_record, dict) and isinstance(previous_record.get("image"), str) and previous_record.get("image"):
@@ -4308,6 +4318,238 @@ def _tracking_status_label(value: str | None) -> str:
     return labels.get(normalized, normalized.replace("_", " ").title() if normalized else "Tracking updated")
 
 
+def _absolute_public_url(base_url: str | None, path_or_url: object) -> str:
+    value = str(path_or_url or "").strip()
+    if not value:
+        return ""
+    if value.startswith("http://") or value.startswith("https://"):
+        return value
+    base = str(base_url or "").strip().rstrip("/")
+    if not base:
+        return value
+    return f"{base}/{value.lstrip('/')}"
+
+
+def _is_email_reachable_url(value: object) -> bool:
+    raw = str(value or "").strip()
+    if not raw.startswith("http://") and not raw.startswith("https://"):
+        return False
+    parsed = urlparse(raw)
+    hostname = (parsed.hostname or "").lower()
+    return hostname not in {"localhost", "127.0.0.1", "0.0.0.0", "::1"}
+
+
+def _listing_email_detail(label: str, value: object) -> str:
+    text = str(value or "").strip()
+    return f"{label}: {text}" if text else ""
+
+
+def _listing_condition_label(value: object) -> str:
+    raw = str(value or "").strip()
+    labels = {
+        "likenew": "Like New",
+        "newwithtags": "New with Tags",
+        "new": "New",
+    }
+    return labels.get(raw.replace(" ", "").replace("_", "").lower(), raw)
+
+
+def _send_listing_published_email_if_configured(
+    *,
+    settings: Settings,
+    owner_subject: str,
+    listing_id: str,
+    title: str,
+) -> str:
+    notification_from_email = str(settings.notification_from_email or "").strip()
+    profile_db = Database(settings.database_url)
+    profile_db.initialize()
+    profile = profile_db.get_user_profile_quiz(owner_subject) or {}
+    recipient = str(profile.get("email") or profile.get("shipping_email") or "").strip()
+    if not recipient:
+        return "skipped_no_recipient"
+
+    listing = profile_db.get_listing_by_id(listing_id) or {}
+    customer_name = str(profile.get("first_name") or "there").strip() or "there"
+    listing_title = str(listing.get("title") or title or "your listing").strip() or "your listing"
+    brand = str(listing.get("brand") or "").strip()
+    category = str(listing.get("category") or "").strip()
+    condition = _listing_condition_label(listing.get("condition"))
+    size = str(listing.get("size") or "").strip()
+    city = str(listing.get("city") or "").strip()
+    description = str(listing.get("description") or "").strip()
+    estimated_value = listing.get("estimated_value")
+    try:
+        value_label = f"${float(estimated_value):,.0f}"
+    except Exception:
+        value_label = ""
+    images = listing.get("images") if isinstance(listing.get("images"), list) else []
+    hero_image = str(listing.get("image") or (images[0] if images else "") or "").strip()
+    hero_image_url = _absolute_public_url(settings.public_api_url, hero_image)
+    if hero_image_url and not _is_email_reachable_url(hero_image_url):
+        log_json(
+            "listing_published_email_image_skipped",
+            listing_id=listing_id,
+            public_api_url=settings.public_api_url,
+            reason="image_url_not_publicly_reachable",
+        )
+        hero_image_url = ""
+    listing_url = _absolute_public_url(settings.public_app_url, f"/?tab=market&listing={listing_id}")
+    detail_rows = [
+        ("Estimated value", value_label),
+        ("Brand", brand),
+        ("Category", category),
+        ("Condition", condition),
+        ("Size", size),
+        ("Location", city),
+    ]
+    detail_rows = [(label, value) for label, value in detail_rows if str(value or "").strip()]
+    detail_lines = [_listing_email_detail(label, value) for label, value in detail_rows]
+    subject = "Your listing is live on JOUFT"
+    text_body = (
+        f"Hi {customer_name},\n\n"
+        f"{listing_title} has been published to Marketplace.\n\n"
+        + "\n".join(detail_lines)
+        + ("\n\n" if detail_lines else "")
+        + (f"{description}\n\n" if description else "")
+        + (f"View listing: {listing_url}\n\n" if listing_url else "")
+        + "You can now receive trade offers from matched members.\n"
+    )
+    detail_html = "".join(
+        f"<tr><td style=\"padding:6px 12px 6px 0;color:#6b7280;font-size:13px;text-transform:uppercase;letter-spacing:1.5px;\">{html_escape(label)}</td>"
+        f"<td style=\"padding:6px 0;color:#111827;font-size:16px;font-weight:600;\">{html_escape(str(value))}</td></tr>"
+        for label, value in detail_rows
+    )
+    hero_html = (
+        f"<img src=\"{html_escape(hero_image_url)}\" alt=\"{html_escape(listing_title)}\" "
+        "style=\"display:block;width:100%;max-width:560px;height:auto;border:1px solid #e5ddd2;background:#f3f4f6;\" />"
+        if hero_image_url
+        else ""
+    )
+    description_html = (
+        f"<p style=\"font-size:16px;line-height:1.55;color:#4b5563;margin:0 0 22px;\">{html_escape(description)}</p>"
+        if description
+        else ""
+    )
+    cta_html = (
+        f"<a href=\"{html_escape(listing_url)}\" style=\"display:inline-block;background:#111;color:#fff;text-decoration:none;text-transform:uppercase;letter-spacing:2px;font-size:13px;font-weight:700;padding:14px 18px;\">View Listing</a>"
+        if listing_url
+        else ""
+    )
+    html_body = f"""<!doctype html>
+<html>
+  <body style="margin:0;padding:0;background:#f8f4ee;color:#111827;font-family:Arial,Helvetica,sans-serif;">
+    <div style="max-width:640px;margin:0 auto;padding:28px 20px;">
+      <div style="font-family:Georgia,'Times New Roman',serif;font-size:42px;letter-spacing:4px;color:#64141f;">JOUFT</div>
+      <div style="font-size:13px;letter-spacing:5px;text-transform:uppercase;color:#7c7269;margin:4px 0 24px;">AI Luxury Exchange</div>
+      <div style="background:#fff;border:1px solid #ded6cc;padding:24px;">
+        <p style="margin:0 0 18px;font-size:16px;line-height:1.5;">Hi {html_escape(customer_name)},</p>
+        <h1 style="margin:0 0 16px;font-family:Georgia,'Times New Roman',serif;font-size:32px;font-weight:400;color:#111827;">Your listing is live</h1>
+        {hero_html}
+        <h2 style="margin:22px 0 8px;font-size:24px;line-height:1.2;color:#111827;">{html_escape(listing_title)}</h2>
+        <table role="presentation" style="width:100%;border-collapse:collapse;margin:10px 0 16px;">{detail_html}</table>
+        {description_html}
+        {cta_html}
+        <p style="font-size:14px;line-height:1.5;color:#6b7280;margin:24px 0 0;">You can now receive trade offers from matched members.</p>
+      </div>
+    </div>
+  </body>
+</html>"""
+
+    def _send_via_ses(recipient_email: str) -> str:
+        from_email = str(notification_from_email or settings.ses_from_email or settings.smtp_from_email or "").strip()
+        region = str(settings.ses_region or settings.aws_region or "us-east-1").strip()
+        if not from_email:
+            return "skipped_ses_not_configured"
+        try:
+            session = boto3.session.Session(
+                aws_access_key_id=(settings.ses_access_key_id or None),
+                aws_secret_access_key=(settings.ses_secret_access_key or None),
+                aws_session_token=(settings.ses_session_token or None),
+                region_name=region,
+            )
+            client = session.client("ses", endpoint_url=(settings.ses_endpoint_url or None))
+            client.send_email(
+                Source=from_email,
+                Destination={"ToAddresses": [recipient_email]},
+                Message={
+                    "Subject": {"Data": subject, "Charset": "UTF-8"},
+                    "Body": {
+                        "Text": {"Data": text_body, "Charset": "UTF-8"},
+                        "Html": {"Data": html_body, "Charset": "UTF-8"},
+                    },
+                },
+            )
+            return "sent_ses"
+        except Exception as exc:
+            error_code = None
+            error_message = str(exc)
+            response = getattr(exc, "response", None)
+            if isinstance(response, dict):
+                error = response.get("Error")
+                if isinstance(error, dict):
+                    error_code = error.get("Code")
+                    error_message = str(error.get("Message") or error_message)
+            log_json(
+                "listing_published_email_ses_failed",
+                listing_id=listing_id,
+                owner_subject=owner_subject,
+                recipient=recipient_email,
+                from_email=from_email,
+                error_code=error_code,
+                error=error_message[:300],
+            )
+            return "failed_ses"
+
+    def _send_via_smtp(recipient_email: str) -> str:
+        host = str(settings.smtp_host or "").strip()
+        from_email = str(notification_from_email or settings.smtp_from_email or settings.ses_from_email or "").strip()
+        if not host or not from_email:
+            return "skipped_smtp_not_configured"
+        msg = EmailMessage()
+        msg["Subject"] = subject
+        msg["From"] = from_email
+        msg["To"] = recipient_email
+        msg.set_content(text_body)
+        msg.add_alternative(html_body, subtype="html")
+        try:
+            with smtplib.SMTP(host, int(settings.smtp_port), timeout=20) as smtp:
+                if settings.smtp_use_tls:
+                    smtp.starttls()
+                if settings.smtp_username:
+                    smtp.login(settings.smtp_username, settings.smtp_password or "")
+                smtp.send_message(msg)
+            return "sent_smtp"
+        except Exception as exc:
+            log_json(
+                "listing_published_email_smtp_failed",
+                listing_id=listing_id,
+                owner_subject=owner_subject,
+                recipient=recipient_email,
+                from_email=from_email,
+                error=type(exc).__name__,
+            )
+            return "failed_smtp"
+
+    provider = str(settings.email_provider or "auto").strip().lower()
+    if provider == "ses":
+        result = _send_via_ses(recipient)
+    elif provider == "smtp":
+        result = _send_via_smtp(recipient)
+    else:
+        result = _send_via_ses(recipient)
+        if result != "sent_ses":
+            smtp_result = _send_via_smtp(recipient)
+            result = smtp_result if smtp_result == "sent_smtp" else result
+    log_json(
+        "listing_published_email_attempt",
+        listing_id=listing_id,
+        owner_subject=owner_subject,
+        email_status=result,
+    )
+    return result
+
+
 def _send_tracking_update_email_if_configured(
     *,
     settings: Settings,
@@ -4340,9 +4582,10 @@ def _send_tracking_update_email_if_configured(
         f"Tracking: {tracking_number or 'pending'}\n"
         f"{optional_text}"
     )
+    notification_from_email = str(settings.notification_from_email or "").strip()
 
     def _send_via_ses(recipient_email: str) -> str:
-        from_email = str(settings.ses_from_email or settings.smtp_from_email or "").strip()
+        from_email = str(notification_from_email or settings.ses_from_email or settings.smtp_from_email or "").strip()
         template_name = str(settings.ses_template_shipping_tracking_update or "").strip()
         region = str(settings.ses_region or settings.aws_region or "us-east-1").strip()
         if not from_email:
@@ -4386,7 +4629,7 @@ def _send_tracking_update_email_if_configured(
 
     def _send_via_smtp(recipient_email: str) -> str:
         host = str(settings.smtp_host or "").strip()
-        from_email = str(settings.smtp_from_email or settings.ses_from_email or "").strip()
+        from_email = str(notification_from_email or settings.smtp_from_email or settings.ses_from_email or "").strip()
         if not host or not from_email:
             return "skipped_smtp_not_configured"
         msg = EmailMessage()
@@ -4644,8 +4887,10 @@ def _send_label_email_if_configured(
     carrier: str | None = None,
     service_level: str | None = None,
 ) -> str:
+    notification_from_email = str(settings.notification_from_email or "").strip()
+
     def _send_via_ses(recipient: str) -> str:
-        from_email = str(settings.ses_from_email or settings.smtp_from_email or "").strip()
+        from_email = str(notification_from_email or settings.ses_from_email or settings.smtp_from_email or "").strip()
         template_name = str(settings.ses_template_shipping_label or "").strip()
         region = str(settings.ses_region or settings.aws_region or "us-east-1").strip()
         if not from_email:
@@ -4697,7 +4942,7 @@ def _send_label_email_if_configured(
 
     def _send_via_smtp(recipient: str) -> str:
         host = str(settings.smtp_host or "").strip()
-        from_email = str(settings.smtp_from_email or settings.ses_from_email or "").strip()
+        from_email = str(notification_from_email or settings.smtp_from_email or settings.ses_from_email or "").strip()
         if not host or not from_email:
             return "skipped_smtp_not_configured"
         msg = EmailMessage()
@@ -4751,8 +4996,10 @@ def _send_shipping_reminder_email_if_configured(
     service_level: str | None = None,
     reminder_count: int = 0,
 ) -> str:
+    notification_from_email = str(settings.notification_from_email or "").strip()
+
     def _send_via_ses(recipient: str) -> str:
-        from_email = str(settings.ses_from_email or settings.smtp_from_email or "").strip()
+        from_email = str(notification_from_email or settings.ses_from_email or settings.smtp_from_email or "").strip()
         template_name = str(settings.ses_template_shipping_reminder or "").strip()
         region = str(settings.ses_region or "us-east-1").strip()
         if not from_email:
@@ -4808,7 +5055,7 @@ def _send_shipping_reminder_email_if_configured(
 
     def _send_via_smtp(recipient: str) -> str:
         host = str(settings.smtp_host or "").strip()
-        from_email = str(settings.smtp_from_email or settings.ses_from_email or "").strip()
+        from_email = str(notification_from_email or settings.smtp_from_email or settings.ses_from_email or "").strip()
         if not host or not from_email:
             return "skipped_smtp_not_configured"
         msg = EmailMessage()

@@ -179,6 +179,21 @@ variable "shippo_default_contact_phone" {
   default = ""
 }
 
+variable "notification_from_email" {
+  type    = string
+  default = "notifications@jouft.com"
+}
+
+variable "public_app_url" {
+  type    = string
+  default = "https://jouft.com"
+}
+
+variable "public_api_url" {
+  type    = string
+  default = "https://api.jouft.com"
+}
+
 variable "clerk_enabled" {
   type    = bool
   default = false

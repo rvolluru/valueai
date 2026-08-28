@@ -645,6 +645,96 @@ def test_presigned_upload_confirm_persists_images() -> None:
     assert updated["images"] == [image_urls[1], image_urls[0]]
 
 
+def test_publish_listing_transition_queues_published_email(monkeypatch) -> None:
+    client = _build_client()
+    sent: list[dict] = []
+
+    def fake_send_listing_published_email_if_configured(**kwargs):
+        sent.append(kwargs)
+        return "sent_ses"
+
+    monkeypatch.setattr(
+        "app.main._send_listing_published_email_if_configured",
+        fake_send_listing_published_email_if_configured,
+    )
+
+    profile = client.put(
+        "/v1/me/profile-quiz",
+        json={
+            "first_name": "Rajesh",
+            "last_name": "Volluru",
+            "email": "rajesh@example.com",
+        },
+        headers={"x-api-key": "test-key"},
+    )
+    assert profile.status_code == 200, profile.text
+
+    create = client.post(
+        "/v1/listings",
+        json={
+            "title": "Review listing",
+            "mode": "trade",
+            "category": "handbag",
+            "brand": "Chanel",
+            "condition": "LikeNew",
+            "size": "Medium",
+            "estimated_value": 1200,
+            "city": "Your area",
+            "image": None,
+            "images": [],
+            "description": "Ready for review.",
+            "wants": "Open to similar-value offers",
+            "tags": [],
+            "source_item_id": None,
+            "status": "Review",
+        },
+        headers={"x-api-key": "test-key"},
+    )
+    assert create.status_code == 200, create.text
+    listing = create.json()
+
+    publish_payload = {
+        **listing,
+        "status": "Active",
+        "tags": ["LikeNew", "Chanel", "trade"],
+    }
+    for response_only_key in ("listing_id", "owner_subject", "owner_name", "created_at"):
+        publish_payload.pop(response_only_key, None)
+
+    publish = client.put(
+        f"/v1/listings/{listing['listing_id']}",
+        json=publish_payload,
+        headers={"x-api-key": "test-key"},
+    )
+    assert publish.status_code == 200, publish.text
+    assert len(sent) == 1
+    assert sent[0]["owner_subject"] == "api-key"
+    assert sent[0]["listing_id"] == listing["listing_id"]
+    assert sent[0]["title"] == "Review listing"
+
+    save_active = client.put(
+        f"/v1/listings/{listing['listing_id']}",
+        json=publish_payload,
+        headers={"x-api-key": "test-key"},
+    )
+    assert save_active.status_code == 200, save_active.text
+    assert len(sent) == 1
+
+
+def test_listing_published_email_rejects_loopback_image_urls() -> None:
+    _build_client()
+
+    from app.main import _absolute_public_url, _is_email_reachable_url
+
+    local_image_url = _absolute_public_url("http://127.0.0.1:8000", "/v1/images/image-id")
+    public_image_url = _absolute_public_url("https://api.jouft.com", "/v1/images/image-id")
+
+    assert local_image_url == "http://127.0.0.1:8000/v1/images/image-id"
+    assert not _is_email_reachable_url(local_image_url)
+    assert not _is_email_reachable_url("http://localhost:8000/v1/images/image-id")
+    assert _is_email_reachable_url(public_image_url)
+
+
 def test_listings_support_limit_offset_pagination() -> None:
     client = _build_client()
     created_ids: list[str] = []

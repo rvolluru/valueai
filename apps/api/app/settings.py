@@ -45,6 +45,7 @@ class Settings(BaseSettings):
     )
 
     app_env: str = "local"
+    aws_region: str = "us-east-1"
     api_key: str = "local-dev-key"
     version: str = "0.1.0"
 
@@ -163,6 +164,8 @@ class Settings(BaseSettings):
     shippo_default_contact_email: str | None = None
     shippo_default_contact_phone: str | None = None
     email_provider: str = "auto"  # auto|ses|smtp
+    public_app_url: str = "http://localhost:5173"
+    public_api_url: str = "http://127.0.0.1:8000"
     ses_region: str | None = None
     ses_from_email: str | None = None
     ses_endpoint_url: str | None = None
@@ -176,6 +179,7 @@ class Settings(BaseSettings):
     ses_template_offer_update: str | None = "jouft-offer-update-v1"
     ses_template_shipping_reminder: str | None = "jouft-shipping-reminder-v1"
     ses_template_shipping_tracking_update: str | None = "jouft-shipping-tracking-update-v1"
+    notification_from_email: str | None = "notifications@jouft.com"
     smtp_host: str | None = None
     smtp_port: int = 587
     smtp_username: str | None = None
