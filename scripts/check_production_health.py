@@ -145,6 +145,8 @@ def main() -> int:
 
     base_url = os.environ.get("PROD_HEALTH_URL", "https://api.jouft.com").rstrip("/")
     api_key = (os.environ.get("PROD_HEALTH_API_KEY") or "").strip()
+    tfvars_api_key = _api_key_from_tfvars_b64()
+    dependency_api_key = tfvars_api_key or api_key
     require_dependency_health = (
         os.environ.get("REQUIRE_DEPENDENCY_HEALTH", "false").lower() == "true"
     )
@@ -163,27 +165,32 @@ def main() -> int:
         )
         return 1
 
-    if not api_key:
+    if not dependency_api_key:
         print("dependency health skipped: PROD_HEALTH_API_KEY is not configured")
         if require_dependency_health:
             _send_alert(
                 "JOUFT dependency health check is not configured",
-                "JOUFT dependency health failed because PROD_HEALTH_API_KEY is missing.",
+                (
+                    "JOUFT dependency health failed because neither "
+                    "TFVARS_PROD_B64 api_key nor PROD_HEALTH_API_KEY is configured."
+                ),
             )
             return 1
         return 0
 
-    status_code, dependencies = _request_json(f"{base_url}/v1/health/dependencies", api_key=api_key)
+    status_code, dependencies = _request_json(
+        f"{base_url}/v1/health/dependencies",
+        api_key=dependency_api_key,
+    )
     if status_code == 401:
-        tfvars_api_key = _api_key_from_tfvars_b64()
-        if tfvars_api_key and tfvars_api_key != api_key:
+        if api_key and api_key != dependency_api_key:
             print(
-                "dependency health auth failed with PROD_HEALTH_API_KEY; "
-                "retrying with TFVARS_PROD_B64 api_key"
+                "dependency health auth failed with TFVARS_PROD_B64 api_key; "
+                "retrying with PROD_HEALTH_API_KEY"
             )
             status_code, dependencies = _request_json(
                 f"{base_url}/v1/health/dependencies",
-                api_key=tfvars_api_key,
+                api_key=api_key,
             )
     print(f"dependency health HTTP {status_code}: status={dependencies.get('status')}")
     _print_dependency_report(dependencies)
