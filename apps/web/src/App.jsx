@@ -3966,9 +3966,12 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
         country: 'country',
       }
       if (!rawUrl) {
-        const msg = hasIncompleteProfile
-          ? `Shipping profile incomplete.${missingFrom.length > 0 ? ` Sender missing: ${missingFrom.map((k) => fmt[k]).join(', ')}.` : ''}${missingTo.length > 0 ? ` Receiver missing: ${missingTo.map((k) => fmt[k]).join(', ')}.` : ''}`
-          : 'Carrier label is not available yet. Please retry in a few seconds.'
+        const status = String(payload?.status || shipment?.status || '').toLowerCase()
+        const msg = status === 'awaiting_shippo_config'
+          ? 'Shipping labels are not configured on the server yet.'
+          : hasIncompleteProfile
+            ? `Shipping profile incomplete.${missingFrom.length > 0 ? ` Sender missing: ${missingFrom.map((k) => fmt[k]).join(', ')}.` : ''}${missingTo.length > 0 ? ` Receiver missing: ${missingTo.map((k) => fmt[k]).join(', ')}.` : ''}`
+            : 'Carrier label is not available yet. Please retry in a few seconds.'
         setSavedListingNotice(msg)
         window.alert(msg)
         return
@@ -6076,20 +6079,28 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                               ) : null}
                               {hasShipments && (
                                 <div className="inbox-label-list">
-                                  {offerShipments.map((s) => (
-                                    <div key={s.shipment_id} className="inbox-label-card">
-                                      <strong>{s.carrier} • {s.service_level}</strong>
-                                      <div className="tiny-note">Tracking: {s.tracking_number || 'pending'}</div>
-                                      <div className="tiny-note">Status: {shipmentTrackingLabel(s)}</div>
-                                      {s.tracking_status_details ? <div className="tiny-note">{s.tracking_status_details}</div> : null}
-                                      {s.tracking_eta ? <div className="tiny-note">Estimated delivery: {s.tracking_eta}</div> : null}
-                                      <div className="tiny-note">From: {s.from_name || 'n/a'} • {s.from_city || ''} {s.from_state || ''}</div>
-                                      <div className="tiny-note">To: {s.to_name || 'n/a'} • {s.to_city || ''} {s.to_state || ''}</div>
-                                      <button type="button" className="ghost small" onClick={() => openShippingLabel(s)}>
-                                        Download label
-                                      </button>
-                                    </div>
-                                  ))}
+                                  {offerShipments.map((s) => {
+                                    const hasLabelUrl = Boolean(String(s.label_url || '').trim())
+                                    const shipmentStatus = String(s.status || '').toLowerCase()
+                                    const unavailableMessage = shipmentStatus === 'awaiting_shippo_config'
+                                      ? 'Shipping labels are not configured on the server yet.'
+                                      : 'Carrier label is not available yet.'
+                                    return (
+                                      <div key={s.shipment_id} className="inbox-label-card">
+                                        <strong>{s.carrier} • {s.service_level}</strong>
+                                        <div className="tiny-note">Tracking: {s.tracking_number || 'pending'}</div>
+                                        <div className="tiny-note">Status: {shipmentTrackingLabel(s)}</div>
+                                        {s.tracking_status_details ? <div className="tiny-note">{s.tracking_status_details}</div> : null}
+                                        {s.tracking_eta ? <div className="tiny-note">Estimated delivery: {s.tracking_eta}</div> : null}
+                                        <div className="tiny-note">From: {s.from_name || 'n/a'} • {s.from_city || ''} {s.from_state || ''}</div>
+                                        <div className="tiny-note">To: {s.to_name || 'n/a'} • {s.to_city || ''} {s.to_state || ''}</div>
+                                        {!hasLabelUrl ? <div className="tiny-note">{unavailableMessage}</div> : null}
+                                        <button type="button" className="ghost small" disabled={!hasLabelUrl} onClick={() => openShippingLabel(s)}>
+                                          {hasLabelUrl ? 'Download label' : 'Label unavailable'}
+                                        </button>
+                                      </div>
+                                    )
+                                  })}
                                 </div>
                               )}
                               <div className="button-row inbox-editorial-actions">

@@ -74,6 +74,9 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
           STRIPE_PUBLISHABLE_KEY: ${{ secrets.STRIPE_PUBLISHABLE_KEY }}
+          SHIPPO_API_KEY: ${{ secrets.SHIPPO_API_KEY }}
+          SHIPPO_DEFAULT_CONTACT_EMAIL: ${{ secrets.SHIPPO_DEFAULT_CONTACT_EMAIL }}
+          SHIPPO_DEFAULT_CONTACT_PHONE: ${{ secrets.SHIPPO_DEFAULT_CONTACT_PHONE }}
         run: |
           set -euo pipefail
           test -n "${TFVARS_PROD_B64}"
@@ -110,6 +113,27 @@ jobs:
               echo "openai_api_key                    = \"${OPENAI_API_KEY}\"" >> "${TF_DIR}/terraform.tfvars"
             fi
           fi
+          if [ -n "${SHIPPO_API_KEY:-}" ]; then
+            if grep -qE '^[[:space:]]*shippo_api_key[[:space:]]*=' "${TF_DIR}/terraform.tfvars"; then
+              sed -i.bak -E "s#^[[:space:]]*shippo_api_key[[:space:]]*=.*#shippo_api_key                   = \"${SHIPPO_API_KEY}\"#" "${TF_DIR}/terraform.tfvars"
+            else
+              echo "shippo_api_key                   = \"${SHIPPO_API_KEY}\"" >> "${TF_DIR}/terraform.tfvars"
+            fi
+          fi
+          if [ -n "${SHIPPO_DEFAULT_CONTACT_EMAIL:-}" ]; then
+            if grep -qE '^[[:space:]]*shippo_default_contact_email[[:space:]]*=' "${TF_DIR}/terraform.tfvars"; then
+              sed -i.bak -E "s#^[[:space:]]*shippo_default_contact_email[[:space:]]*=.*#shippo_default_contact_email         = \"${SHIPPO_DEFAULT_CONTACT_EMAIL}\"#" "${TF_DIR}/terraform.tfvars"
+            else
+              echo "shippo_default_contact_email         = \"${SHIPPO_DEFAULT_CONTACT_EMAIL}\"" >> "${TF_DIR}/terraform.tfvars"
+            fi
+          fi
+          if [ -n "${SHIPPO_DEFAULT_CONTACT_PHONE:-}" ]; then
+            if grep -qE '^[[:space:]]*shippo_default_contact_phone[[:space:]]*=' "${TF_DIR}/terraform.tfvars"; then
+              sed -i.bak -E "s#^[[:space:]]*shippo_default_contact_phone[[:space:]]*=.*#shippo_default_contact_phone         = \"${SHIPPO_DEFAULT_CONTACT_PHONE}\"#" "${TF_DIR}/terraform.tfvars"
+            else
+              echo "shippo_default_contact_phone         = \"${SHIPPO_DEFAULT_CONTACT_PHONE}\"" >> "${TF_DIR}/terraform.tfvars"
+            fi
+          fi
 
       - name: Decide deploy mode (fast ECS vs full Terraform)
         id: mode
@@ -141,6 +165,9 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
           STRIPE_PUBLISHABLE_KEY: ${{ secrets.STRIPE_PUBLISHABLE_KEY }}
+          SHIPPO_API_KEY: ${{ secrets.SHIPPO_API_KEY }}
+          SHIPPO_DEFAULT_CONTACT_EMAIL: ${{ secrets.SHIPPO_DEFAULT_CONTACT_EMAIL }}
+          SHIPPO_DEFAULT_CONTACT_PHONE: ${{ secrets.SHIPPO_DEFAULT_CONTACT_PHONE }}
         run: |
           set -euo pipefail
           CLUSTER="${PROJECT_NAME}-cluster"
@@ -154,7 +181,10 @@ jobs:
           jq --arg IMAGE "${IMAGE_URI}" \
              --arg OPENAI_API_KEY "${OPENAI_API_KEY:-}" \
              --arg STRIPE_SECRET_KEY "${STRIPE_SECRET_KEY:-}" \
-             --arg STRIPE_PUBLISHABLE_KEY "${STRIPE_PUBLISHABLE_KEY:-}" '
+             --arg STRIPE_PUBLISHABLE_KEY "${STRIPE_PUBLISHABLE_KEY:-}" \
+             --arg SHIPPO_API_KEY "${SHIPPO_API_KEY:-}" \
+             --arg SHIPPO_DEFAULT_CONTACT_EMAIL "${SHIPPO_DEFAULT_CONTACT_EMAIL:-}" \
+             --arg SHIPPO_DEFAULT_CONTACT_PHONE "${SHIPPO_DEFAULT_CONTACT_PHONE:-}" '
             def upsert_env($n; $v):
               if ($v|length) == 0 then .
               elif ((.environment // []) | map(.name) | index($n)) != null
@@ -179,7 +209,10 @@ jobs:
                   | upsert_env("GPT_ITEM_PROFILE_PROVIDER_ORDER"; "hybrid,gemini,openai")
                   | upsert_env("GPT_ITEM_PROFILE_TIMEOUT_S"; "120")
                   | upsert_env("STRIPE_SECRET_KEY"; $STRIPE_SECRET_KEY)
-                  | upsert_env("STRIPE_PUBLISHABLE_KEY"; $STRIPE_PUBLISHABLE_KEY))
+                  | upsert_env("STRIPE_PUBLISHABLE_KEY"; $STRIPE_PUBLISHABLE_KEY)
+                  | upsert_env("SHIPPO_API_KEY"; $SHIPPO_API_KEY)
+                  | upsert_env("SHIPPO_DEFAULT_CONTACT_EMAIL"; $SHIPPO_DEFAULT_CONTACT_EMAIL)
+                  | upsert_env("SHIPPO_DEFAULT_CONTACT_PHONE"; $SHIPPO_DEFAULT_CONTACT_PHONE))
                 else . end
               )
           ' /tmp/current-td.json > /tmp/new-td.json
