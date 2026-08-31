@@ -1972,7 +1972,7 @@ def _check_shippo_health(settings: Settings) -> DependencyHealthCheck:
     try:
         with httpx.Client(timeout=10.0) as client:
             response = client.get(
-                f"{settings.shippo_api_base_url.rstrip('/')}/tracks/",
+                f"{settings.shippo_api_base_url.rstrip('/')}/carrier_accounts",
                 headers={"Authorization": f"ShippoToken {settings.shippo_api_key}"},
                 params={"page": 1, "results": 1},
             )
