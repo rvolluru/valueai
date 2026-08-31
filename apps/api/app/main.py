@@ -4200,6 +4200,20 @@ def _hydrate_shipment_party_fields(db: Database, shipment: dict) -> dict:
     return hydrated
 
 
+def _shipment_address_snapshot(shipment: dict, prefix: str) -> dict[str, str | None]:
+    return {
+        "name": shipment.get(f"{prefix}_name"),
+        "line1": shipment.get(f"{prefix}_address_line1"),
+        "line2": shipment.get(f"{prefix}_address_line2"),
+        "city": shipment.get(f"{prefix}_city"),
+        "state": shipment.get(f"{prefix}_state"),
+        "postal": shipment.get(f"{prefix}_postal_code"),
+        "country": shipment.get(f"{prefix}_country") or "US",
+        "email": None,
+        "phone": None,
+    }
+
+
 def _visible_shipments_for_subject(*, shipments: list[dict], subject: str) -> list[dict]:
     actor = str(subject or "")
     return [s for s in shipments if str(s.get("from_subject") or "") == actor]
@@ -5560,6 +5574,18 @@ def _create_or_refresh_trade_shipment_for_subject(
     )
     if existing_leg and str(existing_leg.get("status") or "").lower() == "label_created" and str(existing_leg.get("label_url") or "").strip():
         return _hydrate_shipment_party_fields(db, existing_leg)
+    if existing_leg:
+        existing_leg = _hydrate_shipment_party_fields(db, existing_leg)
+        sender_contact = _subject_shipping_snapshot(db, from_subject, settings)
+        receiver_contact = _subject_shipping_snapshot(db, to_subject, settings)
+        if not _address_complete(sender_profile):
+            sender_profile = _shipment_address_snapshot(existing_leg, "from")
+        if not _address_complete(receiver_profile):
+            receiver_profile = _shipment_address_snapshot(existing_leg, "to")
+        sender_profile["email"] = sender_profile.get("email") or sender_contact.get("email")
+        sender_profile["phone"] = sender_profile.get("phone") or sender_contact.get("phone")
+        receiver_profile["email"] = receiver_profile.get("email") or receiver_contact.get("email")
+        receiver_profile["phone"] = receiver_profile.get("phone") or receiver_contact.get("phone")
 
     quote = _shippo_quote_rate(
         settings=settings,
@@ -5588,6 +5614,14 @@ def _create_or_refresh_trade_shipment_for_subject(
         ) or existing_leg
         out = _hydrate_shipment_party_fields(db, updated)
         out["label_debug"] = label_result.get("debug")
+        if str(label_result.get("status") or "").lower() != "label_created":
+            log_json(
+                "shipping_label_refresh_unavailable",
+                offer_id=offer_id,
+                shipment_id=out.get("shipment_id"),
+                status=label_result.get("status"),
+                debug=label_result.get("debug"),
+            )
         return out
 
     tracking = label_result.get("tracking_number") or f"TRD{uuid.uuid4().hex[:12].upper()}"
@@ -5683,7 +5717,21 @@ def create_shipping_labels(
         raise HTTPException(status_code=400, detail="Shipping labels can only be created after both users accept trade")
     if not payload.confirmed:
         raise HTTPException(status_code=400, detail="Shipping cost confirmation is required before creating label")
-    if not offer.get("from_receive_address") or not offer.get("to_receive_address"):
+    from_subject, to_subject, _, _ = _outbound_leg_for_subject(offer, principal.subject)
+    existing_shipments = db.list_shipments_for_offer(offer_id)
+    existing_leg = next(
+        (
+            s for s in existing_shipments
+            if str(s.get("from_subject") or "") == from_subject and str(s.get("to_subject") or "") == to_subject
+        ),
+        None,
+    )
+    existing_leg_has_addresses = bool(
+        existing_leg
+        and _address_complete(_shipment_address_snapshot(existing_leg, "from"))
+        and _address_complete(_shipment_address_snapshot(existing_leg, "to"))
+    )
+    if (not offer.get("from_receive_address") or not offer.get("to_receive_address")) and not existing_leg_has_addresses:
         raise HTTPException(status_code=400, detail="Both users must select a receive shipping address before creating labels")
     created_or_updated = _create_or_refresh_trade_shipment_for_subject(
         db=db,
