@@ -72,6 +72,7 @@ jobs:
         env:
           TFVARS_PROD_B64: ${{ secrets.TFVARS_PROD_B64 }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          PHOTOROOM_API_KEY: ${{ secrets.PHOTOROOM_API_KEY }}
           STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
           STRIPE_PUBLISHABLE_KEY: ${{ secrets.STRIPE_PUBLISHABLE_KEY }}
           SHIPPO_API_KEY: ${{ secrets.SHIPPO_API_KEY }}
@@ -111,6 +112,13 @@ jobs:
               sed -i.bak -E "s#^[[:space:]]*openai_api_key[[:space:]]*=.*#openai_api_key                    = \"${OPENAI_API_KEY}\"#" "${TF_DIR}/terraform.tfvars"
             else
               echo "openai_api_key                    = \"${OPENAI_API_KEY}\"" >> "${TF_DIR}/terraform.tfvars"
+            fi
+          fi
+          if [ -n "${PHOTOROOM_API_KEY:-}" ]; then
+            if grep -qE '^[[:space:]]*photoroom_api_key[[:space:]]*=' "${TF_DIR}/terraform.tfvars"; then
+              sed -i.bak -E "s#^[[:space:]]*photoroom_api_key[[:space:]]*=.*#photoroom_api_key                 = \"${PHOTOROOM_API_KEY}\"#" "${TF_DIR}/terraform.tfvars"
+            else
+              echo "photoroom_api_key                 = \"${PHOTOROOM_API_KEY}\"" >> "${TF_DIR}/terraform.tfvars"
             fi
           fi
           if [ -n "${SHIPPO_API_KEY:-}" ]; then
@@ -163,6 +171,7 @@ jobs:
           IMAGE_URI: ${{ steps.image.outputs.image_uri }}
           PROJECT_NAME: ${{ steps.mode.outputs.project_name }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          PHOTOROOM_API_KEY: ${{ secrets.PHOTOROOM_API_KEY }}
           STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
           STRIPE_PUBLISHABLE_KEY: ${{ secrets.STRIPE_PUBLISHABLE_KEY }}
           SHIPPO_API_KEY: ${{ secrets.SHIPPO_API_KEY }}
@@ -180,6 +189,7 @@ jobs:
           aws ecs describe-task-definition --task-definition "${CURRENT_TASK_DEF_ARN}" > /tmp/current-td.json
           jq --arg IMAGE "${IMAGE_URI}" \
              --arg OPENAI_API_KEY "${OPENAI_API_KEY:-}" \
+             --arg PHOTOROOM_API_KEY "${PHOTOROOM_API_KEY:-}" \
              --arg STRIPE_SECRET_KEY "${STRIPE_SECRET_KEY:-}" \
              --arg STRIPE_PUBLISHABLE_KEY "${STRIPE_PUBLISHABLE_KEY:-}" \
              --arg SHIPPO_API_KEY "${SHIPPO_API_KEY:-}" \
@@ -206,6 +216,7 @@ jobs:
                 then
                   (.image = $IMAGE
                   | upsert_env("OPENAI_API_KEY"; $OPENAI_API_KEY)
+                  | upsert_env("PHOTOROOM_API_KEY"; $PHOTOROOM_API_KEY)
                   | upsert_env("GPT_ITEM_PROFILE_PROVIDER_ORDER"; "hybrid,gemini,openai")
                   | upsert_env("GPT_ITEM_PROFILE_TIMEOUT_S"; "120")
                   | upsert_env("STRIPE_SECRET_KEY"; $STRIPE_SECRET_KEY)
