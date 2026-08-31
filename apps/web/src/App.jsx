@@ -3818,7 +3818,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
           setSavedListingNotice('Trade accepted successfully. This trade is now in Accepted.')
           setOfferStatusFilter('accepted')
           try {
-            await loadShippingLabelsForOffer(offerId)
+            await createShippingLabelsForOffer(offerId)
           } catch {}
         } else if (actorAccepted) {
           setSavedListingNotice('Your acceptance is recorded. Waiting for the other user to accept.')
@@ -6109,7 +6109,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                                   type="button"
                                   onClick={async () => {
                                     try {
-                                      await loadShippingLabelsForOffer(offer.offer_id)
+                                      await createShippingLabelsForOffer(offer.offer_id)
                                     } catch (err) {
                                       setSavedListingNotice(err.message || 'Failed to load shipping labels.')
                                     }
