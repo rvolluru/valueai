@@ -26,7 +26,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.responses import RedirectResponse
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from PIL import Image, ImageFilter, ImageOps
+from PIL import Image, ImageFilter, ImageOps, ImageStat
 from starlette.datastructures import Headers
 
 from brand.types import ImageInput
@@ -431,6 +431,165 @@ def _same_listing_image_urls(left: list[str] | None, right: list[str] | None) ->
 
 def _image_content_hash(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+_ANALYSIS_IMAGE_ROLE_PRIORITY = {
+    "full_item": 0,
+    "brand_label": 1,
+    "size_label": 2,
+    "sole_or_bottom": 3,
+    "condition_detail": 4,
+    "accessory_or_box": 5,
+    "close_up": 6,
+    "other": 7,
+}
+
+_ANALYSIS_IMAGE_ROLE_TOKENS = (
+    ("brand_label", ("brand", "label", "logo", "tag", "insole", "stamp", "serial")),
+    ("size_label", ("size", "sizing")),
+    ("sole_or_bottom", ("sole", "outsole", "bottom", "heel")),
+    ("accessory_or_box", ("box", "dust", "receipt", "invoice", "authentic", "card", "certificate", "proof")),
+    ("full_item", ("full", "front", "back", "side", "hero", "main", "product")),
+    ("condition_detail", ("detail", "close", "wear", "scratch", "stain", "damage", "corner", "hardware")),
+)
+
+
+def _normalized_analysis_image_role(role_hint: object) -> str:
+    value = str(role_hint or "").strip().replace("-", "_").replace(" ", "_").casefold()
+    if not value:
+        return "other"
+    aliases = {
+        "tag": "brand_label",
+        "label": "brand_label",
+        "logo": "brand_label",
+        "brand": "brand_label",
+        "receipt": "accessory_or_box",
+        "authenticity": "accessory_or_box",
+        "authenticity_card": "accessory_or_box",
+        "authenticity_receipt": "accessory_or_box",
+        "box": "accessory_or_box",
+        "bottom": "sole_or_bottom",
+        "sole": "sole_or_bottom",
+        "outsole": "sole_or_bottom",
+        "closeup": "close_up",
+    }
+    value = aliases.get(value, value)
+    return value if value in _ANALYSIS_IMAGE_ROLE_PRIORITY else "other"
+
+
+def _analysis_image_filename_role(filename: object) -> str:
+    value = str(filename or "").casefold()
+    if not value:
+        return "other"
+    for role, tokens in _ANALYSIS_IMAGE_ROLE_TOKENS:
+        if any(token in value for token in tokens):
+            return role
+    return "other"
+
+
+def _analysis_image_metrics(data: bytes) -> dict[str, float]:
+    try:
+        image = Image.open(BytesIO(data))
+        image = ImageOps.exif_transpose(image).convert("RGB")
+        image.thumbnail((160, 160))
+        width, height = image.size
+        grayscale = image.convert("L")
+        edges = grayscale.filter(ImageFilter.FIND_EDGES)
+        mean_edge = float(ImageStat.Stat(edges).mean[0])
+        pixel_bytes = image.tobytes()
+        pixel_count = max(width * height, 1)
+        non_white = 0
+        for offset in range(0, len(pixel_bytes), 3):
+            r, g, b = pixel_bytes[offset], pixel_bytes[offset + 1], pixel_bytes[offset + 2]
+            if min(abs(r - 245), abs(g - 245), abs(b - 245)) > 18:
+                non_white += 1
+        return {
+            "aspect": width / height if height else 1.0,
+            "edge_mean": mean_edge,
+            "non_white_ratio": non_white / pixel_count,
+        }
+    except Exception:
+        return {"aspect": 1.0, "edge_mean": 0.0, "non_white_ratio": 0.0}
+
+
+def _analysis_full_item_score(entry: dict[str, object]) -> float:
+    role_from_name = _analysis_image_filename_role(entry.get("filename"))
+    if role_from_name == "full_item":
+        return 100.0
+    if role_from_name in {"brand_label", "size_label", "sole_or_bottom", "accessory_or_box"}:
+        return -100.0
+    data = entry.get("data")
+    metrics = _analysis_image_metrics(data) if isinstance(data, bytes) else {}
+    aspect = float(metrics.get("aspect") or 1.0)
+    edge_mean = float(metrics.get("edge_mean") or 0.0)
+    non_white_ratio = float(metrics.get("non_white_ratio") or 0.0)
+    aspect_score = 10.0 if 0.45 <= aspect <= 2.2 else 0.0
+    coverage_score = min(max(non_white_ratio, 0.0), 1.0) * 12.0
+    edge_score = min(edge_mean / 8.0, 8.0)
+    return aspect_score + coverage_score + edge_score
+
+
+def _canonicalize_analysis_file_entries(entries: list[dict[str, object]]) -> list[dict[str, object]]:
+    prepared: list[dict[str, object]] = []
+    for idx, entry in enumerate(entries):
+        data = entry.get("data")
+        if not isinstance(data, bytes):
+            continue
+        normalized = dict(entry)
+        normalized["_analysis_original_index"] = idx
+        normalized["content_hash"] = str(entry.get("content_hash") or _image_content_hash(data))
+        explicit_role = _normalized_analysis_image_role(entry.get("role_hint"))
+        filename_role = _analysis_image_filename_role(entry.get("filename"))
+        normalized["role_hint"] = filename_role if filename_role != "other" else explicit_role
+        prepared.append(normalized)
+
+    if prepared and not any(entry.get("role_hint") == "full_item" for entry in prepared):
+        best = max(prepared, key=_analysis_full_item_score)
+        best["role_hint"] = "full_item"
+
+    for entry in prepared:
+        if entry.get("role_hint") == "other":
+            entry["role_hint"] = "condition_detail"
+
+    return sorted(
+        prepared,
+        key=lambda entry: (
+            _ANALYSIS_IMAGE_ROLE_PRIORITY.get(str(entry.get("role_hint") or "other"), 99),
+            str(entry.get("content_hash") or ""),
+            str(entry.get("filename") or ""),
+            int(entry.get("_analysis_original_index") or 0),
+        ),
+    )
+
+
+def _canonicalize_image_inputs_for_analysis(images: list[ImageInput]) -> list[ImageInput]:
+    entries = [
+        {
+            "image": image,
+            "filename": image.filename,
+            "role_hint": None
+            if _normalized_analysis_image_role(image.role_hint) in {"full_item", "close_up"}
+            else image.role_hint,
+            "data": image.bytes_data,
+        }
+        for image in images
+    ]
+    ordered_entries = _canonicalize_analysis_file_entries(entries)
+    ordered: list[ImageInput] = []
+    for entry in ordered_entries:
+        image = entry.get("image")
+        if not isinstance(image, ImageInput):
+            continue
+        ordered.append(
+            ImageInput(
+                image_id=image.image_id,
+                filename=image.filename,
+                content_type=image.content_type,
+                bytes_data=image.bytes_data,
+                role_hint=str(entry.get("role_hint") or image.role_hint or "condition_detail"),
+            )
+        )
+    return ordered
 
 
 def _profile_owner_display_name(db: Database, owner_subject: object, fallback: object = None) -> str:
@@ -965,7 +1124,7 @@ def _collect_listing_analysis_files(
             continue
         seen_signatures.add(signature)
         deduped_files.append(entry)
-    return deduped_files[: settings.max_images_per_request]
+    return _canonicalize_analysis_file_entries(deduped_files)[: settings.max_images_per_request]
 
 
 def _remove_background_with_photoroom(raw: bytes, content_type: str, settings: Settings) -> tuple[bytes, str, dict[str, object]]:
@@ -6477,7 +6636,7 @@ async def queue_listing_analysis(
             continue
         seen_signatures.add(signature)
         deduped_files.append(entry)
-    files = deduped_files[: settings.max_images_per_request]
+    files = _canonicalize_analysis_file_entries(deduped_files)[: settings.max_images_per_request]
     if not files:
         _mark_listing_analysis_failed(db, current, principal.subject)
         log_json("listing_analysis_queue_no_files", listing_id=listing_id, actor=principal.subject)
@@ -6595,6 +6754,8 @@ async def analyze(
 
     if not image_inputs:
         raise HTTPException(status_code=400, detail="No readable images uploaded")
+
+    image_inputs = _canonicalize_image_inputs_for_analysis(image_inputs)
 
     requested_photos: list[str] = []
     brand_debug: dict[str, object] = {"source": "gemini_only"}

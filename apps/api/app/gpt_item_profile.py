@@ -589,7 +589,7 @@ class GptItemProfiler:
                 score += 0.08
             role_hint = str(image.role_hint or "").casefold()
             filename = str(image.filename or "").casefold()
-            if role_hint in {"close_up", "tag", "label", "logo"}:
+            if role_hint in {"close_up", "tag", "label", "logo", "brand_label", "size_label"}:
                 score += 0.08
             if any(token in filename for token in ("tag", "label", "logo", "receipt", "auth")):
                 score += 0.04

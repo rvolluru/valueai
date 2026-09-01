@@ -156,6 +156,59 @@ def _override_gpt_profiler(profile: dict | None):
     return app
 
 
+def test_analysis_image_canonical_order_is_upload_order_independent() -> None:
+    from app.main import _canonicalize_analysis_file_entries, _image_content_hash
+
+    full = {"filename": "full_item.jpg", "role_hint": "close_up", "data": _make_image("FULL")}
+    label = {"filename": "brand_label.jpg", "role_hint": "close_up", "data": _make_image("LABEL")}
+    detail = {"filename": "condition_detail.jpg", "role_hint": "close_up", "data": _make_image("DETAIL")}
+
+    forward = _canonicalize_analysis_file_entries([detail, full, label])
+    reversed_order = _canonicalize_analysis_file_entries([label, full, detail])
+
+    forward_signature = [(entry["role_hint"], _image_content_hash(entry["data"])) for entry in forward]
+    reversed_signature = [(entry["role_hint"], _image_content_hash(entry["data"])) for entry in reversed_order]
+
+    assert forward_signature == reversed_signature
+    assert [entry["role_hint"] for entry in forward] == ["full_item", "brand_label", "condition_detail"]
+
+
+def test_analyze_passes_canonical_image_order_to_profiler() -> None:
+    client = _build_client()
+    from app.deps import get_gpt_item_profiler
+    from app.gpt_item_profile import GptItemProfileResult
+    from app.main import app
+
+    captured: list[tuple[str, str | None]] = []
+
+    class StubGptProfiler:
+        def profile_item(self, **kwargs):
+            captured.extend((image.filename, image.role_hint) for image in kwargs["images"])
+            return GptItemProfileResult(profile=_stub_item_profile(), enabled=True, called=True)
+
+    app.dependency_overrides[get_gpt_item_profiler] = lambda: StubGptProfiler()
+    try:
+        files = [
+            ("images", ("condition_detail.jpg", _make_image("DETAIL"), "image/jpeg")),
+            ("images", ("brand_label.jpg", _make_image("LABEL"), "image/jpeg")),
+            ("images", ("full_item.jpg", _make_image("FULL"), "image/jpeg")),
+        ]
+        res = client.post(
+            "/v1/analyze",
+            data={"item_id": "item-canonical-order", "user_condition": "New"},
+            files=files,
+            headers={"x-api-key": "test-key"},
+        )
+        assert res.status_code == 200, res.text
+        assert captured == [
+            ("full_item.jpg", "full_item"),
+            ("brand_label.jpg", "brand_label"),
+            ("condition_detail.jpg", "condition_detail"),
+        ]
+    finally:
+        app.dependency_overrides.clear()
+
+
 def test_listing_title_from_analysis_uses_label_brand_for_generic_model() -> None:
     from app.main import _listing_title_from_analysis
 
