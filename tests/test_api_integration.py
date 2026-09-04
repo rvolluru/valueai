@@ -95,6 +95,85 @@ def test_dependency_health_reports_core_services_and_redacts_secrets():
     assert "test-key" not in str(body)
 
 
+def test_register_and_unregister_push_token():
+    client = _build_client()
+    token = "ExponentPushToken[test-token]"
+
+    register = client.post(
+        "/v1/me/push-token",
+        headers={"x-api-key": "test-key"},
+        json={"token": token, "platform": "ios", "device_id": "device-1"},
+    )
+
+    assert register.status_code == 200
+    assert register.json()["registered"] is True
+    assert register.json()["token"] == token
+
+    unregister = client.request(
+        "DELETE",
+        "/v1/me/push-token",
+        headers={"x-api-key": "test-key"},
+        json={"token": token},
+    )
+
+    assert unregister.status_code == 200
+    assert unregister.json()["deleted"] is True
+
+
+def test_create_user_notification_pushes_to_registered_expo_token(monkeypatch):
+    _build_client()
+    from app import deps
+    from app.main import _create_user_notification_and_push
+    from app.settings import get_settings
+
+    db = deps.get_db()
+    settings = get_settings()
+    token = "ExponentPushToken[test-token]"
+    db.upsert_user_push_token(owner_subject="api-key", token=token, platform="ios", device_id="device-1")
+    sent_payloads = []
+
+    class StubResponse:
+        status_code = 200
+        text = ""
+
+        def json(self):
+            return {"data": [{"status": "ok", "id": "ticket-1"}]}
+
+    class StubClient:
+        def __init__(self, timeout=None):
+            self.timeout = timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def post(self, url, headers=None, json=None):
+            sent_payloads.append({"url": url, "headers": headers, "json": json})
+            return StubResponse()
+
+    monkeypatch.setattr("app.main.httpx.Client", StubClient)
+
+    notification = _create_user_notification_and_push(
+        db=db,
+        settings=settings,
+        notification_id="notif-1",
+        owner_subject="api-key",
+        actor_subject=None,
+        type="listing-liked",
+        title="Listing liked",
+        body="Someone liked your listing.",
+        entity_id="listing-1",
+        action_tab="marketplace",
+    )
+
+    assert notification["notification_id"] == "notif-1"
+    assert len(sent_payloads) == 1
+    assert sent_payloads[0]["json"][0]["to"] == token
+    assert sent_payloads[0]["json"][0]["title"] == "Listing liked"
+
+
 def _stub_item_profile(
     *,
     brand: str = "Nike",
@@ -471,7 +550,7 @@ def test_analyze_response_schema_and_debug_payload() -> None:
     assert res.status_code == 200, res.text
     body = res.json()
     assert body["item_id"] == "item-123"
-    assert body["category"] in {"clothes", "shoes", "handbag"}
+    assert body["category"] in {"clothes", "shoes", "handbag", "accessories"}
     assert body["brand"]["name"] == "Nike"
     assert body["brand"]["evidence"] == "gpt_item_profile"
     assert body["brand"]["confidence"] >= 0.75
@@ -772,6 +851,35 @@ def test_publish_listing_transition_queues_published_email(monkeypatch) -> None:
     )
     assert save_active.status_code == 200, save_active.text
     assert len(sent) == 1
+
+
+def test_accessory_listing_can_be_created_without_size() -> None:
+    client = _build_client()
+    response = client.post(
+        "/v1/listings",
+        json={
+            "title": "Chanel silk scarf",
+            "mode": "trade",
+            "category": "accessories",
+            "brand": "Chanel",
+            "condition": "LikeNew",
+            "size": None,
+            "estimated_value": 350,
+            "city": "Your area",
+            "image": None,
+            "images": [],
+            "description": "Silk scarf with logo print.",
+            "wants": "Open to similar-value offers",
+            "tags": [],
+            "source_item_id": None,
+            "status": "Review",
+        },
+        headers={"x-api-key": "test-key"},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["category"] == "accessories"
+    assert body["size"] is None
 
 
 def test_listing_published_email_rejects_loopback_image_urls() -> None:

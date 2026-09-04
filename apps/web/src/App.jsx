@@ -388,7 +388,7 @@ function missingPublishFields(listing) {
   const condition = String(listing?.condition || '').trim()
   const value = Number(listing?.estimatedValue || 0)
   const size = String(listing?.size || '').trim()
-  const validCategories = new Set(['clothes', 'shoes', 'handbag'])
+  const validCategories = new Set(['clothes', 'shoes', 'handbag', 'accessories'])
   const validConditions = new Set(['NewWithTags', 'New', 'LikeNew'])
 
   if (gallery.length < 1) missing.push('photos')
@@ -504,6 +504,7 @@ function sizeOptionsForCategory(category) {
   if (category === 'shoes') return ['US 5', 'US 5.5', 'US 6', 'US 6.5', 'US 7', 'US 7.5', 'US 8', 'US 8.5', 'US 9', 'US 9.5', 'US 10', 'US 10.5', 'US 11', 'US 12']
   if (category === 'clothes') return APPAREL_SIZE_OPTIONS
   if (category === 'handbag') return ['Mini', 'Small', 'Medium', 'Large']
+  if (category === 'accessories') return ACCESSORY_SIZE_OPTIONS
   return []
 }
 
@@ -513,6 +514,7 @@ const MALE_ALPHA_APPAREL_SIZE_OPTIONS = ['XS', 'S', 'M', 'L', 'XL', 'XXL', 'XXXL
 const FEMALE_APPAREL_SIZE_OPTIONS = [...FEMALE_ALPHA_APPAREL_SIZE_OPTIONS, ...US_NUMERIC_APPAREL_SIZE_OPTIONS]
 const MALE_APPAREL_SIZE_OPTIONS = [...MALE_ALPHA_APPAREL_SIZE_OPTIONS, ...US_NUMERIC_APPAREL_SIZE_OPTIONS]
 const APPAREL_SIZE_OPTIONS = ['XXS', 'XS', 'S', 'M', 'L', 'XL', 'XXL', 'XXXL', ...US_NUMERIC_APPAREL_SIZE_OPTIONS]
+const ACCESSORY_SIZE_OPTIONS = ['One Size', 'Mini', 'Small', 'Medium', 'Large', 'Adjustable']
 const FEMALE_SHOE_SIZE_OPTIONS = ['US 5', 'US 5.5', 'US 6', 'US 6.5', 'US 7', 'US 7.5', 'US 8', 'US 8.5', 'US 9', 'US 9.5', 'US 10', 'US 10.5', 'US 11', 'US 12']
 const MALE_SHOE_SIZE_OPTIONS = ['US 6', 'US 6.5', 'US 7', 'US 7.5', 'US 8', 'US 8.5', 'US 9', 'US 9.5', 'US 10', 'US 10.5', 'US 11', 'US 11.5', 'US 12', 'US 13', 'US 14']
 const PROFILE_CATEGORY_OPTIONS = ['Dresses', 'Jackets', 'Shoes', 'Handbags', 'Skirts', 'Accessories']
@@ -3009,7 +3011,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   }
 
 	  function toRemoteListingPayload(listing) {
-    const allowedCategories = ['clothes', 'shoes', 'handbag']
+    const allowedCategories = ['clothes', 'shoes', 'handbag', 'accessories']
     const allowedConditions = ['NewWithTags', 'New', 'LikeNew']
 	    const uploadedImageUrls = getUploadedImageUrlsFromAnalysis(listing.analysis)
 	    const listingImageUrls = persistableImageUrls([...(Array.isArray(listing.images) ? listing.images : []), listing.image])
@@ -5667,6 +5669,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                           <option value="clothes">Clothes</option>
                           <option value="shoes">Shoes</option>
                           <option value="handbag">Handbag</option>
+                          <option value="accessories">Accessories</option>
                         </select>
                       </label>
                       <label>
@@ -6698,6 +6701,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                 <option value="clothes">Clothes</option>
                 <option value="shoes">Shoes</option>
                 <option value="handbag">Handbag</option>
+                <option value="accessories">Accessories</option>
               </select>
             </label>
             <label className="listing-modal-field">

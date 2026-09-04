@@ -348,6 +348,26 @@ export function createMobileApiClient({ apiBaseUrl }) {
         auth,
       });
     },
+    registerPushToken(payload, auth = {}) {
+      return requestJson({
+        apiBaseUrl,
+        path: '/v1/me/push-token',
+        method: 'POST',
+        auth,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload || {}),
+      });
+    },
+    unregisterPushToken(token, auth = {}) {
+      return requestJson({
+        apiBaseUrl,
+        path: '/v1/me/push-token',
+        method: 'DELETE',
+        auth,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token }),
+      });
+    },
     likeListing(listingId, auth = {}) {
       return requestJson({
         apiBaseUrl,

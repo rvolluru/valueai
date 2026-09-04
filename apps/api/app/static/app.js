@@ -20,6 +20,7 @@ const SIZE_FIELD_META = {
   clothes: { label: "Apparel size", placeholder: "e.g. S, M, L, 8, 10" },
   shoes: { label: "Shoe size (US)", placeholder: "e.g. 7.5, 9, 10.5" },
   handbag: { label: "Bag size", placeholder: "e.g. Mini, Small, Medium, Large" },
+  accessories: { label: "Accessory size", placeholder: "e.g. One Size, Small, Medium, Adjustable" },
 };
 
 function setStatus(text, kind = "") {

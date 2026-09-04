@@ -401,7 +401,7 @@ class GptItemProfiler:
             {
                 "type": "input_text",
                 "text": (
-                    "Also classify the item category and return exactly one of: clothes, shoes, handbag."
+                    "Also classify the item category and return exactly one of: clothes, shoes, handbag, accessories."
                 ),
             },
             {
@@ -743,7 +743,7 @@ class GptItemProfiler:
                 },
                 "category": {
                     "type": "string",
-                    "enum": ["clothes", "shoes", "handbag"],
+                    "enum": ["clothes", "shoes", "handbag", "accessories"],
                 },
                 "candidate_brand": {"type": ["string", "null"]},
                 "candidate_model": {"type": ["string", "null"]},
@@ -1167,7 +1167,7 @@ class GptItemProfiler:
                     "Collect pricing evidence relevant to the identified model and current condition, including "
                     "median-like central value and condition-based ranges when available.\n"
                     "Also infer the specific shipping item type and realistic packaged weight from the photos "
-                    "(examples: dress, blouse, jeans, blazer, coat, heels, boots, handbag).\n"
+                    "(examples: dress, blouse, jeans, blazer, coat, heels, boots, handbag, belt, scarf, wallet, sunglasses, jewelry).\n"
                     "Return concise evidence text with sources and numeric price mentions."
                 )
             }
@@ -1221,7 +1221,7 @@ class GptItemProfiler:
                     "Use only evidence retrieved from the configured Vertex AI Search datastore. "
                     "Collect pricing evidence relevant to the identified model and current item condition, including "
                     "median-like central value and condition-based ranges when available. "
-                    "Also infer the specific shipping item type and realistic packaged weight from the photos. "
+                    "Also infer the specific shipping item type and realistic packaged weight from the photos, including accessories such as belts, scarves, wallets, sunglasses, and jewelry. "
                     "Return concise evidence text with source titles, URLs when present, and numeric price mentions."
                 )
             }
@@ -1803,6 +1803,12 @@ class GptItemProfiler:
             ("jacket", ("jacket", "blazer", "bomber")),
             ("boots", ("boot", "boots")),
             ("handbag", ("handbag", "bag", "tote", "satchel", "purse")),
+            ("wallet", ("wallet", "card holder", "cardholder")),
+            ("belt", ("belt",)),
+            ("scarf", ("scarf", "shawl")),
+            ("sunglasses", ("sunglasses", "glasses", "eyewear")),
+            ("jewelry", ("jewelry", "bracelet", "necklace", "earrings", "ring")),
+            ("hat", ("hat", "cap")),
             ("jeans", ("jean", "denim", "pants", "trouser")),
             ("dress", ("dress", "gown")),
             ("skirt", ("skirt",)),
@@ -1819,6 +1825,8 @@ class GptItemProfiler:
             return "shoes"
         if normalized_category == "clothes":
             return "clothes"
+        if normalized_category == "accessories":
+            return "accessories"
         return normalized_category or "unknown"
 
     @staticmethod
@@ -1830,6 +1838,20 @@ class GptItemProfiler:
             ("handbag", 48.0),
             ("jacket", 48.0),
             ("blazer", 40.0),
+            ("wallet", 12.0),
+            ("cardholder", 8.0),
+            ("card holder", 8.0),
+            ("belt", 16.0),
+            ("scarf", 12.0),
+            ("shawl", 16.0),
+            ("sunglasses", 12.0),
+            ("glasses", 12.0),
+            ("jewelry", 8.0),
+            ("bracelet", 8.0),
+            ("necklace", 8.0),
+            ("earrings", 8.0),
+            ("ring", 8.0),
+            ("hat", 16.0),
             ("jeans", 32.0),
             ("pants", 28.0),
             ("sweater", 24.0),
@@ -1842,6 +1864,7 @@ class GptItemProfiler:
             ("top", 12.0),
             ("blouse", 12.0),
             ("shirt", 12.0),
+            ("accessories", 12.0),
             ("clothes", 24.0),
         ]
         for needle, weight in weights:
@@ -1874,7 +1897,9 @@ class GptItemProfiler:
             norm = value.strip().casefold()
             if norm == "handbags":
                 return "handbag"
-            if norm in {"clothes", "shoes", "handbag"}:
+            if norm in {"accessory", "accessories"}:
+                return "accessories"
+            if norm in {"clothes", "shoes", "handbag", "accessories"}:
                 return norm
         return "clothes"
 

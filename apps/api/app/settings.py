@@ -180,6 +180,10 @@ class Settings(BaseSettings):
     ses_template_shipping_reminder: str | None = "jouft-shipping-reminder-v1"
     ses_template_shipping_tracking_update: str | None = "jouft-shipping-tracking-update-v1"
     notification_from_email: str | None = "notifications@jouft.com"
+    expo_push_enabled: bool = True
+    expo_push_api_url: str = "https://exp.host/--/api/v2/push/send"
+    expo_push_access_token: str | None = None
+    expo_push_timeout_s: float = 10.0
     smtp_host: str | None = None
     smtp_port: int = 587
     smtp_username: str | None = None

@@ -35,7 +35,7 @@ class UploadedImageOut(BaseModel):
 
 class AnalyzeResponse(BaseModel):
     item_id: str
-    category: Literal["clothes", "shoes", "handbag"]
+    category: Literal["clothes", "shoes", "handbag", "accessories"]
     brand: BrandOut
     condition: ConditionOut
     user_condition: ConditionGrade | None = None
@@ -187,6 +187,12 @@ class UserNotificationResponse(BaseModel):
     created_at: str
 
 
+class PushTokenRegisterRequest(BaseModel):
+    token: str
+    device_id: str | None = None
+    platform: str | None = None
+
+
 class PaymentMethodCreateRequest(BaseModel):
     method_type: Literal["card", "apple_pay", "paypal", "link"]
     provider: Literal["stripe", "paypal"] = "stripe"
@@ -282,7 +288,7 @@ class ListedImage(BaseModel):
 class ListingCreateRequest(BaseModel):
     title: str
     mode: Literal["trade"] = "trade"
-    category: Literal["clothes", "shoes", "handbag"]
+    category: Literal["clothes", "shoes", "handbag", "accessories"]
     brand: str
     condition: ConditionGrade
     size: str | None = None

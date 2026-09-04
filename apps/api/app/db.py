@@ -358,6 +358,17 @@ class Database:
             )
             """,
             """
+            CREATE TABLE IF NOT EXISTS user_push_tokens (
+              token TEXT PRIMARY KEY,
+              owner_subject TEXT NOT NULL,
+              device_id TEXT,
+              platform TEXT,
+              enabled INTEGER NOT NULL DEFAULT 1,
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            )
+            """,
+            """
             CREATE TABLE IF NOT EXISTS user_billing_profiles (
               owner_subject TEXT PRIMARY KEY,
               stripe_customer_id TEXT,
@@ -462,6 +473,9 @@ class Database:
             "ALTER TABLE trade_shipments ADD COLUMN tracking_status_updated_at TEXT",
             "ALTER TABLE trade_shipments ADD COLUMN tracking_eta TEXT",
             "ALTER TABLE trade_shipments ADD COLUMN tracking_history_json TEXT NOT NULL DEFAULT '[]'",
+            "ALTER TABLE user_push_tokens ADD COLUMN device_id TEXT",
+            "ALTER TABLE user_push_tokens ADD COLUMN platform TEXT",
+            "ALTER TABLE user_push_tokens ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1",
         ):
             try:
                 self.execute(alter)
@@ -2465,6 +2479,99 @@ class Database:
         cur.close()
         self._pg.commit()
         return deleted
+
+    def upsert_user_push_token(
+        self,
+        *,
+        owner_subject: str,
+        token: str,
+        device_id: str | None = None,
+        platform: str | None = None,
+    ) -> dict:
+        now = utc_now_iso()
+        if self._sqlite_conn is not None:
+            with self._sqlite_lock:
+                self._sqlite_conn.execute(
+                    """INSERT INTO user_push_tokens
+                    (token, owner_subject, device_id, platform, enabled, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, 1, ?, ?)
+                    ON CONFLICT(token) DO UPDATE SET
+                      owner_subject = excluded.owner_subject,
+                      device_id = excluded.device_id,
+                      platform = excluded.platform,
+                      enabled = 1,
+                      updated_at = excluded.updated_at
+                    """,
+                    (token, owner_subject, device_id, platform, now, now),
+                )
+                self._sqlite_conn.commit()
+        else:
+            cur = self._pg_cursor()
+            cur.execute(
+                f"""INSERT INTO user_push_tokens
+                (token, owner_subject, device_id, platform, enabled, created_at, updated_at)
+                VALUES ({self.param}, {self.param}, {self.param}, {self.param}, 1, {self.param}, {self.param})
+                ON CONFLICT(token) DO UPDATE SET
+                  owner_subject = EXCLUDED.owner_subject,
+                  device_id = EXCLUDED.device_id,
+                  platform = EXCLUDED.platform,
+                  enabled = 1,
+                  updated_at = EXCLUDED.updated_at
+                """,
+                (token, owner_subject, device_id, platform, now, now),
+            )
+            cur.close()
+            self._pg.commit()
+        return {
+            "token": token,
+            "owner_subject": owner_subject,
+            "device_id": device_id,
+            "platform": platform,
+            "enabled": True,
+            "created_at": now,
+            "updated_at": now,
+        }
+
+    def list_user_push_tokens(self, owner_subject: str) -> list[str]:
+        query = f"SELECT token FROM user_push_tokens WHERE owner_subject = {self.param} AND enabled = 1"
+        if self._sqlite_conn is not None:
+            with self._sqlite_lock:
+                rows = self._sqlite_conn.execute(query, (owner_subject,)).fetchall()
+        else:
+            cur = self._pg_cursor()
+            cur.execute(query, (owner_subject,))
+            rows = cur.fetchall()
+            cur.close()
+        return [str(row["token"] if isinstance(row, sqlite3.Row) else row[0]) for row in rows if row]
+
+    def delete_user_push_token(self, owner_subject: str, token: str) -> bool:
+        query = f"DELETE FROM user_push_tokens WHERE owner_subject = {self.param} AND token = {self.param}"
+        if self._sqlite_conn is not None:
+            with self._sqlite_lock:
+                cur = self._sqlite_conn.execute(query, (owner_subject, token))
+                self._sqlite_conn.commit()
+                return cur.rowcount > 0
+        cur = self._pg_cursor()
+        cur.execute(query, (owner_subject, token))
+        deleted = cur.rowcount > 0
+        cur.close()
+        self._pg.commit()
+        return deleted
+
+    def disable_user_push_token(self, token: str) -> bool:
+        now = utc_now_iso()
+        query = f"UPDATE user_push_tokens SET enabled = 0, updated_at = {self.param} WHERE token = {self.param}"
+        if self._sqlite_conn is not None:
+            with self._sqlite_lock:
+                cur = self._sqlite_conn.execute(query, (now, token))
+                self._sqlite_conn.commit()
+                return cur.rowcount > 0
+        cur = self._pg_cursor()
+        cur.execute(query, (now, token))
+        updated = cur.rowcount > 0
+        cur.close()
+        self._pg.commit()
+        return updated
 
     def list_payment_methods(self, owner_subject: str) -> list[dict]:
         query = (

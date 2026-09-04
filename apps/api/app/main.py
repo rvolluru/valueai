@@ -75,6 +75,7 @@ from .schemas import (
     StripeSetupIntentResponse,
     SubscriptionActivateRequest,
     SubscriptionActivateResponse,
+    PushTokenRegisterRequest,
     TradeMatchListResponse,
     TradeMatchResponse,
     TradeMatchRunResponse,
@@ -206,7 +207,7 @@ if _settings.storage_backend == "local":
     _uploads_dir.mkdir(parents=True, exist_ok=True)
     app.mount("/uploads", StaticFiles(directory=str(_uploads_dir)), name="uploads")
 
-VALID_CATEGORIES = {"clothes", "shoes", "handbag"}
+VALID_CATEGORIES = {"clothes", "shoes", "handbag", "accessories"}
 VALID_CONDITION_GRADES = {
     "newwithtags": "NewWithTags",
     "newwithtag": "NewWithTags",
@@ -1430,6 +1431,11 @@ def infer_category_from_item_profile(item_profile: dict[str, object] | None) -> 
     shoes_terms = ("shoe", "boot", "sandal", "sneaker", "heel", "pump", "loafer", "mule")
     handbag_terms = ("handbag", "bag", "purse", "tote", "satchel", "crossbody", "clutch")
     clothes_terms = ("dress", "jacket", "coat", "shirt", "top", "jeans", "pants", "skirt", "blouse", "sweater")
+    accessory_terms = (
+        "accessory", "belt", "scarf", "shawl", "sunglasses", "glasses", "wallet", "card holder",
+        "cardholder", "keychain", "key ring", "hat", "cap", "gloves", "tie", "jewelry", "bracelet",
+        "necklace", "earrings", "ring",
+    )
 
     if any(term in text for term in shoes_terms):
         return "shoes"
@@ -1437,6 +1443,8 @@ def infer_category_from_item_profile(item_profile: dict[str, object] | None) -> 
         return "handbag"
     if any(term in text for term in clothes_terms):
         return "clothes"
+    if any(term in text for term in accessory_terms):
+        return "accessories"
     return None
 
 
@@ -1512,6 +1520,8 @@ def _retail_to_resale_factor_for_category(category: object) -> float:
         return 0.80
     if category_key == "clothes":
         return 0.72
+    if category_key == "accessories":
+        return 0.75
     return 0.80
 
 
@@ -1828,8 +1838,10 @@ def normalize_category(value: str | None) -> str | None:
     norm = value.strip().casefold()
     if norm == "handbags":
         norm = "handbag"
+    if norm in {"accessory", "accessories"}:
+        norm = "accessories"
     if norm not in VALID_CATEGORIES:
-        raise HTTPException(status_code=400, detail="category must be clothes|shoes|handbag")
+        raise HTTPException(status_code=400, detail="category must be clothes|shoes|handbag|accessories")
     return norm
 
 
@@ -2498,11 +2510,157 @@ def delete_notification(
     return {"deleted": True}
 
 
+def _notification_category(notification_type: str) -> str:
+    value = str(notification_type or "").lower()
+    if value == "listing-liked":
+        return "likes"
+    if "shipping" in value:
+        return "shipping"
+    return "trades"
+
+
+def _owner_allows_push_category(db: Database, owner_subject: str, category: str) -> bool:
+    try:
+        state = db.get_user_client_state(owner_subject) or {}
+    except Exception:
+        return True
+    prefs = state.get("alert_preferences") if isinstance(state, dict) else None
+    if not isinstance(prefs, dict):
+        return True
+    return bool(prefs.get(category, True))
+
+
+def _is_expo_push_token(token: str) -> bool:
+    s = str(token or "").strip()
+    return (
+        s.startswith("ExponentPushToken[")
+        or s.startswith("ExpoPushToken[")
+    ) and s.endswith("]")
+
+
+def _send_expo_push_notification(*, db: Database, settings: Settings, notification: dict) -> None:
+    if not settings.expo_push_enabled:
+        return
+    owner_subject = str(notification.get("owner_subject") or "").strip()
+    if not owner_subject:
+        return
+    category = _notification_category(str(notification.get("type") or ""))
+    if not _owner_allows_push_category(db, owner_subject, category):
+        return
+    tokens = [token for token in db.list_user_push_tokens(owner_subject) if _is_expo_push_token(token)]
+    if not tokens:
+        return
+    messages = [
+        {
+            "to": token,
+            "title": str(notification.get("title") or "Jouft notification"),
+            "body": str(notification.get("body") or ""),
+            "sound": "default",
+            "data": {
+                "notification_id": str(notification.get("notification_id") or ""),
+                "type": str(notification.get("type") or ""),
+                "entity_id": str(notification.get("entity_id") or ""),
+                "action_tab": str(notification.get("action_tab") or ""),
+            },
+        }
+        for token in tokens
+    ]
+    headers = {"Content-Type": "application/json", "Accept": "application/json"}
+    access_token = str(settings.expo_push_access_token or "").strip()
+    if access_token:
+        headers["Authorization"] = f"Bearer {access_token}"
+    try:
+        with httpx.Client(timeout=settings.expo_push_timeout_s) as client:
+            response = client.post(str(settings.expo_push_api_url), headers=headers, json=messages)
+        if response.status_code >= 400:
+            log_json(
+                "expo_push_failed",
+                owner_subject=owner_subject,
+                status_code=response.status_code,
+                response=response.text[:500],
+            )
+            return
+        payload = response.json()
+        tickets = payload.get("data") if isinstance(payload, dict) else None
+        if isinstance(tickets, dict):
+            tickets = [tickets]
+        if not isinstance(tickets, list):
+            return
+        for token, ticket in zip(tokens, tickets):
+            if not isinstance(ticket, dict):
+                continue
+            if ticket.get("status") == "error":
+                details = ticket.get("details") if isinstance(ticket.get("details"), dict) else {}
+                error = str(details.get("error") or ticket.get("message") or "")
+                log_json("expo_push_ticket_error", owner_subject=owner_subject, error=error[:300])
+                if error == "DeviceNotRegistered":
+                    db.disable_user_push_token(token)
+    except Exception as exc:
+        log_json("expo_push_exception", owner_subject=owner_subject, error=str(exc)[:500])
+
+
+def _create_user_notification_and_push(
+    *,
+    db: Database,
+    settings: Settings,
+    notification_id: str,
+    owner_subject: str,
+    actor_subject: str | None,
+    type: str,
+    title: str,
+    body: str,
+    entity_id: str | None = None,
+    action_tab: str | None = None,
+) -> dict:
+    notification = db.create_user_notification(
+        notification_id=notification_id,
+        owner_subject=owner_subject,
+        actor_subject=actor_subject,
+        type=type,
+        title=title,
+        body=body,
+        entity_id=entity_id,
+        action_tab=action_tab,
+    )
+    _send_expo_push_notification(db=db, settings=settings, notification=notification)
+    return notification
+
+
+@app.post("/v1/me/push-token")
+def register_push_token(
+    payload: PushTokenRegisterRequest,
+    principal: AuthPrincipal = Depends(get_request_principal),
+    db: Database = Depends(get_db),
+):
+    token = str(payload.token or "").strip()
+    if not _is_expo_push_token(token):
+        raise HTTPException(status_code=400, detail="Invalid Expo push token")
+    record = db.upsert_user_push_token(
+        owner_subject=principal.subject,
+        token=token,
+        device_id=(payload.device_id.strip() if isinstance(payload.device_id, str) and payload.device_id.strip() else None),
+        platform=(payload.platform.strip() if isinstance(payload.platform, str) and payload.platform.strip() else None),
+    )
+    return {"registered": True, "token": record["token"], "platform": record.get("platform")}
+
+
+@app.delete("/v1/me/push-token")
+def unregister_push_token(
+    payload: PushTokenRegisterRequest,
+    principal: AuthPrincipal = Depends(get_request_principal),
+    db: Database = Depends(get_db),
+):
+    token = str(payload.token or "").strip()
+    deleted = db.delete_user_push_token(principal.subject, token) if token else False
+    return {"deleted": deleted}
+
+
 @app.post("/v1/listings/{listing_id}/like")
 def like_listing(
     listing_id: str,
     principal: AuthPrincipal = Depends(get_request_principal),
     db: Database = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ):
     listing = db.get_listing_by_id(listing_id)
     if not listing:
@@ -2513,7 +2671,9 @@ def like_listing(
     if owner_subject == principal.subject:
         return {"created": False, "reason": "own_listing"}
     title = str(listing.get("title") or "your listing").strip() or "your listing"
-    notification = db.create_user_notification(
+    notification = _create_user_notification_and_push(
+        db=db,
+        settings=settings,
         notification_id=str(uuid.uuid4()),
         owner_subject=owner_subject,
         actor_subject=principal.subject,
@@ -4103,6 +4263,21 @@ def create_offer(
     )
     offer["from_name"] = _profile_subject_first_name(db, offer.get("from_subject"))
     offer["to_name"] = _profile_subject_first_name(db, offer.get("to_subject"))
+    offered_title = str((db.get_listing_by_id(offered_ids[0]) or {}).get("title") or "an item").strip() or "an item"
+    target_title = str(target.get("title") or "your listing").strip() or "your listing"
+    actor_name = _profile_subject_first_name(db, principal.subject) or "Someone"
+    _create_user_notification_and_push(
+        db=db,
+        settings=settings,
+        notification_id=str(uuid.uuid4()),
+        owner_subject=str(target["owner_subject"]),
+        actor_subject=principal.subject,
+        type="trade-offer-received",
+        title="Trade offer received",
+        body=f"{actor_name} offered {offered_title} for {target_title}.",
+        entity_id=str(offer["offer_id"]),
+        action_tab="inbox",
+    )
     return OfferResponse(**offer)
 
 
@@ -4216,6 +4391,23 @@ def action_offer(
         except Exception:
             # Do not block offer acceptance if shipping providers/email providers are temporarily unavailable.
             pass
+        recipient_subject = str(updated.get("from_subject") or "").strip()
+        if recipient_subject and recipient_subject != principal.subject:
+            target = db.get_listing_by_id(str(updated.get("target_listing_id") or "")) or {}
+            actor_name = _profile_subject_first_name(db, principal.subject) or "Someone"
+            title = str(target.get("title") or "your trade offer").strip() or "your trade offer"
+            _create_user_notification_and_push(
+                db=db,
+                settings=settings,
+                notification_id=str(uuid.uuid4()),
+                owner_subject=recipient_subject,
+                actor_subject=principal.subject,
+                type="trade-offer-accepted",
+                title="Trade accepted",
+                body=f"{actor_name} accepted your offer for {title}.",
+                entity_id=str(updated.get("offer_id") or offer_id),
+                action_tab="inbox",
+            )
     updated["from_name"] = _profile_subject_first_name(db, updated.get("from_subject"))
     updated["to_name"] = _profile_subject_first_name(db, updated.get("to_subject"))
     return OfferResponse(**updated)
@@ -4850,7 +5042,9 @@ def _notify_shipment_tracking_update(*, db: Database, settings: Settings, shipme
     for owner_subject in {str(shipment.get("from_subject") or ""), str(shipment.get("to_subject") or "")}:
         if not owner_subject:
             continue
-        db.create_user_notification(
+        _create_user_notification_and_push(
+            db=db,
+            settings=settings,
             notification_id=str(uuid.uuid4()),
             owner_subject=owner_subject,
             actor_subject=str(shipment.get("from_subject") or "") or None,

@@ -5,6 +5,7 @@ import {
   Image,
   Linking,
   Modal,
+  Platform,
   RefreshControl,
   Share,
   ScrollView,
@@ -67,6 +68,7 @@ const MALE_ALPHA_APPAREL_SIZE_OPTIONS = ['XS', 'S', 'M', 'L', 'XL', 'XXL', 'XXXL
 const FEMALE_APPAREL_SIZE_OPTIONS = [...FEMALE_ALPHA_APPAREL_SIZE_OPTIONS, ...US_NUMERIC_APPAREL_SIZE_OPTIONS];
 const MALE_APPAREL_SIZE_OPTIONS = [...MALE_ALPHA_APPAREL_SIZE_OPTIONS, ...US_NUMERIC_APPAREL_SIZE_OPTIONS];
 const APPAREL_SIZE_OPTIONS = ['XXS', 'XS', 'S', 'M', 'L', 'XL', 'XXL', 'XXXL', ...US_NUMERIC_APPAREL_SIZE_OPTIONS];
+const ACCESSORY_SIZE_OPTIONS = ['One Size', 'Mini', 'Small', 'Medium', 'Large', 'Adjustable'];
 const FEMALE_SHOE_SIZE_OPTIONS = ['US 5', 'US 5.5', 'US 6', 'US 6.5', 'US 7', 'US 7.5', 'US 8', 'US 8.5', 'US 9', 'US 9.5', 'US 10', 'US 10.5', 'US 11', 'US 12'];
 const MALE_SHOE_SIZE_OPTIONS = ['US 6', 'US 6.5', 'US 7', 'US 7.5', 'US 8', 'US 8.5', 'US 9', 'US 9.5', 'US 10', 'US 10.5', 'US 11', 'US 11.5', 'US 12', 'US 13', 'US 14'];
 const PROFILE_CATEGORY_OPTIONS = ['Dresses', 'Jackets', 'Shoes', 'Handbags', 'Skirts', 'Accessories'];
@@ -372,7 +374,7 @@ function missingPublishFields(listing) {
   const condition = String(listing?.condition || '').trim();
   const value = Number(listing?.estimated_value ?? listing?.estimatedValue ?? 0);
   const size = String(listing?.size || '').trim();
-  const validCategories = new Set(['clothes', 'shoes', 'handbag']);
+  const validCategories = new Set(['clothes', 'shoes', 'handbag', 'accessories']);
   const validConditions = new Set(['NewWithTags', 'New', 'LikeNew']);
 
   if (gallery.length < 1) missing.push('photos');
@@ -634,6 +636,7 @@ function sizeOptionsForCategory(category) {
   if (normalized === 'shoes') return ['US 5', 'US 5.5', 'US 6', 'US 6.5', 'US 7', 'US 7.5', 'US 8', 'US 8.5', 'US 9', 'US 9.5', 'US 10', 'US 10.5', 'US 11', 'US 12'];
   if (normalized === 'clothes') return APPAREL_SIZE_OPTIONS;
   if (normalized === 'handbag') return ['Mini', 'Small', 'Medium', 'Large'];
+  if (normalized === 'accessories') return ACCESSORY_SIZE_OPTIONS;
   return [];
 }
 
@@ -745,8 +748,19 @@ function ListingCard({
   const brandLabel = item?.brand || 'Unknown';
   const conditionLabel = displayConditionLabel(item?.condition || 'unknown');
   const sizeLabel = item?.size || 'N/A';
+  const CardContainer = onOpenDetails ? TouchableOpacity : View;
+  const cardContainerProps = onOpenDetails ? {
+    onPress: () => onOpenDetails(item),
+    disabled: closetCardDisabled,
+    activeOpacity: 0.88,
+    accessibilityRole: 'button',
+    accessibilityLabel: `View details for ${item?.title || 'listing'}`,
+  } : {};
   return (
-    <View style={[styles.listingCard, closetCardDisabled && styles.listingCardDisabled]}>
+    <CardContainer
+      style={[styles.listingCard, closetCardDisabled && styles.listingCardDisabled]}
+      {...cardContainerProps}
+    >
       {imageUrl ? (
         <Image
           source={{ uri: imageUrl }}
@@ -780,13 +794,6 @@ function ListingCard({
         <Text numberOfLines={2} style={styles.listingMeta}>
           EST. {money(item?.estimated_value)} · {String(brandLabel).toUpperCase()} · {String(conditionLabel).toUpperCase()} · SIZE {String(sizeLabel).toUpperCase()}
         </Text>
-        {showStatus && statusLabel ? (
-          <View style={[styles.statusBadge, analysisFailed && styles.statusBadgeFailed]}>
-            <Text style={[styles.statusBadgeText, analysisFailed && styles.statusBadgeTextFailed]}>
-              {titleCase(statusLabel)}
-            </Text>
-          </View>
-        ) : null}
         {analysisFailed ? (
           <Text style={styles.analysisFailedText}>{ANALYSIS_FAILED_MESSAGE}</Text>
         ) : null}
@@ -817,38 +824,40 @@ function ListingCard({
             <Text style={styles.primaryBtnText}>{startTradeDisabled ? 'Unavailable' : 'Start Trade'}</Text>
           </TouchableOpacity>
         ) : null}
-        {onOpenDetails ? (
-          <TouchableOpacity
-            style={[styles.secondaryBtnCompact, closetCardDisabled && styles.primaryBtnDisabled]}
-            onPress={() => onOpenDetails(item)}
-            disabled={closetCardDisabled}
-          >
-            <Text style={styles.secondaryBtnText}>View Details</Text>
-          </TouchableOpacity>
-        ) : null}
-        {onEditDraft ? (
-          <TouchableOpacity
-            style={[styles.secondaryBtnCompact, analyzing && styles.primaryBtnDisabled]}
-            onPress={() => onEditDraft(item)}
-            disabled={analyzing}
-          >
-            <Text style={styles.secondaryBtnText}>Edit Listing</Text>
-          </TouchableOpacity>
-        ) : null}
-        {onRemoveListing ? (
-          <TouchableOpacity
-            style={[styles.secondaryBtnCompact, styles.dangerBtnCompact, closetCardDisabled && styles.primaryBtnDisabled]}
-            onPress={() => onRemoveListing(item)}
-            disabled={closetCardDisabled}
-          >
-            <Text style={[styles.secondaryBtnText, styles.dangerBtnText]}>Remove Listing</Text>
-          </TouchableOpacity>
-        ) : null}
-        {onShareListing || onShareToPinterest || onShareToFacebook ? (
+        {showStatus && statusLabel || onEditDraft || onRemoveListing || onShareListing || onShareToPinterest || onShareToFacebook ? (
           <View style={styles.listingActionRow}>
+            {showStatus && statusLabel ? (
+              <View style={[styles.statusBadge, analysisFailed && styles.statusBadgeFailed]}>
+                <Text style={[styles.statusBadgeText, analysisFailed && styles.statusBadgeTextFailed]}>
+                  {titleCase(statusLabel)}
+                </Text>
+              </View>
+            ) : null}
+            {onEditDraft ? (
+              <TouchableOpacity
+                style={[styles.secondaryBtnCompact, styles.listingIconButton, analyzing && styles.primaryBtnDisabled]}
+                onPress={() => onEditDraft(item)}
+                disabled={analyzing}
+                accessibilityRole="button"
+                accessibilityLabel="Edit listing"
+              >
+                <FontAwesome name="pencil-square-o" size={19} color="#4b433a" />
+              </TouchableOpacity>
+            ) : null}
+            {onRemoveListing ? (
+              <TouchableOpacity
+                style={[styles.secondaryBtnCompact, styles.listingIconButton, styles.dangerBtnCompact, closetCardDisabled && styles.primaryBtnDisabled]}
+                onPress={() => onRemoveListing(item)}
+                disabled={closetCardDisabled}
+                accessibilityRole="button"
+                accessibilityLabel="Delete listing"
+              >
+                <FontAwesome name="trash-o" size={20} color="#b42318" />
+              </TouchableOpacity>
+            ) : null}
             {onShareListing ? (
               <TouchableOpacity
-                style={[styles.secondaryBtnCompact, closetCardDisabled && styles.primaryBtnDisabled]}
+                style={[styles.secondaryBtnCompact, styles.listingTextButton, closetCardDisabled && styles.primaryBtnDisabled]}
                 onPress={() => onShareListing(item)}
                 disabled={closetCardDisabled}
               >
@@ -895,7 +904,7 @@ function ListingCard({
           <Text style={styles.pendingReviewText}>Review and Publish</Text>
         </TouchableOpacity>
       ) : null}
-    </View>
+    </CardContainer>
   );
 }
 
@@ -1067,6 +1076,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
 	  const initializedShippingStateRef = useRef(false);
 	  const shippingStatusMapRef = useRef(new Map());
 	  const seenServerNotificationIdsRef = useRef(new Set());
+	  const registeredPushTokenRef = useRef('');
 	  const profileSetupCheckedRef = useRef('');
 	  const mainScrollRef = useRef(null);
   const normalizedProfileGender = profileQuiz?.gender === 'male' || profileQuiz?.gender === 'female' || profileQuiz?.gender === 'other'
@@ -1422,7 +1432,20 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
       if (!DeviceModule?.isDevice) return;
       const projectId = Constants.expoConfig?.extra?.eas?.projectId || Constants.easConfig?.projectId;
       const tokenResp = await NotificationsModule.getExpoPushTokenAsync(projectId ? { projectId } : undefined);
-      setPushToken(String(tokenResp?.data || ''));
+      const token = String(tokenResp?.data || '').trim();
+      setPushToken(token);
+      if (token && registeredPushTokenRef.current !== token && authReady()) {
+        try {
+          await apiClient.registerPushToken({
+            token,
+            platform: Platform.OS,
+            device_id: Constants.sessionId || DeviceModule?.modelId || DeviceModule?.modelName || null,
+          }, await authContext());
+          registeredPushTokenRef.current = token;
+        } catch (e) {
+          // Keep local notification permission state even if backend registration is temporarily unavailable.
+        }
+      }
     } catch (e) {
       setNotificationPermission('denied');
     }
@@ -2297,9 +2320,19 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
   }, [apiClient, alertPrefs, likedListingIds, alertStateHydrated]);
 
   useEffect(() => {
-    if (!authReady() || !pushEnabled) return;
-    registerForPushNotifications().catch(() => {});
-  }, [clerkEnabled, authMode, bearerToken, apiKey, pushEnabled]);
+    if (!authReady()) return;
+    if (pushEnabled) {
+      registerForPushNotifications().catch(() => {});
+      return;
+    }
+    const token = registeredPushTokenRef.current || pushToken;
+    if (token) {
+      (async () => {
+        apiClient.unregisterPushToken(token, await authContext()).catch(() => {});
+      })();
+      registeredPushTokenRef.current = '';
+    }
+  }, [clerkEnabled, authMode, bearerToken, apiKey, pushEnabled, pushToken]);
 
   useEffect(() => {
     if (!authReady()) return;
@@ -2940,12 +2973,16 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
           ) : null}
           {selectedListingSource === 'marketplace' && !isOwnListing ? (
             <TouchableOpacity
-              style={[styles.secondaryBtnCompact, selectedListingLiked && styles.likeDetailButtonActive]}
+              style={[styles.secondaryBtnCompact, styles.likeDetailIconButton, selectedListingLiked && styles.likeDetailButtonActive]}
               onPress={() => toggleLikedListing(selectedListing)}
+              accessibilityRole="button"
+              accessibilityLabel={selectedListingLiked ? 'Unlike listing' : 'Like listing'}
             >
-              <Text style={[styles.secondaryBtnText, selectedListingLiked && styles.likeDetailButtonTextActive]}>
-                {selectedListingLiked ? 'Liked' : 'Like Listing'}
-              </Text>
+              <FontAwesome
+                name={selectedListingLiked ? 'heart' : 'heart-o'}
+                size={22}
+                color={selectedListingLiked ? theme.brand : '#4b433a'}
+              />
             </TouchableOpacity>
           ) : null}
           {canReviewClosetListing ? (
@@ -3318,6 +3355,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                     { key: 'clothes', label: 'Clothes' },
                     { key: 'shoes', label: 'Shoes' },
                     { key: 'handbag', label: 'Handbag' },
+                    { key: 'accessories', label: 'Accessories' },
                   ].map((option) => {
                     const selected = category === option.key;
                     return (
@@ -3382,7 +3420,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
             {wizardStep === 2 && editingListingId && (
               <>
                 <Text style={styles.label}>Category</Text>
-                <TextInput value={category} onChangeText={setCategory} style={styles.input} placeholder="clothes / shoes / handbag" />
+                <TextInput value={category} onChangeText={setCategory} style={styles.input} placeholder="clothes / shoes / handbag / accessories" />
                 <Text style={styles.label}>Title</Text>
                 <TextInput value={itemTitle} onChangeText={setItemTitle} style={[styles.input, styles.multiInput]} multiline />
                 <Text style={styles.label}>Description</Text>
@@ -3659,11 +3697,6 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
               <>
                 <Text style={styles.label}>Signed In As</Text>
                 <Text style={styles.helperText}>{clerkUserLabel || 'Authenticated user'}</Text>
-                {onSignOut ? (
-                  <TouchableOpacity style={styles.secondaryBtn} onPress={onSignOut}>
-                    <Text style={styles.secondaryBtnText}>Sign Out</Text>
-                  </TouchableOpacity>
-                ) : null}
               </>
             ) : null}
 
@@ -4215,6 +4248,14 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
               </TouchableOpacity>
             </View>
               </>
+            ) : null}
+
+            {clerkEnabled && onSignOut ? (
+              <View style={styles.profileSignOutFooter}>
+                <TouchableOpacity style={styles.secondaryBtn} onPress={onSignOut}>
+                  <Text style={styles.secondaryBtnText}>Sign Out</Text>
+                </TouchableOpacity>
+              </View>
             ) : null}
           </View>
         )}
@@ -5728,6 +5769,21 @@ const styles = StyleSheet.create({
   likeDetailButtonTextActive: {
     color: theme.brand,
   },
+  likeDetailIconButton: {
+    width: 54,
+    minWidth: 54,
+    height: 44,
+    paddingHorizontal: 0,
+    alignSelf: 'flex-start',
+  },
+  listingIconButton: {
+    width: 44,
+    minWidth: 44,
+    height: 40,
+    paddingHorizontal: 0,
+    justifyContent: 'center',
+    alignSelf: 'flex-start',
+  },
   listingMeta: {
     color: '#55606f',
     fontSize: 12,
@@ -5741,7 +5797,8 @@ const styles = StyleSheet.create({
     borderColor: '#d8c8b8',
     backgroundColor: '#f7f0e8',
     paddingHorizontal: 9,
-    paddingVertical: 5,
+    height: 40,
+    justifyContent: 'center',
   },
   statusBadgeFailed: {
     borderColor: 'rgba(168,34,34,0.34)',
@@ -6097,6 +6154,12 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: 8,
   },
+  profileSignOutFooter: {
+    borderTopWidth: 1,
+    borderTopColor: theme.line,
+    marginTop: 12,
+    paddingTop: 12,
+  },
   profileAddressRow: {
     flexDirection: 'row',
     gap: 8,
@@ -6373,12 +6436,17 @@ const styles = StyleSheet.create({
   listingActionRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
+    alignItems: 'center',
     gap: 8,
     marginTop: 6,
   },
+  listingTextButton: {
+    minHeight: 40,
+    justifyContent: 'center',
+  },
   shareIconButton: {
     width: 42,
-    minHeight: 36,
+    minHeight: 40,
     justifyContent: 'center',
     paddingHorizontal: 0,
   },
