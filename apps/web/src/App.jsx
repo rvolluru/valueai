@@ -1,10 +1,10 @@
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  SignIn,
-  SignUp,
   UserButton,
   useAuth,
   useClerk,
+  useSignIn,
+  useSignUp,
   useUser,
 } from '@clerk/clerk-react'
 import { FaFacebookF, FaPinterestP } from 'react-icons/fa'
@@ -81,6 +81,33 @@ const seedListings = [
 function money(value) {
   if (value == null || Number.isNaN(Number(value))) return 'N/A'
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(Number(value))
+}
+
+const JOUFT_SENDER_SHIPPING_FLAT_RATE = 6.49
+const JOUFT_SENDER_SHIPPING_FLAT_RATE_MAX_OZ = 32
+
+function estimatedShippingWeightOzFromListing(listing) {
+  const weight = listing?.analysis?.item_profile?.shipping_profile?.estimated_weight_oz
+  if (typeof weight === 'number' && weight >= 1 && weight <= 240) return weight
+  if (typeof weight === 'string') {
+    const match = weight.match(/(\d+(?:\.\d+)?)/)
+    if (match) {
+      let numeric = Number(match[1])
+      if (/\blb|\bpound/i.test(weight)) numeric *= 16
+      if (numeric >= 1 && numeric <= 240) return numeric
+    }
+  }
+  return JOUFT_SENDER_SHIPPING_FLAT_RATE_MAX_OZ
+}
+
+function estimatedSenderShippingChargeForListings(listings) {
+  const selected = Array.isArray(listings) ? listings.filter(Boolean) : []
+  if (selected.length === 0) return null
+  const maxWeightOz = Math.max(...selected.map(estimatedShippingWeightOzFromListing))
+  if (maxWeightOz <= JOUFT_SENDER_SHIPPING_FLAT_RATE_MAX_OZ) {
+    return { amount: JOUFT_SENDER_SHIPPING_FLAT_RATE, currency: 'USD', display: '$6.49' }
+  }
+  return null
 }
 
 function normalizeMode() {
@@ -1359,14 +1386,385 @@ function TermsPage() {
   )
 }
 
+function clerkAuthErrorMessage(error, fallback) {
+  const message = error?.errors?.[0]?.longMessage || error?.errors?.[0]?.message || error?.message || fallback
+  if (String(message || '').toLowerCase().includes('verification strategy')) {
+    return `${message} Enable email code verification in Clerk, or update the custom auth flow to match the enabled Clerk verification method.`
+  }
+  return message
+}
+
+function WebClerkAuthModal({ mode: initialMode, entryPoint = 'login', onClose }) {
+  const [mode, setMode] = useState(initialMode === 'signup' ? 'signup' : 'login')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [verificationCode, setVerificationCode] = useState('')
+  const [pendingSignInVerification, setPendingSignInVerification] = useState(false)
+  const [signInVerificationStep, setSignInVerificationStep] = useState('first_email_code')
+  const [pendingSignUpVerification, setPendingSignUpVerification] = useState(false)
+  const [pendingPasswordReset, setPendingPasswordReset] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [oauthBusy, setOauthBusy] = useState('')
+  const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
+  const { isLoaded: signInLoaded, signIn, setActive: setSignInActive } = useSignIn()
+  const { isLoaded: signUpLoaded, signUp, setActive: setSignUpActive } = useSignUp()
+
+  const resetAuthFlow = useCallback((nextMode) => {
+    setMode(nextMode)
+    setError('')
+    setNotice('')
+    setVerificationCode('')
+    setPassword('')
+    setPendingSignInVerification(false)
+    setSignInVerificationStep('first_email_code')
+    setPendingSignUpVerification(false)
+    setPendingPasswordReset(false)
+  }, [])
+
+  const returnToEmailEntry = useCallback(() => {
+    setError('')
+    setNotice('')
+    setVerificationCode('')
+    setPendingSignInVerification(false)
+    setSignInVerificationStep('first_email_code')
+    setPendingSignUpVerification(false)
+    setPendingPasswordReset(false)
+  }, [])
+
+  const prepareSignInSecondFactor = useCallback(async (result) => {
+    const secondFactors = Array.isArray(result?.supportedSecondFactors) ? result.supportedSecondFactors : []
+    const emailCodeFactor = secondFactors.find((factor) => factor?.strategy === 'email_code')
+    if (emailCodeFactor?.emailAddressId) {
+      await signIn.prepareSecondFactor({ strategy: 'email_code', emailAddressId: emailCodeFactor.emailAddressId })
+      setSignInVerificationStep('second_email_code')
+      setPendingSignInVerification(true)
+      setNotice('Enter the additional sign-in code Clerk sent to your email.')
+      return
+    }
+    const totpFactor = secondFactors.find((factor) => factor?.strategy === 'totp')
+    if (totpFactor) {
+      setSignInVerificationStep('second_totp')
+      setPendingSignInVerification(true)
+      setNotice('Enter the authenticator code for this account.')
+      return
+    }
+    setError('This account requires another sign-in step that the web app does not support yet.')
+  }, [signIn])
+
+  const prepareSignInEmailCode = useCallback(async (result) => {
+    const passwordFactor = (result?.supportedFirstFactors || []).find((factor) => factor?.strategy === 'password')
+    if (passwordFactor) {
+      if (!password.trim()) {
+        setError('Enter your password to sign in.')
+        return
+      }
+      const passwordResult = await signIn.attemptFirstFactor({ strategy: 'password', password })
+      if (passwordResult?.status === 'complete' && passwordResult?.createdSessionId) {
+        await setSignInActive({ session: passwordResult.createdSessionId })
+        return
+      }
+      if (passwordResult?.status === 'needs_second_factor') {
+        await prepareSignInSecondFactor(passwordResult)
+        return
+      }
+      setError('Additional sign-in steps are required for this account.')
+      return
+    }
+
+    const emailCodeFactor = (result?.supportedFirstFactors || []).find((factor) => factor?.strategy === 'email_code')
+    if (!emailCodeFactor?.emailAddressId) {
+      setError('This account needs a sign-in method that the web app does not support yet.')
+      return
+    }
+    await signIn.prepareFirstFactor({ strategy: 'email_code', emailAddressId: emailCodeFactor.emailAddressId })
+    setSignInVerificationStep('first_email_code')
+    setPendingSignInVerification(true)
+    setNotice('Enter the sign-in code Clerk sent to your email.')
+  }, [password, prepareSignInSecondFactor, setSignInActive, signIn])
+
+  async function submitOAuth(provider) {
+    const providerLabel = provider === 'google' ? 'Google' : 'Facebook'
+    const strategy = provider === 'google' ? 'oauth_google' : 'oauth_facebook'
+    const actor = mode === 'signup' ? signUp : signIn
+    const isLoaded = mode === 'signup' ? signUpLoaded : signInLoaded
+    if (!isLoaded || !actor?.authenticateWithRedirect) return
+    setOauthBusy(provider)
+    setError('')
+    setNotice('')
+    try {
+      await actor.authenticateWithRedirect({
+        strategy,
+        redirectUrl: window.location.href,
+        redirectUrlComplete: window.location.origin,
+      })
+    } catch (e) {
+      setError(clerkAuthErrorMessage(e, `${providerLabel} sign-in failed.`))
+      setOauthBusy('')
+    }
+  }
+
+  async function submitSignInVerification() {
+    if (!signInLoaded) return
+    setBusy(true)
+    setError('')
+    setNotice('')
+    try {
+      const result = signInVerificationStep === 'second_email_code'
+        ? await signIn.attemptSecondFactor({ strategy: 'email_code', code: verificationCode.trim() })
+        : signInVerificationStep === 'second_totp'
+          ? await signIn.attemptSecondFactor({ strategy: 'totp', code: verificationCode.trim() })
+          : await signIn.attemptFirstFactor({ strategy: 'email_code', code: verificationCode.trim() })
+      if (result?.status === 'complete' && result?.createdSessionId) {
+        await setSignInActive({ session: result.createdSessionId })
+        return
+      }
+      if (result?.status === 'needs_second_factor') {
+        await prepareSignInSecondFactor(result)
+        return
+      }
+      setError('Additional sign-in steps are required for this account.')
+    } catch (e) {
+      setError(clerkAuthErrorMessage(e, 'Verification failed.'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function submitSignIn() {
+    if (!signInLoaded) return
+    if (pendingSignInVerification) {
+      await submitSignInVerification()
+      return
+    }
+    setBusy(true)
+    setError('')
+    setNotice('')
+    try {
+      const payload = { identifier: email.trim() }
+      if (password.trim()) payload.password = password
+      const result = await signIn.create(payload)
+      if (result?.status === 'complete' && result?.createdSessionId) {
+        await setSignInActive({ session: result.createdSessionId })
+        return
+      }
+      if (result?.status === 'needs_second_factor') {
+        await prepareSignInSecondFactor(result)
+        return
+      }
+      await prepareSignInEmailCode(result)
+    } catch (e) {
+      setError(clerkAuthErrorMessage(e, 'Sign in failed.'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function submitSignUpVerification() {
+    if (!signUpLoaded) return
+    setBusy(true)
+    setError('')
+    setNotice('')
+    try {
+      const result = await signUp.attemptEmailAddressVerification({ code: verificationCode.trim() })
+      if (result?.status === 'complete' && result?.createdSessionId) {
+        await setSignUpActive({ session: result.createdSessionId })
+        return
+      }
+      setError('Additional sign-up steps are required for this account.')
+    } catch (e) {
+      setError(clerkAuthErrorMessage(e, 'Verification failed.'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function submitSignUp() {
+    if (!signUpLoaded) return
+    if (pendingSignUpVerification) {
+      await submitSignUpVerification()
+      return
+    }
+    setBusy(true)
+    setError('')
+    setNotice('')
+    try {
+      const result = await signUp.create({ emailAddress: email.trim(), password })
+      if (result?.status === 'complete' && result?.createdSessionId) {
+        await setSignUpActive({ session: result.createdSessionId })
+        return
+      }
+      await signUp.prepareEmailAddressVerification({ strategy: 'email_code' })
+      setPendingSignUpVerification(true)
+      setNotice('Enter the verification code Clerk sent to your email.')
+    } catch (e) {
+      setError(clerkAuthErrorMessage(e, 'Sign up failed.'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function submitPasswordReset() {
+    if (!signInLoaded) return
+    const identifier = email.trim()
+    if (!identifier) {
+      setError('Enter your email address to reset your password.')
+      return
+    }
+    setBusy(true)
+    setError('')
+    setNotice('')
+    try {
+      if (!pendingPasswordReset) {
+        await signIn.create({ strategy: 'reset_password_email_code', identifier })
+        setPendingPasswordReset(true)
+        setNotice('Clerk sent a password reset code to your email.')
+        return
+      }
+      const result = await signIn.attemptFirstFactor({
+        strategy: 'reset_password_email_code',
+        code: verificationCode.trim(),
+        password,
+      })
+      if (result?.status === 'needs_new_password') {
+        const resetResult = await signIn.resetPassword({ password, signOutOfOtherSessions: true })
+        if (resetResult?.status === 'complete' && resetResult?.createdSessionId) {
+          await setSignInActive({ session: resetResult.createdSessionId })
+          return
+        }
+      }
+      if (result?.status === 'complete' && result?.createdSessionId) {
+        await setSignInActive({ session: result.createdSessionId })
+        return
+      }
+      setError('Additional password reset steps are required for this account.')
+    } catch (e) {
+      setError(clerkAuthErrorMessage(e, 'Password reset failed.'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handleSubmit(event) {
+    event.preventDefault()
+    if (mode === 'reset_password') {
+      await submitPasswordReset()
+    } else if (mode === 'login') {
+      await submitSignIn()
+    } else {
+      await submitSignUp()
+    }
+  }
+
+  const title = mode === 'reset_password' ? 'Reset Password' : entryPoint === 'request_access' ? 'Request Access' : mode === 'login' ? 'Sign In' : 'Create Account'
+  const verificationPending = pendingSignInVerification || pendingSignUpVerification
+  const submitText = busy
+    ? 'Please wait...'
+    : mode === 'reset_password'
+      ? (pendingPasswordReset ? 'Reset Password' : 'Send Reset Code')
+      : verificationPending
+        ? 'Verify Email'
+        : mode === 'login'
+          ? 'Sign In'
+          : 'Create Account'
+
+  return (
+    <div className="auth-modal-shell" onClick={onClose}>
+      <section className="auth-panel auth-panel-modal auth-panel-clerk" onClick={(e) => e.stopPropagation()}>
+        <div className="auth-panel-head auth-panel-head-clerk">
+          <p className="eyebrow">{title}</p>
+          <button className="ghost small" type="button" onClick={onClose}>Close</button>
+        </div>
+        <form className="auth-form auth-form-clerk-custom" onSubmit={handleSubmit}>
+          <div className="auth-social-row">
+            <button className="ghost auth-social-btn" type="button" onClick={() => submitOAuth('facebook')} disabled={Boolean(oauthBusy || busy)}>
+              <FaFacebookF aria-hidden="true" />
+              <span>{oauthBusy === 'facebook' ? 'Connecting...' : 'Facebook'}</span>
+            </button>
+            <button className="ghost auth-social-btn" type="button" onClick={() => submitOAuth('google')} disabled={Boolean(oauthBusy || busy)}>
+              <span className="google-mark" aria-hidden="true">G</span>
+              <span>{oauthBusy === 'google' ? 'Connecting...' : 'Google'}</span>
+            </button>
+          </div>
+          <div className="auth-divider"><span />or<span /></div>
+          {entryPoint === 'request_access' ? null : (
+            <div className="mode-row auth-mode-row">
+              <button className={mode === 'login' ? 'active' : ''} type="button" onClick={() => resetAuthFlow('login')}>Sign In</button>
+              <button className={mode === 'signup' ? 'active' : ''} type="button" onClick={() => resetAuthFlow('signup')}>Create Account</button>
+            </div>
+          )}
+          <label>
+            <span>Email</span>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              autoCapitalize="none"
+              autoComplete="email"
+              disabled={verificationPending}
+              required
+            />
+          </label>
+          {(verificationPending || pendingPasswordReset) && (
+            <button className="auth-link-button" type="button" onClick={returnToEmailEntry} disabled={busy}>Change email</button>
+          )}
+          {mode === 'reset_password' ? (
+            pendingPasswordReset ? (
+              <>
+                <label>
+                  <span>Reset Code</span>
+                  <input value={verificationCode} onChange={(e) => setVerificationCode(e.target.value)} autoComplete="one-time-code" required />
+                </label>
+                <label>
+                  <span>New Password</span>
+                  <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" required />
+                </label>
+              </>
+            ) : null
+          ) : !verificationPending ? (
+            <>
+              <label>
+                <span>Password</span>
+                <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete={mode === 'login' ? 'current-password' : 'new-password'} required />
+              </label>
+              {mode === 'login' ? (
+                <button className="auth-link-button" type="button" onClick={() => resetAuthFlow('reset_password')}>Forgot password?</button>
+              ) : null}
+            </>
+          ) : (
+            <label>
+              <span>Verification Code</span>
+              <input value={verificationCode} onChange={(e) => setVerificationCode(e.target.value)} autoComplete="one-time-code" required />
+            </label>
+          )}
+          {error ? <p className="error-text">{error}</p> : null}
+          {notice ? <p className="ok-text">{notice}</p> : null}
+          <button className="primary" type="submit" disabled={busy || Boolean(oauthBusy)}>{submitText}</button>
+          {mode === 'reset_password' ? (
+            <button className="auth-link-button" type="button" onClick={() => resetAuthFlow('login')}>Back to sign in</button>
+          ) : null}
+        </form>
+      </section>
+    </div>
+  )
+}
+
 function ClerkMarketplaceApp() {
   const { isLoaded, isSignedIn, getToken } = useAuth()
   const { signOut } = useClerk()
   const { user } = useUser()
   const [authMode, setAuthMode] = useState('login')
+  const [authEntryPoint, setAuthEntryPoint] = useState('login')
   const [authPanelOpen, setAuthPanelOpen] = useState(false)
+  const [authPanelKey, setAuthPanelKey] = useState(0)
   const getBearerToken = useCallback(() => getToken(), [getToken])
   const handleLogout = useCallback(() => signOut({ redirectUrl: '/' }), [signOut])
+  const openFreshAuthPanel = useCallback((nextMode) => {
+    setAuthMode(nextMode)
+    setAuthEntryPoint(nextMode === 'signup' ? 'request_access' : 'login')
+    setAuthPanelKey((key) => key + 1)
+    setAuthPanelOpen(true)
+  }, [])
 
   if (!isLoaded) return <LoadingShell message="Loading authentication..." />
 
@@ -1375,27 +1773,18 @@ function ClerkMarketplaceApp() {
       <AuthShell
         actions={(
         <div className="auth-cta-actions auth-cta-actions-fixed">
-          <button className="ghost" type="button" onClick={() => { setAuthMode('login'); setAuthPanelOpen(true) }}>Log In</button>
-          <button className="primary" type="button" onClick={() => { setAuthMode('signup'); setAuthPanelOpen(true) }}>Request Access</button>
+          <button className="ghost" type="button" onClick={() => openFreshAuthPanel('login')}>Log In</button>
+          <button className="primary" type="button" onClick={() => openFreshAuthPanel('signup')}>Request Access</button>
         </div>
         )}
       >
         {authPanelOpen && (
-          <div className="auth-modal-shell" onClick={() => setAuthPanelOpen(false)}>
-            <section className="auth-panel auth-panel-modal auth-panel-clerk" onClick={(e) => e.stopPropagation()}>
-              <div className="auth-panel-head auth-panel-head-clerk">
-                <p className="eyebrow">{authMode === 'login' ? 'Sign In' : 'Create Account'}</p>
-                <button className="ghost small" type="button" onClick={() => setAuthPanelOpen(false)}>Close</button>
-              </div>
-              <div className="auth-clerk-wrap">
-                {authMode === 'login' ? (
-                  <SignIn routing="virtual" signUpUrl="#" appearance={CLERK_AUTH_APPEARANCE} />
-                ) : (
-                  <SignUp routing="virtual" signInUrl="#" appearance={CLERK_AUTH_APPEARANCE} />
-                )}
-              </div>
-            </section>
-          </div>
+          <WebClerkAuthModal
+            key={`auth-${authPanelKey}`}
+            mode={authMode}
+            entryPoint={authEntryPoint}
+            onClose={() => setAuthPanelOpen(false)}
+          />
         )}
       </AuthShell>
     )
@@ -1960,6 +2349,25 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
         title: 'Accept Trade?',
         message: `Accept this trade for ${targetTitle} in exchange for ${offeredTitle}? Shipping cost charged to you: ${shippingCost}.`,
         primaryLabel: 'Accept Trade',
+        onPrimary: () => {
+          setAppAlert(null)
+          resolve(true)
+        },
+        secondaryLabel: 'Cancel',
+        onSecondary: () => resolve(false),
+      })
+    })
+  }
+
+  function confirmTradeOfferShippingCharge(selectedListings) {
+    const charge = estimatedSenderShippingChargeForListings(selectedListings)
+    const shippingCost = charge?.display || 'the carrier-calculated shipping fee'
+    const selectedCount = selectedListings.length
+    return new Promise((resolve) => {
+      setAppAlert({
+        title: 'Send Trade Offer?',
+        message: `If this trade is accepted, you will be charged ${shippingCost} to ship ${selectedCount === 1 ? 'your offered item' : 'the accepted item chosen from your offer'}.`,
+        primaryLabel: 'Send Trade Offer',
         onPrimary: () => {
           setAppAlert(null)
           resolve(true)
@@ -3677,6 +4085,9 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
       setTradeOfferError('Select one or more of your listings to offer for trade.')
       return
     }
+    const selectedOfferListings = tradeOfferCandidates.filter((listing) => tradeOfferListingIds.includes(listing.id))
+    const confirmed = await confirmTradeOfferShippingCharge(selectedOfferListings)
+    if (!confirmed) return
     setTradeOfferBusy(true)
     setTradeOfferError('')
     try {

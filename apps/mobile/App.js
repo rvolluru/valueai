@@ -436,6 +436,33 @@ function money(value) {
   return `$${Number.isFinite(amount) ? amount.toFixed(0) : '0'}`;
 }
 
+const JOUFT_SENDER_SHIPPING_FLAT_RATE = 6.49;
+const JOUFT_SENDER_SHIPPING_FLAT_RATE_MAX_OZ = 32;
+
+function estimatedShippingWeightOzFromListing(listing) {
+  const weight = listing?.analysis?.item_profile?.shipping_profile?.estimated_weight_oz;
+  if (typeof weight === 'number' && weight >= 1 && weight <= 240) return weight;
+  if (typeof weight === 'string') {
+    const match = weight.match(/(\d+(?:\.\d+)?)/);
+    if (match) {
+      let numeric = Number(match[1]);
+      if (/\blb|\bpound/i.test(weight)) numeric *= 16;
+      if (numeric >= 1 && numeric <= 240) return numeric;
+    }
+  }
+  return JOUFT_SENDER_SHIPPING_FLAT_RATE_MAX_OZ;
+}
+
+function estimatedSenderShippingChargeForListings(listings) {
+  const selected = Array.isArray(listings) ? listings.filter(Boolean) : [];
+  if (selected.length === 0) return null;
+  const maxWeightOz = Math.max(...selected.map(estimatedShippingWeightOzFromListing));
+  if (maxWeightOz <= JOUFT_SENDER_SHIPPING_FLAT_RATE_MAX_OZ) {
+    return { amount: JOUFT_SENDER_SHIPPING_FLAT_RATE, currency: 'USD', display: '$6.49' };
+  }
+  return null;
+}
+
 function makeId(prefix) {
   const cryptoApi = typeof globalThis !== 'undefined' ? globalThis.crypto : undefined;
   if (cryptoApi && typeof cryptoApi.randomUUID === 'function') {
@@ -2010,6 +2037,8 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
       setTradeOfferError(targetValue > 0 ? 'Each offered listing must be within the 30% trade band.' : 'Target listing needs a value before sending an offer.');
       return;
     }
+    const confirmed = await confirmTradeOfferShippingCharge(selectedOfferListings);
+    if (!confirmed) return;
     setTradeOfferBusy(true);
     setTradeOfferError('');
     try {
@@ -2044,6 +2073,25 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
         setActiveTab('profile');
       },
       secondaryLabel: 'Cancel',
+    });
+  }
+
+  function confirmTradeOfferShippingCharge(selectedListings) {
+    const charge = estimatedSenderShippingChargeForListings(selectedListings);
+    const shippingCost = charge?.display || 'the carrier-calculated shipping fee';
+    const selectedCount = selectedListings.length;
+    return new Promise((resolve) => {
+      setAppAlert({
+        title: 'Send Trade Offer?',
+        message: `If this trade is accepted, you will be charged ${shippingCost} to ship ${selectedCount === 1 ? 'your offered item' : 'the accepted item chosen from your offer'}.`,
+        primaryLabel: 'Send Trade Offer',
+        onPrimary: () => {
+          setAppAlert(null);
+          resolve(true);
+        },
+        secondaryLabel: 'Cancel',
+        onSecondary: () => resolve(false),
+      });
     });
   }
 
@@ -4712,6 +4760,16 @@ function ClerkAuthScreen() {
     setPendingPasswordReset(false);
   }
 
+  function returnToEmailEntry() {
+    setError('');
+    setNotice('');
+    setVerificationCode('');
+    setPendingSignInVerification(false);
+    setSignInVerificationStep('first_email_code');
+    setPendingSignUpVerification(false);
+    setPendingPasswordReset(false);
+  }
+
   function openAuth(nextMode) {
     setAuthEntryPoint(nextMode === 'sign_up' ? 'request_access' : 'sign_in');
     resetAuthFlow(nextMode);
@@ -5086,6 +5144,11 @@ function ClerkAuthScreen() {
                   keyboardType="email-address"
                   editable={!pendingSignInVerification && !pendingSignUpVerification}
                 />
+                {(pendingSignInVerification || pendingSignUpVerification || pendingPasswordReset) ? (
+                  <TouchableOpacity style={styles.authLinkButton} onPress={returnToEmailEntry} disabled={busy}>
+                    <Text style={styles.authLinkText}>Change email</Text>
+                  </TouchableOpacity>
+                ) : null}
                 {mode === 'reset_password' ? (
                   <>
                     {pendingPasswordReset ? (
