@@ -38,6 +38,24 @@ const CONTACT_EMAIL = 'admin@jouft.com';
 const CONTACT_ADDRESS_LINES = ['120 Vantis Dr. Suite 300', 'Aliso Viejo, CA 92656', 'US'];
 const CONTACT_MAP_QUERY = '120 Vantis Dr Suite 300, Aliso Viejo, CA 92656, US';
 const CONTACT_DIRECTIONS_URL = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(CONTACT_MAP_QUERY)}`;
+const AUTH_HOME_IMAGES = {
+  hero: 'https://images.unsplash.com/photo-1617038220319-276d3cfab638?auto=format&fit=crop&w=1200&q=80',
+  bags: 'https://images.unsplash.com/photo-1594223274512-ad4803739b7c?auto=format&fit=crop&w=700&q=80',
+  apparel: 'https://images.unsplash.com/photo-1487222477894-8943e31ef7b2?auto=format&fit=crop&w=700&q=80',
+  shoes: 'https://images.unsplash.com/photo-1543163521-1bf539c55dd2?auto=format&fit=crop&w=700&q=80',
+  accessories: 'https://images.unsplash.com/photo-1524592094714-0f0654e20314?auto=format&fit=crop&w=700&q=80',
+  jewelry: 'https://images.unsplash.com/photo-1617038220319-276d3cfab638?auto=format&fit=crop&w=700&q=80',
+  designer: 'https://images.unsplash.com/photo-1511499767150-a48a237f0083?auto=format&fit=crop&w=700&q=80',
+};
+const AUTH_HOME_CATEGORIES = [
+  ['Bags', '312 curated pieces', AUTH_HOME_IMAGES.bags],
+  ['Apparel', '892 ready to trade', AUTH_HOME_IMAGES.apparel],
+  ['Shoes', '532 designer finds', AUTH_HOME_IMAGES.shoes],
+  ['Accessories', '241 finishing pieces', AUTH_HOME_IMAGES.accessories],
+  ['Jewelry', '189 statement trades', AUTH_HOME_IMAGES.jewelry],
+  ['Designer Collections', '126 rare edits', AUTH_HOME_IMAGES.designer],
+];
+const JOUFT_LOGO_IMAGE = require('./assets/jouft-logo.png');
 const UPLOAD_MAX_DIMENSION = 1600;
 const UPLOAD_JPEG_QUALITY = 0.82;
 const TABS = ['marketplace', 'closet', 'create', 'inbox', 'profile'];
@@ -992,8 +1010,8 @@ function TopBrandHeader() {
   return (
     <View style={styles.brandWrap}>
       <View style={styles.brandMainRow}>
-        <Text style={styles.brandWordmark}>JOUFT</Text>
-        <Text style={styles.brandSubWordmark}>AI LUXURY EXCHANGE</Text>
+        <Text style={styles.brandLogoCaption}>TRADE · ELEVATE · BELONG.</Text>
+        <Image source={JOUFT_LOGO_IMAGE} style={styles.brandLogoImage} resizeMode="contain" accessibilityLabel="TRADE · ELEVATE · BELONG. JOUFT" />
       </View>
     </View>
   );
@@ -5038,20 +5056,24 @@ function ClerkAuthScreen() {
     <SafeAreaView style={styles.authRoot}>
       <StatusBar style="dark" />
       <ScrollView style={styles.authScroll} contentContainerStyle={styles.authScrollContent}>
+        <View style={styles.mobileAuthAnnounceBar}>
+          <Text style={styles.mobileAuthAnnounceText}>INVITE ONLY COMMUNITY • CURATED MEMBERSHIP ACCESS</Text>
+        </View>
         <View style={styles.mobileAuthHero}>
           <View style={styles.mobileAuthTopbar}>
-            <Text style={styles.mobileAuthLogo}>JOUFT</Text>
-            <Text style={styles.mobileAuthPill}>INVITE ONLY</Text>
+            <Text style={styles.mobileAuthLogoCaption}>TRADE · ELEVATE · BELONG.</Text>
+            <Image source={JOUFT_LOGO_IMAGE} style={styles.mobileAuthLogoImage} resizeMode="contain" accessibilityLabel="TRADE · ELEVATE · BELONG. JOUFT" />
           </View>
-          <Image
-            source={{ uri: 'https://images.unsplash.com/photo-1617038220319-276d3cfab638?auto=format&fit=crop&w=1200&q=80' }}
-            style={styles.mobileAuthHeroImage}
-          />
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.mobileAuthMarquee}>
+            {['TRADING', 'CLOSET', 'DISCOVER', 'HOW IT WORKS', 'CONTACT US'].map((item) => (
+              <Text key={item} style={styles.mobileAuthMarqueeText}>{item}</Text>
+            ))}
+          </ScrollView>
           <View style={styles.mobileAuthCopy}>
             <Text style={styles.sectionEyebrow}>TRADE. ELEVATE. BELONG.</Text>
             <Text style={styles.mobileAuthTitle}>The Fashion Trading Platform for Collectors</Text>
             <Text style={styles.mobileAuthText}>
-              Trade authentic fashion with a curated community built around style, value, and trust.
+              Trade authenticated luxury pieces with a curated community built around style, value, and trust.
             </Text>
             <View style={styles.authHeroActions}>
               <TouchableOpacity style={styles.primaryBtn} onPress={() => openAuth('sign_up')}>
@@ -5062,21 +5084,101 @@ function ClerkAuthScreen() {
               </TouchableOpacity>
             </View>
           </View>
+          <View style={styles.mobileAuthHeroImageWrap}>
+            <Image source={{ uri: AUTH_HOME_IMAGES.hero }} style={styles.mobileAuthHeroImage} />
+            <View style={styles.mobileAuthMembersCard}>
+              <Text style={styles.mobileAuthMembersKicker}>MEMBER EDIT</Text>
+              <Text style={styles.mobileAuthMembersTitle}>AI-priced pieces ready for value-aligned trades.</Text>
+              <Text style={styles.mobileAuthMembersCount}>2,400+ curated listings</Text>
+            </View>
+          </View>
         </View>
 
         <View style={styles.authValueStrip}>
           <View style={styles.authValueItem}>
+            <Text style={styles.authValueTitle}>Exclusive Access</Text>
+            <Text style={styles.authValueText}>An invite-only circle for serious fashion collectors.</Text>
+          </View>
+          <View style={styles.authValueItem}>
             <Text style={styles.authValueTitle}>Curated Quality</Text>
-            <Text style={styles.authValueText}>Discover pieces matched by style and value.</Text>
+            <Text style={styles.authValueText}>Listings are guided by image analysis and member review.</Text>
           </View>
           <View style={styles.authValueItem}>
-            <Text style={styles.authValueTitle}>Secure Trades</Text>
-            <Text style={styles.authValueText}>Accept offers and manage shipping in one place.</Text>
+            <Text style={styles.authValueTitle}>Smart Matching</Text>
+            <Text style={styles.authValueText}>Discover trade opportunities around comparable value.</Text>
           </View>
           <View style={styles.authValueItem}>
-            <Text style={styles.authValueTitle}>Sustainable Style</Text>
+            <Text style={styles.authValueTitle}>Sustainable Impact</Text>
             <Text style={styles.authValueText}>Extend item life while refreshing your closet.</Text>
           </View>
+        </View>
+
+        <View style={styles.mobileAuthSection}>
+          <View style={styles.mobileAuthSectionHeader}>
+            <Text style={styles.sectionEyebrow}>Browse the Closet</Text>
+            <Text style={styles.mobileAuthSectionTitle}>Curated categories</Text>
+          </View>
+          <View style={styles.mobileAuthClosetGrid}>
+            {AUTH_HOME_CATEGORIES.map(([title, meta, imageUrl]) => (
+              <View key={title} style={styles.mobileAuthClosetCard}>
+                <Image source={{ uri: imageUrl }} style={styles.mobileAuthClosetImage} />
+                <View style={styles.mobileAuthClosetCopy}>
+                  <Text style={styles.mobileAuthClosetTitle}>{title}</Text>
+                  <Text style={styles.mobileAuthClosetMeta}>{meta}</Text>
+                </View>
+              </View>
+            ))}
+          </View>
+          <View style={styles.mobileAuthBanner}>
+            <Text style={styles.mobileAuthBannerEyebrow}>NEW THIS WEEK</Text>
+            <Text style={styles.mobileAuthBannerText}>Fresh drops from Chanel, Louis Vuitton, Gucci, Prada, and more.</Text>
+          </View>
+        </View>
+
+        <View style={styles.mobileAuthSection}>
+          <View style={styles.mobileAuthSectionHeader}>
+            <Text style={styles.sectionEyebrow}>How Jouft Works</Text>
+            <Text style={styles.mobileAuthSectionTitle}>A cleaner trade flow</Text>
+          </View>
+          <View style={styles.mobileAuthSteps}>
+            {[
+              ['01', 'Upload your closet', 'Add photos and condition details for AI-assisted listing setup.'],
+              ['02', 'Review the value', 'Confirm the generated details before publishing to the marketplace.'],
+              ['03', 'Discover matches', 'See items from other members that align with your trade value.'],
+              ['04', 'Trade with confidence', 'Accept offers and manage shipping from the trade inbox.'],
+            ].map(([number, title, body]) => (
+              <View key={number} style={styles.mobileAuthStepCard}>
+                <Text style={styles.mobileAuthStepNumber}>{number}</Text>
+                <Text style={styles.mobileAuthStepTitle}>{title}</Text>
+                <Text style={styles.mobileAuthStepText}>{body}</Text>
+              </View>
+            ))}
+          </View>
+        </View>
+
+        <View style={styles.mobileAuthSection}>
+          <View style={styles.mobileAuthSectionHeader}>
+            <Text style={styles.sectionEyebrow}>Contact Us</Text>
+            <Text style={styles.mobileAuthSectionTitle}>JOUFT LLC</Text>
+          </View>
+          <View style={styles.mobileAuthContactBlock}>
+            {CONTACT_ADDRESS_LINES.map((line) => (
+              <Text key={line} style={styles.mobileAuthContactText}>{line}</Text>
+            ))}
+            <TouchableOpacity onPress={() => Linking.openURL(`mailto:${CONTACT_EMAIL}`)}>
+              <Text style={styles.mobileAuthContactLink}>{CONTACT_EMAIL}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.secondaryBtn} onPress={() => Linking.openURL(CONTACT_DIRECTIONS_URL)}>
+              <Text style={styles.secondaryBtnText}>Maps and Directions</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        <View style={styles.mobileAuthFooter}>
+          <Text style={styles.mobileAuthFooterCaption}>TRADE · ELEVATE · BELONG.</Text>
+          <Image source={JOUFT_LOGO_IMAGE} style={styles.mobileAuthFooterLogoImage} resizeMode="contain" accessibilityLabel="TRADE · ELEVATE · BELONG. JOUFT" />
+          <Text style={styles.mobileAuthFooterText}>ABOUT · CONTACT US · FAQ · TERMS · PRIVACY</Text>
+          <Text style={styles.mobileAuthFooterText}>© JOUFT LLC</Text>
         </View>
 
         <Modal
@@ -5392,56 +5494,105 @@ const styles = StyleSheet.create({
     lineHeight: 34,
     fontFamily: 'Didot',
   },
-	  mobileAuthHero: {
-	    overflow: 'hidden',
-	    borderWidth: 1,
-	    borderColor: theme.line,
-	    backgroundColor: '#120d0c',
-	    borderRadius: 0,
-	  },
+  mobileAuthAnnounceBar: {
+    backgroundColor: theme.brand,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  mobileAuthAnnounceText: {
+    color: '#fff8f2',
+    textAlign: 'center',
+    fontSize: 10,
+    letterSpacing: 1.7,
+    fontWeight: '700',
+  },
+  mobileAuthHero: {
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: theme.line,
+    backgroundColor: theme.surface,
+    borderRadius: 0,
+  },
   mobileAuthTopbar: {
     paddingHorizontal: 14,
-    paddingVertical: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+    paddingTop: 13,
+    paddingBottom: 9,
+    alignItems: 'flex-start',
+    gap: 5,
   },
-  mobileAuthLogo: {
-    color: '#fffaf5',
-    fontFamily: 'Didot',
-    fontSize: 28,
-    letterSpacing: 1.8,
-  },
-	  mobileAuthPill: {
-    color: '#f1e8e1',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.35)',
-	    borderRadius: 0,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+  mobileAuthLogoCaption: {
+    color: theme.brand,
     fontSize: 10,
-    letterSpacing: 1,
-    fontWeight: '700',
+    letterSpacing: 4,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+  },
+  mobileAuthLogoImage: {
+    width: 255,
+    height: 60,
+  },
+  mobileAuthMarquee: {
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: theme.line,
+    paddingHorizontal: 14,
+    paddingVertical: 11,
+    gap: 18,
+  },
+  mobileAuthMarqueeText: {
+    color: theme.text,
+    fontSize: 10,
+    letterSpacing: 2.1,
+    fontWeight: '800',
   },
   mobileAuthHeroImage: {
     width: '100%',
-    height: 250,
-    backgroundColor: '#2d2521',
+    height: 310,
+    backgroundColor: '#eee7df',
   },
   mobileAuthCopy: {
     padding: 16,
     gap: 10,
   },
   mobileAuthTitle: {
-    color: '#fffaf5',
+    color: theme.text,
     fontFamily: 'Didot',
-    fontSize: 38,
-    lineHeight: 41,
+    fontSize: 41,
+    lineHeight: 43,
   },
   mobileAuthText: {
-    color: '#eadfd6',
+    color: theme.muted,
     fontSize: 14,
     lineHeight: 20,
+  },
+  mobileAuthHeroImageWrap: {
+    paddingHorizontal: 16,
+    paddingBottom: 16,
+  },
+  mobileAuthMembersCard: {
+    marginTop: -42,
+    marginHorizontal: 14,
+    borderWidth: 1,
+    borderColor: theme.line,
+    backgroundColor: theme.surface,
+    padding: 12,
+    gap: 4,
+  },
+  mobileAuthMembersKicker: {
+    color: theme.brand,
+    fontSize: 9,
+    letterSpacing: 1.7,
+    fontWeight: '800',
+  },
+  mobileAuthMembersTitle: {
+    color: theme.text,
+    fontSize: 14,
+    lineHeight: 19,
+    fontWeight: '700',
+  },
+  mobileAuthMembersCount: {
+    color: theme.muted,
+    fontSize: 12,
   },
   authHeroActions: {
     gap: 9,
@@ -5469,6 +5620,134 @@ const styles = StyleSheet.create({
     fontSize: 12,
     lineHeight: 17,
     marginTop: 2,
+  },
+  mobileAuthSection: {
+    borderWidth: 1,
+    borderColor: theme.line,
+    backgroundColor: theme.surface,
+    padding: 14,
+    gap: 12,
+  },
+  mobileAuthSectionHeader: {
+    gap: 2,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.line,
+    paddingBottom: 10,
+  },
+  mobileAuthSectionTitle: {
+    color: theme.text,
+    fontFamily: 'Didot',
+    fontSize: 31,
+    lineHeight: 34,
+  },
+  mobileAuthClosetGrid: {
+    gap: 10,
+  },
+  mobileAuthClosetCard: {
+    borderWidth: 1,
+    borderColor: theme.line,
+    backgroundColor: '#fff',
+  },
+  mobileAuthClosetImage: {
+    width: '100%',
+    height: 150,
+    backgroundColor: '#eee7df',
+  },
+  mobileAuthClosetCopy: {
+    padding: 11,
+    gap: 2,
+  },
+  mobileAuthClosetTitle: {
+    color: theme.text,
+    fontSize: 18,
+    fontWeight: '800',
+  },
+  mobileAuthClosetMeta: {
+    color: theme.muted,
+    fontSize: 12,
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+  },
+  mobileAuthBanner: {
+    borderWidth: 1,
+    borderColor: theme.brand,
+    backgroundColor: theme.brandSoft,
+    padding: 12,
+    gap: 4,
+  },
+  mobileAuthBannerEyebrow: {
+    color: theme.brand,
+    fontSize: 10,
+    letterSpacing: 1.5,
+    fontWeight: '800',
+  },
+  mobileAuthBannerText: {
+    color: theme.text,
+    fontSize: 14,
+    lineHeight: 19,
+  },
+  mobileAuthSteps: {
+    gap: 10,
+  },
+  mobileAuthStepCard: {
+    borderWidth: 1,
+    borderColor: theme.line,
+    backgroundColor: '#fff',
+    padding: 12,
+    gap: 5,
+  },
+  mobileAuthStepNumber: {
+    color: theme.brand,
+    fontSize: 11,
+    letterSpacing: 1.5,
+    fontWeight: '800',
+  },
+  mobileAuthStepTitle: {
+    color: theme.text,
+    fontSize: 17,
+    fontWeight: '800',
+  },
+  mobileAuthStepText: {
+    color: theme.muted,
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  mobileAuthContactBlock: {
+    gap: 6,
+  },
+  mobileAuthContactText: {
+    color: theme.text,
+    fontSize: 14,
+    lineHeight: 19,
+  },
+  mobileAuthContactLink: {
+    color: theme.brand,
+    fontSize: 14,
+    fontWeight: '800',
+    textDecorationLine: 'underline',
+    marginBottom: 6,
+  },
+  mobileAuthFooter: {
+    paddingVertical: 18,
+    gap: 6,
+    alignItems: 'center',
+  },
+  mobileAuthFooterLogoImage: {
+    width: 160,
+    height: 38,
+  },
+  mobileAuthFooterCaption: {
+    color: theme.brand,
+    fontSize: 8,
+    letterSpacing: 2.6,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+  },
+  mobileAuthFooterText: {
+    color: theme.muted,
+    fontSize: 10,
+    letterSpacing: 1.1,
+    textAlign: 'center',
   },
   authPanelHeader: {
     flexDirection: 'row',
@@ -5555,14 +5834,20 @@ const styles = StyleSheet.create({
   },
   brandMainRow: {
     paddingHorizontal: 16,
-    paddingTop: 14,
+    paddingTop: 12,
     paddingBottom: 10,
+    gap: 4,
   },
-  brandWordmark: {
+  brandLogoCaption: {
     color: theme.brand,
-    fontSize: 40,
-    letterSpacing: 2.4,
-    fontFamily: 'Didot',
+    fontSize: 9,
+    letterSpacing: 3.2,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+  },
+  brandLogoImage: {
+    width: 230,
+    height: 54,
   },
   brandSubWordmark: {
     color: theme.muted,

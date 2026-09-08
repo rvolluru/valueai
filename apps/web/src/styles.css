@@ -19,6 +19,7 @@
   --font-body: 'Plus Jakarta Sans', 'Helvetica Neue', Arial, sans-serif;
   --font-ui: 'Plus Jakarta Sans', 'Helvetica Neue', Arial, sans-serif;
   --font-logo: 'Didot', 'Bodoni 72', 'Bodoni Moda', 'Times New Roman', serif;
+  --font-wordmark: Optima, 'Optima LT Pro', 'Bodoni 72 Smallcaps', 'Bodoni 72', 'Didot', serif;
   --font-auth-display: var(--font-logo);
   --font-auth-sans: 'Jost', 'Plus Jakarta Sans', 'Helvetica Neue', Arial, sans-serif;
 }
@@ -154,17 +155,26 @@ h1, h2, h3, h4 {
   width: fit-content;
   margin: 0;
 }
-.auth-brand-lockup {
+.brand-logo-lockup {
   display: grid;
-  gap: 0;
+  gap: 8px;
 }
-.auth-brand-lockup strong {
-  font-family: var(--font-logo);
-  font-size: clamp(2rem, 3vw, 2.7rem);
-  letter-spacing: 0.08em;
-  line-height: 0.9;
-  font-weight: 400;
+.brand-logo-caption {
+  display: block;
   color: #53191f;
+  font-family: var(--font-auth-sans);
+  font-size: clamp(0.56rem, 0.64vw, 0.72rem);
+  font-weight: 700;
+  letter-spacing: 0.42em;
+  line-height: 1;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.auth-brand-logo {
+  display: block;
+  width: clamp(220px, 24vw, 360px);
+  height: auto;
+  object-fit: contain;
 }
 .auth-marquee {
   display: flex;
@@ -546,11 +556,14 @@ h1, h2, h3, h4 {
 }
 .legal-wordmark {
   color: #171515;
-  font-family: var(--font-auth-display);
+  font-family: var(--font-wordmark);
   font-size: clamp(2.4rem, 8vw, 5rem);
-  letter-spacing: 0.06em;
+  letter-spacing: 0.105em;
+  font-weight: 400;
   text-decoration: none;
   line-height: 0.9;
+  transform: scaleX(1.08);
+  transform-origin: left center;
 }
 .legal-back-link {
   color: #4a161b;
@@ -1612,37 +1625,13 @@ textarea { resize: vertical; }
 .app-brandmark {
   display: inline-flex;
   align-items: center;
-  gap: 12px;
+  gap: 0;
 }
-.app-brand-emblem {
-  width: 34px;
-  height: 34px;
-  border-radius: 999px;
-  border: 1px solid rgba(41, 24, 24, 0.6);
-  display: inline-grid;
-  place-items: center;
-  font-family: var(--font-display);
-  font-size: 1.2rem;
-  color: #4d141b;
-}
-.app-brand-lockup {
-  display: grid;
-  gap: 2px;
-}
-.app-brand-lockup strong {
-  font-family: var(--font-display);
-  font-size: 1.9rem;
-  letter-spacing: 0.05em;
-  line-height: 0.9;
-  font-weight: 500;
-  color: #4d141b;
-}
-.app-brand-lockup small {
-  font-family: var(--font-auth-sans);
-  font-size: 0.62rem;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: #6f5a5a;
+.app-brand-logo {
+  display: block;
+  width: clamp(190px, 17vw, 280px);
+  height: auto;
+  object-fit: contain;
 }
 .app-brand-links {
   display: flex;

@@ -10,6 +10,7 @@ import {
 import { FaFacebookF, FaPinterestP } from 'react-icons/fa'
 import { FiBell, FiTrash2 } from 'react-icons/fi'
 import { createWebApiClient } from './lib/apiClient'
+import jouftLogo from './assets/jouft-logo.png'
 
 const API_DEFAULT =
   import.meta.env.VITE_API_BASE_URL ||
@@ -1919,8 +1920,9 @@ function AuthShell({ children, actions = null }) {
         <div className="auth-announce-bar">INVITE ONLY COMMUNITY • CURATED MEMBERSHIP ACCESS</div>
         <div className="auth-hero-topbar">
           <div className="auth-brandmark" aria-label="Jouft brand">
-            <div className="auth-brand-lockup">
-              <strong>JOUFT</strong>
+            <div className="brand-logo-lockup">
+              <span className="brand-logo-caption">TRADE · ELEVATE · BELONG.</span>
+              <img className="auth-brand-logo" src={jouftLogo} alt="JOUFT" />
             </div>
           </div>
           <div className="auth-marquee" aria-label="Site sections">
@@ -4793,10 +4795,9 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
         <div className="topbar-copy">
           <div className="app-brand-row">
             <div className="app-brandmark" aria-label="Jouft brand">
-              <span className="app-brand-emblem">J</span>
-              <div className="app-brand-lockup">
-                <strong>JOUFT</strong>
-                <small>AI LUXURY EXCHANGE</small>
+              <div className="brand-logo-lockup">
+                <span className="brand-logo-caption">TRADE · ELEVATE · BELONG.</span>
+                <img className="app-brand-logo" src={jouftLogo} alt="JOUFT" />
               </div>
             </div>
             <div className="app-brand-links" aria-label="Primary app sections">
