@@ -30,6 +30,10 @@
         "ascAppId": "6791465341"
       }
     },
-    "production": {}
+    "production": {
+      "ios": {
+        "ascAppId": "6791465341"
+      }
+    }
   }
 }
