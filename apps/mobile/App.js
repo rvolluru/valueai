@@ -59,6 +59,13 @@ const JOUFT_LOGO_IMAGE = require('./assets/jouft-logo.png');
 const UPLOAD_MAX_DIMENSION = 1600;
 const UPLOAD_JPEG_QUALITY = 0.82;
 const TABS = ['marketplace', 'closet', 'create', 'inbox', 'profile'];
+const PASSWORD_MIN_LENGTH = 8;
+const PASSWORD_REQUIREMENTS = [
+  `At least ${PASSWORD_MIN_LENGTH} characters`,
+  'At least one letter',
+  'At least one uppercase letter',
+  'At least one number',
+];
 const LISTINGS_PAGE_SIZE = 24;
 const TAB_LABELS = {
   marketplace: 'Market',
@@ -74,6 +81,15 @@ const TAB_ICONS = {
   inbox: 'chatbubbles-outline',
   profile: 'person-outline',
 };
+
+function passwordValidationError(value) {
+  const password = String(value || '');
+  if (password.length < PASSWORD_MIN_LENGTH) return `Password must be at least ${PASSWORD_MIN_LENGTH} characters.`;
+  if (!/[A-Za-z]/.test(password)) return 'Password must include at least one letter.';
+  if (!/[A-Z]/.test(password)) return 'Password must include at least one uppercase letter.';
+  if (!/\d/.test(password)) return 'Password must include at least one number.';
+  return '';
+}
 const OFFER_FILTERS = ['pending', 'accepted', 'declined', 'all'];
 const SUBSCRIPTION_PLANS = [
   { key: 'free', label: 'Free', monthly: 0, annual: 0, limit: '3 listings / month' },
@@ -4744,6 +4760,8 @@ function ClerkAuthScreen() {
   const [authEntryPoint, setAuthEntryPoint] = useState('sign_in');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [verificationCode, setVerificationCode] = useState('');
   const [pendingSignInVerification, setPendingSignInVerification] = useState(false);
   const [signInVerificationStep, setSignInVerificationStep] = useState('first_email_code');
@@ -4772,6 +4790,8 @@ function ClerkAuthScreen() {
     setNotice('');
     setVerificationCode('');
     setPassword('');
+    setConfirmPassword('');
+    setShowPassword(false);
     setPendingSignInVerification(false);
     setSignInVerificationStep('first_email_code');
     setPendingSignUpVerification(false);
@@ -4782,6 +4802,8 @@ function ClerkAuthScreen() {
     setError('');
     setNotice('');
     setVerificationCode('');
+    setConfirmPassword('');
+    setShowPassword(false);
     setPendingSignInVerification(false);
     setSignInVerificationStep('first_email_code');
     setPendingSignUpVerification(false);
@@ -4976,6 +4998,15 @@ function ClerkAuthScreen() {
       await submitSignUpVerification();
       return;
     }
+    const passwordError = passwordValidationError(password);
+    if (passwordError) {
+      setError(passwordError);
+      return;
+    }
+    if (password !== confirmPassword) {
+      setError('Passwords do not match.');
+      return;
+    }
     setBusy(true);
     setError('');
     setNotice('');
@@ -5019,6 +5050,11 @@ function ClerkAuthScreen() {
         return;
       }
 
+      const passwordError = passwordValidationError(password);
+      if (passwordError) {
+        setError(passwordError);
+        return;
+      }
       const result = await signIn.attemptFirstFactor({
         strategy: 'reset_password_email_code',
         code: verificationCode.trim(),
@@ -5051,6 +5087,38 @@ function ClerkAuthScreen() {
     if (authEntryPoint === 'request_access') return 'Request Access';
     return mode === 'sign_in' ? 'Sign In' : 'Create Account';
   }
+
+  const pendingVerification = pendingSignInVerification || pendingSignUpVerification;
+  const shouldShowPasswordRequirements = (mode === 'sign_up' && !pendingVerification) || (mode === 'reset_password' && pendingPasswordReset);
+  const passwordRequirementChecks = [
+    [password.length >= PASSWORD_MIN_LENGTH, PASSWORD_REQUIREMENTS[0]],
+    [/[A-Za-z]/.test(password), PASSWORD_REQUIREMENTS[1]],
+    [/[A-Z]/.test(password), PASSWORD_REQUIREMENTS[2]],
+    [/\d/.test(password), PASSWORD_REQUIREMENTS[3]],
+  ];
+  const renderPasswordInput = (value = password, onChangeText = setPassword, autoComplete = 'password') => (
+    <View style={styles.passwordInputWrap}>
+      <TextInput
+        value={value}
+        onChangeText={onChangeText}
+        style={[styles.input, styles.passwordInput]}
+        secureTextEntry={!showPassword}
+        autoCapitalize="none"
+        autoComplete={autoComplete}
+        textContentType={autoComplete === 'new-password' ? 'newPassword' : 'password'}
+      />
+      <TouchableOpacity style={styles.passwordVisibilityButton} onPress={() => setShowPassword((value) => !value)}>
+        <Text style={styles.passwordVisibilityText}>{showPassword ? 'Hide' : 'Show'}</Text>
+      </TouchableOpacity>
+    </View>
+  );
+  const renderPasswordRequirements = () => (
+    <View style={styles.passwordRequirements}>
+      {passwordRequirementChecks.map(([met, label]) => (
+        <Text key={label} style={[styles.passwordRequirement, met && styles.passwordRequirementMet]}>{label}</Text>
+      ))}
+    </View>
+  );
 
   return (
     <SafeAreaView style={styles.authRoot}>
@@ -5258,14 +5326,22 @@ function ClerkAuthScreen() {
                         <Text style={styles.label}>Reset Code</Text>
                         <TextInput value={verificationCode} onChangeText={setVerificationCode} style={styles.input} autoCapitalize="none" keyboardType="number-pad" />
                         <Text style={styles.label}>New Password</Text>
-                        <TextInput value={password} onChangeText={setPassword} style={styles.input} secureTextEntry autoCapitalize="none" />
+                        {renderPasswordInput(password, setPassword, 'new-password')}
+                        {shouldShowPasswordRequirements ? renderPasswordRequirements() : null}
                       </>
                     ) : null}
                   </>
                 ) : !pendingSignInVerification && !pendingSignUpVerification ? (
                   <>
                     <Text style={styles.label}>Password</Text>
-                    <TextInput value={password} onChangeText={setPassword} style={styles.input} secureTextEntry autoCapitalize="none" />
+                    {renderPasswordInput(password, setPassword, mode === 'sign_in' ? 'current-password' : 'new-password')}
+                    {mode === 'sign_up' ? (
+                      <>
+                        <Text style={styles.label}>Confirm Password</Text>
+                        {renderPasswordInput(confirmPassword, setConfirmPassword, 'new-password')}
+                      </>
+                    ) : null}
+                    {shouldShowPasswordRequirements ? renderPasswordRequirements() : null}
                     {mode === 'sign_in' ? (
                       <TouchableOpacity style={styles.authLinkButton} onPress={() => resetAuthFlow('reset_password')}>
                         <Text style={styles.authLinkText}>Forgot password?</Text>
@@ -6706,6 +6782,50 @@ const styles = StyleSheet.create({
 	    fontSize: 15,
 	    fontWeight: '500',
 	  },
+  passwordInputWrap: {
+    position: 'relative',
+    justifyContent: 'center',
+  },
+  passwordInput: {
+    paddingRight: 76,
+  },
+  passwordVisibilityButton: {
+    position: 'absolute',
+    right: 10,
+    top: 0,
+    bottom: 0,
+    justifyContent: 'center',
+    paddingHorizontal: 4,
+  },
+  passwordVisibilityText: {
+    color: theme.brand,
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+  },
+  passwordRequirements: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: -2,
+  },
+  passwordRequirement: {
+    borderWidth: 1,
+    borderColor: theme.line,
+    color: theme.muted,
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 0.4,
+    paddingHorizontal: 7,
+    paddingVertical: 5,
+    textTransform: 'uppercase',
+  },
+  passwordRequirementMet: {
+    borderColor: 'rgba(22, 117, 82, 0.28)',
+    color: '#167552',
+    backgroundColor: 'rgba(22, 117, 82, 0.06)',
+  },
   multiInput: { minHeight: 74, textAlignVertical: 'top' },
 
   modeRow: { flexDirection: 'row', gap: 8, marginVertical: 2 },

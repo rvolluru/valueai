@@ -39,6 +39,23 @@ function tabHref(tab) {
   return `/?tab=${encodeURIComponent(tab)}`
 }
 
+const PASSWORD_MIN_LENGTH = 8
+const PASSWORD_REQUIREMENTS = [
+  `At least ${PASSWORD_MIN_LENGTH} characters`,
+  'At least one letter',
+  'At least one uppercase letter',
+  'At least one number',
+]
+
+function passwordValidationError(value) {
+  const password = String(value || '')
+  if (password.length < PASSWORD_MIN_LENGTH) return `Password must be at least ${PASSWORD_MIN_LENGTH} characters.`
+  if (!/[A-Za-z]/.test(password)) return 'Password must include at least one letter.'
+  if (!/[A-Z]/.test(password)) return 'Password must include at least one uppercase letter.'
+  if (!/\d/.test(password)) return 'Password must include at least one number.'
+  return ''
+}
+
 function editListingHref(listingId) {
   return `/?tab=edit_listing&listing=${encodeURIComponent(listingId || '')}`
 }
@@ -1395,10 +1412,28 @@ function clerkAuthErrorMessage(error, fallback) {
   return message
 }
 
+function PasswordRequirements({ password }) {
+  const checks = [
+    [password.length >= PASSWORD_MIN_LENGTH, PASSWORD_REQUIREMENTS[0]],
+    [/[A-Za-z]/.test(password), PASSWORD_REQUIREMENTS[1]],
+    [/[A-Z]/.test(password), PASSWORD_REQUIREMENTS[2]],
+    [/\d/.test(password), PASSWORD_REQUIREMENTS[3]],
+  ]
+  return (
+    <div className="password-requirements" aria-live="polite">
+      {checks.map(([met, label]) => (
+        <span key={label} className={met ? 'met' : ''}>{label}</span>
+      ))}
+    </div>
+  )
+}
+
 function WebClerkAuthModal({ mode: initialMode, entryPoint = 'login', onClose }) {
   const [mode, setMode] = useState(initialMode === 'signup' ? 'signup' : 'login')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
   const [verificationCode, setVerificationCode] = useState('')
   const [pendingSignInVerification, setPendingSignInVerification] = useState(false)
   const [signInVerificationStep, setSignInVerificationStep] = useState('first_email_code')
@@ -1417,6 +1452,8 @@ function WebClerkAuthModal({ mode: initialMode, entryPoint = 'login', onClose })
     setNotice('')
     setVerificationCode('')
     setPassword('')
+    setConfirmPassword('')
+    setShowPassword(false)
     setPendingSignInVerification(false)
     setSignInVerificationStep('first_email_code')
     setPendingSignUpVerification(false)
@@ -1427,6 +1464,8 @@ function WebClerkAuthModal({ mode: initialMode, entryPoint = 'login', onClose })
     setError('')
     setNotice('')
     setVerificationCode('')
+    setConfirmPassword('')
+    setShowPassword(false)
     setPendingSignInVerification(false)
     setSignInVerificationStep('first_email_code')
     setPendingSignUpVerification(false)
@@ -1586,6 +1625,15 @@ function WebClerkAuthModal({ mode: initialMode, entryPoint = 'login', onClose })
       await submitSignUpVerification()
       return
     }
+    const passwordError = passwordValidationError(password)
+    if (passwordError) {
+      setError(passwordError)
+      return
+    }
+    if (password !== confirmPassword) {
+      setError('Passwords do not match.')
+      return
+    }
     setBusy(true)
     setError('')
     setNotice('')
@@ -1620,6 +1668,11 @@ function WebClerkAuthModal({ mode: initialMode, entryPoint = 'login', onClose })
         await signIn.create({ strategy: 'reset_password_email_code', identifier })
         setPendingPasswordReset(true)
         setNotice('Clerk sent a password reset code to your email.')
+        return
+      }
+      const passwordError = passwordValidationError(password)
+      if (passwordError) {
+        setError(passwordError)
         return
       }
       const result = await signIn.attemptFirstFactor({
@@ -1659,6 +1712,7 @@ function WebClerkAuthModal({ mode: initialMode, entryPoint = 'login', onClose })
 
   const title = mode === 'reset_password' ? 'Reset Password' : entryPoint === 'request_access' ? 'Request Access' : mode === 'login' ? 'Sign In' : 'Create Account'
   const verificationPending = pendingSignInVerification || pendingSignUpVerification
+  const shouldShowPasswordRequirements = (mode === 'signup' && !verificationPending) || (mode === 'reset_password' && pendingPasswordReset)
   const submitText = busy
     ? 'Please wait...'
     : mode === 'reset_password'
@@ -1718,16 +1772,63 @@ function WebClerkAuthModal({ mode: initialMode, entryPoint = 'login', onClose })
                 </label>
                 <label>
                   <span>New Password</span>
-                  <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" required />
+                  <span className="password-input-wrap">
+                    <input
+                      type={showPassword ? 'text' : 'password'}
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      autoComplete="new-password"
+                      minLength={PASSWORD_MIN_LENGTH}
+                      pattern="(?=.*[A-Za-z])(?=.*[A-Z])(?=.*\d).{8,}"
+                      required
+                    />
+                    <button className="password-visibility-toggle" type="button" onClick={() => setShowPassword((value) => !value)}>
+                      {showPassword ? 'Hide' : 'Show'}
+                    </button>
+                  </span>
                 </label>
+                {shouldShowPasswordRequirements ? <PasswordRequirements password={password} /> : null}
               </>
             ) : null
           ) : !verificationPending ? (
             <>
               <label>
                 <span>Password</span>
-                <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete={mode === 'login' ? 'current-password' : 'new-password'} required />
+                <span className="password-input-wrap">
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
+                    minLength={mode === 'signup' ? PASSWORD_MIN_LENGTH : undefined}
+                    pattern={mode === 'signup' ? '(?=.*[A-Za-z])(?=.*[A-Z])(?=.*\\d).{8,}' : undefined}
+                    required
+                  />
+                  <button className="password-visibility-toggle" type="button" onClick={() => setShowPassword((value) => !value)}>
+                    {showPassword ? 'Hide' : 'Show'}
+                  </button>
+                </span>
               </label>
+              {mode === 'signup' ? (
+                <label>
+                  <span>Confirm Password</span>
+                  <span className="password-input-wrap">
+                    <input
+                      type={showPassword ? 'text' : 'password'}
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
+                      autoComplete="new-password"
+                      minLength={PASSWORD_MIN_LENGTH}
+                      pattern="(?=.*[A-Za-z])(?=.*[A-Z])(?=.*\d).{8,}"
+                      required
+                    />
+                    <button className="password-visibility-toggle" type="button" onClick={() => setShowPassword((value) => !value)}>
+                      {showPassword ? 'Hide' : 'Show'}
+                    </button>
+                  </span>
+                </label>
+              ) : null}
+              {shouldShowPasswordRequirements ? <PasswordRequirements password={password} /> : null}
               {mode === 'login' ? (
                 <button className="auth-link-button" type="button" onClick={() => resetAuthFlow('reset_password')}>Forgot password?</button>
               ) : null}
@@ -1832,6 +1933,8 @@ function LocalMarketplaceApp() {
   const [users, setUsers] = useState([])
   const [authEmail, setAuthEmail] = useState('')
   const [authPassword, setAuthPassword] = useState('')
+  const [authConfirmPassword, setAuthConfirmPassword] = useState('')
+  const [showAuthPassword, setShowAuthPassword] = useState(false)
   const [authName, setAuthName] = useState('')
   const [authError, setAuthError] = useState('')
   const handleLogout = useCallback(() => setSession(null), [])
@@ -1843,17 +1946,22 @@ function LocalMarketplaceApp() {
     if (!email || !authPassword.trim()) return setAuthError('Email and password are required.')
     if (authMode === 'signup') {
       if (!authName.trim()) return setAuthError('Display name is required for sign up.')
+      const passwordError = passwordValidationError(authPassword)
+      if (passwordError) return setAuthError(passwordError)
+      if (authPassword !== authConfirmPassword) return setAuthError('Passwords do not match.')
       if (users.some((u) => u.email === email)) return setAuthError('Account already exists. Log in instead.')
       const nextUser = { id: makeId('user'), email, password: authPassword, name: authName.trim() }
       setUsers((prev) => [...prev, nextUser])
       setSession({ id: nextUser.id, email: nextUser.email, name: nextUser.name })
       setAuthPassword('')
+      setAuthConfirmPassword('')
       return
     }
     const found = users.find((u) => u.email === email && u.password === authPassword)
     if (!found) return setAuthError('Invalid credentials. Use demo signup first or correct your password.')
     setSession({ id: found.id, email: found.email, name: found.name })
     setAuthPassword('')
+    setAuthConfirmPassword('')
   }
 
   if (!session) {
@@ -1861,8 +1969,8 @@ function LocalMarketplaceApp() {
       <AuthShell
         actions={(
         <div className="auth-cta-actions auth-cta-actions-fixed">
-          <button className="ghost" type="button" onClick={() => { setAuthMode('login'); setAuthPanelOpen(true) }}>Log In</button>
-          <button className="primary" type="button" onClick={() => { setAuthMode('signup'); setAuthPanelOpen(true) }}>Request Access</button>
+          <button className="ghost" type="button" onClick={() => { setAuthMode('login'); setAuthConfirmPassword(''); setShowAuthPassword(false); setAuthPanelOpen(true) }}>Log In</button>
+          <button className="primary" type="button" onClick={() => { setAuthMode('signup'); setAuthConfirmPassword(''); setShowAuthPassword(false); setAuthPanelOpen(true) }}>Request Access</button>
         </div>
         )}
       >
@@ -1886,8 +1994,39 @@ function LocalMarketplaceApp() {
                 </label>
                 <label>
                   <span>Password</span>
-                  <input type="password" value={authPassword} onChange={(e) => setAuthPassword(e.target.value)} placeholder="••••••••" />
+                  <span className="password-input-wrap">
+                    <input
+                      type={showAuthPassword ? 'text' : 'password'}
+                      value={authPassword}
+                      onChange={(e) => setAuthPassword(e.target.value)}
+                      placeholder="••••••••"
+                      minLength={authMode === 'signup' ? PASSWORD_MIN_LENGTH : undefined}
+                      pattern={authMode === 'signup' ? '(?=.*[A-Za-z])(?=.*[A-Z])(?=.*\\d).{8,}' : undefined}
+                    />
+                    <button className="password-visibility-toggle" type="button" onClick={() => setShowAuthPassword((value) => !value)}>
+                      {showAuthPassword ? 'Hide' : 'Show'}
+                    </button>
+                  </span>
                 </label>
+                {authMode === 'signup' ? (
+                  <label>
+                    <span>Confirm Password</span>
+                    <span className="password-input-wrap">
+                      <input
+                        type={showAuthPassword ? 'text' : 'password'}
+                        value={authConfirmPassword}
+                        onChange={(e) => setAuthConfirmPassword(e.target.value)}
+                        placeholder="••••••••"
+                        minLength={PASSWORD_MIN_LENGTH}
+                        pattern="(?=.*[A-Za-z])(?=.*[A-Z])(?=.*\\d).{8,}"
+                      />
+                      <button className="password-visibility-toggle" type="button" onClick={() => setShowAuthPassword((value) => !value)}>
+                        {showAuthPassword ? 'Hide' : 'Show'}
+                      </button>
+                    </span>
+                  </label>
+                ) : null}
+                {authMode === 'signup' ? <PasswordRequirements password={authPassword} /> : null}
                 {authError && <p className="error-text">{authError}</p>}
                 <button className="primary" type="submit">{authMode === 'signup' ? 'Create account' : 'Continue'}</button>
               </form>
