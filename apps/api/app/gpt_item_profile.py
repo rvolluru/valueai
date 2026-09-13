@@ -539,11 +539,26 @@ class GptItemProfiler:
         }
 
     @staticmethod
-    def _brand_from_label_ocr(label_ocr: dict[str, Any] | None) -> str | None:
+    def _label_ocr_confidence(label_ocr: dict[str, Any] | None) -> float | None:
         if not isinstance(label_ocr, dict):
             return None
         confidence = label_ocr.get("confidence")
-        if not isinstance(confidence, (int, float)) or float(confidence) < 0.65:
+        if not isinstance(confidence, (int, float)):
+            return None
+        value = float(confidence)
+        if value > 1.0:
+            if value <= 5.0:
+                value = value / 5.0
+            elif value <= 100.0:
+                value = value / 100.0
+        return max(0.0, min(value, 1.0))
+
+    @staticmethod
+    def _brand_from_label_ocr(label_ocr: dict[str, Any] | None) -> str | None:
+        if not isinstance(label_ocr, dict):
+            return None
+        confidence = GptItemProfiler._label_ocr_confidence(label_ocr)
+        if confidence is None or confidence < 0.65:
             return None
         brand = str(label_ocr.get("brand_text") or "").strip()
         if not brand or brand.lower() in {"unknown", "unclear", "null", "none"}:
@@ -572,10 +587,7 @@ class GptItemProfiler:
         brand = cls._brand_from_label_ocr(label_ocr)
         if not brand:
             return -1.0
-        try:
-            confidence = float(label_ocr.get("confidence"))  # type: ignore[union-attr]
-        except Exception:
-            confidence = 0.0
+        confidence = cls._label_ocr_confidence(label_ocr) or 0.0
 
         score = confidence
         raw_text = cls._label_ocr_raw_text(label_ocr)
@@ -1209,6 +1221,236 @@ class GptItemProfiler:
             },
         }
 
+    @staticmethod
+    def _text_is_missing(value: Any) -> bool:
+        if not isinstance(value, str):
+            return True
+        return value.strip().casefold() in {"", "unknown", "unclear", "null", "none", "n/a"}
+
+    @staticmethod
+    def _price_is_missing(value: Any) -> bool:
+        if not isinstance(value, dict):
+            return True
+        price = value.get("estimated_price")
+        return not isinstance(price, (int, float)) or float(price) <= 0
+
+    @staticmethod
+    def _clean_extracted_name(value: str | None) -> str | None:
+        if not value:
+            return None
+        text = re.sub(r"\s+", " ", value).strip(" .:-*\"'")
+        if not text or len(text) < 3 or len(text) > 110:
+            return None
+        lowered = text.casefold()
+        if any(token in lowered for token in ("unknown", "unclear", "not immediately available")):
+            return None
+        return text
+
+    @classmethod
+    def _extract_brand_from_grounded_text(cls, grounded_text: str) -> str | None:
+        for pattern in (
+            r"(?im)^\s*\**brand\**\s*:\s*([^\n]+)",
+            r"(?im)\bbrand\s+is\s+([A-Z][A-Za-z0-9&.' -]{2,60})",
+        ):
+            match = re.search(pattern, grounded_text or "")
+            if not match:
+                continue
+            brand = cls._clean_extracted_name(match.group(1))
+            if brand:
+                return brand
+        return None
+
+    @classmethod
+    def _extract_model_from_grounded_text(cls, grounded_text: str, brand: str | None = None) -> str | None:
+        text = grounded_text or ""
+        for pattern in (
+            r'(?i)\bmodel[^.\n]{0,80}["\u201c]([^"\u201d]{5,100})["\u201d]',
+            r'(?i)\bstrongly aligns with (?:the )?["\u201c]([^"\u201d]{5,100})["\u201d]',
+            r'(?i)\bidentified as (?:the )?["\u201c]([^"\u201d]{5,100})["\u201d]',
+        ):
+            match = re.search(pattern, text)
+            if match:
+                model = cls._clean_extracted_name(match.group(1))
+                if model:
+                    return model
+        line_match = re.search(r"(?im)^\s*\**model(?: identification)?\**\s*:\s*([^\n]+)", text)
+        if line_match:
+            model = cls._clean_extracted_name(line_match.group(1))
+            if model:
+                return model
+        if brand:
+            branded_match = re.search(
+                rf"(?i)\b{re.escape(brand)}\b\s+([A-Za-z0-9&.' -]{{5,90}}?(?:bag|clutch|pumps?|boots?|dress|jacket|blazer|wallet|belt|scarf|sunglasses|necklace|bracelet|ring))\b",
+                text,
+            )
+            if branded_match:
+                model = cls._clean_extracted_name(branded_match.group(1))
+                if model:
+                    return model
+        return None
+
+    @staticmethod
+    def _parse_money(value: str) -> float | None:
+        try:
+            amount = float(value.replace(",", "").strip())
+        except Exception:
+            return None
+        return amount if amount > 0 else None
+
+    @classmethod
+    def _extract_retail_price_from_grounded_text(cls, grounded_text: str) -> float | None:
+        values: list[float] = []
+        for pattern in (
+            r"(?i)\b(?:retail(?:ed)?|msrp|original retail|new retail pricing|full price)[^$]{0,100}\$([0-9][0-9,]*(?:\.[0-9]{1,2})?)",
+            r"(?i)\$([0-9][0-9,]*(?:\.[0-9]{1,2})?)[^.\n]{0,80}\b(?:retail|msrp|original retail)",
+        ):
+            for match in re.finditer(pattern, grounded_text or ""):
+                amount = cls._parse_money(match.group(1))
+                if amount is not None:
+                    values.append(amount)
+        return max(values) if values else None
+
+    @classmethod
+    def _extract_resale_range_from_grounded_text(cls, grounded_text: str) -> tuple[float, float, float] | None:
+        for pattern in (
+            r"(?i)(?:resale|secondary market|secondary-market|market)[^.\n]{0,160}\$([0-9][0-9,]*(?:\.[0-9]{1,2})?)\s*(?:-|to|\u2013|\u2014)\s*\$([0-9][0-9,]*(?:\.[0-9]{1,2})?)",
+            r"(?i)\$([0-9][0-9,]*(?:\.[0-9]{1,2})?)\s*(?:-|to|\u2013|\u2014)\s*\$([0-9][0-9,]*(?:\.[0-9]{1,2})?)[^.\n]{0,160}(?:resale|secondary market|secondary-market|market)",
+        ):
+            match = re.search(pattern, grounded_text or "")
+            if not match:
+                continue
+            low = cls._parse_money(match.group(1))
+            high = cls._parse_money(match.group(2))
+            if low is None or high is None:
+                continue
+            low, high = min(low, high), max(low, high)
+            return round((low + high) / 2.0, 2), low, high
+        return None
+
+    @classmethod
+    def _repair_structured_profile_from_grounded_evidence(
+        cls,
+        profile: dict[str, Any],
+        *,
+        grounded_text: str,
+        label_ocr: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        repaired = dict(profile)
+        repair_log: dict[str, Any] = {}
+
+        ocr_brand = cls._brand_from_label_ocr(label_ocr)
+        ocr_conf = cls._label_ocr_confidence(label_ocr)
+        raw_ocr = cls._label_ocr_raw_text(label_ocr)
+        if cls._text_is_missing(repaired.get("candidate_brand")):
+            if ocr_brand and ocr_conf is not None and ocr_conf >= 0.85 and ocr_brand.casefold() in raw_ocr.casefold():
+                repaired["candidate_brand"] = ocr_brand
+                repaired["confidence"] = max(float(repaired.get("confidence") or 0), min(ocr_conf, 0.9))
+                repair_log["candidate_brand"] = {
+                    "from": profile.get("candidate_brand"),
+                    "to": ocr_brand,
+                    "source": "label_ocr",
+                    "confidence": round(ocr_conf, 3),
+                    "evidence_image_id": label_ocr.get("evidence_image_id") if isinstance(label_ocr, dict) else None,
+                }
+            else:
+                grounded_brand = cls._extract_brand_from_grounded_text(grounded_text)
+                if grounded_brand:
+                    repaired["candidate_brand"] = grounded_brand
+                    repaired["confidence"] = max(float(repaired.get("confidence") or 0), 0.75)
+                    repair_log["candidate_brand"] = {
+                        "from": profile.get("candidate_brand"),
+                        "to": grounded_brand,
+                        "source": "gemini_grounded_search",
+                        "confidence": 0.75,
+                    }
+
+        brand = repaired.get("candidate_brand") if isinstance(repaired.get("candidate_brand"), str) else None
+        if cls._text_is_missing(repaired.get("candidate_model")):
+            model = cls._extract_model_from_grounded_text(grounded_text, brand=brand)
+            if model:
+                repaired["candidate_model"] = model
+                repair_log["candidate_model"] = {
+                    "from": profile.get("candidate_model"),
+                    "to": model,
+                    "source": "gemini_grounded_search",
+                    "confidence": 0.65,
+                }
+
+        model_identification = repaired.get("model_identification") if isinstance(repaired.get("model_identification"), dict) else {}
+        if cls._text_is_missing(model_identification.get("name")):
+            candidate_brand = repaired.get("candidate_brand") if isinstance(repaired.get("candidate_brand"), str) else None
+            candidate_model = repaired.get("candidate_model") if isinstance(repaired.get("candidate_model"), str) else None
+            if candidate_brand and candidate_model:
+                model_identification = dict(model_identification)
+                model_identification["name"] = f"{candidate_brand} {candidate_model}"
+                model_identification["confidence"] = max(float(model_identification.get("confidence") or 0), 0.65)
+                model_identification.setdefault("attributes", [])
+                repaired["model_identification"] = model_identification
+                original_model_identification = (
+                    profile.get("model_identification") if isinstance(profile.get("model_identification"), dict) else {}
+                )
+                repair_log["model_identification.name"] = {
+                    "from": original_model_identification.get("name"),
+                    "to": model_identification["name"],
+                    "source": "candidate_brand_model_repair",
+                    "confidence": 0.65,
+                }
+
+        if cls._price_is_missing(repaired.get("retail_price_estimate")):
+            retail_price = cls._extract_retail_price_from_grounded_text(grounded_text)
+            if retail_price is not None:
+                repaired["retail_price_estimate"] = {
+                    "estimated_price": retail_price,
+                    "currency": "USD",
+                    "confidence": 0.35,
+                    "rationale": "Extracted from Gemini grounded retail/MSRP evidence because structured JSON formatting omitted it.",
+                    "references": [],
+                }
+                repair_log["retail_price_estimate"] = {
+                    "from": profile.get("retail_price_estimate"),
+                    "to": retail_price,
+                    "source": "gemini_grounded_search",
+                    "confidence": 0.35,
+                }
+
+        if cls._price_is_missing(repaired.get("resale_price_estimate")):
+            resale_range = cls._extract_resale_range_from_grounded_text(grounded_text)
+            if resale_range is not None:
+                estimated, low, high = resale_range
+                repaired["resale_price_estimate"] = {
+                    "estimated_price": estimated,
+                    "currency": "USD",
+                    "confidence": 0.25,
+                    "rationale": "Estimated from Gemini grounded resale/secondary-market range because structured JSON formatting omitted resale pricing.",
+                    "condition_assumption": "user_condition",
+                    "references": [],
+                }
+                repaired["resale_price_breakdown"] = [
+                    {
+                        "label": "Grounded resale range fallback",
+                        "estimated_price": estimated,
+                        "range_low": low,
+                        "range_high": high,
+                        "currency": "USD",
+                        "confidence": 0.25,
+                        "rationale": "Parsed from explicit resale/secondary-market range in grounded evidence.",
+                    }
+                ]
+                repair_log["resale_price_estimate"] = {
+                    "from": profile.get("resale_price_estimate"),
+                    "to": estimated,
+                    "range_low": low,
+                    "range_high": high,
+                    "source": "gemini_grounded_search",
+                    "confidence": 0.25,
+                }
+
+        if repair_log:
+            workflow = dict(repaired.get("_workflow") or {})
+            workflow["structured_repair"] = repair_log
+            repaired["_workflow"] = workflow
+        return repaired
+
     def _build_vertex_ai_search_payload(self, *, content: list[dict[str, Any]]) -> dict[str, Any]:
         gemini_parts = self._build_gemini_parts(content=content)
         gemini_parts.append(
@@ -1526,6 +1768,11 @@ class GptItemProfiler:
         if isinstance(label_ocr, dict):
             parsed_single["label_ocr"] = label_ocr
         parsed_single["_workflow"] = workflow
+        parsed_single = self._repair_structured_profile_from_grounded_evidence(
+            parsed_single,
+            grounded_text=grounded_text,
+            label_ocr=label_ocr,
+        )
         return parsed_single
 
     def _vertex_generate_content_url(self) -> str:

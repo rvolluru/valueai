@@ -1452,17 +1452,40 @@ def infer_brand_from_item_profile(item_profile: dict[str, object] | None) -> tup
     if not isinstance(item_profile, dict):
         return None, None, None
     candidate_brand = item_profile.get("candidate_brand")
-    if not isinstance(candidate_brand, str):
-        return None, None, None
-    brand = candidate_brand.strip()
-    if not brand:
-        return None, None, None
-    confidence = item_profile.get("confidence")
-    try:
-        conf = max(0.0, min(float(confidence), 1.0))
-    except Exception:
-        conf = None
-    return brand, conf, "gpt_item_profile"
+    if isinstance(candidate_brand, str):
+        brand = candidate_brand.strip()
+        if brand:
+            confidence = item_profile.get("confidence")
+            try:
+                conf = max(0.0, min(float(confidence), 1.0))
+            except Exception:
+                conf = None
+            return brand, conf, "gpt_item_profile"
+
+    label_ocr = item_profile.get("label_ocr") if isinstance(item_profile.get("label_ocr"), dict) else None
+    if label_ocr:
+        raw_confidence = label_ocr.get("confidence")
+        try:
+            confidence = float(raw_confidence)
+            if confidence > 1.0:
+                confidence = confidence / 5.0 if confidence <= 5.0 else confidence / 100.0
+            confidence = max(0.0, min(confidence, 1.0))
+        except Exception:
+            confidence = 0.0
+        brand = str(label_ocr.get("brand_text") or "").strip()
+        raw_text = label_ocr.get("raw_visible_text")
+        if isinstance(raw_text, list):
+            raw_text_value = " ".join(str(part or "") for part in raw_text)
+        else:
+            raw_text_value = str(raw_text or "")
+        if (
+            confidence >= 0.85
+            and brand
+            and brand.casefold() not in {"unknown", "unclear", "null", "none", "n/a"}
+            and brand.casefold() in raw_text_value.casefold()
+        ):
+            return brand, min(confidence, 0.9), "label_ocr"
+    return None, None, None
 
 
 def _coerce_positive_float(value: object) -> float | None:

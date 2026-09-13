@@ -73,6 +73,47 @@ def test_dependency_health_requires_authentication():
     assert res.status_code == 401
 
 
+def test_infer_brand_from_item_profile_uses_high_confidence_label_ocr_when_candidate_missing():
+    from app.main import infer_brand_from_item_profile
+
+    brand, confidence, source = infer_brand_from_item_profile(
+        {
+            "candidate_brand": None,
+            "confidence": 0.1,
+            "label_ocr": {
+                "brand_text": "DOLCE & GABBANA",
+                "confidence": 5,
+                "raw_visible_text": "DOLCE & GABBANA",
+                "evidence_image_id": "tag-image",
+            },
+        }
+    )
+
+    assert brand == "DOLCE & GABBANA"
+    assert confidence == 0.9
+    assert source == "label_ocr"
+
+
+def test_infer_brand_from_item_profile_ignores_low_confidence_label_ocr_when_candidate_missing():
+    from app.main import infer_brand_from_item_profile
+
+    brand, confidence, source = infer_brand_from_item_profile(
+        {
+            "candidate_brand": None,
+            "label_ocr": {
+                "brand_text": "ALEXIS",
+                "confidence": 0.6,
+                "raw_visible_text": "ALEXIS",
+                "evidence_image_id": "tag-image",
+            },
+        }
+    )
+
+    assert brand is None
+    assert confidence is None
+    assert source is None
+
+
 def test_dependency_health_reports_core_services_and_redacts_secrets():
     client = _build_client()
 

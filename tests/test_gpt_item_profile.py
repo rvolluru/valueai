@@ -330,6 +330,80 @@ def test_gemini_grounded_search_prompt_prioritizes_label_before_style_search() -
     assert "ALEXIS" not in prompt
 
 
+def test_structured_repair_promotes_high_confidence_ocr_and_grounded_evidence() -> None:
+    profiler = _profiler(max_images=6)
+    profile = {
+        "category": "handbag",
+        "candidate_brand": None,
+        "candidate_model": None,
+        "confidence": 0.4,
+        "model_identification": {"name": None, "confidence": 0.2, "attributes": []},
+        "retail_price_estimate": {"estimated_price": None, "currency": "USD", "confidence": 0.1, "rationale": "", "references": []},
+        "resale_price_estimate": {
+            "estimated_price": None,
+            "currency": "USD",
+            "confidence": 0.1,
+            "rationale": "",
+            "condition_assumption": "NewWithTags",
+            "references": [],
+        },
+        "resale_price_breakdown": [],
+        "_workflow": {"grounded_search": "existing"},
+    }
+    grounded_text = (
+        "**Brand:** DOLCE&GABBANA\n"
+        "The item strongly aligns with the \"Marlene Medium Sequined Clutch Bag\" by Dolce&Gabbana. "
+        "New retail pricing for this model has been observed at $3,295.00. "
+        "Secondary market resale value range is $2,200 - $3,000."
+    )
+    label_ocr = {
+        "brand_text": "DOLCE&GABBANA",
+        "confidence": 5,
+        "evidence_image_id": "tag-image",
+        "raw_visible_text": "DOLCE&GABBANA",
+        "rationale": "clear tag",
+    }
+
+    repaired = profiler._repair_structured_profile_from_grounded_evidence(
+        profile,
+        grounded_text=grounded_text,
+        label_ocr=label_ocr,
+    )
+
+    assert repaired["candidate_brand"] == "DOLCE&GABBANA"
+    assert repaired["candidate_model"] == "Marlene Medium Sequined Clutch Bag"
+    assert repaired["model_identification"]["name"] == "DOLCE&GABBANA Marlene Medium Sequined Clutch Bag"
+    assert repaired["retail_price_estimate"]["estimated_price"] == 3295.0
+    assert repaired["resale_price_estimate"]["estimated_price"] == 2600.0
+    assert repaired["_workflow"]["structured_repair"]["candidate_brand"]["source"] == "label_ocr"
+    assert repaired["_workflow"]["structured_repair"]["retail_price_estimate"]["source"] == "gemini_grounded_search"
+
+
+def test_structured_repair_does_not_overwrite_existing_structured_identity() -> None:
+    profiler = _profiler(max_images=6)
+    profile = {
+        "candidate_brand": "Herve Leger",
+        "candidate_model": "Bandage Dress",
+        "confidence": 0.86,
+        "model_identification": {"name": "Herve Leger Bandage Dress", "confidence": 0.86, "attributes": []},
+    }
+
+    repaired = profiler._repair_structured_profile_from_grounded_evidence(
+        profile,
+        grounded_text='**Brand:** ALEXIS\nThe item strongly aligns with the "ALEXIS dress".',
+        label_ocr={
+            "brand_text": "ALEXIS",
+            "confidence": 0.95,
+            "raw_visible_text": "ALEXIS",
+            "evidence_image_id": "other-tag",
+        },
+    )
+
+    assert repaired["candidate_brand"] == "Herve Leger"
+    assert repaired["candidate_model"] == "Bandage Dress"
+    assert "structured_repair" not in repaired.get("_workflow", {})
+
+
 def test_gemini_formatter_prompt_preserves_condition_evidence() -> None:
     payload = _profiler(max_images=6)._build_gemini_formatter_payload(
         content=[{"type": "input_text", "text": "Analyze this item."}],
