@@ -100,6 +100,7 @@ class Settings(BaseSettings):
     photoroom_output_format: str = "jpg"
     photoroom_background_color: str = "#FFFFFF"
     photoroom_output_size: str = "full"
+    health_photoroom_live_probe_enabled: bool = True
     image_staging_gemini_enabled: bool = True
     image_staging_gemini_model: str = "gemini-2.5-flash-image-preview"
     image_staging_gemini_timeout_s: float = 30.0
@@ -153,6 +154,7 @@ class Settings(BaseSettings):
     google_places_timeout_s: float = 8.0
     stripe_secret_key: str | None = None
     stripe_publishable_key: str | None = None
+    stripe_webhook_secret: str | None = None
     paypal_client_id: str | None = None
     shippo_api_key: str | None = None
     shippo_api_base_url: str = "https://api.goshippo.com"
@@ -183,6 +185,7 @@ class Settings(BaseSettings):
     expo_push_enabled: bool = True
     expo_push_api_url: str = "https://exp.host/--/api/v2/push/send"
     expo_push_access_token: str | None = None
+    expo_push_health_token: str | None = None
     expo_push_timeout_s: float = 10.0
     smtp_host: str | None = None
     smtp_port: int = 587

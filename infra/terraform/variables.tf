@@ -390,6 +390,18 @@ variable "stripe_publishable_key" {
   sensitive = true
 }
 
+variable "stripe_webhook_secret" {
+  type      = string
+  default   = ""
+  sensitive = true
+}
+
+variable "expo_push_health_token" {
+  type      = string
+  default   = ""
+  sensitive = true
+}
+
 variable "google_places_api_key" {
   type      = string
   default   = ""

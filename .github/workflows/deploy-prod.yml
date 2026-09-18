@@ -75,6 +75,8 @@ jobs:
           PHOTOROOM_API_KEY: ${{ secrets.PHOTOROOM_API_KEY }}
           STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
           STRIPE_PUBLISHABLE_KEY: ${{ secrets.STRIPE_PUBLISHABLE_KEY }}
+          STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
+          EXPO_PUSH_HEALTH_TOKEN: ${{ secrets.EXPO_PUSH_HEALTH_TOKEN }}
           SHIPPO_API_KEY: ${{ secrets.SHIPPO_API_KEY }}
           SHIPPO_DEFAULT_CONTACT_EMAIL: ${{ secrets.SHIPPO_DEFAULT_CONTACT_EMAIL }}
           SHIPPO_DEFAULT_CONTACT_PHONE: ${{ secrets.SHIPPO_DEFAULT_CONTACT_PHONE }}
@@ -105,6 +107,20 @@ jobs:
               sed -i.bak -E "s#^[[:space:]]*stripe_publishable_key[[:space:]]*=.*#stripe_publishable_key             = \"${STRIPE_PUBLISHABLE_KEY}\"#" "${TF_DIR}/terraform.tfvars"
             else
               echo "stripe_publishable_key             = \"${STRIPE_PUBLISHABLE_KEY}\"" >> "${TF_DIR}/terraform.tfvars"
+            fi
+          fi
+          if [ -n "${STRIPE_WEBHOOK_SECRET:-}" ]; then
+            if grep -qE '^[[:space:]]*stripe_webhook_secret[[:space:]]*=' "${TF_DIR}/terraform.tfvars"; then
+              sed -i.bak -E "s#^[[:space:]]*stripe_webhook_secret[[:space:]]*=.*#stripe_webhook_secret              = \"${STRIPE_WEBHOOK_SECRET}\"#" "${TF_DIR}/terraform.tfvars"
+            else
+              echo "stripe_webhook_secret              = \"${STRIPE_WEBHOOK_SECRET}\"" >> "${TF_DIR}/terraform.tfvars"
+            fi
+          fi
+          if [ -n "${EXPO_PUSH_HEALTH_TOKEN:-}" ]; then
+            if grep -qE '^[[:space:]]*expo_push_health_token[[:space:]]*=' "${TF_DIR}/terraform.tfvars"; then
+              sed -i.bak -E "s#^[[:space:]]*expo_push_health_token[[:space:]]*=.*#expo_push_health_token             = \"${EXPO_PUSH_HEALTH_TOKEN}\"#" "${TF_DIR}/terraform.tfvars"
+            else
+              echo "expo_push_health_token             = \"${EXPO_PUSH_HEALTH_TOKEN}\"" >> "${TF_DIR}/terraform.tfvars"
             fi
           fi
           if [ -n "${OPENAI_API_KEY:-}" ]; then
@@ -174,6 +190,8 @@ jobs:
           PHOTOROOM_API_KEY: ${{ secrets.PHOTOROOM_API_KEY }}
           STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
           STRIPE_PUBLISHABLE_KEY: ${{ secrets.STRIPE_PUBLISHABLE_KEY }}
+          STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
+          EXPO_PUSH_HEALTH_TOKEN: ${{ secrets.EXPO_PUSH_HEALTH_TOKEN }}
           SHIPPO_API_KEY: ${{ secrets.SHIPPO_API_KEY }}
           SHIPPO_DEFAULT_CONTACT_EMAIL: ${{ secrets.SHIPPO_DEFAULT_CONTACT_EMAIL }}
           SHIPPO_DEFAULT_CONTACT_PHONE: ${{ secrets.SHIPPO_DEFAULT_CONTACT_PHONE }}
@@ -192,6 +210,8 @@ jobs:
              --arg PHOTOROOM_API_KEY "${PHOTOROOM_API_KEY:-}" \
              --arg STRIPE_SECRET_KEY "${STRIPE_SECRET_KEY:-}" \
              --arg STRIPE_PUBLISHABLE_KEY "${STRIPE_PUBLISHABLE_KEY:-}" \
+             --arg STRIPE_WEBHOOK_SECRET "${STRIPE_WEBHOOK_SECRET:-}" \
+             --arg EXPO_PUSH_HEALTH_TOKEN "${EXPO_PUSH_HEALTH_TOKEN:-}" \
              --arg SHIPPO_API_KEY "${SHIPPO_API_KEY:-}" \
              --arg SHIPPO_DEFAULT_CONTACT_EMAIL "${SHIPPO_DEFAULT_CONTACT_EMAIL:-}" \
              --arg SHIPPO_DEFAULT_CONTACT_PHONE "${SHIPPO_DEFAULT_CONTACT_PHONE:-}" '
@@ -221,6 +241,8 @@ jobs:
                   | upsert_env("GPT_ITEM_PROFILE_TIMEOUT_S"; "120")
                   | upsert_env("STRIPE_SECRET_KEY"; $STRIPE_SECRET_KEY)
                   | upsert_env("STRIPE_PUBLISHABLE_KEY"; $STRIPE_PUBLISHABLE_KEY)
+                  | upsert_env("STRIPE_WEBHOOK_SECRET"; $STRIPE_WEBHOOK_SECRET)
+                  | upsert_env("EXPO_PUSH_HEALTH_TOKEN"; $EXPO_PUSH_HEALTH_TOKEN)
                   | upsert_env("SHIPPO_API_KEY"; $SHIPPO_API_KEY)
                   | upsert_env("SHIPPO_DEFAULT_CONTACT_EMAIL"; $SHIPPO_DEFAULT_CONTACT_EMAIL)
                   | upsert_env("SHIPPO_DEFAULT_CONTACT_PHONE"; $SHIPPO_DEFAULT_CONTACT_PHONE))

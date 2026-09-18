@@ -248,6 +248,23 @@ class Database:
             )
             """,
             """
+            CREATE TABLE IF NOT EXISTS listing_analysis_jobs (
+              job_id TEXT PRIMARY KEY,
+              listing_id TEXT NOT NULL,
+              owner_subject TEXT NOT NULL,
+              status TEXT NOT NULL,
+              stage TEXT NOT NULL,
+              attempts INTEGER NOT NULL DEFAULT 0,
+              max_attempts INTEGER NOT NULL DEFAULT 2,
+              error TEXT,
+              result_item_id TEXT,
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL,
+              started_at TEXT,
+              completed_at TEXT
+            )
+            """,
+            """
             CREATE TABLE IF NOT EXISTS user_profiles (
               owner_subject TEXT PRIMARY KEY,
               first_name TEXT,
@@ -405,6 +422,8 @@ class Database:
               to_country TEXT,
               carrier TEXT NOT NULL DEFAULT 'USPS',
               service_level TEXT NOT NULL DEFAULT 'Priority Mail',
+              shipping_cost_amount TEXT,
+              shipping_cost_currency TEXT,
               tracking_number TEXT,
               label_url TEXT,
               status TEXT NOT NULL DEFAULT 'label_created',
@@ -413,6 +432,19 @@ class Database:
               tracking_status_updated_at TEXT,
               tracking_eta TEXT,
               tracking_history_json TEXT NOT NULL DEFAULT '[]',
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS admin_support_notes (
+              note_id TEXT PRIMARY KEY,
+              entity_type TEXT NOT NULL,
+              entity_id TEXT NOT NULL,
+              category TEXT NOT NULL,
+              status TEXT NOT NULL,
+              note TEXT NOT NULL DEFAULT '',
+              actor_subject TEXT,
               created_at TEXT NOT NULL,
               updated_at TEXT NOT NULL
             )
@@ -473,6 +505,8 @@ class Database:
             "ALTER TABLE trade_shipments ADD COLUMN tracking_status_updated_at TEXT",
             "ALTER TABLE trade_shipments ADD COLUMN tracking_eta TEXT",
             "ALTER TABLE trade_shipments ADD COLUMN tracking_history_json TEXT NOT NULL DEFAULT '[]'",
+            "ALTER TABLE trade_shipments ADD COLUMN shipping_cost_amount TEXT",
+            "ALTER TABLE trade_shipments ADD COLUMN shipping_cost_currency TEXT",
             "ALTER TABLE user_push_tokens ADD COLUMN device_id TEXT",
             "ALTER TABLE user_push_tokens ADD COLUMN platform TEXT",
             "ALTER TABLE user_push_tokens ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1",
@@ -1167,6 +1201,139 @@ class Database:
         cur.close()
         return [self._analysis_row_to_dict(row) for row in rows]
 
+    def list_listing_analysis_jobs(self, limit: int = 50, status: str | None = None) -> list[dict]:
+        safe_limit = max(1, min(int(limit or 50), 200))
+        if status:
+            query = (
+                f"SELECT job_id, listing_id, owner_subject, status, stage, attempts, max_attempts, error, result_item_id, "
+                f"created_at, updated_at, started_at, completed_at FROM listing_analysis_jobs "
+                f"WHERE LOWER(status) = {self.param} ORDER BY updated_at DESC LIMIT {self.param}"
+            )
+            params = (str(status).lower(), safe_limit)
+        else:
+            query = (
+                f"SELECT job_id, listing_id, owner_subject, status, stage, attempts, max_attempts, error, result_item_id, "
+                f"created_at, updated_at, started_at, completed_at FROM listing_analysis_jobs "
+                f"ORDER BY updated_at DESC LIMIT {self.param}"
+            )
+            params = (safe_limit,)
+        if self._sqlite_conn is not None:
+            with self._sqlite_lock:
+                rows = self._sqlite_conn.execute(query, params).fetchall()
+        else:
+            cur = self._pg_cursor()
+            cur.execute(query, params)
+            rows = cur.fetchall()
+            cur.close()
+        return [self._listing_analysis_job_row_to_dict(row) for row in rows]
+
+    def list_all_trade_offers(self, limit: int = 50, status: str | None = None) -> list[dict]:
+        safe_limit = max(1, min(int(limit or 50), 200))
+        if status:
+            query = (
+                f"SELECT offer_id, target_listing_id, offered_listing_id, selected_offered_listing_id, from_subject, to_subject, status, accepted_by_from, accepted_by_to, from_receive_address_json, to_receive_address_json, message, created_at, updated_at, offered_listing_ids_json "
+                f"FROM trade_offers WHERE LOWER(status) = {self.param} ORDER BY updated_at DESC LIMIT {self.param}"
+            )
+            params = (str(status).lower(), safe_limit)
+        else:
+            query = (
+                f"SELECT offer_id, target_listing_id, offered_listing_id, selected_offered_listing_id, from_subject, to_subject, status, accepted_by_from, accepted_by_to, from_receive_address_json, to_receive_address_json, message, created_at, updated_at, offered_listing_ids_json "
+                f"FROM trade_offers ORDER BY updated_at DESC LIMIT {self.param}"
+            )
+            params = (safe_limit,)
+        if self._sqlite_conn is not None:
+            with self._sqlite_lock:
+                rows = self._sqlite_conn.execute(query, params).fetchall()
+        else:
+            cur = self._pg_cursor()
+            cur.execute(query, params)
+            rows = cur.fetchall()
+            cur.close()
+        return [self._trade_offer_row_to_dict(row) for row in rows]
+
+    def list_billing_profiles(self, limit: int = 100) -> list[dict]:
+        safe_limit = max(1, min(int(limit or 100), 500))
+        query = (
+            f"SELECT owner_subject, stripe_customer_id, stripe_subscription_id, subscription_plan, "
+            f"subscription_billing_cycle, subscription_status, subscription_renewal_date, created_at, updated_at "
+            f"FROM user_billing_profiles ORDER BY updated_at DESC LIMIT {self.param}"
+        )
+        keys = [
+            "owner_subject", "stripe_customer_id", "stripe_subscription_id", "subscription_plan",
+            "subscription_billing_cycle", "subscription_status", "subscription_renewal_date", "created_at", "updated_at",
+        ]
+        if self._sqlite_conn is not None:
+            with self._sqlite_lock:
+                rows = self._sqlite_conn.execute(query, (safe_limit,)).fetchall()
+        else:
+            cur = self._pg_cursor()
+            cur.execute(query, (safe_limit,))
+            rows = cur.fetchall()
+            cur.close()
+        out: list[dict] = []
+        for row in rows:
+            data = dict(row) if isinstance(row, sqlite3.Row) else {k: row[idx] for idx, k in enumerate(keys)}
+            out.append({k: data.get(k) for k in keys})
+        return out
+
+    def create_admin_support_note(
+        self,
+        *,
+        note_id: str,
+        entity_type: str,
+        entity_id: str,
+        category: str,
+        status: str,
+        note: str,
+        actor_subject: str | None,
+    ) -> dict:
+        now = utc_now_iso()
+        self.execute(
+            f"""INSERT INTO admin_support_notes
+            (note_id, entity_type, entity_id, category, status, note, actor_subject, created_at, updated_at)
+            VALUES ({self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param})""",
+            (note_id, entity_type, entity_id, category, status, note, actor_subject, now, now),
+        )
+        self.commit()
+        return {
+            "note_id": note_id,
+            "entity_type": entity_type,
+            "entity_id": entity_id,
+            "category": category,
+            "status": status,
+            "note": note,
+            "actor_subject": actor_subject,
+            "created_at": now,
+            "updated_at": now,
+        }
+
+    def list_admin_support_notes(self, limit: int = 50, entity_type: str | None = None, entity_id: str | None = None) -> list[dict]:
+        safe_limit = max(1, min(int(limit or 50), 200))
+        where: list[str] = []
+        params: list[object] = []
+        if entity_type:
+            where.append(f"entity_type = {self.param}")
+            params.append(entity_type)
+        if entity_id:
+            where.append(f"entity_id = {self.param}")
+            params.append(entity_id)
+        where_sql = f"WHERE {' AND '.join(where)}" if where else ""
+        query = (
+            f"SELECT note_id, entity_type, entity_id, category, status, note, actor_subject, created_at, updated_at "
+            f"FROM admin_support_notes {where_sql} ORDER BY created_at DESC LIMIT {self.param}"
+        )
+        params.append(safe_limit)
+        keys = ["note_id", "entity_type", "entity_id", "category", "status", "note", "actor_subject", "created_at", "updated_at"]
+        if self._sqlite_conn is not None:
+            with self._sqlite_lock:
+                rows = self._sqlite_conn.execute(query, tuple(params)).fetchall()
+        else:
+            cur = self._pg_cursor()
+            cur.execute(query, tuple(params))
+            rows = cur.fetchall()
+            cur.close()
+        return [dict(row) if isinstance(row, sqlite3.Row) else {k: row[idx] for idx, k in enumerate(keys)} for row in rows]
+
     def get_image_storage_uri(self, image_id: str) -> str | None:
         query = f"SELECT storage_uri FROM images WHERE image_id = {self.param} LIMIT 1"
         if self._sqlite_conn is not None:
@@ -1616,12 +1783,171 @@ class Database:
         self.commit()
         return changed
 
+    def create_listing_analysis_job(
+        self,
+        *,
+        job_id: str,
+        listing_id: str,
+        owner_subject: str,
+        max_attempts: int = 2,
+    ) -> dict:
+        now = utc_now_iso()
+        sql = f"""INSERT INTO listing_analysis_jobs
+            (job_id, listing_id, owner_subject, status, stage, attempts, max_attempts, error, result_item_id, created_at, updated_at, started_at, completed_at)
+            VALUES ({self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param})"""
+        self.execute(
+            sql,
+            (
+                job_id,
+                listing_id,
+                owner_subject,
+                "queued",
+                "queued",
+                0,
+                max(1, int(max_attempts or 1)),
+                None,
+                None,
+                now,
+                now,
+                None,
+                None,
+            ),
+        )
+        self.commit()
+        return self.get_listing_analysis_job(job_id, owner_subject) or {
+            "job_id": job_id,
+            "listing_id": listing_id,
+            "owner_subject": owner_subject,
+            "status": "queued",
+            "stage": "queued",
+            "attempts": 0,
+            "max_attempts": max_attempts,
+            "created_at": now,
+            "updated_at": now,
+        }
+
+    def update_listing_analysis_job(
+        self,
+        *,
+        job_id: str,
+        owner_subject: str,
+        status: str | None = None,
+        stage: str | None = None,
+        attempts: int | None = None,
+        error: str | None = None,
+        result_item_id: str | None = None,
+        started: bool = False,
+        completed: bool = False,
+    ) -> dict | None:
+        existing = self.get_listing_analysis_job(job_id, owner_subject)
+        if existing is None:
+            return None
+        now = utc_now_iso()
+        next_status = status if status is not None else existing.get("status")
+        next_stage = stage if stage is not None else existing.get("stage")
+        next_attempts = attempts if attempts is not None else existing.get("attempts")
+        next_error = error if error is not None else existing.get("error")
+        next_result_item_id = result_item_id if result_item_id is not None else existing.get("result_item_id")
+        started_at = existing.get("started_at") or (now if started else None)
+        completed_at = now if completed else existing.get("completed_at")
+        sql = f"""UPDATE listing_analysis_jobs
+            SET status = {self.param},
+                stage = {self.param},
+                attempts = {self.param},
+                error = {self.param},
+                result_item_id = {self.param},
+                updated_at = {self.param},
+                started_at = {self.param},
+                completed_at = {self.param}
+            WHERE job_id = {self.param} AND owner_subject = {self.param}"""
+        self.execute(
+            sql,
+            (
+                next_status,
+                next_stage,
+                int(next_attempts or 0),
+                next_error,
+                next_result_item_id,
+                now,
+                started_at,
+                completed_at,
+                job_id,
+                owner_subject,
+            ),
+        )
+        self.commit()
+        return self.get_listing_analysis_job(job_id, owner_subject)
+
+    def get_listing_analysis_job(self, job_id: str, owner_subject: str | None = None) -> dict | None:
+        query = (
+            f"SELECT job_id, listing_id, owner_subject, status, stage, attempts, max_attempts, error, result_item_id, "
+            f"created_at, updated_at, started_at, completed_at FROM listing_analysis_jobs WHERE job_id = {self.param}"
+        )
+        params: tuple = (job_id,)
+        if owner_subject is not None:
+            query += f" AND owner_subject = {self.param}"
+            params = (job_id, owner_subject)
+        query += " LIMIT 1"
+        if self._sqlite_conn is not None:
+            with self._sqlite_lock:
+                row = self._sqlite_conn.execute(query, params).fetchone()
+        else:
+            cur = self._pg_cursor()
+            cur.execute(query, params)
+            row = cur.fetchone()
+            cur.close()
+        return self._listing_analysis_job_row_to_dict(row) if row else None
+
+    def get_latest_listing_analysis_job(self, listing_id: str, owner_subject: str) -> dict | None:
+        query = (
+            f"SELECT job_id, listing_id, owner_subject, status, stage, attempts, max_attempts, error, result_item_id, "
+            f"created_at, updated_at, started_at, completed_at FROM listing_analysis_jobs "
+            f"WHERE listing_id = {self.param} AND owner_subject = {self.param} "
+            f"ORDER BY created_at DESC LIMIT 1"
+        )
+        params = (listing_id, owner_subject)
+        if self._sqlite_conn is not None:
+            with self._sqlite_lock:
+                row = self._sqlite_conn.execute(query, params).fetchone()
+        else:
+            cur = self._pg_cursor()
+            cur.execute(query, params)
+            row = cur.fetchone()
+            cur.close()
+        return self._listing_analysis_job_row_to_dict(row) if row else None
+
     def mark_stale_analyzing_listings_failed(self, cutoff_updated_at: str) -> int:
         sql = (
             f"UPDATE listings SET status = {self.param}, tags_json = {self.param} "
             f"WHERE LOWER(status) = {self.param} AND COALESCE(updated_at, created_at) < {self.param}"
         )
         params = ("AnalysisFailed", json.dumps(["Analysis failed"]), "analyzing", cutoff_updated_at)
+        if self._sqlite_conn is not None:
+            with self._sqlite_lock:
+                self._sqlite_conn.execute(sql, params)
+                changed_row = self._sqlite_conn.execute("SELECT changes() AS n").fetchone()
+            changed = int(changed_row["n"] if isinstance(changed_row, sqlite3.Row) else changed_row[0])
+        else:
+            cur = self._pg_cursor()
+            try:
+                cur.execute(sql, params)
+                changed = int(cur.rowcount or 0)
+            except Exception:
+                self._pg.rollback()
+                raise
+            finally:
+                cur.close()
+        self.commit()
+        return changed
+
+    def mark_stale_listing_analysis_jobs_failed(self, cutoff_updated_at: str) -> int:
+        now = utc_now_iso()
+        sql = (
+            f"UPDATE listing_analysis_jobs "
+            f"SET status = {self.param}, stage = {self.param}, error = {self.param}, updated_at = {self.param}, completed_at = {self.param} "
+            f"WHERE LOWER(status) IN ({self.param}, {self.param}, {self.param}) AND COALESCE(updated_at, created_at) < {self.param}"
+        )
+        params = ("failed", "failed", "Analysis job expired before completion", now, now, "queued", "running", "retrying", cutoff_updated_at)
         if self._sqlite_conn is not None:
             with self._sqlite_lock:
                 self._sqlite_conn.execute(sql, params)
@@ -2005,6 +2331,34 @@ class Database:
             "created_at": data["created_at"],
             "updated_at": data.get("updated_at") or data["created_at"],
         }
+
+    @staticmethod
+    def _listing_analysis_job_row_to_dict(row) -> dict:
+        if isinstance(row, sqlite3.Row):
+            data = dict(row)
+        else:
+            keys = [
+                "job_id",
+                "listing_id",
+                "owner_subject",
+                "status",
+                "stage",
+                "attempts",
+                "max_attempts",
+                "error",
+                "result_item_id",
+                "created_at",
+                "updated_at",
+                "started_at",
+                "completed_at",
+            ]
+            data = {k: row[idx] for idx, k in enumerate(keys)}
+        for key in ("attempts", "max_attempts"):
+            try:
+                data[key] = int(data.get(key) or 0)
+            except Exception:
+                data[key] = 0
+        return data
 
     def get_user_profile_quiz(self, owner_subject: str) -> dict | None:
         query = (
@@ -2805,6 +3159,48 @@ class Database:
             "updated_at": data.get("updated_at"),
         }
 
+    def get_billing_profile_by_stripe_customer_id(self, stripe_customer_id: str) -> dict | None:
+        customer_id = str(stripe_customer_id or "").strip()
+        if not customer_id:
+            return None
+        query = (
+            f"SELECT owner_subject FROM user_billing_profiles "
+            f"WHERE stripe_customer_id = {self.param} LIMIT 1"
+        )
+        if self._sqlite_conn is not None:
+            with self._sqlite_lock:
+                row = self._sqlite_conn.execute(query, (customer_id,)).fetchone()
+        else:
+            cur = self._pg_cursor()
+            cur.execute(query, (customer_id,))
+            row = cur.fetchone()
+            cur.close()
+        if not row:
+            return None
+        owner_subject = row["owner_subject"] if isinstance(row, sqlite3.Row) else row[0]
+        return self.get_billing_profile(str(owner_subject))
+
+    def get_billing_profile_by_stripe_subscription_id(self, stripe_subscription_id: str) -> dict | None:
+        subscription_id = str(stripe_subscription_id or "").strip()
+        if not subscription_id:
+            return None
+        query = (
+            f"SELECT owner_subject FROM user_billing_profiles "
+            f"WHERE stripe_subscription_id = {self.param} LIMIT 1"
+        )
+        if self._sqlite_conn is not None:
+            with self._sqlite_lock:
+                row = self._sqlite_conn.execute(query, (subscription_id,)).fetchone()
+        else:
+            cur = self._pg_cursor()
+            cur.execute(query, (subscription_id,))
+            row = cur.fetchone()
+            cur.close()
+        if not row:
+            return None
+        owner_subject = row["owner_subject"] if isinstance(row, sqlite3.Row) else row[0]
+        return self.get_billing_profile(str(owner_subject))
+
     def set_billing_subscription(
         self,
         owner_subject: str,
@@ -2914,14 +3310,14 @@ class Database:
             f"SELECT shipment_id, offer_id, from_subject, to_subject, from_listing_id, to_listing_id, "
             f"from_name, from_address_line1, from_address_line2, from_city, from_state, from_postal_code, from_country, "
             f"to_name, to_address_line1, to_address_line2, to_city, to_state, to_postal_code, to_country, "
-            f"carrier, service_level, tracking_number, label_url, status, tracking_status, tracking_status_details, tracking_status_updated_at, tracking_eta, tracking_history_json, shipped_at, last_ship_reminder_at, ship_reminder_count, created_at, updated_at "
+            f"carrier, service_level, shipping_cost_amount, shipping_cost_currency, tracking_number, label_url, status, tracking_status, tracking_status_details, tracking_status_updated_at, tracking_eta, tracking_history_json, shipped_at, last_ship_reminder_at, ship_reminder_count, created_at, updated_at "
             f"FROM trade_shipments WHERE offer_id = {self.param} ORDER BY created_at ASC"
         )
         keys = [
             "shipment_id", "offer_id", "from_subject", "to_subject", "from_listing_id", "to_listing_id",
             "from_name", "from_address_line1", "from_address_line2", "from_city", "from_state", "from_postal_code", "from_country",
             "to_name", "to_address_line1", "to_address_line2", "to_city", "to_state", "to_postal_code", "to_country",
-            "carrier", "service_level", "tracking_number", "label_url", "status", "tracking_status", "tracking_status_details", "tracking_status_updated_at", "tracking_eta", "tracking_history_json", "shipped_at", "last_ship_reminder_at", "ship_reminder_count", "created_at", "updated_at",
+            "carrier", "service_level", "shipping_cost_amount", "shipping_cost_currency", "tracking_number", "label_url", "status", "tracking_status", "tracking_status_details", "tracking_status_updated_at", "tracking_eta", "tracking_history_json", "shipped_at", "last_ship_reminder_at", "ship_reminder_count", "created_at", "updated_at",
         ]
         if self._sqlite_conn is not None:
             rows = self._sqlite_conn.execute(query, (offer_id,)).fetchall()
@@ -2946,14 +3342,14 @@ class Database:
             f"SELECT shipment_id, offer_id, from_subject, to_subject, from_listing_id, to_listing_id, "
             f"from_name, from_address_line1, from_address_line2, from_city, from_state, from_postal_code, from_country, "
             f"to_name, to_address_line1, to_address_line2, to_city, to_state, to_postal_code, to_country, "
-            f"carrier, service_level, tracking_number, label_url, status, tracking_status, tracking_status_details, tracking_status_updated_at, tracking_eta, tracking_history_json, shipped_at, last_ship_reminder_at, ship_reminder_count, created_at, updated_at "
+            f"carrier, service_level, shipping_cost_amount, shipping_cost_currency, tracking_number, label_url, status, tracking_status, tracking_status_details, tracking_status_updated_at, tracking_eta, tracking_history_json, shipped_at, last_ship_reminder_at, ship_reminder_count, created_at, updated_at "
             f"FROM trade_shipments WHERE shipment_id = {self.param} LIMIT 1"
         )
         keys = [
             "shipment_id", "offer_id", "from_subject", "to_subject", "from_listing_id", "to_listing_id",
             "from_name", "from_address_line1", "from_address_line2", "from_city", "from_state", "from_postal_code", "from_country",
             "to_name", "to_address_line1", "to_address_line2", "to_city", "to_state", "to_postal_code", "to_country",
-            "carrier", "service_level", "tracking_number", "label_url", "status", "tracking_status", "tracking_status_details", "tracking_status_updated_at", "tracking_eta", "tracking_history_json", "shipped_at", "last_ship_reminder_at", "ship_reminder_count", "created_at", "updated_at",
+            "carrier", "service_level", "shipping_cost_amount", "shipping_cost_currency", "tracking_number", "label_url", "status", "tracking_status", "tracking_status_details", "tracking_status_updated_at", "tracking_eta", "tracking_history_json", "shipped_at", "last_ship_reminder_at", "ship_reminder_count", "created_at", "updated_at",
         ]
         if self._sqlite_conn is not None:
             row = self._sqlite_conn.execute(query, (shipment_id,)).fetchone()
@@ -2978,6 +3374,8 @@ class Database:
         shipment_id: str,
         carrier: str | None = None,
         service_level: str | None = None,
+        shipping_cost_amount: str | None = None,
+        shipping_cost_currency: str | None = None,
         tracking_number: str | None = None,
         label_url: str | None = None,
         status: str | None = None,
@@ -2987,14 +3385,16 @@ class Database:
             return None
         new_carrier = carrier if carrier is not None else shipment.get("carrier")
         new_service = service_level if service_level is not None else shipment.get("service_level")
+        new_cost_amount = shipping_cost_amount if shipping_cost_amount is not None else shipment.get("shipping_cost_amount")
+        new_cost_currency = shipping_cost_currency if shipping_cost_currency is not None else shipment.get("shipping_cost_currency")
         new_tracking = tracking_number if tracking_number is not None else shipment.get("tracking_number")
         new_label = label_url if label_url is not None else shipment.get("label_url")
         new_status = status if status is not None else shipment.get("status")
         self.execute(
             f"""UPDATE trade_shipments
-            SET carrier = {self.param}, service_level = {self.param}, tracking_number = {self.param}, label_url = {self.param}, status = {self.param}, updated_at = {self.param}
+            SET carrier = {self.param}, service_level = {self.param}, shipping_cost_amount = {self.param}, shipping_cost_currency = {self.param}, tracking_number = {self.param}, label_url = {self.param}, status = {self.param}, updated_at = {self.param}
             WHERE shipment_id = {self.param}""",
-            (new_carrier, new_service, new_tracking, new_label, new_status, utc_now_iso(), shipment_id),
+            (new_carrier, new_service, new_cost_amount, new_cost_currency, new_tracking, new_label, new_status, utc_now_iso(), shipment_id),
         )
         self.commit()
         return self.get_trade_shipment_by_id(shipment_id)
@@ -3128,17 +3528,19 @@ class Database:
         tracking_number: str,
         label_url: str,
         status: str,
+        shipping_cost_amount: str | None = None,
+        shipping_cost_currency: str | None = None,
     ) -> dict:
         now = utc_now_iso()
         self.execute(
             f"""INSERT INTO trade_shipments
-            (shipment_id, offer_id, from_subject, to_subject, from_listing_id, to_listing_id, from_name, from_address_line1, from_address_line2, from_city, from_state, from_postal_code, from_country, to_name, to_address_line1, to_address_line2, to_city, to_state, to_postal_code, to_country, carrier, service_level, tracking_number, label_url, status, created_at, updated_at)
-            VALUES ({self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param})""",
+            (shipment_id, offer_id, from_subject, to_subject, from_listing_id, to_listing_id, from_name, from_address_line1, from_address_line2, from_city, from_state, from_postal_code, from_country, to_name, to_address_line1, to_address_line2, to_city, to_state, to_postal_code, to_country, carrier, service_level, shipping_cost_amount, shipping_cost_currency, tracking_number, label_url, status, created_at, updated_at)
+            VALUES ({self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param})""",
             (
                 shipment_id, offer_id, from_subject, to_subject, from_listing_id, to_listing_id,
                 from_name, from_address_line1, from_address_line2, from_city, from_state, from_postal_code, from_country,
                 to_name, to_address_line1, to_address_line2, to_city, to_state, to_postal_code, to_country,
-                carrier, service_level, tracking_number, label_url, status, now, now,
+                carrier, service_level, shipping_cost_amount, shipping_cost_currency, tracking_number, label_url, status, now, now,
             ),
         )
         self.commit()
@@ -3165,6 +3567,8 @@ class Database:
             "to_country": to_country,
             "carrier": carrier,
             "service_level": service_level,
+            "shipping_cost_amount": shipping_cost_amount,
+            "shipping_cost_currency": shipping_cost_currency,
             "tracking_number": tracking_number,
             "label_url": label_url,
             "status": status,

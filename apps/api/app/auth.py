@@ -33,6 +33,36 @@ def _forbidden(detail: str = "Forbidden") -> HTTPException:
     return HTTPException(status_code=403, detail=detail)
 
 
+def _value_has_admin_role(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return value.strip().casefold() == "admin"
+    if isinstance(value, (list, tuple, set)):
+        return any(_value_has_admin_role(item) for item in value)
+    return False
+
+
+def principal_has_admin_role(principal: AuthPrincipal) -> bool:
+    claims = principal.claims if isinstance(principal.claims, dict) else {}
+    candidates: list[Any] = [
+        claims.get("role"),
+        claims.get("roles"),
+        claims.get("org_role"),
+        claims.get("organization_role"),
+        claims.get("permissions"),
+    ]
+    for key in ("public_metadata", "private_metadata", "metadata", "unsafe_metadata"):
+        metadata = claims.get(key)
+        if isinstance(metadata, dict):
+            candidates.extend([
+                metadata.get("role"),
+                metadata.get("roles"),
+                metadata.get("permissions"),
+            ])
+    return any(_value_has_admin_role(candidate) for candidate in candidates)
+
+
 def _parse_bearer(authorization: str | None) -> str | None:
     if not authorization:
         return None
@@ -115,3 +145,11 @@ def require_clerk_user(
     if not sub:
         raise _unauthorized("Token missing subject")
     return AuthPrincipal(auth_type="clerk", subject=sub, claims=claims)
+
+
+def require_admin_user(
+    principal: AuthPrincipal = Depends(require_clerk_user),
+) -> AuthPrincipal:
+    if not principal_has_admin_role(principal):
+        raise _forbidden("Admin role required")
+    return principal

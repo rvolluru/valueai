@@ -187,6 +187,14 @@ class UserNotificationResponse(BaseModel):
     created_at: str
 
 
+class AdminSupportNoteCreateRequest(BaseModel):
+    entity_type: Literal["listing", "analysis", "trade", "billing", "user"]
+    entity_id: str
+    category: Literal["valuation_dispute", "auth_risk", "refund", "trade_support", "analysis_support", "general"]
+    status: Literal["open", "investigating", "resolved", "rejected"] = "open"
+    note: str = ""
+
+
 class PushTokenRegisterRequest(BaseModel):
     token: str
     device_id: str | None = None

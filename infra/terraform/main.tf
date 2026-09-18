@@ -333,6 +333,8 @@ resource "aws_ecs_task_definition" "api" {
         { name = "PHOTOROOM_OUTPUT_SIZE", value = var.photoroom_output_size },
         { name = "STRIPE_SECRET_KEY", value = var.stripe_secret_key },
         { name = "STRIPE_PUBLISHABLE_KEY", value = var.stripe_publishable_key },
+        { name = "STRIPE_WEBHOOK_SECRET", value = var.stripe_webhook_secret },
+        { name = "EXPO_PUSH_HEALTH_TOKEN", value = var.expo_push_health_token },
         { name = "GOOGLE_PLACES_API_KEY", value = var.google_places_api_key },
         { name = "SHIPPO_API_KEY", value = var.shippo_api_key },
         { name = "SHIPPO_API_BASE_URL", value = var.shippo_api_base_url },

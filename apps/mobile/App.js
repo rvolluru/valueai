@@ -13,6 +13,7 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
@@ -377,6 +378,31 @@ function getMatchPreviewImages(item, apiBaseUrl, currentSubject = '') {
     .slice(0, 3);
 }
 
+function getMarketplaceMatchesForClosetListing(listing, marketplaceListings, currentSubject = '') {
+  const targetId = String(listing?.listing_id || listing?.id || '').trim();
+  if (!targetId) return [];
+  const matchesById = new Map();
+
+  for (const candidate of getCrossOwnerMatches(listing, currentSubject)) {
+    const candidateId = String(candidate?.listing_id || candidate?.id || '').trim();
+    if (candidateId) matchesById.set(candidateId, candidate);
+  }
+
+  for (const marketplaceListing of Array.isArray(marketplaceListings) ? marketplaceListings : []) {
+    if (String(marketplaceListing?.status || '').trim().toLowerCase() !== 'active') continue;
+    if (isSameListingOwner(listing, marketplaceListing, currentSubject)) continue;
+    const matches = Array.isArray(marketplaceListing?.matches) ? marketplaceListing.matches : [];
+    const includesTarget = matches.some((match) => (
+      String(match?.listing_id || match?.id || '').trim() === targetId
+    ));
+    if (!includesTarget) continue;
+    const marketplaceId = String(marketplaceListing?.listing_id || marketplaceListing?.id || '').trim();
+    if (marketplaceId) matchesById.set(marketplaceId, marketplaceListing);
+  }
+
+  return Array.from(matchesById.values());
+}
+
 function listingGallery(listing, apiBaseUrl) {
   if (!listing || typeof listing !== 'object') return [];
   const listedImages = Array.isArray(listing.listed_images)
@@ -594,6 +620,18 @@ function completeShippingAddresses(addresses) {
   return (Array.isArray(addresses) ? addresses : []).filter(isCompleteShippingAddress);
 }
 
+function formatShippingAddress(address) {
+  if (!address || typeof address !== 'object') return '';
+  const cityStatePostal = [
+    String(address.city || '').trim(),
+    [String(address.state || '').trim(), String(address.postal_code || '').trim()].filter(Boolean).join(' '),
+  ].filter(Boolean).join(', ');
+  return [address.full_name, address.address_line1, address.address_line2, cityStatePostal, address.country]
+    .map((part) => String(part || '').trim())
+    .filter(Boolean)
+    .join('\n');
+}
+
 function normalizeProfileShippingAddresses(addresses, fallbackProfile = null) {
   const normalized = Array.isArray(addresses)
     ? addresses
@@ -783,6 +821,8 @@ function ListingCard({
   currentOwnerSubject = '',
   currentUserDisplayName = '',
   showStatus = true,
+  closet = false,
+  matchCount = null,
 }) {
   const rawImageUrl = item?.image || item?.images?.[0];
   const [imageFailed, setImageFailed] = useState(false);
@@ -795,6 +835,19 @@ function ListingCard({
   const statusLabel = String(item?.status || '').trim();
   const analysisFailed = statusLabel.toLowerCase() === 'analysisfailed';
   const analyzing = statusLabel.toLowerCase() === 'analyzing';
+  const analysisJob = item?.analysis?.debug?.analysis_job || null;
+  const analysisJobStatus = String(analysisJob?.status || '').toLowerCase();
+  const analysisJobAttempts = Number(analysisJob?.attempts || 0);
+  const analysisJobMaxAttempts = Number(analysisJob?.max_attempts || 0);
+  const analysisProgressLabel = analyzing
+    ? analysisJobStatus === 'retrying'
+      ? `Analysis retrying${analysisJobMaxAttempts ? ` (${analysisJobAttempts}/${analysisJobMaxAttempts})` : ''}.`
+      : analysisJobStatus === 'running'
+        ? `Analysis running${analysisJobAttempts ? ` (attempt ${analysisJobAttempts})` : ''}.`
+        : 'Analysis queued.'
+    : analysisFailed && analysisJob?.error
+      ? `Analysis failed: ${analysisJob.error}`
+      : '';
   const closetCardDisabled = analyzing && Boolean(onEditDraft || onPublishListing || onRemoveListing);
   const canReviewAndPublish = typeof onReviewListing === 'function' && !['active', 'analyzing', 'analysisfailed'].includes(statusLabel.toLowerCase());
   const isCurrentUserListing = Boolean(
@@ -833,7 +886,13 @@ function ListingCard({
           <Text style={styles.emptyText}>Image unavailable</Text>
         </View>
       )}
+      {closet && Number.isFinite(matchCount) && matchCount > 0 ? (
+        <View style={styles.closetMatchCount} pointerEvents="none">
+          <Text style={styles.closetMatchCountText}>{matchCount} {matchCount === 1 ? 'MATCH' : 'MATCHES'}</Text>
+        </View>
+      ) : null}
       <View style={[styles.listingBody, closetCardDisabled && styles.listingCardContentDisabled]}>
+        <Text numberOfLines={1} style={styles.listingBrand}>{String(brandLabel).toUpperCase()}</Text>
         <View style={styles.listingTitleRow}>
           <View style={{ flex: 1 }}>
             <Text numberOfLines={2} style={styles.listingTitle}>{item?.title || 'Untitled listing'}</Text>
@@ -849,14 +908,19 @@ function ListingCard({
             </TouchableOpacity>
           ) : null}
         </View>
-        <Text numberOfLines={1} style={styles.listingByline}>
-          BY {ownerName.toUpperCase()}
-        </Text>
+        {!closet ? (
+          <Text numberOfLines={1} style={styles.listingByline}>
+            BY {ownerName.toUpperCase()}
+          </Text>
+        ) : null}
         <Text numberOfLines={2} style={styles.listingMeta}>
-          EST. {money(item?.estimated_value)} · {String(brandLabel).toUpperCase()} · {String(conditionLabel).toUpperCase()} · SIZE {String(sizeLabel).toUpperCase()}
+          {money(item?.estimated_value)} · SIZE {String(sizeLabel).toUpperCase()} · {String(conditionLabel).toUpperCase()}
         </Text>
         {analysisFailed ? (
           <Text style={styles.analysisFailedText}>{ANALYSIS_FAILED_MESSAGE}</Text>
+        ) : null}
+        {analysisProgressLabel ? (
+          <Text style={styles.analysisProgressText}>{analysisProgressLabel}</Text>
         ) : null}
         {showMatches ? (
           <View style={styles.matchesRow}>
@@ -969,15 +1033,23 @@ function ListingCard({
   );
 }
 
-function OfferCard({ offer, apiBaseUrl }) {
+function OfferCard({ offer, apiBaseUrl, onPress = null }) {
   const targetListing = offer?.target_listing || null;
   const offeredListings = offerOfferedListings(offer);
   const targetHero = listingGallery(targetListing, apiBaseUrl)[0] || null;
+  const status = String(offer?.status || 'pending').toLowerCase();
+  const Container = onPress ? TouchableOpacity : View;
   return (
-    <View style={styles.offerCard}>
-      <Text style={styles.offerTitle}>Offer #{String(offer?.offer_id || '').slice(0, 8)}</Text>
-      <Text style={styles.offerMeta}>Status: {titleCase(offer?.status || 'pending')}</Text>
-      <Text style={styles.offerMeta}>From: {offerParticipantName(offer, 'from')}</Text>
+    <Container style={styles.offerCard} onPress={onPress} activeOpacity={0.88} accessibilityRole={onPress ? 'button' : undefined}>
+      <View style={styles.offerCardHeader}>
+        <View style={styles.offerCardHeaderCopy}>
+          <Text style={styles.offerLaneLabel}>Trade offer from {offerParticipantName(offer, 'from')}</Text>
+          <Text style={styles.offerTitle} numberOfLines={2}>{targetListing?.title || 'Trade offer'}</Text>
+        </View>
+        <View style={[styles.offerStatusBadge, status === 'accepted' && styles.offerStatusAccepted, status === 'declined' && styles.offerStatusDeclined]}>
+          <Text style={styles.offerStatusText}>{titleCase(status)}</Text>
+        </View>
+      </View>
       <View style={styles.offerMediaRow}>
         <View style={styles.offerTargetPanel}>
           <Text style={styles.offerLaneLabel}>Target Listing</Text>
@@ -1016,9 +1088,14 @@ function OfferCard({ offer, apiBaseUrl }) {
               {listing?.title || 'Offered listing'}
             </Text>
           ))}
+          {offeredListings.length > 2 ? <Text style={styles.offerItemMeta}>+{offeredListings.length - 2} more</Text> : null}
         </View>
       </View>
-    </View>
+      <View style={styles.offerCardOpenRow}>
+        <Text style={styles.offerCardOpenText}>View offer</Text>
+        <Ionicons name="chevron-forward" size={18} color={theme.brand} />
+      </View>
+    </Container>
   );
 }
 
@@ -1034,6 +1111,7 @@ function TopBrandHeader() {
 }
 
 function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, clerkUserLabel = '', clerkUserProfile = {}, onSignOut = null }) {
+  const { width: viewportWidth } = useWindowDimensions();
   const [apiBaseUrl, setApiBaseUrl] = useState(API_DEFAULT);
   const [authMode, setAuthMode] = useState('api_key');
   const [apiKey, setApiKey] = useState('local-dev-key');
@@ -1052,16 +1130,21 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
   const [selectedListingSource, setSelectedListingSource] = useState(null);
   const [selectedListingIndex, setSelectedListingIndex] = useState(-1);
   const [selectedGalleryImage, setSelectedGalleryImage] = useState(null);
+  const [selectedGalleryImages, setSelectedGalleryImages] = useState([]);
+  const [selectedGalleryIndex, setSelectedGalleryIndex] = useState(0);
   const [failedDetailImages, setFailedDetailImages] = useState({});
   const [tradeComposerTarget, setTradeComposerTarget] = useState(null);
+  const [tradeComposerReturnTab, setTradeComposerReturnTab] = useState('marketplace');
   const [tradeOfferCandidates, setTradeOfferCandidates] = useState([]);
   const [tradeOfferListingIds, setTradeOfferListingIds] = useState([]);
   const [tradeOfferMessage, setTradeOfferMessage] = useState('');
+  const [tradeComposerStep, setTradeComposerStep] = useState('select');
   const [tradeOfferBusy, setTradeOfferBusy] = useState(false);
   const [tradeOfferError, setTradeOfferError] = useState('');
   const [appAlert, setAppAlert] = useState(null);
   const [offerActionBusyById, setOfferActionBusyById] = useState({});
   const [offerAcceptedListingById, setOfferAcceptedListingById] = useState({});
+  const [offerImageIndexByListingId, setOfferImageIndexByListingId] = useState({});
   const [shippingAddresses, setShippingAddresses] = useState([]);
   const [profileShippingAddresses, setProfileShippingAddresses] = useState([]);
   const [profileQuiz, setProfileQuiz] = useState(null);
@@ -1187,7 +1270,41 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     setSelectedListingSource(null);
     setSelectedListingIndex(-1);
     setSelectedGalleryImage(null);
+    setSelectedGalleryImages([]);
+    setSelectedGalleryIndex(0);
     setFailedDetailImages({});
+  }
+
+  function openExpandedGallery(images, index = 0) {
+    const gallery = Array.isArray(images) ? images.filter(Boolean) : [];
+    if (gallery.length === 0) return;
+    const safeIndex = Math.max(0, Math.min(index, gallery.length - 1));
+    setSelectedGalleryImages(gallery);
+    setSelectedGalleryIndex(safeIndex);
+    setSelectedGalleryImage(gallery[safeIndex]);
+  }
+
+  function closeExpandedGallery() {
+    setSelectedGalleryImage(null);
+    setSelectedGalleryImages([]);
+    setSelectedGalleryIndex(0);
+  }
+
+  function openOfferDetails(offerId) {
+    if (!offerId) return;
+    setSelectedOfferId(offerId);
+    setActiveTab('offerDetail');
+    const offer = incomingOffers.find((entry) => entry?.offer_id === offerId);
+    if (String(offer?.status || '').toLowerCase() === 'pending' && !shippingQuoteByOffer[offerId]) {
+      loadShippingQuoteForOffer(offerId).catch(() => {});
+    }
+    requestAnimationFrame(() => mainScrollRef.current?.scrollTo?.({ y: 0, animated: false }));
+  }
+
+  function closeOfferDetails() {
+    setSelectedOfferId(null);
+    setActiveTab('inbox');
+    requestAnimationFrame(() => mainScrollRef.current?.scrollTo?.({ y: 0, animated: false }));
   }
 
   function authReady() {
@@ -2019,10 +2136,19 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     setLoading(true);
     setError('');
     setTradeOfferError('');
+    setTradeComposerReturnTab(activeTab === 'closet' ? 'closet' : 'marketplace');
+    setIsListingDetailOpen(false);
+    setSelectedListing(null);
+    setSelectedListingSource(null);
     setTradeComposerTarget(targetListing);
+    setActiveTab('tradeComposer');
+    requestAnimationFrame(() => {
+      mainScrollRef.current?.scrollTo?.({ y: 0, animated: false });
+    });
     setTradeOfferCandidates([]);
     setTradeOfferListingIds([]);
     setTradeOfferMessage('');
+    setTradeComposerStep('select');
     try {
       const payload = await apiClient.listOfferCandidates(targetListing.listing_id, 100, await authContext());
       const candidates = Array.isArray(payload?.items) ? payload.items : [];
@@ -2040,7 +2166,9 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     setTradeOfferCandidates([]);
     setTradeOfferListingIds([]);
     setTradeOfferMessage('');
+    setTradeComposerStep('select');
     setTradeOfferError('');
+    setActiveTab(tradeComposerReturnTab || 'marketplace');
   }
 
   function toggleTradeListing(listingId) {
@@ -2050,6 +2178,20 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
         ? prev.filter((id) => id !== listingId)
         : [...prev, listingId]
     ));
+  }
+
+  function reviewTradeOffer() {
+    const selectedListings = tradeOfferCandidates.filter((listing) => tradeOfferListingIds.includes(listing?.listing_id));
+    const targetValue = Number(tradeComposerTarget?.estimated_value || 0);
+    const allWithinBand = targetValue > 0 && selectedListings.length > 0
+      && selectedListings.every((listing) => Math.abs(Number(listing?.estimated_value || 0) - targetValue) / targetValue <= 0.30);
+    if (!allWithinBand) {
+      setTradeOfferError(selectedListings.length > 0 ? 'One or more selected listings are not eligible for this trade.' : 'Select at least one listing to offer.');
+      return;
+    }
+    setTradeOfferError('');
+    setTradeComposerStep('review');
+    requestAnimationFrame(() => mainScrollRef.current?.scrollTo?.({ y: 0, animated: false }));
   }
 
   async function submitTradeOffer() {
@@ -2068,11 +2210,9 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     const targetValue = Number(tradeComposerTarget?.estimated_value || 0);
     const allWithinBand = targetValue > 0 && selectedOfferListings.every((listing) => Math.abs(Number(listing?.estimated_value || 0) - targetValue) / targetValue <= 0.30);
     if (!allWithinBand) {
-      setTradeOfferError(targetValue > 0 ? 'Each offered listing must be within the 30% trade band.' : 'Target listing needs a value before sending an offer.');
+      setTradeOfferError(targetValue > 0 ? 'One or more selected listings are not eligible for this trade.' : 'This trade is not available yet.');
       return;
     }
-    const confirmed = await confirmTradeOfferShippingCharge(selectedOfferListings);
-    if (!confirmed) return;
     setTradeOfferBusy(true);
     setTradeOfferError('');
     try {
@@ -3040,6 +3180,45 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     const selectedListingAnalysisFailed = String(selectedListing?.status || '').toLowerCase() === 'analysisfailed';
     const selectedListingStatus = String(selectedListing?.status || '').trim().toLowerCase();
     const canReviewClosetListing = selectedListingSource === 'closet' && !['active', 'analyzing', 'analysisfailed'].includes(selectedListingStatus);
+    if (selectedListingSource === 'closet' && selectedListingStatus === 'active') {
+      const closetMatches = getMarketplaceMatchesForClosetListing(selectedListing, marketplaceListings, marketplaceActorSubject);
+      return (
+        <View style={asScreen ? styles.listingDetailScreen : styles.offerDetailShell}>
+          <View style={styles.offerDetailHead}>
+            <View style={styles.offerDetailTitleWrap}>
+              <Text style={styles.sectionEyebrow}>Marketplace Matches</Text>
+              <Text style={styles.offerDetailTitle} numberOfLines={3}>Matches for {selectedListing?.title || 'your listing'}</Text>
+            </View>
+            <TouchableOpacity style={[styles.secondaryBtnCompact, styles.offerDetailBackButton]} onPress={closeListingDetails} hitSlop={{ top: 10, right: 10, bottom: 10, left: 10 }}>
+              <Text style={styles.secondaryBtnText}>Back</Text>
+            </TouchableOpacity>
+          </View>
+          <View style={styles.offerDetailBody}>
+            {closetMatches.length > 0 ? closetMatches.map((item) => {
+              const isOwnListing = isOwnMarketplaceListing(item);
+              return (
+                <ListingCard
+                  key={item?.listing_id || item?.id}
+                  item={item}
+                  apiBaseUrl={apiBaseUrl}
+                  showStatus={false}
+                  currentOwnerSubject={marketplaceActorSubject}
+                  currentUserDisplayName={clerkUserLabel}
+                  onOpenDetails={(listing) => openListingDetails(listing, 'marketplace')}
+                  liked={likedListingIds.includes(String(item?.listing_id || item?.id || ''))}
+                  onToggleLike={isOwnListing ? null : toggleLikedListing}
+                />
+              );
+            }) : (
+              <View style={styles.emptyState}>
+                <Text style={styles.emptyTitle}>No marketplace matches yet</Text>
+                <Text style={styles.emptyText}>Compatible items will appear here as new listings are published.</Text>
+              </View>
+            )}
+          </View>
+        </View>
+      );
+    }
     const body = (
       <>
         <View style={styles.offerDetailPanel}>
@@ -3139,7 +3318,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                   <TouchableOpacity
                     key={`${selectedListing?.listing_id || 'listing'}-image-${idx}`}
                     activeOpacity={0.88}
-                    onPress={() => setSelectedGalleryImage(src)}
+                    onPress={() => openExpandedGallery(gallery, idx)}
                     disabled={failed}
                   >
                     {failed ? (
@@ -3192,6 +3371,39 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     String(item?.status || '').trim().toLowerCase() === 'active'
     && getCrossOwnerMatches(item, marketplaceActorSubject).length > 0
   ));
+  const tradeComposerSelectedListings = tradeOfferCandidates
+    .filter((listing) => tradeOfferListingIds.includes(listing?.listing_id));
+  const tradeComposerTargetValue = Number(tradeComposerTarget?.estimated_value || 0);
+  const tradeComposerWithinBand = tradeComposerTargetValue > 0 && tradeComposerSelectedListings.length > 0
+    && tradeComposerSelectedListings.every((listing) => (
+      Math.abs(Number(listing?.estimated_value || 0) - tradeComposerTargetValue) / tradeComposerTargetValue <= 0.30
+    ));
+  const tradeComposerShippingCharge = estimatedSenderShippingChargeForListings(tradeComposerSelectedListings);
+  const selectedOfferStatus = String(selectedOffer?.status || '').toLowerCase();
+  const selectedOfferChoices = selectedOffer ? offerOfferedListings(selectedOffer) : [];
+  const selectedOfferChoiceId = selectedOffer
+    ? (offerAcceptedListingById[selectedOffer.offer_id]
+      || selectedOffer?.selected_offered_listing_id
+      || (selectedOfferChoices.length === 1 ? listingIdOf(selectedOfferChoices[0]) : ''))
+    : '';
+  const selectedOfferChoice = selectedOfferChoices.find((listing) => listingIdOf(listing) === selectedOfferChoiceId) || null;
+  const selectedOfferAddresses = completeShippingAddresses(shippingAddresses);
+  const selectedOfferAddressId = selectedOffer
+    ? (selectedAddressByOffer[selectedOffer.offer_id]
+      || (selectedOfferAddresses.length === 1 ? selectedOfferAddresses[0].id : ''))
+    : '';
+  const selectedOfferQuote = selectedOffer ? shippingQuoteByOffer[selectedOffer.offer_id] || null : null;
+  const selectedOfferActionBusy = selectedOffer ? offerActionBusyById[selectedOffer.offer_id] || '' : '';
+  const selectedOfferCanAccept = Boolean(
+    selectedOffer
+    && selectedOfferStatus === 'pending'
+    && selectedOfferChoiceId
+    && selectedOfferAddressId
+    && selectedOfferQuote?.status === 'quoted'
+    && selectedOfferQuote?.amount
+    && !selectedOfferActionBusy,
+  );
+  const offerCarouselWidth = Math.max(260, viewportWidth - 46);
 
   return (
     <SafeAreaView style={styles.root} edges={['top', 'right', 'bottom', 'left']}>
@@ -3199,7 +3411,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
 	      <ScrollView
 	        ref={mainScrollRef}
 	        style={styles.mainScroll}
-	        contentContainerStyle={styles.content}
+	        contentContainerStyle={[styles.content, (tradeComposerTarget || selectedOffer) && styles.tradeComposerContent]}
 	        keyboardShouldPersistTaps="handled"
 	        scrollEventThrottle={250}
 	        onScroll={({ nativeEvent }) => {
@@ -3318,23 +3530,31 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                 ) : myListings.length === 0 ? (
                   <Text style={styles.emptyText}>No closet listings yet.</Text>
                 ) : (
-                  myListings.map((item) => (
-                    <ListingCard
-                      key={item.listing_id}
-                      item={item}
-                      apiBaseUrl={apiBaseUrl}
-                      onOpenDetails={(listing) => openListingDetails(listing, 'closet')}
-                      onEditDraft={openEditListingDraft}
-                      onReviewListing={(listing) => openListingDetails(listing, 'closet')}
-                      onPublishListing={publishListingToMarketplace}
-                      onRemoveListing={removeListingFromCloset}
-                      onShareListing={shareListing}
-                      onShareToPinterest={shareListingPinterest}
-                      onShareToFacebook={shareListingFacebook}
-                      currentOwnerSubject={marketplaceActorSubject}
-                      currentUserDisplayName={clerkUserLabel}
-                    />
-                  )).concat(closetHasMore ? [
+                  myListings.map((item) => {
+                    const isPublished = String(item?.status || '').trim().toLowerCase() === 'active';
+                    const matchCount = isPublished
+                      ? getMarketplaceMatchesForClosetListing(item, marketplaceListings, marketplaceActorSubject).length
+                      : null;
+                    return (
+                      <ListingCard
+                        key={item.listing_id}
+                        item={item}
+                        apiBaseUrl={apiBaseUrl}
+                        closet
+                        matchCount={matchCount}
+                        onOpenDetails={(listing) => openListingDetails(listing, 'closet')}
+                        onEditDraft={openEditListingDraft}
+                        onReviewListing={(listing) => openListingDetails(listing, 'closet')}
+                        onPublishListing={publishListingToMarketplace}
+                        onRemoveListing={removeListingFromCloset}
+                        onShareListing={shareListing}
+                        onShareToPinterest={shareListingPinterest}
+                        onShareToFacebook={shareListingFacebook}
+                        currentOwnerSubject={marketplaceActorSubject}
+                        currentUserDisplayName={clerkUserLabel}
+                      />
+                    );
+                  }).concat(closetHasMore ? [
                     <TouchableOpacity
                       key="closet-load-more"
                       style={[styles.secondaryBtnCompact, styles.loadMoreButton, closetPageLoading && styles.primaryBtnDisabled]}
@@ -3636,13 +3856,8 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                 const offerActionBusy = offerActionBusyById[offerId] || '';
                 return (
                   <View key={offerId} style={styles.offerCardWrap}>
-                    <OfferCard offer={offer} apiBaseUrl={apiBaseUrl} />
-                    <View style={styles.offerDetailCtaRow}>
-                      <TouchableOpacity style={styles.secondaryBtnCompact} onPress={() => setSelectedOfferId(offerId)}>
-                        <Text style={styles.secondaryBtnText}>View Offer Details</Text>
-                      </TouchableOpacity>
-                    </View>
-                    {isPending ? (
+                    <OfferCard offer={offer} apiBaseUrl={apiBaseUrl} onPress={() => openOfferDetails(offerId)} />
+                    {false && isPending ? (
                       <View style={styles.offerActions}>
                         <Text style={styles.label}>Receive address</Text>
                         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.addressRow}>
@@ -3661,7 +3876,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                                     {(address.label || 'Address').toUpperCase()}
                                   </Text>
                                   <Text style={[styles.addressChipSubText, active && styles.addressChipSubTextActive]}>
-                                    {address.city}, {address.state}
+                                    {formatShippingAddress(address)}
                                   </Text>
                                 </TouchableOpacity>
                               );
@@ -3711,7 +3926,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                         </View>
                       </View>
                     ) : null}
-                    {isAccepted ? (
+                    {false && isAccepted ? (
                       <View style={styles.labelBlock}>
                         <View style={styles.labelBlockHeader}>
                           <Text style={styles.label}>Shipping labels</Text>
@@ -4353,67 +4568,124 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
           const labels = Array.isArray(shippingLabelsByOffer[offerId]) ? shippingLabelsByOffer[offerId] : [];
 	          const quote = shippingQuoteByOffer[offerId] || null;
 	          const shippingBusy = Boolean(shippingBusyByOffer[offerId]);
-	          const offerActionBusy = offerActionBusyById[offerId] || '';
 	          const isPending = String(selectedOffer?.status || '').toLowerCase() === 'pending';
           const isAccepted = String(selectedOffer?.status || '').toLowerCase() === 'accepted';
           return (
-            <SafeAreaView style={styles.offerDetailOverlay}>
-              <View style={styles.offerDetailShell}>
+            <View style={styles.tradeComposerScreen}>
+              <View style={styles.listingDetailScreen}>
                 <View style={styles.offerDetailHead}>
-                  <View>
-                    <Text style={styles.sectionEyebrow}>Offer Details</Text>
-                    <Text style={styles.offerDetailTitle}>#{String(offerId || '').slice(0, 8)}</Text>
+                  <View style={styles.offerDetailTitleWrap}>
+                    <Text style={styles.sectionEyebrow}>{titleCase(selectedOffer?.status || 'pending')} Trade</Text>
+                    <Text style={styles.offerDetailTitle} numberOfLines={2}>{offerParticipantName(selectedOffer, 'from')}’s Offer</Text>
                   </View>
-                  <TouchableOpacity style={styles.secondaryBtnCompact} onPress={() => setSelectedOfferId(null)}>
-                    <Text style={styles.secondaryBtnText}>Close</Text>
+                  <TouchableOpacity style={styles.secondaryBtnCompact} onPress={closeOfferDetails}>
+                    <Text style={styles.secondaryBtnText}>Back</Text>
                   </TouchableOpacity>
                 </View>
-                <ScrollView contentContainerStyle={styles.offerDetailBody} keyboardShouldPersistTaps="handled">
-                  <View style={styles.offerDetailPanel}>
-                    <Text style={styles.offerLaneLabel}>Target Listing</Text>
+                <View style={styles.offerDetailBody}>
+                  <View style={[styles.offerDetailPanel, styles.offerExchangeTarget]}>
                     {targetGallery.length > 0 ? (
-                      <Image source={{ uri: targetGallery[0] }} style={styles.offerDetailHero} />
+                      <Image source={{ uri: targetGallery[0] }} style={styles.offerExchangeTargetImage} />
                     ) : (
-                      <View style={[styles.offerDetailHero, styles.offerImageFallback]}>
+                      <View style={[styles.offerExchangeTargetImage, styles.offerImageFallback]}>
                         <Text style={styles.emptyText}>No image</Text>
                       </View>
                     )}
-                    {targetGallery.length > 1 ? (
-                      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.offerDetailThumbRow}>
-                        {targetGallery.slice(1).map((src, idx) => (
-                          <Image key={`${offerId}-target-extra-${idx}`} source={{ uri: src }} style={styles.offerDetailThumb} />
-                        ))}
-                      </ScrollView>
-                    ) : null}
-                    <Text style={styles.offerDetailItemTitle}>{targetListing?.title || 'Target listing'}</Text>
-                    <Text style={styles.offerDetailItemMeta}>
-                      {targetListing?.brand || 'Unknown'} • {displayConditionLabel(targetListing?.condition || 'unknown')} • {titleCase(targetListing?.category || 'listing')}
-                    </Text>
+                    <View style={styles.tradeTargetCopy}>
+                      <Text style={styles.offerLaneLabel}>Requested Item</Text>
+                      <Text style={styles.offerDetailItemTitle} numberOfLines={3}>{targetListing?.title || 'Target listing'}</Text>
+                      <Text style={styles.offerDetailItemMeta} numberOfLines={2}>
+                        {targetListing?.brand || 'Unknown'} • SIZE {targetListing?.size || 'N/A'} • {displayConditionLabel(targetListing?.condition || 'unknown')}
+                      </Text>
+                    </View>
                   </View>
 
                   <View style={styles.offerDetailPanel}>
-                    <Text style={styles.offerLaneLabel}>Offered Items</Text>
+                    <View style={styles.offerChoiceHeading}>
+                      <View>
+                        <Text style={styles.offerLaneLabel}>Offered Items</Text>
+                        {isPending && offeredListings.length > 1 ? <Text style={styles.helperText}>Select the item you want to receive</Text> : null}
+                      </View>
+                      <Text style={styles.offerChoiceCount}>{offeredListings.length}</Text>
+                    </View>
                     {offeredListings.length === 0 ? (
                       <Text style={styles.emptyText}>No offered listings found.</Text>
                     ) : (
-                      offeredListings.map((listing, idx) => {
-                        const gallery = listingGallery(listing, apiBaseUrl);
-                        return (
-                          <View key={`${offerId}-offered-${idx}`} style={styles.offerDetailListingCard}>
-                            {gallery[0] ? (
-                              <Image source={{ uri: gallery[0] }} style={styles.offerDetailListingImage} />
-                            ) : (
-                              <View style={[styles.offerDetailListingImage, styles.offerImageFallback]}>
-                                <Text style={styles.emptyText}>No image</Text>
+                      <View style={styles.offerChoiceList}>
+                        {offeredListings.map((listing, idx) => {
+                          const gallery = listingGallery(listing, apiBaseUrl);
+                          const listingId = listingIdOf(listing);
+                          const active = listingId === selectedOfferedListingId;
+                          const imageIndex = Math.min(offerImageIndexByListingId[listingId] || 0, Math.max(0, gallery.length - 1));
+                          return (
+                            <View key={`${offerId}-offered-${idx}`} style={[styles.offerChoiceCard, active && styles.offerChoiceCardActive]}>
+                              <View style={styles.offerChoiceCarousel}>
+                                {gallery.length > 0 ? (
+                                  <ScrollView
+                                    horizontal
+                                    pagingEnabled
+                                    nestedScrollEnabled
+                                    showsHorizontalScrollIndicator={false}
+                                    decelerationRate="fast"
+                                    onMomentumScrollEnd={({ nativeEvent }) => {
+                                      const nextIndex = Math.round(nativeEvent.contentOffset.x / offerCarouselWidth);
+                                      setOfferImageIndexByListingId((prev) => ({ ...prev, [listingId]: nextIndex }));
+                                    }}
+                                  >
+                                    {gallery.map((src, imageIdx) => (
+                                      <TouchableOpacity
+                                        key={`${listingId}-image-${imageIdx}`}
+                                        activeOpacity={0.92}
+                                        onPress={() => openExpandedGallery(gallery, imageIdx)}
+                                      >
+                                        <Image source={{ uri: src }} style={[styles.offerChoiceImage, { width: offerCarouselWidth }]} resizeMode="contain" />
+                                      </TouchableOpacity>
+                                    ))}
+                                  </ScrollView>
+                                ) : (
+                                  <View style={[styles.offerChoiceImage, styles.offerImageFallback, { width: offerCarouselWidth }]}>
+                                    <Text style={styles.emptyText}>No image</Text>
+                                  </View>
+                                )}
+                                {gallery.length > 1 ? (
+                                  <View style={styles.offerChoiceImageCount}>
+                                    <Text style={styles.offerChoiceImageCountText}>{imageIndex + 1} / {gallery.length}</Text>
+                                  </View>
+                                ) : null}
                               </View>
-                            )}
-                            <Text style={styles.offerDetailItemTitle}>{listing?.title || 'Offered listing'}</Text>
-                            <Text style={styles.offerDetailItemMeta}>
-                              {listing?.brand || 'Unknown'} • {displayConditionLabel(listing?.condition || 'unknown')} • ${Number(listing?.estimated_value || 0).toFixed(0)}
-                            </Text>
-                          </View>
-                        );
-                      })
+                              <View style={styles.offerChoiceDetails}>
+                                <View style={styles.offerChoiceIdentityRow}>
+                                  <View style={styles.tradeTargetCopy}>
+                                    <Text style={styles.tradeCandidateBrand}>{listing?.brand || 'Unknown'}</Text>
+                                    <Text style={styles.offerChoiceTitle}>{listing?.title || 'Offered listing'}</Text>
+                                  </View>
+                                  {active ? (
+                                    <View style={styles.offerChoiceSelectedBadge}>
+                                      <Ionicons name="checkmark" size={16} color="#fff" />
+                                    </View>
+                                  ) : null}
+                                </View>
+                                <Text style={styles.offerDetailItemMeta}>
+                                  SIZE {listing?.size || 'N/A'} • {displayConditionLabel(listing?.condition || 'unknown')}
+                                </Text>
+                                {listingDescription(listing) ? (
+                                  <Text style={styles.offerChoiceDescription}>{listingDescription(listing)}</Text>
+                                ) : null}
+                                {isPending ? (
+                                  <TouchableOpacity
+                                    style={[active ? styles.primaryBtnCompact : styles.secondaryBtnCompact, styles.offerChoiceSelectButton]}
+                                    onPress={() => setOfferAcceptedListingById((prev) => ({ ...prev, [offerId]: listingId }))}
+                                  >
+                                    <Text style={active ? styles.primaryBtnText : styles.secondaryBtnText}>
+                                      {active ? 'Selected' : 'Select This Item'}
+                                    </Text>
+                                  </TouchableOpacity>
+                                ) : null}
+                              </View>
+                            </View>
+                          );
+                        })}
+                      </View>
                     )}
                   </View>
 
@@ -4426,16 +4698,22 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
 
                   {isPending ? (
                     <View style={styles.offerDetailPanel}>
-                      <Text style={styles.offerLaneLabel}>Actions</Text>
-                      <Text style={styles.helperText}>
-                        Shipping cost to send your item: {
+                      <Text style={styles.offerLaneLabel}>Delivery & Decision</Text>
+                      <View style={styles.offerShippingSummary}>
+                        <View style={styles.tradeTargetCopy}>
+                          <Text style={styles.helperText}>Shipping cost if accepted</Text>
+                          <Text style={styles.offerShippingAmount}>{
                           quote?.status === 'quoted' && quote?.amount
-                            ? `${quote.currency || 'USD'} ${quote.amount} • ${quote.carrier || 'USPS'} ${quote.service_level || ''}`
+                            ? `${quote.currency || 'USD'} ${quote.amount}`
                             : quote?.status === 'loading'
                               ? 'Calculating...'
                               : 'Unavailable until shipping addresses are complete.'
-                        }
-                      </Text>
+                          }</Text>
+                          {quote?.status === 'quoted' ? <Text style={styles.helperText}>{quote.carrier || 'USPS'} {quote.service_level || ''}</Text> : null}
+                        </View>
+                        <Ionicons name="cube-outline" size={26} color={theme.brand} />
+                      </View>
+                      <Text style={styles.label}>Receive at</Text>
                       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.addressRow}>
                         {selectableAddresses.length === 0 ? (
                           <Text style={styles.helperText}>Add a complete shipping address in Profile.</Text>
@@ -4452,54 +4730,13 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                                   {(address.label || 'Address').toUpperCase()}
                                 </Text>
                                 <Text style={[styles.addressChipSubText, active && styles.addressChipSubTextActive]}>
-                                  {address.city}, {address.state}
+                                  {formatShippingAddress(address)}
                                 </Text>
                               </TouchableOpacity>
                             );
                           })
                         )}
                       </ScrollView>
-                      <Text style={styles.label}>Accepted offered item</Text>
-                      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.addressRow}>
-                        {offeredListings.length === 0 ? (
-                          <Text style={styles.helperText}>No offered items available.</Text>
-                        ) : (
-                          offeredListings.map((listing, idx) => {
-                            const listingId = listingIdOf(listing);
-                            const active = listingId === selectedOfferedListingId;
-                            return (
-                              <TouchableOpacity
-                                key={`${offerId}-detail-offered-choice-${listingId || idx}`}
-                                style={[styles.addressChip, active && styles.addressChipActive]}
-                                onPress={() => setOfferAcceptedListingById((prev) => ({ ...prev, [offerId]: listingId }))}
-                              >
-                                <Text style={[styles.addressChipText, active && styles.addressChipTextActive]} numberOfLines={1}>
-                                  {(listing?.title || `Item ${idx + 1}`).toUpperCase()}
-                                </Text>
-                                <Text style={[styles.addressChipSubText, active && styles.addressChipSubTextActive]}>
-                                  {money(listing?.estimated_value || 0)}
-                                </Text>
-                              </TouchableOpacity>
-                            );
-                          })
-                        )}
-                      </ScrollView>
-                      <View style={styles.actionRow}>
-	                        <TouchableOpacity
-	                          style={[styles.primaryBtn, offerActionBusy && styles.primaryBtnDisabled]}
-	                          onPress={() => respondToOffer(offerId, 'accepted')}
-	                          disabled={Boolean(offerActionBusy) || !selectedOfferedListingId}
-	                        >
-	                          <Text style={styles.primaryBtnText}>{offerActionBusy === 'accepted' ? 'Accepting...' : 'Accept Trade'}</Text>
-	                        </TouchableOpacity>
-	                        <TouchableOpacity
-	                          style={[styles.secondaryBtn, offerActionBusy && styles.primaryBtnDisabled]}
-	                          onPress={() => respondToOffer(offerId, 'declined')}
-	                          disabled={Boolean(offerActionBusy)}
-	                        >
-	                          <Text style={styles.secondaryBtnText}>{offerActionBusy === 'declined' ? 'Declining...' : 'Decline'}</Text>
-	                        </TouchableOpacity>
-                      </View>
                     </View>
                   ) : null}
 
@@ -4554,62 +4791,59 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                       )}
                     </View>
                   ) : null}
-                </ScrollView>
+                </View>
               </View>
-            </SafeAreaView>
+            </View>
           );
         })() : null}
 
         {tradeComposerTarget ? (() => {
           const targetGallery = listingGallery(tradeComposerTarget, apiBaseUrl);
-          const selectedOfferListings = tradeOfferCandidates
-            .filter((listing) => tradeOfferListingIds.includes(listing?.listing_id));
-          const targetValue = Number(tradeComposerTarget?.estimated_value || 0);
-          const withinBand = targetValue > 0 && selectedOfferListings.length > 0
-            ? selectedOfferListings.every((listing) => Math.abs(Number(listing?.estimated_value || 0) - targetValue) / targetValue <= 0.30)
-            : false;
           return (
-            <SafeAreaView style={styles.offerDetailOverlay}>
-              <View style={styles.offerDetailShell}>
+            <View style={styles.tradeComposerScreen}>
+              <View style={styles.listingDetailScreen}>
                 <View style={styles.offerDetailHead}>
-                  <View>
+                  <View style={styles.offerDetailTitleWrap}>
                     <Text style={styles.sectionEyebrow}>Trade Composer</Text>
-                    <Text style={styles.offerDetailTitle}>Build Offer</Text>
+                    <Text style={styles.offerDetailTitle}>{tradeComposerStep === 'review' ? 'Review Offer' : 'Choose Your Item'}</Text>
                   </View>
-                  <TouchableOpacity style={styles.secondaryBtnCompact} onPress={closeTradeComposer} hitSlop={{ top: 10, right: 10, bottom: 10, left: 10 }}>
-                    <Text style={styles.secondaryBtnText}>Close</Text>
+                  <TouchableOpacity
+                    style={styles.secondaryBtnCompact}
+                    onPress={() => {
+                      if (tradeComposerStep === 'review') {
+                        setTradeComposerStep('select');
+                        requestAnimationFrame(() => mainScrollRef.current?.scrollTo?.({ y: 0, animated: false }));
+                      } else {
+                        closeTradeComposer();
+                      }
+                    }}
+                    hitSlop={{ top: 10, right: 10, bottom: 10, left: 10 }}
+                  >
+                    <Text style={styles.secondaryBtnText}>Back</Text>
                   </TouchableOpacity>
                 </View>
-                <ScrollView contentContainerStyle={styles.offerDetailBody} keyboardShouldPersistTaps="handled">
-                  <View style={styles.offerDetailPanel}>
-                    <Text style={styles.offerLaneLabel}>Target Listing</Text>
+                <View style={styles.offerDetailBody}>
+                  <View style={[styles.offerDetailPanel, styles.tradeTargetSummary]}>
                     {targetGallery[0] ? (
-                      <Image source={{ uri: targetGallery[0] }} style={styles.offerDetailHero} />
+                      <Image source={{ uri: targetGallery[0] }} style={styles.tradeTargetThumb} />
                     ) : (
-                      <View style={[styles.offerDetailHero, styles.offerImageFallback]}>
+                      <View style={[styles.tradeTargetThumb, styles.offerImageFallback]}>
                         <Text style={styles.emptyText}>No image</Text>
                       </View>
                     )}
-                    <Text style={styles.offerDetailItemTitle}>{tradeComposerTarget?.title || 'Target listing'}</Text>
-                    <Text style={styles.offerDetailItemMeta}>
-                      {tradeComposerTarget?.brand || 'Unknown'} • {displayConditionLabel(tradeComposerTarget?.condition || 'unknown')} • {money(tradeComposerTarget?.estimated_value)}
-                    </Text>
-                    <TouchableOpacity
-                      style={styles.secondaryBtnCompact}
-                      onPress={() => {
-                        const target = tradeComposerTarget;
-                        closeTradeComposer();
-                        openListingDetails(target, 'marketplace');
-                      }}
-                    >
-                      <Text style={styles.secondaryBtnText}>View Details</Text>
-                    </TouchableOpacity>
+                    <View style={styles.tradeTargetCopy}>
+                      <Text style={styles.offerLaneLabel}>You want</Text>
+                      <Text style={styles.offerDetailItemTitle} numberOfLines={2}>{tradeComposerTarget?.title || 'Target listing'}</Text>
+                      <Text style={styles.offerDetailItemMeta} numberOfLines={1}>
+                        {tradeComposerTarget?.brand || 'Unknown'} • SIZE {tradeComposerTarget?.size || 'N/A'} • {displayConditionLabel(tradeComposerTarget?.condition || 'unknown')}
+                      </Text>
+                    </View>
                   </View>
 
-                  <View style={styles.offerDetailPanel}>
+                  {tradeComposerStep === 'select' ? <View style={styles.offerDetailPanel}>
                     <Text style={styles.offerLaneLabel}>Your Listings to Offer</Text>
                     {tradeOfferCandidates.length === 0 ? (
-                      <Text style={styles.helperText}>No eligible listings found. Offer candidates must match brand and be within price band.</Text>
+                      <Text style={styles.helperText}>No eligible listings are available from your closet for this trade.</Text>
                     ) : (
                       tradeOfferCandidates.map((listing) => {
                         const checked = tradeOfferListingIds.includes(listing?.listing_id);
@@ -4627,10 +4861,11 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                                 <Text style={styles.offerThumbEmptyText}>No image</Text>
                               </View>
                             )}
-                            <View style={{ flex: 1 }}>
-                              <Text style={styles.offerItemTitle} numberOfLines={1}>{listing?.title || 'Listing'}</Text>
-                              <Text style={styles.offerItemMeta} numberOfLines={1}>
-                                {listing?.brand || 'Unknown'} • {money(listing?.estimated_value)}
+                            <View style={styles.tradeCandidateCopy}>
+                              <Text style={styles.tradeCandidateBrand} numberOfLines={1}>{listing?.brand || 'Unknown brand'}</Text>
+                              <Text style={styles.tradeCandidateTitle} numberOfLines={3}>{listing?.title || 'Listing'}</Text>
+                              <Text style={styles.tradeCandidateMeta} numberOfLines={2}>
+                                SIZE {listing?.size || 'N/A'} • {displayConditionLabel(listing?.condition || 'unknown')} • {titleCase(listing?.category || 'item')}
                               </Text>
                             </View>
                             <View style={[styles.tradeCheck, checked && styles.tradeCheckActive]}>
@@ -4640,14 +4875,27 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                         );
                       })
                     )}
-                  </View>
+                    {tradeOfferError ? <Text style={styles.error}>{tradeOfferError}</Text> : null}
+                  </View> : null}
 
-                  <View style={styles.offerDetailPanel}>
+                  {tradeComposerStep === 'review' ? <View style={styles.offerDetailPanel}>
+                    <Text style={styles.offerLaneLabel}>Your Offer</Text>
+                    {tradeComposerSelectedListings.map((listing) => {
+                      const gallery = listingGallery(listing, apiBaseUrl);
+                      return (
+                        <View key={`review-${listing?.listing_id}`} style={styles.tradeReviewItem}>
+                          {gallery[0] ? <Image source={{ uri: gallery[0] }} style={styles.tradeReviewThumb} /> : null}
+                          <View style={styles.tradeTargetCopy}>
+                            <Text style={styles.offerItemTitle} numberOfLines={2}>{listing?.title || 'Listing'}</Text>
+                            <Text style={styles.offerItemMeta} numberOfLines={2}>
+                              {listing?.brand || 'Unknown'} • SIZE {listing?.size || 'N/A'} • {displayConditionLabel(listing?.condition || 'unknown')}
+                            </Text>
+                          </View>
+                        </View>
+                      );
+                    })}
                     <Text style={styles.helperText}>
-                      Selected choices: {selectedOfferListings.length} • Target: {money(targetValue)}
-                    </Text>
-                    <Text style={withinBand ? styles.notice : styles.error}>
-                      {withinBand ? 'Each selected item is within the 30% trade band' : 'Select at least one item within the 30% trade band'}
+                      The recipient will select one of your offered items if this trade is accepted.
                     </Text>
                     <Text style={styles.label}>Message (optional)</Text>
                     <TextInput
@@ -4657,26 +4905,73 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                       placeholder="I’d like to trade with this item. Let me know what you think."
                       multiline
                     />
-                    {tradeOfferError ? <Text style={styles.error}>{tradeOfferError}</Text> : null}
-                    <View style={styles.actionRow}>
-                      <TouchableOpacity style={styles.secondaryBtn} onPress={closeTradeComposer}>
-                        <Text style={styles.secondaryBtnText}>Cancel</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        style={[styles.primaryBtn, (tradeOfferBusy || !withinBand) && styles.primaryBtnDisabled]}
-                        onPress={submitTradeOffer}
-                        disabled={tradeOfferBusy || !withinBand}
-                      >
-                        <Text style={styles.primaryBtnText}>{tradeOfferBusy ? 'Sending...' : 'Send Trade Offer'}</Text>
-                      </TouchableOpacity>
+                    <View style={styles.tradeShippingNotice}>
+                      <Text style={styles.offerLaneLabel}>Shipping charge</Text>
+                      <Text style={styles.tradeShippingAmount}>{tradeComposerShippingCharge?.display || 'Calculated when accepted'}</Text>
+                      <Text style={styles.helperText}>You will be charged this amount to ship your item only if the recipient accepts the trade.</Text>
                     </View>
-                  </View>
-                </ScrollView>
+                    {tradeOfferError ? <Text style={styles.error}>{tradeOfferError}</Text> : null}
+                  </View> : null}
+                </View>
               </View>
-            </SafeAreaView>
+            </View>
           );
         })() : null}
       </ScrollView>
+      {tradeComposerTarget ? (
+        <View style={styles.tradeComposerFooter}>
+          <View style={styles.tradeComposerFooterCopy}>
+            <Text style={styles.offerLaneLabel}>{tradeComposerStep === 'review' ? 'Shipping if accepted' : 'Selected'}</Text>
+            <Text style={styles.tradeComposerFooterValue}>
+              {tradeComposerStep === 'review'
+                ? (tradeComposerShippingCharge?.display || 'Carrier rate')
+                : `${tradeComposerSelectedListings.length} ${tradeComposerSelectedListings.length === 1 ? 'item' : 'items'}`}
+            </Text>
+          </View>
+          <TouchableOpacity
+            style={[styles.primaryBtnCompact, styles.tradeComposerFooterButton, (!tradeComposerWithinBand || tradeOfferBusy) && styles.primaryBtnDisabled]}
+            onPress={tradeComposerStep === 'review' ? submitTradeOffer : reviewTradeOffer}
+            disabled={!tradeComposerWithinBand || tradeOfferBusy}
+          >
+            <Text style={styles.primaryBtnText}>
+              {tradeComposerStep === 'review' ? (tradeOfferBusy ? 'Sending...' : 'Send Trade Offer') : 'Review Offer'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
+      {selectedOffer && selectedOfferStatus === 'pending' ? (
+        <View style={styles.offerPersistentFooter}>
+          <View style={styles.offerPersistentSummary}>
+            <Text style={styles.offerLaneLabel}>Shipping if accepted</Text>
+            <Text style={styles.offerPersistentAmount}>
+              {selectedOfferQuote?.status === 'quoted' && selectedOfferQuote?.amount
+                ? `${selectedOfferQuote.currency || 'USD'} ${selectedOfferQuote.amount}`
+                : selectedOfferQuote?.status === 'loading'
+                  ? 'Calculating...'
+                  : 'Unavailable'}
+            </Text>
+            <Text style={styles.offerPersistentSelection} numberOfLines={1}>
+              {selectedOfferChoice?.title || 'Select an offered item'}
+            </Text>
+          </View>
+          <View style={styles.offerPersistentActions}>
+            <TouchableOpacity
+              style={[styles.secondaryBtnCompact, styles.offerPersistentButton, selectedOfferActionBusy && styles.primaryBtnDisabled]}
+              onPress={() => respondToOffer(selectedOffer.offer_id, 'declined')}
+              disabled={Boolean(selectedOfferActionBusy)}
+            >
+              <Text style={styles.secondaryBtnText}>{selectedOfferActionBusy === 'declined' ? 'Declining...' : 'Decline'}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.primaryBtnCompact, styles.offerPersistentAcceptButton, !selectedOfferCanAccept && styles.primaryBtnDisabled]}
+              onPress={() => respondToOffer(selectedOffer.offer_id, 'accepted')}
+              disabled={!selectedOfferCanAccept}
+            >
+              <Text style={styles.primaryBtnText}>{selectedOfferActionBusy === 'accepted' ? 'Accepting...' : 'Accept Trade'}</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      ) : null}
       <Modal
         visible={Boolean(appAlert)}
         animationType="fade"
@@ -4724,32 +5019,54 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
         visible={Boolean(selectedGalleryImage)}
         animationType="fade"
         transparent={false}
-        onRequestClose={() => setSelectedGalleryImage(null)}
+        onRequestClose={closeExpandedGallery}
       >
         <SafeAreaView style={styles.galleryModalRoot}>
           <View style={styles.galleryModalHeader}>
+            <Text style={styles.galleryModalCount}>
+              {selectedGalleryImages.length > 0 ? `${selectedGalleryIndex + 1} / ${selectedGalleryImages.length}` : ''}
+            </Text>
             <TouchableOpacity
               style={[styles.secondaryBtnCompact, styles.galleryModalCloseButton]}
-              onPress={() => setSelectedGalleryImage(null)}
+              onPress={closeExpandedGallery}
               hitSlop={{ top: 10, right: 10, bottom: 10, left: 10 }}
             >
               <Text style={styles.secondaryBtnText}>Close</Text>
             </TouchableOpacity>
           </View>
-          {selectedGalleryImage ? (
-            <Image
-              source={{ uri: selectedGalleryImage }}
-              style={styles.galleryModalImage}
-              resizeMode="contain"
-            />
+          {selectedGalleryImages.length > 0 ? (
+            <ScrollView
+              key={`${selectedGalleryImages.join('|')}-${viewportWidth}`}
+              horizontal
+              pagingEnabled
+              showsHorizontalScrollIndicator={false}
+              contentOffset={{ x: selectedGalleryIndex * viewportWidth, y: 0 }}
+              style={styles.galleryModalCarousel}
+              onMomentumScrollEnd={({ nativeEvent }) => {
+                const nextIndex = Math.max(0, Math.min(
+                  Math.round(nativeEvent.contentOffset.x / viewportWidth),
+                  selectedGalleryImages.length - 1,
+                ));
+                setSelectedGalleryIndex(nextIndex);
+                setSelectedGalleryImage(selectedGalleryImages[nextIndex]);
+              }}
+            >
+              {selectedGalleryImages.map((src, idx) => (
+                <View key={`${src}-${idx}`} style={[styles.galleryModalSlide, { width: viewportWidth }]}>
+                  <Image source={{ uri: src }} style={styles.galleryModalImage} resizeMode="contain" />
+                </View>
+              ))}
+            </ScrollView>
           ) : null}
         </SafeAreaView>
       </Modal>
-      <View style={styles.tabContainer}>
-        {TABS.map((tab) => (
-          <AppTabButton key={tab} tab={tab} activeTab={activeTab === 'editListing' ? 'closet' : activeTab} onPress={handleTabPress} />
-        ))}
-      </View>
+      {!tradeComposerTarget && !selectedOffer ? (
+        <View style={styles.tabContainer}>
+          {TABS.map((tab) => (
+            <AppTabButton key={tab} tab={tab} activeTab={activeTab === 'editListing' ? 'closet' : activeTab} onPress={handleTabPress} />
+          ))}
+        </View>
+      ) : null}
     </SafeAreaView>
   );
 }
@@ -5470,6 +5787,10 @@ const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: theme.bg },
   mainScroll: { flex: 1 },
   content: { paddingBottom: 18 },
+  tradeComposerContent: {
+    flexGrow: 1,
+    backgroundColor: theme.surface,
+  },
   authRoot: {
     flex: 1,
     backgroundColor: theme.bg,
@@ -6145,6 +6466,32 @@ const styles = StyleSheet.create({
   listingImage: { width: '100%', height: 220, backgroundColor: '#ddd4ca' },
   listingImageFallback: { alignItems: 'center', justifyContent: 'center' },
   listingBody: { padding: 12, gap: 8 },
+  closetMatchCount: {
+    position: 'absolute',
+    top: 10,
+    right: 10,
+    zIndex: 3,
+    borderWidth: 1,
+    borderColor: 'rgba(90, 18, 27, 0.34)',
+    backgroundColor: 'rgba(255, 255, 255, 0.94)',
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+  },
+  closetMatchCountText: {
+    color: theme.brand,
+    fontSize: 10,
+    lineHeight: 12,
+    fontWeight: '700',
+    letterSpacing: 1,
+  },
+  listingBrand: {
+    color: theme.brand,
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: '700',
+    letterSpacing: 1.4,
+    textTransform: 'uppercase',
+  },
   listingTitleRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
@@ -6154,7 +6501,7 @@ const styles = StyleSheet.create({
     color: '#171511',
     fontSize: 18,
     lineHeight: 21,
-    fontWeight: '600',
+    fontWeight: '400',
   },
   listingByline: {
     color: '#171511',
@@ -6249,6 +6596,17 @@ const styles = StyleSheet.create({
     lineHeight: 17,
     fontWeight: '700',
   },
+  analysisProgressText: {
+    borderWidth: 1,
+    borderColor: 'rgba(92,25,33,0.18)',
+    backgroundColor: 'rgba(92,25,33,0.06)',
+    color: theme.primary,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '700',
+  },
   matchesRow: {
     marginTop: 4,
     flexDirection: 'row',
@@ -6283,10 +6641,44 @@ const styles = StyleSheet.create({
   offerCard: {
     backgroundColor: '#fff',
     padding: 12,
-    gap: 8,
+    gap: 12,
   },
-  offerTitle: { color: '#171511', fontSize: 23, lineHeight: 27, fontFamily: 'Didot' },
+  offerCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  offerCardHeaderCopy: {
+    flex: 1,
+    minWidth: 0,
+    gap: 4,
+  },
+  offerTitle: { color: '#171511', fontSize: 20, lineHeight: 24, fontFamily: 'Didot' },
   offerMeta: { color: '#574f46', fontSize: 12 },
+  offerStatusBadge: {
+    borderWidth: 1,
+    borderColor: '#d8c8b8',
+    backgroundColor: '#f7f0e8',
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+  },
+  offerStatusAccepted: {
+    borderColor: 'rgba(20, 122, 82, 0.35)',
+    backgroundColor: 'rgba(20, 122, 82, 0.08)',
+  },
+  offerStatusDeclined: {
+    borderColor: 'rgba(168, 34, 34, 0.28)',
+    backgroundColor: 'rgba(168, 34, 34, 0.06)',
+  },
+  offerStatusText: {
+    color: theme.text,
+    fontSize: 9,
+    lineHeight: 12,
+    fontWeight: '700',
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+  },
   offerMediaRow: {
     flexDirection: 'row',
     gap: 8,
@@ -6361,6 +6753,23 @@ const styles = StyleSheet.create({
     fontSize: 10,
     lineHeight: 13,
   },
+  offerCardOpenRow: {
+    minHeight: 44,
+    borderTopWidth: 1,
+    borderTopColor: theme.line,
+    paddingTop: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  offerCardOpenText: {
+    color: theme.brand,
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: '700',
+    letterSpacing: 1.2,
+    textTransform: 'uppercase',
+  },
 	  offerCardWrap: {
 	    borderWidth: 1,
 	    borderColor: theme.line,
@@ -6387,6 +6796,83 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
     zIndex: 40,
   },
+	tradeComposerScreen: {
+	  paddingTop: 8,
+	  paddingBottom: 24,
+	},
+	tradeTargetSummary: {
+	  flexDirection: 'row',
+	  alignItems: 'center',
+	  gap: 12,
+	},
+	tradeTargetThumb: {
+	  width: 92,
+	  height: 92,
+	  borderWidth: 1,
+	  borderColor: theme.line,
+	  backgroundColor: '#ece7df',
+	},
+	tradeTargetCopy: {
+	  flex: 1,
+	  minWidth: 0,
+	  gap: 4,
+	},
+	tradeReviewItem: {
+	  flexDirection: 'row',
+	  alignItems: 'center',
+	  gap: 10,
+	  borderBottomWidth: 1,
+	  borderBottomColor: theme.line,
+	  paddingBottom: 10,
+	},
+	tradeReviewThumb: {
+	  width: 58,
+	  height: 58,
+	  borderWidth: 1,
+	  borderColor: theme.line,
+	  backgroundColor: '#ece7df',
+	},
+	tradeShippingNotice: {
+	  borderWidth: 1,
+	  borderColor: 'rgba(90, 18, 27, 0.28)',
+	  backgroundColor: 'rgba(90, 18, 27, 0.05)',
+	  padding: 12,
+	  gap: 5,
+	},
+	tradeShippingAmount: {
+	  color: theme.brand,
+	  fontSize: 20,
+	  lineHeight: 24,
+	  fontWeight: '700',
+	},
+	tradeComposerFooter: {
+	  flexDirection: 'row',
+	  alignItems: 'center',
+	  gap: 12,
+	  borderTopWidth: 1,
+	  borderTopColor: theme.line,
+	  backgroundColor: '#fff',
+	  paddingHorizontal: 16,
+	  paddingVertical: 12,
+	},
+	tradeComposerFooterCopy: {
+	  flex: 1,
+	  gap: 2,
+	},
+	tradeComposerFooterValue: {
+	  color: theme.text,
+	  fontSize: 16,
+	  lineHeight: 20,
+	  fontWeight: '700',
+	},
+	tradeComposerFooterButton: {
+	  alignSelf: 'center',
+	  justifyContent: 'center',
+	  minHeight: 46,
+	  minWidth: 154,
+	  marginTop: 0,
+	  paddingHorizontal: 16,
+	},
 	  offerDetailShell: {
 	    flex: 1,
 	    borderRadius: 0,
@@ -6437,6 +6923,161 @@ const styles = StyleSheet.create({
     padding: 10,
     gap: 8,
   },
+  offerExchangeTarget: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  offerExchangeTargetImage: {
+    width: 104,
+    height: 104,
+    borderWidth: 1,
+    borderColor: theme.line,
+    backgroundColor: '#ece7df',
+  },
+  offerChoiceHeading: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  offerChoiceCount: {
+    minWidth: 28,
+    height: 28,
+    borderWidth: 1,
+    borderColor: theme.line,
+    color: theme.brand,
+    fontSize: 12,
+    lineHeight: 26,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  offerChoiceList: {
+    gap: 14,
+  },
+  offerChoiceCard: {
+    width: '100%',
+    borderWidth: 1,
+    borderColor: theme.line,
+    backgroundColor: '#fff',
+    overflow: 'hidden',
+  },
+  offerChoiceCardActive: {
+    borderColor: theme.brand,
+    backgroundColor: theme.brandSoft,
+  },
+  offerChoiceCarousel: {
+    position: 'relative',
+    width: '100%',
+    backgroundColor: '#f1eee9',
+  },
+  offerChoiceImage: {
+    height: 270,
+    backgroundColor: '#ece7df',
+  },
+  offerChoiceImageCount: {
+    position: 'absolute',
+    right: 10,
+    bottom: 10,
+    minWidth: 48,
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    backgroundColor: 'rgba(20, 17, 15, 0.76)',
+    alignItems: 'center',
+  },
+  offerChoiceImageCountText: {
+    color: '#fff',
+    fontSize: 12,
+    lineHeight: 15,
+    fontWeight: '700',
+  },
+  offerChoiceDetails: {
+    padding: 14,
+    gap: 8,
+  },
+  offerChoiceIdentityRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+  },
+  offerChoiceSelectedBadge: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: theme.brand,
+  },
+  offerChoiceTitle: {
+    color: theme.text,
+    fontSize: 18,
+    lineHeight: 23,
+    fontWeight: '500',
+  },
+  offerChoiceDescription: {
+    color: theme.muted,
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  offerChoiceSelectButton: {
+    width: '100%',
+    justifyContent: 'center',
+    marginTop: 4,
+  },
+  offerShippingSummary: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(90, 18, 27, 0.24)',
+    backgroundColor: 'rgba(90, 18, 27, 0.05)',
+    padding: 12,
+  },
+  offerShippingAmount: {
+    color: theme.brand,
+    fontSize: 20,
+    lineHeight: 24,
+    fontWeight: '700',
+  },
+  offerPersistentFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderTopWidth: 1,
+    borderTopColor: theme.line,
+    backgroundColor: '#fff',
+  },
+  offerPersistentSummary: {
+    flex: 1,
+    minWidth: 0,
+  },
+  offerPersistentAmount: {
+    color: theme.brand,
+    fontSize: 18,
+    lineHeight: 22,
+    fontWeight: '700',
+  },
+  offerPersistentSelection: {
+    color: theme.muted,
+    fontSize: 12,
+    lineHeight: 16,
+    marginTop: 2,
+  },
+  offerPersistentActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  offerPersistentButton: {
+    minWidth: 82,
+    justifyContent: 'center',
+  },
+  offerPersistentAcceptButton: {
+    minWidth: 124,
+    justifyContent: 'center',
+  },
   offerDetailHero: {
     width: '100%',
     height: 240,
@@ -6471,20 +7112,37 @@ const styles = StyleSheet.create({
     backgroundColor: '#0d0b0a',
   },
   galleryModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
     paddingHorizontal: 12,
     paddingTop: 56,
     paddingBottom: 10,
-    alignItems: 'flex-end',
     zIndex: 2,
+  },
+  galleryModalCount: {
+    color: '#fff',
+    fontSize: 14,
+    lineHeight: 18,
+    fontWeight: '700',
   },
   galleryModalCloseButton: {
     minWidth: 92,
     minHeight: 44,
     justifyContent: 'center',
   },
+  galleryModalCarousel: {
+    flex: 1,
+  },
+  galleryModalSlide: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   galleryModalImage: {
     flex: 1,
     width: '100%',
+    height: '100%',
   },
   offerDetailThumbRow: {
     gap: 8,
@@ -6620,7 +7278,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 7,
     backgroundColor: '#fff',
-    minWidth: 126,
+	    minWidth: 220,
+	    maxWidth: 280,
   },
   addressChipActive: {
     borderColor: theme.brand,
@@ -6636,6 +7295,7 @@ const styles = StyleSheet.create({
   addressChipSubText: {
     color: '#6f665d',
     fontSize: 11,
+    lineHeight: 16,
     marginTop: 2,
   },
   addressChipSubTextActive: { color: theme.brand },
@@ -6923,10 +7583,11 @@ const styles = StyleSheet.create({
   tradeCandidateRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 12,
     borderWidth: 1,
     borderColor: theme.line,
-    padding: 8,
+    padding: 10,
+    minHeight: 132,
     backgroundColor: '#fff',
   },
   tradeCandidateRowActive: {
@@ -6934,11 +7595,37 @@ const styles = StyleSheet.create({
     backgroundColor: theme.brandSoft,
   },
   tradeCandidateThumb: {
-    width: 56,
-    height: 56,
+    width: 112,
+    height: 112,
     borderWidth: 1,
     borderColor: theme.line,
     backgroundColor: '#ece7df',
+  },
+  tradeCandidateCopy: {
+    flex: 1,
+    minWidth: 0,
+    gap: 5,
+  },
+  tradeCandidateBrand: {
+    color: theme.brand,
+    fontSize: 10,
+    lineHeight: 13,
+    fontWeight: '700',
+    letterSpacing: 1.2,
+    textTransform: 'uppercase',
+  },
+  tradeCandidateTitle: {
+    color: theme.text,
+    fontSize: 16,
+    lineHeight: 20,
+    fontWeight: '500',
+  },
+  tradeCandidateMeta: {
+    color: theme.muted,
+    fontSize: 11,
+    lineHeight: 16,
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
   },
   tradeCheck: {
     width: 24,

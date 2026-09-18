@@ -7,6 +7,7 @@ import smtplib
 import asyncio
 import copy
 import hashlib
+import hmac
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -26,14 +27,14 @@ from fastapi.responses import HTMLResponse
 from fastapi.responses import RedirectResponse
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from PIL import Image, ImageFilter, ImageOps, ImageStat
+from PIL import Image, ImageDraw, ImageFilter, ImageOps, ImageStat
 from starlette.datastructures import Headers
 
 from brand.types import ImageInput
 from valuation import ValuationConfig, ValuationService
 from valuation.types import ValuationRequest
 
-from .auth import AuthPrincipal, get_request_principal, require_clerk_user
+from .auth import AuthPrincipal, get_request_principal, require_admin_user, require_clerk_user
 from .db import Database, PersistedImage, utc_now_iso
 from .deps import (
     get_db,
@@ -45,6 +46,7 @@ from .deps import (
 from .logging_utils import log_json
 from .schemas import (
     AnalyzeResponse,
+    AdminSupportNoteCreateRequest,
     AuthMeResponse,
     BrandOut,
     ClientStateResponse,
@@ -93,6 +95,9 @@ from .trade_match_agent import build_trade_match_suggestions
 
 
 app = FastAPI(title="ValueAI Fashion Analyzer", version="0.1.0")
+
+ANALYSIS_JOB_MAX_ATTEMPTS = 2
+ANALYSIS_JOB_ATTEMPT_TIMEOUT_S = int(os.getenv("LISTING_ANALYSIS_ATTEMPT_TIMEOUT_S", "180"))
 API_REQUEST_SLOW_THRESHOLD_SECONDS = 5.0
 SUBSCRIPTION_PLANS = {
     "free": {
@@ -1077,6 +1082,49 @@ def _mark_listing_analysis_failed(db: Database, listing: dict | None, owner_subj
             actor=owner_subject,
             error=str(exc),
         )
+
+
+def _create_listing_analysis_job(db: Database, *, listing_id: str, owner_subject: str) -> dict:
+    return db.create_listing_analysis_job(
+        job_id=f"analysis-job-{uuid.uuid4()}",
+        listing_id=listing_id,
+        owner_subject=owner_subject,
+        max_attempts=ANALYSIS_JOB_MAX_ATTEMPTS,
+    )
+
+
+def _with_latest_analysis_job(db: Database, listing: dict, owner_subject: str) -> dict:
+    job = db.get_latest_listing_analysis_job(str(listing.get("listing_id") or ""), owner_subject)
+    if not job:
+        return listing
+    out = dict(listing)
+    analysis = out.get("analysis") if isinstance(out.get("analysis"), dict) else {}
+    debug = analysis.get("debug") if isinstance(analysis.get("debug"), dict) else {}
+    debug = dict(debug)
+    debug["analysis_job"] = job
+    analysis = dict(analysis)
+    analysis["debug"] = debug
+    out["analysis"] = analysis
+    return out
+
+
+def _analysis_job_public_payload(job: dict | None) -> dict:
+    if not job:
+        return {"status": "not_found"}
+    return {
+        "job_id": job.get("job_id"),
+        "listing_id": job.get("listing_id"),
+        "status": job.get("status"),
+        "stage": job.get("stage"),
+        "attempts": job.get("attempts"),
+        "max_attempts": job.get("max_attempts"),
+        "error": job.get("error"),
+        "result_item_id": job.get("result_item_id"),
+        "created_at": job.get("created_at"),
+        "updated_at": job.get("updated_at"),
+        "started_at": job.get("started_at"),
+        "completed_at": job.get("completed_at"),
+    }
 
 
 def _collect_listing_analysis_files(
@@ -2130,9 +2178,30 @@ def _check_photoroom_health(settings: Settings) -> DependencyHealthCheck:
         return _dependency_health_check(
             "photoroom", "not_configured", message="PHOTOROOM_API_KEY missing"
         )
-    return _dependency_health_check(
-        "photoroom", "ok", message="configured; live processing probe skipped"
-    )
+    if not settings.health_photoroom_live_probe_enabled:
+        return _dependency_health_check(
+            "photoroom", "ok", message="configured; live processing probe disabled"
+        )
+    started = time.perf_counter()
+    try:
+        probe = Image.new("RGB", (96, 96), color="white")
+        draw = ImageDraw.Draw(probe)
+        draw.rectangle((24, 24, 72, 72), fill="black")
+        buf = BytesIO()
+        probe.save(buf, format="PNG")
+        _, _, debug = _remove_background_with_photoroom(buf.getvalue(), "image/png", settings)
+        if debug.get("reason") == "success":
+            return _dependency_health_check("photoroom", "ok", started_at=started)
+        status_code = debug.get("status_code")
+        status = "down" if status_code in {401, 403, 429} else "degraded"
+        return _dependency_health_check(
+            "photoroom",
+            status,
+            started_at=started,
+            message=f"probe_failed: {debug.get('reason') or debug.get('error') or status_code}",
+        )
+    except Exception as exc:
+        return _dependency_health_check("photoroom", "down", started_at=started, message=str(exc))
 
 
 def _check_stripe_health(settings: Settings) -> DependencyHealthCheck:
@@ -2243,7 +2312,95 @@ def _check_email_health(settings: Settings) -> DependencyHealthCheck:
         return _dependency_health_check(
             "email", "not_configured", message="No email provider configured"
         )
-    return _dependency_health_check("email", "ok", message=f"provider={provider}")
+    provider_to_probe = "ses" if provider == "ses" or (provider == "auto" and ses_configured) else "smtp"
+    started = time.perf_counter()
+    if provider_to_probe == "ses":
+        try:
+            region = str(settings.ses_region or settings.aws_region or "us-east-1").strip()
+            session = boto3.session.Session(
+                aws_access_key_id=(settings.ses_access_key_id or None),
+                aws_secret_access_key=(settings.ses_secret_access_key or None),
+                aws_session_token=(settings.ses_session_token or None),
+                region_name=region,
+            )
+            client = session.client("ses", endpoint_url=(settings.ses_endpoint_url or None))
+            quota = client.get_send_quota()
+            max_24h = quota.get("Max24HourSend")
+            sent_24h = quota.get("SentLast24Hours")
+            return _dependency_health_check(
+                "email",
+                "ok",
+                started_at=started,
+                message=f"provider=ses sent_24h={sent_24h} max_24h={max_24h}",
+            )
+        except Exception as exc:
+            return _dependency_health_check("email", "down", started_at=started, message=str(exc))
+    try:
+        host = str(settings.smtp_host or "").strip()
+        with smtplib.SMTP(host, int(settings.smtp_port), timeout=15) as smtp:
+            if settings.smtp_use_tls:
+                smtp.starttls()
+            if settings.smtp_username:
+                smtp.login(settings.smtp_username, settings.smtp_password or "")
+            smtp.noop()
+        return _dependency_health_check("email", "ok", started_at=started, message="provider=smtp")
+    except Exception as exc:
+        return _dependency_health_check("email", "down", started_at=started, message=str(exc))
+
+
+def _check_push_notification_health(settings: Settings) -> DependencyHealthCheck:
+    if not settings.expo_push_enabled:
+        return _dependency_health_check("push_notifications", "not_configured", message="Expo push disabled")
+    api_url = str(settings.expo_push_api_url or "").strip()
+    if not api_url:
+        return _dependency_health_check("push_notifications", "not_configured", message="EXPO_PUSH_API_URL missing")
+    token = str(settings.expo_push_health_token or "").strip()
+    if not token:
+        return _dependency_health_check(
+            "push_notifications",
+            "not_configured",
+            message="EXPO_PUSH_HEALTH_TOKEN missing; live delivery probe skipped",
+        )
+    if not _is_expo_push_token(token):
+        return _dependency_health_check("push_notifications", "down", message="EXPO_PUSH_HEALTH_TOKEN is invalid")
+    started = time.perf_counter()
+    headers = {"Content-Type": "application/json", "Accept": "application/json"}
+    access_token = str(settings.expo_push_access_token or "").strip()
+    if access_token:
+        headers["Authorization"] = f"Bearer {access_token}"
+    try:
+        with httpx.Client(timeout=settings.expo_push_timeout_s) as client:
+            response = client.post(
+                api_url,
+                headers=headers,
+                json={
+                    "to": token,
+                    "title": "JOUFT health check",
+                    "body": "Push notification delivery probe.",
+                    "data": {"type": "health-check"},
+                },
+            )
+        if response.status_code >= 400:
+            status = "down" if response.status_code in {401, 403, 429} else "degraded"
+            return _dependency_health_check(
+                "push_notifications",
+                status,
+                started_at=started,
+                message=_health_http_message(response),
+            )
+        payload = response.json()
+        ticket = payload.get("data") if isinstance(payload, dict) else None
+        if isinstance(ticket, dict) and ticket.get("status") == "error":
+            details = ticket.get("details") if isinstance(ticket.get("details"), dict) else {}
+            return _dependency_health_check(
+                "push_notifications",
+                "down",
+                started_at=started,
+                message=str(details.get("error") or ticket.get("message") or "Expo ticket error"),
+            )
+        return _dependency_health_check("push_notifications", "ok", started_at=started)
+    except Exception as exc:
+        return _dependency_health_check("push_notifications", "down", started_at=started, message=str(exc))
 
 
 @app.get("/v1/health/dependencies", response_model=DependencyHealthResponse)
@@ -2264,6 +2421,7 @@ def dependency_health(
         _check_google_places_health(settings),
         _check_clerk_health(settings),
         _check_email_health(settings),
+        _check_push_notification_health(settings),
     ]
     blocking_statuses = {check.status for check in checks if check.status != "not_configured"}
     if "down" in blocking_statuses:
@@ -2872,6 +3030,403 @@ def _date_from_stripe_epoch(value: object) -> str | None:
         return None
 
 
+def _is_expired_payment_method(method: dict | None) -> bool:
+    if not method:
+        return False
+    try:
+        exp_month = int(method.get("exp_month") or 0)
+        exp_year = int(method.get("exp_year") or 0)
+    except Exception:
+        return False
+    if exp_month < 1 or exp_month > 12 or exp_year < 1:
+        return False
+    now = datetime.now(timezone.utc)
+    return exp_year < now.year or (exp_year == now.year and exp_month < now.month)
+
+
+def _subscription_status_has_entitlement(status: str | None) -> bool:
+    return str(status or "").strip().lower() in {"active", "trialing", "free", "canceling"}
+
+
+def _subject_has_subscription_entitlement(db: Database, subject: str) -> bool:
+    billing = db.get_billing_profile(subject) or {}
+    profile = db.get_user_profile_quiz(subject) or {}
+    plan = str(billing.get("subscription_plan") or profile.get("subscription_plan") or "").strip()
+    status = str(billing.get("subscription_status") or profile.get("subscription_status") or "").strip()
+    if plan == "free":
+        return True
+    return bool(plan and _subscription_status_has_entitlement(status))
+
+
+def _require_subscription_entitlement(db: Database, principal: AuthPrincipal) -> None:
+    if principal.auth_type != "clerk":
+        return
+    if not _subject_has_subscription_entitlement(db, principal.subject):
+        raise HTTPException(
+            status_code=402,
+            detail="An active subscription is required. Update payment details or choose a plan in Profile.",
+        )
+
+
+def _stripe_signature_is_valid(*, payload: bytes, signature_header: str, secret: str, tolerance_seconds: int = 300) -> bool:
+    parts: dict[str, list[str]] = {}
+    for item in signature_header.split(","):
+        if "=" not in item:
+            continue
+        key, value = item.split("=", 1)
+        parts.setdefault(key, []).append(value)
+    timestamp_raw = next(iter(parts.get("t") or []), "")
+    signatures = parts.get("v1") or []
+    if not timestamp_raw or not signatures:
+        return False
+    try:
+        timestamp = int(timestamp_raw)
+    except ValueError:
+        return False
+    if abs(int(time.time()) - timestamp) > tolerance_seconds:
+        return False
+    signed_payload = f"{timestamp}.{payload.decode('utf-8')}".encode("utf-8")
+    expected = hmac.new(secret.encode("utf-8"), signed_payload, hashlib.sha256).hexdigest()
+    return any(hmac.compare_digest(expected, sig) for sig in signatures)
+
+
+def _subscription_plan_cycle_from_metadata(subscription: dict, existing: dict | None = None) -> tuple[str | None, str | None]:
+    metadata = subscription.get("metadata") if isinstance(subscription.get("metadata"), dict) else {}
+    plan = str(metadata.get("plan") or "").strip() or None
+    cycle = str(metadata.get("billing_cycle") or "").strip() or None
+    if existing:
+        plan = plan or (str(existing.get("subscription_plan") or "").strip() or None)
+        cycle = cycle or (str(existing.get("subscription_billing_cycle") or "").strip() or None)
+    return plan, cycle
+
+
+def _reconcile_subscription_state(
+    db: Database,
+    *,
+    owner_subject: str,
+    stripe_subscription_id: str | None,
+    subscription_plan: str | None,
+    subscription_billing_cycle: str | None,
+    subscription_status: str,
+    subscription_renewal_date: str | None,
+) -> None:
+    db.set_billing_subscription(
+        owner_subject,
+        stripe_subscription_id=stripe_subscription_id,
+        subscription_plan=subscription_plan,
+        subscription_billing_cycle=subscription_billing_cycle,
+        subscription_status=subscription_status,
+        subscription_renewal_date=subscription_renewal_date,
+    )
+    db.update_profile_subscription(
+        owner_subject,
+        subscription_plan=subscription_plan,
+        subscription_billing_cycle=subscription_billing_cycle,
+        subscription_status=subscription_status,
+        subscription_renewal_date=subscription_renewal_date,
+    )
+
+
+def _billing_profile_for_stripe_object(db: Database, obj: dict) -> dict | None:
+    subscription_id = str(obj.get("subscription") or obj.get("id") or "").strip()
+    if subscription_id.startswith("sub_"):
+        by_subscription = db.get_billing_profile_by_stripe_subscription_id(subscription_id)
+        if by_subscription:
+            return by_subscription
+    customer_id = str(obj.get("customer") or "").strip()
+    if customer_id:
+        return db.get_billing_profile_by_stripe_customer_id(customer_id)
+    return None
+
+
+def _send_subscription_billing_email_if_configured(
+    *,
+    settings: Settings,
+    db: Database,
+    owner_subject: str,
+    kind: str,
+    plan: str | None = None,
+    invoice_url: str | None = None,
+) -> str:
+    profile = db.get_user_profile_quiz(owner_subject) or {}
+    recipient = str(profile.get("email") or profile.get("shipping_email") or "").strip()
+    if not recipient:
+        return "skipped_no_recipient"
+    customer_name = str(profile.get("first_name") or "there").strip() or "there"
+    plan_label = str(SUBSCRIPTION_PLANS.get(str(plan or ""), {}).get("label") or "your JOUFT plan")
+    profile_url = _absolute_public_url(settings.public_app_url, "/?tab=profile")
+    notification_from_email = str(settings.notification_from_email or "").strip()
+
+    if kind == "payment_failed":
+        subject = "Payment failed for your JOUFT subscription"
+        heading = "Payment could not be processed"
+        summary = (
+            f"We could not process the renewal payment for {plan_label}. "
+            "This can happen when a card expires, is replaced, or requires bank verification."
+        )
+        action = "Please update your payment method in Profile to keep your JOUFT access active."
+        cta_label = "Update Payment Method"
+    elif kind == "payment_recovered":
+        subject = "Your JOUFT payment was processed"
+        heading = "Subscription payment processed"
+        summary = f"Your payment for {plan_label} was processed successfully."
+        action = "Your JOUFT subscription access is active again."
+        cta_label = "View Subscription"
+    else:
+        return "skipped_unknown_kind"
+
+    text_body = (
+        f"Hi {customer_name},\n\n"
+        f"{summary}\n\n"
+        f"{action}\n\n"
+        + (f"Profile: {profile_url}\n" if profile_url else "")
+        + (f"Stripe invoice: {invoice_url}\n" if invoice_url else "")
+    )
+    invoice_html = (
+        f'<p style="font-size:14px;line-height:1.5;margin:16px 0 0;"><a href="{html_escape(invoice_url)}" style="color:#64141f;">View Stripe invoice</a></p>'
+        if invoice_url
+        else ""
+    )
+    cta_html = (
+        f'<a href="{html_escape(profile_url)}" style="display:inline-block;background:#111;color:#fff;text-decoration:none;text-transform:uppercase;letter-spacing:2px;font-size:13px;font-weight:700;padding:14px 18px;">{html_escape(cta_label)}</a>'
+        if profile_url
+        else ""
+    )
+    html_body = f"""<!doctype html>
+<html>
+  <body style="margin:0;padding:0;background:#f8f4ee;color:#111827;font-family:Arial,Helvetica,sans-serif;">
+    <div style="max-width:640px;margin:0 auto;padding:28px 20px;">
+      <div style="font-family:Georgia,'Times New Roman',serif;font-size:42px;letter-spacing:4px;color:#64141f;">JOUFT</div>
+      <div style="font-size:13px;letter-spacing:5px;text-transform:uppercase;color:#7c7269;margin:4px 0 24px;">AI Luxury Exchange</div>
+      <div style="background:#fff;border:1px solid #ded6cc;padding:24px;">
+        <p style="margin:0 0 18px;font-size:16px;line-height:1.5;">Hi {html_escape(customer_name)},</p>
+        <h1 style="margin:0 0 16px;font-family:Georgia,'Times New Roman',serif;font-size:30px;font-weight:400;color:#111827;">{html_escape(heading)}</h1>
+        <p style="font-size:16px;line-height:1.55;color:#4b5563;margin:0 0 16px;">{html_escape(summary)}</p>
+        <p style="font-size:16px;line-height:1.55;color:#4b5563;margin:0 0 22px;">{html_escape(action)}</p>
+        {cta_html}
+        {invoice_html}
+      </div>
+    </div>
+  </body>
+</html>"""
+
+    def _send_via_ses(recipient_email: str) -> str:
+        from_email = str(notification_from_email or settings.ses_from_email or settings.smtp_from_email or "").strip()
+        region = str(settings.ses_region or settings.aws_region or "us-east-1").strip()
+        if not from_email:
+            return "skipped_ses_not_configured"
+        try:
+            session = boto3.session.Session(
+                aws_access_key_id=(settings.ses_access_key_id or None),
+                aws_secret_access_key=(settings.ses_secret_access_key or None),
+                aws_session_token=(settings.ses_session_token or None),
+                region_name=region,
+            )
+            client = session.client("ses", endpoint_url=(settings.ses_endpoint_url or None))
+            client.send_email(
+                Source=from_email,
+                Destination={"ToAddresses": [recipient_email]},
+                Message={
+                    "Subject": {"Data": subject, "Charset": "UTF-8"},
+                    "Body": {
+                        "Text": {"Data": text_body, "Charset": "UTF-8"},
+                        "Html": {"Data": html_body, "Charset": "UTF-8"},
+                    },
+                },
+            )
+            return "sent_ses"
+        except Exception as exc:
+            log_json(
+                "subscription_billing_email_ses_failed",
+                owner_subject=owner_subject,
+                kind=kind,
+                recipient=recipient_email,
+                error=str(exc)[:300],
+            )
+            return "failed_ses"
+
+    def _send_via_smtp(recipient_email: str) -> str:
+        host = str(settings.smtp_host or "").strip()
+        from_email = str(notification_from_email or settings.smtp_from_email or settings.ses_from_email or "").strip()
+        if not host or not from_email:
+            return "skipped_smtp_not_configured"
+        msg = EmailMessage()
+        msg["Subject"] = subject
+        msg["From"] = from_email
+        msg["To"] = recipient_email
+        msg.set_content(text_body)
+        msg.add_alternative(html_body, subtype="html")
+        try:
+            with smtplib.SMTP(host, int(settings.smtp_port), timeout=20) as smtp:
+                if settings.smtp_use_tls:
+                    smtp.starttls()
+                if settings.smtp_username:
+                    smtp.login(settings.smtp_username, settings.smtp_password or "")
+                smtp.send_message(msg)
+            return "sent_smtp"
+        except Exception as exc:
+            log_json(
+                "subscription_billing_email_smtp_failed",
+                owner_subject=owner_subject,
+                kind=kind,
+                recipient=recipient_email,
+                error=type(exc).__name__,
+            )
+            return "failed_smtp"
+
+    provider = str(settings.email_provider or "auto").strip().lower()
+    if provider == "ses":
+        result = _send_via_ses(recipient)
+    elif provider == "smtp":
+        result = _send_via_smtp(recipient)
+    else:
+        result = _send_via_ses(recipient)
+        if result != "sent_ses":
+            smtp_result = _send_via_smtp(recipient)
+            result = smtp_result if smtp_result == "sent_smtp" else result
+    log_json(
+        "subscription_billing_email_attempt",
+        owner_subject=owner_subject,
+        kind=kind,
+        email_status=result,
+    )
+    return result
+
+
+def _handle_stripe_subscription_webhook(db: Database, subscription: dict, *, deleted: bool = False) -> dict:
+    existing = _billing_profile_for_stripe_object(db, subscription)
+    metadata = subscription.get("metadata") if isinstance(subscription.get("metadata"), dict) else {}
+    owner_subject = str(metadata.get("owner_subject") or (existing or {}).get("owner_subject") or "").strip()
+    if not owner_subject:
+        return {"reconciled": False, "reason": "owner_not_found"}
+    plan, cycle = _subscription_plan_cycle_from_metadata(subscription, existing)
+    status = "canceled" if deleted else str(subscription.get("status") or "").strip().lower()
+    if not status:
+        status = "canceled" if deleted else "unknown"
+    if bool(subscription.get("cancel_at_period_end")) and status in {"active", "trialing"}:
+        status = "canceling"
+    _reconcile_subscription_state(
+        db,
+        owner_subject=owner_subject,
+        stripe_subscription_id=str(subscription.get("id") or (existing or {}).get("stripe_subscription_id") or "").strip() or None,
+        subscription_plan=plan,
+        subscription_billing_cycle=cycle,
+        subscription_status=status,
+        subscription_renewal_date=_date_from_stripe_epoch(subscription.get("current_period_end")),
+    )
+    return {"reconciled": True, "owner_subject": owner_subject, "status": status}
+
+
+def _handle_stripe_billing_status_webhook(db: Database, settings: Settings, obj: dict, *, status: str) -> dict:
+    existing = _billing_profile_for_stripe_object(db, obj)
+    if not existing:
+        return {"reconciled": False, "reason": "billing_profile_not_found"}
+    owner_subject = str(existing.get("owner_subject") or "")
+    previous_status = str(existing.get("subscription_status") or "").strip().lower()
+    plan = str(existing.get("subscription_plan") or "").strip() or None
+    _reconcile_subscription_state(
+        db,
+        owner_subject=owner_subject,
+        stripe_subscription_id=str(existing.get("stripe_subscription_id") or "").strip() or None,
+        subscription_plan=plan,
+        subscription_billing_cycle=str(existing.get("subscription_billing_cycle") or "").strip() or None,
+        subscription_status=status,
+        subscription_renewal_date=existing.get("subscription_renewal_date"),
+    )
+    email_status = "skipped"
+    notification_id = None
+    if status == "past_due":
+        invoice_url = str(obj.get("hosted_invoice_url") or "").strip() or None
+        email_status = _send_subscription_billing_email_if_configured(
+            settings=settings,
+            db=db,
+            owner_subject=owner_subject,
+            kind="payment_failed",
+            plan=plan,
+            invoice_url=invoice_url,
+        )
+        notification = _create_user_notification_and_push(
+            db=db,
+            settings=settings,
+            notification_id=str(uuid.uuid4()),
+            owner_subject=owner_subject,
+            actor_subject=None,
+            type="subscription-payment-failed",
+            title="Payment failed",
+            body="Your subscription payment could not be processed. Update your payment method in Profile.",
+            entity_id=str(existing.get("stripe_subscription_id") or ""),
+            action_tab="profile",
+        )
+        notification_id = notification.get("notification_id")
+    elif status == "active" and previous_status == "past_due":
+        email_status = _send_subscription_billing_email_if_configured(
+            settings=settings,
+            db=db,
+            owner_subject=owner_subject,
+            kind="payment_recovered",
+            plan=plan,
+        )
+        notification = _create_user_notification_and_push(
+            db=db,
+            settings=settings,
+            notification_id=str(uuid.uuid4()),
+            owner_subject=owner_subject,
+            actor_subject=None,
+            type="subscription-payment-recovered",
+            title="Payment processed",
+            body="Your subscription payment was processed successfully.",
+            entity_id=str(existing.get("stripe_subscription_id") or ""),
+            action_tab="profile",
+        )
+        notification_id = notification.get("notification_id")
+    return {
+        "reconciled": True,
+        "owner_subject": owner_subject,
+        "status": status,
+        "previous_status": previous_status,
+        "email_status": email_status,
+        "notification_id": notification_id,
+    }
+
+
+@app.post("/v1/stripe/webhook")
+async def stripe_webhook(
+    request: Request,
+    db: Database = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+):
+    secret = str(settings.stripe_webhook_secret or "").strip()
+    if not secret:
+        raise HTTPException(status_code=400, detail="Stripe webhook secret is not configured")
+    payload = await request.body()
+    signature_header = request.headers.get("stripe-signature", "")
+    if not _stripe_signature_is_valid(payload=payload, signature_header=signature_header, secret=secret):
+        raise HTTPException(status_code=400, detail="Invalid Stripe webhook signature")
+    try:
+        event = json.loads(payload.decode("utf-8"))
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid Stripe webhook payload")
+    event_type = str(event.get("type") or "").strip()
+    data = event.get("data") if isinstance(event.get("data"), dict) else {}
+    obj = data.get("object") if isinstance(data.get("object"), dict) else {}
+    result: dict
+    if event_type in {"customer.subscription.created", "customer.subscription.updated"}:
+        result = _handle_stripe_subscription_webhook(db, obj)
+    elif event_type == "customer.subscription.deleted":
+        result = _handle_stripe_subscription_webhook(db, obj, deleted=True)
+    elif event_type == "invoice.payment_failed":
+        result = _handle_stripe_billing_status_webhook(db, settings, obj, status="past_due")
+    elif event_type == "invoice.payment_succeeded":
+        result = _handle_stripe_billing_status_webhook(db, settings, obj, status="active")
+    elif event_type == "charge.dispute.created":
+        result = _handle_stripe_billing_status_webhook(db, settings, obj, status="disputed")
+    elif event_type == "charge.refunded":
+        result = _handle_stripe_billing_status_webhook(db, settings, obj, status="refunded")
+    else:
+        result = {"reconciled": False, "reason": "ignored_event"}
+    return {"received": True, "type": event_type, **result}
+
+
 @app.post("/v1/me/subscription/activate", response_model=SubscriptionActivateResponse)
 def activate_subscription(
     payload: SubscriptionActivateRequest,
@@ -2959,6 +3514,8 @@ def activate_subscription(
     provider_token = str(selected_method.get("provider_token") or "").strip()
     if provider != "stripe" or not provider_token:
         raise HTTPException(status_code=400, detail="A Stripe payment method is required for paid plans")
+    if _is_expired_payment_method(selected_method):
+        raise HTTPException(status_code=402, detail="Selected payment card is expired. Add a valid payment method.")
 
     customer_id = db.get_stripe_customer_id(principal.subject)
     if not customer_id:
@@ -3692,7 +4249,7 @@ def public_listing_share_page(
 @app.get("/v1/admin/analyses")
 def admin_recent_analyses(
     limit: int = 25,
-    principal: AuthPrincipal = Depends(get_request_principal),
+    principal: AuthPrincipal = Depends(require_admin_user),
     db: Database = Depends(get_db),
 ):
     safe_limit = max(1, min(limit, 100))
@@ -3702,6 +4259,233 @@ def admin_recent_analyses(
         "items": records,
         "actor": {"auth_type": principal.auth_type, "subject": principal.subject},
     }
+
+
+def _admin_listing_auth_risk_details(listing: dict) -> list[dict]:
+    details: list[dict] = []
+    analysis = listing.get("analysis") if isinstance(listing.get("analysis"), dict) else {}
+    profile = analysis.get("item_profile") if isinstance(analysis.get("item_profile"), dict) else {}
+    authenticity = profile.get("authenticity_screen") if isinstance(profile.get("authenticity_screen"), dict) else {}
+    verdict = str(authenticity.get("verdict") or "").strip().lower()
+    brand = str(listing.get("brand") or "").strip().lower()
+    title = str(listing.get("title") or "").strip().lower()
+    label_ocr = profile.get("label_ocr")
+    confidence = None
+    if isinstance(analysis.get("brand"), dict):
+        try:
+            confidence = float(analysis["brand"].get("confidence"))
+        except Exception:
+            confidence = None
+    if verdict in {"fail", "failed", "suspicious", "high_risk"}:
+        details.append({
+            "code": f"authenticity_{verdict}",
+            "severity": "high",
+            "title": "Authenticity screen needs review",
+            "description": f"The AI authenticity screen returned '{verdict}'. Admin should inspect label photos, logo/hardware details, and any third-party authentication evidence before allowing this item to complete a trade.",
+            "evidence": f"authenticity_screen.verdict={verdict}",
+        })
+    if brand in {"unknown", "unclear", ""} or title in {"unknown", "unidentified", "unclear"}:
+        details.append({
+            "code": "identity_unclear",
+            "severity": "medium",
+            "title": "Item identity is unclear",
+            "description": "The listing has an unclear brand or title. This can lead to incorrect valuation and poor trade matching, so admin should verify the item identity from images, OCR, and user-entered details.",
+            "evidence": f"brand={listing.get('brand') or 'blank'}; title={listing.get('title') or 'blank'}",
+        })
+    if confidence is not None and confidence < 0.55:
+        details.append({
+            "code": "low_brand_confidence",
+            "severity": "medium",
+            "title": "Low brand confidence",
+            "description": "The brand detector confidence is below the admin threshold. Admin should confirm the brand manually, especially if the item is being used in a high-value trade.",
+            "evidence": f"brand_confidence={confidence:.2f}; threshold=0.55",
+        })
+    try:
+        estimated_value = float(listing.get("estimated_value") or 0)
+    except Exception:
+        estimated_value = 0.0
+    if estimated_value >= 1000 and not label_ocr:
+        details.append({
+            "code": "high_value_without_label_ocr",
+            "severity": "medium",
+            "title": "High-value item without label OCR evidence",
+            "description": "The estimated value is at least $1,000, but there is no label OCR evidence attached to the analysis. For high-value trades, admin should request or review close-up label/authentication images.",
+            "evidence": f"estimated_value={estimated_value:.0f}; label_ocr=missing",
+        })
+    return details
+
+
+def _admin_listing_auth_risk_flags(listing: dict) -> list[str]:
+    return [str(item.get("code") or "") for item in _admin_listing_auth_risk_details(listing) if item.get("code")]
+
+
+def _admin_listing_with_review_context(listing: dict | None) -> dict | None:
+    if not listing:
+        return None
+    risk_details = _admin_listing_auth_risk_details(listing)
+    return {
+        **listing,
+        "admin_auth_risk": risk_details,
+        "admin_auth_flags": [str(item.get("code") or "") for item in risk_details if item.get("code")],
+    }
+
+
+def _admin_listing_valuation_flags(listing: dict) -> list[str]:
+    flags: list[str] = []
+    analysis = listing.get("analysis") if isinstance(listing.get("analysis"), dict) else {}
+    valuation = analysis.get("valuation") if isinstance(analysis.get("valuation"), dict) else {}
+    try:
+        value = float(listing.get("estimated_value") or valuation.get("estimated_value") or 0)
+    except Exception:
+        value = 0.0
+    if value <= 0:
+        flags.append("missing_value")
+    confidence = valuation.get("confidence")
+    try:
+        if confidence is not None and float(confidence) < 0.45:
+            flags.append("low_valuation_confidence")
+    except Exception:
+        pass
+    basis = str(valuation.get("basis") or "").lower()
+    if "fallback" in basis:
+        flags.append("fallback_valuation")
+    if analysis.get("warnings"):
+        flags.append("analysis_warnings")
+    return flags
+
+
+def _admin_enrich_offer(db: Database, offer: dict) -> dict:
+    listing_ids = [str(offer.get("target_listing_id") or ""), str(offer.get("offered_listing_id") or "")]
+    listing_ids.extend([str(x) for x in (offer.get("offered_listing_ids") or []) if isinstance(x, str)])
+    listings = {
+        listing_id: _admin_listing_with_review_context(listing)
+        for listing_id, listing in db.get_listings_by_ids(listing_ids).items()
+    }
+    shipments = db.list_shipments_for_offer(str(offer.get("offer_id") or ""))
+    return {
+        **offer,
+        "target_listing": listings.get(str(offer.get("target_listing_id") or "")),
+        "offered_listing": listings.get(str(offer.get("offered_listing_id") or "")),
+        "offered_listings": [listings[x] for x in offer.get("offered_listing_ids", []) if x in listings],
+        "shipments": shipments,
+    }
+
+
+@app.get("/v1/admin/dashboard")
+def admin_dashboard(
+    limit: int = 50,
+    principal: AuthPrincipal = Depends(require_admin_user),
+    db: Database = Depends(get_db),
+):
+    safe_limit = max(1, min(limit, 100))
+    failed_jobs = db.list_listing_analysis_jobs(limit=safe_limit, status="failed")
+    failed_jobs = [
+        {**job, "listing": db.get_listing_by_id(str(job.get("listing_id") or ""))}
+        for job in failed_jobs
+    ]
+    trades = [_admin_enrich_offer(db, offer) for offer in db.list_all_trade_offers(limit=safe_limit)]
+    recent_listings = db.list_recent_listings(limit=max(safe_limit, 100), include_analysis=True, include_media=True)
+    suspicious_listings = []
+    valuation_disputes = []
+    for listing in recent_listings:
+        risk_details = _admin_listing_auth_risk_details(listing)
+        risk_flags = [str(item.get("code") or "") for item in risk_details if item.get("code")]
+        value_flags = _admin_listing_valuation_flags(listing)
+        if risk_flags:
+            suspicious_listings.append({**listing, "admin_flags": risk_flags, "admin_auth_risk": risk_details})
+        if value_flags:
+            valuation_disputes.append({**listing, "admin_flags": value_flags})
+        if len(suspicious_listings) >= safe_limit and len(valuation_disputes) >= safe_limit:
+            break
+    refund_statuses = {"past_due", "refunded", "disputed", "canceled", "cancelled", "unpaid", "incomplete_expired"}
+    refund_reviews = [
+        profile
+        for profile in db.list_billing_profiles(limit=200)
+        if str(profile.get("subscription_status") or "").strip().lower() in refund_statuses
+    ][:safe_limit]
+    support_notes = db.list_admin_support_notes(limit=safe_limit)
+    return {
+        "actor": {"auth_type": principal.auth_type, "subject": principal.subject},
+        "failed_analyses": failed_jobs,
+        "trades": trades,
+        "refund_reviews": refund_reviews,
+        "valuation_disputes": valuation_disputes[:safe_limit],
+        "suspicious_listings": suspicious_listings[:safe_limit],
+        "support_notes": support_notes,
+        "counts": {
+            "failed_analyses": len(failed_jobs),
+            "trades": len(trades),
+            "refund_reviews": len(refund_reviews),
+            "valuation_disputes": len(valuation_disputes[:safe_limit]),
+            "suspicious_listings": len(suspicious_listings[:safe_limit]),
+            "support_notes": len(support_notes),
+        },
+    }
+
+
+@app.post("/v1/admin/support-notes")
+def admin_create_support_note(
+    payload: AdminSupportNoteCreateRequest,
+    principal: AuthPrincipal = Depends(require_admin_user),
+    db: Database = Depends(get_db),
+):
+    entity_id = str(payload.entity_id or "").strip()
+    if not entity_id:
+        raise HTTPException(status_code=400, detail="entity_id is required")
+    note = db.create_admin_support_note(
+        note_id=f"support-note-{uuid.uuid4()}",
+        entity_type=payload.entity_type,
+        entity_id=entity_id,
+        category=payload.category,
+        status=payload.status,
+        note=str(payload.note or "").strip(),
+        actor_subject=principal.subject,
+    )
+    return {"note": note}
+
+
+@app.post("/v1/admin/listings/{listing_id}/rerun-analysis")
+def admin_rerun_listing_analysis(
+    listing_id: str,
+    background_tasks: BackgroundTasks,
+    principal: AuthPrincipal = Depends(require_admin_user),
+    db: Database = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+    valuation_service: ValuationService = Depends(get_valuation_service),
+    gpt_item_profiler=Depends(get_gpt_item_profiler),
+):
+    listing = db.get_listing_by_id(listing_id)
+    if not listing:
+        raise HTTPException(status_code=404, detail="listing not found")
+    owner_subject = str(listing.get("owner_subject") or "").strip()
+    if not owner_subject:
+        raise HTTPException(status_code=409, detail="listing owner missing")
+    analysis_job = _create_listing_analysis_job(db, listing_id=listing_id, owner_subject=owner_subject)
+    background_tasks.add_task(
+        _run_listing_analysis_for_existing_listing_job,
+        listing_id=listing_id,
+        owner_subject=owner_subject,
+        category=str(listing.get("category") or "clothes"),
+        item_size=(str(listing.get("size")) if listing.get("size") is not None else None),
+        user_condition=str(listing.get("condition") or "LikeNew"),
+        item_description=str(listing.get("description") or ""),
+        debug=True,
+        settings=settings,
+        valuation_service=valuation_service,
+        gpt_item_profiler=gpt_item_profiler,
+        stage_images_after_analysis=False,
+        job_id=str(analysis_job.get("job_id") or ""),
+    )
+    db.create_admin_support_note(
+        note_id=f"support-note-{uuid.uuid4()}",
+        entity_type="listing",
+        entity_id=listing_id,
+        category="analysis_support",
+        status="investigating",
+        note=f"Analysis rerun queued by {principal.subject}",
+        actor_subject=principal.subject,
+    )
+    return {"status": "queued", "job_id": str(analysis_job.get("job_id") or ""), "listing_id": listing_id}
 
 
 @app.post("/v1/listings", response_model=ListingResponse)
@@ -3714,6 +4498,7 @@ def create_listing(
     valuation_service: ValuationService = Depends(get_valuation_service),
     gpt_item_profiler=Depends(get_gpt_item_profiler),
 ):
+    _require_subscription_entitlement(db, principal)
     normalized_image, normalized_images = _normalize_listing_media_for_storage(
         db=db,
         image=payload.image,
@@ -3778,6 +4563,7 @@ def create_listing(
         for entry in normalized_images
     ]
     if str(payload.status or "").lower() == "analyzing":
+        analysis_job = _create_listing_analysis_job(db, listing_id=listing_id, owner_subject=principal.subject)
         background_tasks.add_task(
             _run_listing_analysis_for_existing_listing_job,
             listing_id=listing_id,
@@ -3791,8 +4577,14 @@ def create_listing(
             valuation_service=valuation_service,
             gpt_item_profiler=gpt_item_profiler,
             stage_images_after_analysis=True,
+            job_id=str(analysis_job.get("job_id") or ""),
         )
-        log_json("listing_analysis_auto_queued", listing_id=listing_id, actor=principal.subject)
+        log_json("listing_analysis_auto_queued", listing_id=listing_id, actor=principal.subject, job_id=analysis_job.get("job_id"))
+        response_payload["analysis"] = {
+            "debug": {
+                "analysis_job": analysis_job,
+            },
+        }
     return ListingResponse(
         listing_id=listing_id,
         owner_subject=principal.subject,
@@ -3861,8 +4653,9 @@ def list_recent_listings(
     cutoff = (datetime.now(timezone.utc) - timedelta(minutes=15)).isoformat()
     try:
         stale_count = db.mark_stale_analyzing_listings_failed(cutoff)
-        if stale_count:
-            log_json("stale_analyzing_listings_marked_failed", count=stale_count, cutoff=cutoff)
+        stale_job_count = db.mark_stale_listing_analysis_jobs_failed(cutoff)
+        if stale_count or stale_job_count:
+            log_json("stale_analyzing_marked_failed", listings=stale_count, jobs=stale_job_count, cutoff=cutoff)
     except Exception as exc:
         log_json("stale_analyzing_cleanup_error", error=str(exc))
     records = (
@@ -4137,6 +4930,8 @@ def update_listing(
     gpt_item_profiler=Depends(get_gpt_item_profiler),
 ):
     previous_record = next((r for r in db.list_owner_listings(principal.subject, limit=500) if r["listing_id"] == listing_id), None)
+    if str(payload.status or "").strip().lower() in {"active", "analyzing"}:
+        _require_subscription_entitlement(db, principal)
     normalized_image, normalized_images = _normalize_listing_media_for_storage(
         db=db,
         image=payload.image,
@@ -4183,35 +4978,31 @@ def update_listing(
         if not previous_images and isinstance(previous_record, dict) and isinstance(previous_record.get("image"), str) and previous_record.get("image"):
             previous_images = [str(previous_record["image"])]
         stage_images_after_analysis = not _same_listing_image_urls(previous_images, _display_image_urls_from_storage_images(normalized_images))
-        files = _collect_listing_analysis_files(db=db, settings=settings, listing=record)
-        if files:
-            background_tasks.add_task(
-                _run_listing_analysis_job,
-                listing_id=listing_id,
-                owner_subject=principal.subject,
-                files=files,
-                category=payload.category,
-                item_size=payload.size,
-                user_condition=payload.condition,
-                item_description=payload.description,
-                debug=True,
-                settings=settings,
-                valuation_service=valuation_service,
-                gpt_item_profiler=gpt_item_profiler,
-                stage_images_after_analysis=stage_images_after_analysis,
-            )
-            log_json(
-                "listing_analysis_auto_queued",
-                listing_id=listing_id,
-                actor=principal.subject,
-                image_count=len(files),
-                source="update_listing",
-                stage_images_after_analysis=stage_images_after_analysis,
-            )
-        else:
-            _mark_listing_analysis_failed(db, record, principal.subject)
-            record = next((r for r in db.list_owner_listings(principal.subject, limit=500) if r["listing_id"] == listing_id), record)
-            log_json("listing_analysis_auto_queue_no_files", listing_id=listing_id, actor=principal.subject, source="update_listing")
+        analysis_job = _create_listing_analysis_job(db, listing_id=listing_id, owner_subject=principal.subject)
+        background_tasks.add_task(
+            _run_listing_analysis_for_existing_listing_job,
+            listing_id=listing_id,
+            owner_subject=principal.subject,
+            category=payload.category,
+            item_size=payload.size,
+            user_condition=payload.condition,
+            item_description=payload.description,
+            debug=True,
+            settings=settings,
+            valuation_service=valuation_service,
+            gpt_item_profiler=gpt_item_profiler,
+            stage_images_after_analysis=stage_images_after_analysis,
+            job_id=str(analysis_job.get("job_id") or ""),
+        )
+        record = _with_latest_analysis_job(db, record, principal.subject)
+        log_json(
+            "listing_analysis_auto_queued",
+            listing_id=listing_id,
+            actor=principal.subject,
+            job_id=analysis_job.get("job_id"),
+            source="update_listing",
+            stage_images_after_analysis=stage_images_after_analysis,
+        )
     return ListingResponse(**record)
 
 
@@ -4239,6 +5030,7 @@ def create_offer(
     db: Database = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ):
+    _require_subscription_entitlement(db, principal)
     offered_ids = [x for x in (payload.offered_listing_ids or []) if isinstance(x, str) and x.strip()]
     if payload.offered_listing_id and payload.offered_listing_id.strip():
         offered_ids.append(payload.offered_listing_id.strip())
@@ -4385,6 +5177,8 @@ def action_offer(
         raise HTTPException(status_code=400, detail="Sender is already marked ready. Only the receiver needs to accept.")
     if payload.status == "accepted" and not _subject_has_complete_shipping_address(db, principal.subject, settings):
         raise HTTPException(status_code=400, detail="Add a complete shipping address in Profile before accepting trade")
+    if payload.status == "accepted":
+        _require_subscription_entitlement(db, principal)
     if payload.status == "accepted" and payload.receive_address is None:
         raise HTTPException(status_code=400, detail="Select receive shipping address while accepting trade")
     if payload.status == "accepted" and principal.subject == str(offer.get("to_subject") or ""):
@@ -5757,6 +6551,8 @@ def _shippo_buy_label(
                 "status": status,
                 "carrier": str(chosen.get("provider") or "USPS"),
                 "service_level": str((chosen.get("servicelevel") or {}).get("name") if isinstance(chosen.get("servicelevel"), dict) else (chosen.get("servicelevel") or "Priority Mail")),
+                "amount": str(chosen.get("amount") or ""),
+                "currency": str(chosen.get("currency") or "USD"),
                 "tracking_number": str(tx.get("tracking_number") or ""),
                 "label_url": tx_label_url,
                 "debug": f"tx_status={tx_status or 'UNKNOWN'}; has_label_url={'yes' if tx_label_url else 'no'}; tx_obj={json.dumps(tx)[:700]}",
@@ -5813,6 +6609,8 @@ def _create_trade_shipments_if_missing(*, db: Database, offer: dict, settings: S
                     shipment_id=str(s.get("shipment_id") or ""),
                     carrier=result.get("carrier"),
                     service_level=result.get("service_level"),
+                    shipping_cost_amount=result.get("amount"),
+                    shipping_cost_currency=result.get("currency"),
                     tracking_number=result.get("tracking_number") or None,
                     label_url=result.get("label_url") or None,
                     status=result.get("status"),
@@ -5871,6 +6669,8 @@ def _create_trade_shipments_if_missing(*, db: Database, offer: dict, settings: S
             to_country=receiver_profile["country"],
             carrier=label_result_offer.get("carrier") or "USPS",
             service_level=label_result_offer.get("service_level") or "Priority Mail",
+            shipping_cost_amount=label_result_offer.get("amount") or None,
+            shipping_cost_currency=label_result_offer.get("currency") or None,
             tracking_number=tracking_offer,
             label_url=label_url_offer or "",
             status=label_result_offer.get("status") or "label_created",
@@ -5910,6 +6710,8 @@ def _create_trade_shipments_if_missing(*, db: Database, offer: dict, settings: S
         to_country=sender_profile["country"],
         carrier=label_result_return.get("carrier") or "USPS",
         service_level=label_result_return.get("service_level") or "Priority Mail",
+        shipping_cost_amount=label_result_return.get("amount") or None,
+        shipping_cost_currency=label_result_return.get("currency") or None,
         tracking_number=tracking_return,
         label_url=label_url_return or "",
         status=label_result_return.get("status") or "label_created",
@@ -5971,11 +6773,16 @@ def _create_or_refresh_trade_shipment_for_subject(
     )
     chosen_rate_id = str(rate_id or quote.get("rate_id") or "").strip()
     label_result = _shippo_buy_label_from_rate(settings=settings, rate_id=chosen_rate_id)
+    if str(label_result.get("status") or "").lower() == "label_created":
+        label_result["amount"] = quote.get("amount") or label_result.get("amount") or ""
+        label_result["currency"] = quote.get("currency") or label_result.get("currency") or "USD"
     if not chosen_rate_id:
         label_result = {
             "status": quote.get("status") or "shippo_no_rate_id",
             "carrier": quote.get("carrier") or "USPS",
             "service_level": quote.get("service_level") or "Priority Mail",
+            "amount": quote.get("amount") or "",
+            "currency": quote.get("currency") or "USD",
             "debug": quote.get("debug") or "rate_id unavailable",
         }
 
@@ -5984,6 +6791,8 @@ def _create_or_refresh_trade_shipment_for_subject(
             shipment_id=str(existing_leg.get("shipment_id") or ""),
             carrier=label_result.get("carrier"),
             service_level=label_result.get("service_level"),
+            shipping_cost_amount=label_result.get("amount"),
+            shipping_cost_currency=label_result.get("currency"),
             tracking_number=label_result.get("tracking_number") or None,
             label_url=label_result.get("label_url") or None,
             status=label_result.get("status"),
@@ -6024,6 +6833,8 @@ def _create_or_refresh_trade_shipment_for_subject(
         to_country=receiver_profile["country"],
         carrier=label_result.get("carrier") or "USPS",
         service_level=label_result.get("service_level") or "Priority Mail",
+        shipping_cost_amount=label_result.get("amount") or None,
+        shipping_cost_currency=label_result.get("currency") or None,
         tracking_number=tracking,
         label_url=(label_result.get("label_url") or ""),
         status=label_result.get("status") or "label_created",
@@ -6575,6 +7386,9 @@ async def _run_listing_analysis_job(
     valuation_service: ValuationService,
     gpt_item_profiler,
     stage_images_after_analysis: bool = False,
+    job_id: str | None = None,
+    attempt: int = 1,
+    raise_on_error: bool = False,
 ) -> None:
     job_db = Database(settings.database_url)
     job_db.initialize()
@@ -6600,11 +7414,31 @@ async def _run_listing_analysis_job(
         )
     if not upload_files:
         log_json("listing_analysis_job_no_files", listing_id=listing_id, actor=owner_subject)
+        if job_id:
+            job_db.update_listing_analysis_job(
+                job_id=job_id,
+                owner_subject=owner_subject,
+                status="failed",
+                stage="failed",
+                attempts=attempt,
+                error="No readable images uploaded",
+                completed=True,
+            )
         _mark_listing_analysis_failed(job_db, current, owner_subject)
         return
 
     try:
-        log_json("listing_analysis_job_started", listing_id=listing_id, actor=owner_subject, image_count=len(upload_files))
+        if job_id:
+            job_db.update_listing_analysis_job(
+                job_id=job_id,
+                owner_subject=owner_subject,
+                status="running",
+                stage="analyzing",
+                attempts=attempt,
+                error="",
+                started=True,
+            )
+        log_json("listing_analysis_job_started", listing_id=listing_id, actor=owner_subject, image_count=len(upload_files), job_id=job_id, attempt=attempt)
         payload = await analyze(
             background_tasks=BackgroundTasks(),
             images=upload_files,
@@ -6676,11 +7510,24 @@ async def _run_listing_analysis_job(
             "listing_analysis_job_completed",
             listing_id=listing_id,
             actor=owner_subject,
+            job_id=job_id,
+            attempt=attempt,
             item_id=response_payload.get("item_id"),
             brand=brand,
             category=resolved_category,
             estimated_value=estimated_value,
         )
+        if job_id:
+            job_db.update_listing_analysis_job(
+                job_id=job_id,
+                owner_subject=owner_subject,
+                status="succeeded",
+                stage="completed",
+                attempts=attempt,
+                error="",
+                result_item_id=str(response_payload.get("item_id") or ""),
+                completed=True,
+            )
         if stage_images_after_analysis:
             await _run_listing_image_staging_job(
                 listing_id=listing_id,
@@ -6692,7 +7539,19 @@ async def _run_listing_analysis_job(
             log_json("listing_image_staging_skipped", listing_id=listing_id, actor=owner_subject, reason="not_new_upload")
     except Exception as exc:
         current = next((r for r in job_db.list_owner_listings(owner_subject, limit=500) if r["listing_id"] == listing_id), None)
-        log_json("listing_analysis_job_error", listing_id=listing_id, actor=owner_subject, error=str(exc))
+        log_json("listing_analysis_job_error", listing_id=listing_id, actor=owner_subject, job_id=job_id, attempt=attempt, error=str(exc))
+        if raise_on_error:
+            raise
+        if job_id:
+            job_db.update_listing_analysis_job(
+                job_id=job_id,
+                owner_subject=owner_subject,
+                status="failed",
+                stage="failed",
+                attempts=attempt,
+                error=str(exc)[:1000],
+                completed=True,
+            )
         _mark_listing_analysis_failed(job_db, current, owner_subject)
 
 
@@ -6710,23 +7569,70 @@ def _run_listing_analysis_job_threaded(
     valuation_service: ValuationService,
     gpt_item_profiler,
     stage_images_after_analysis: bool = False,
+    job_id: str | None = None,
+    max_attempts: int = ANALYSIS_JOB_MAX_ATTEMPTS,
+    attempt_timeout_s: int = ANALYSIS_JOB_ATTEMPT_TIMEOUT_S,
 ) -> None:
-    asyncio.run(
-        _run_listing_analysis_job(
+    max_attempts = max(1, int(max_attempts or 1))
+    last_error = ""
+    for attempt in range(1, max_attempts + 1):
+        try:
+            asyncio.run(
+                asyncio.wait_for(
+                    _run_listing_analysis_job(
+                        listing_id=listing_id,
+                        owner_subject=owner_subject,
+                        files=files,
+                        category=category,
+                        item_size=item_size,
+                        user_condition=user_condition,
+                        item_description=item_description,
+                        debug=debug,
+                        settings=settings,
+                        valuation_service=valuation_service,
+                        gpt_item_profiler=gpt_item_profiler,
+                        stage_images_after_analysis=stage_images_after_analysis,
+                        job_id=job_id,
+                        attempt=attempt,
+                        raise_on_error=True,
+                    ),
+                    timeout=max(30, int(attempt_timeout_s or ANALYSIS_JOB_ATTEMPT_TIMEOUT_S)),
+                )
+            )
+            return
+        except asyncio.TimeoutError:
+            last_error = f"Analysis timed out after {attempt_timeout_s}s"
+        except Exception as exc:
+            last_error = str(exc) or exc.__class__.__name__
+
+        retrying = attempt < max_attempts
+        log_json(
+            "listing_analysis_job_attempt_failed",
             listing_id=listing_id,
-            owner_subject=owner_subject,
-            files=files,
-            category=category,
-            item_size=item_size,
-            user_condition=user_condition,
-            item_description=item_description,
-            debug=debug,
-            settings=settings,
-            valuation_service=valuation_service,
-            gpt_item_profiler=gpt_item_profiler,
-            stage_images_after_analysis=stage_images_after_analysis,
+            actor=owner_subject,
+            job_id=job_id,
+            attempt=attempt,
+            max_attempts=max_attempts,
+            retrying=retrying,
+            error=last_error,
         )
-    )
+        job_db = Database(settings.database_url)
+        job_db.initialize()
+        if job_id:
+            job_db.update_listing_analysis_job(
+                job_id=job_id,
+                owner_subject=owner_subject,
+                status="retrying" if retrying else "failed",
+                stage="retry_wait" if retrying else "failed",
+                attempts=attempt,
+                error=last_error[:1000],
+                completed=not retrying,
+            )
+        if retrying:
+            time.sleep(min(2 * attempt, 6))
+            continue
+        current = next((r for r in job_db.list_owner_listings(owner_subject, limit=500) if r["listing_id"] == listing_id), None)
+        _mark_listing_analysis_failed(job_db, current, owner_subject)
 
 
 def _run_listing_analysis_for_existing_listing_job(
@@ -6742,6 +7648,7 @@ def _run_listing_analysis_for_existing_listing_job(
     valuation_service: ValuationService,
     gpt_item_profiler,
     stage_images_after_analysis: bool = False,
+    job_id: str | None = None,
 ) -> None:
     job_db = Database(settings.database_url)
     job_db.initialize()
@@ -6757,11 +7664,32 @@ def _run_listing_analysis_for_existing_listing_job(
         current=current,
     )
     if reused_payload:
+        if job_id:
+            job_db.update_listing_analysis_job(
+                job_id=job_id,
+                owner_subject=owner_subject,
+                status="succeeded",
+                stage="reused",
+                attempts=0,
+                error="",
+                result_item_id=str(reused_payload.get("item_id") or ""),
+                completed=True,
+            )
         log_json("listing_analysis_reused_in_background", listing_id=listing_id, actor=owner_subject)
         return
 
     files = _collect_listing_analysis_files(db=job_db, settings=settings, listing=current)
     if not files:
+        if job_id:
+            job_db.update_listing_analysis_job(
+                job_id=job_id,
+                owner_subject=owner_subject,
+                status="failed",
+                stage="failed",
+                attempts=0,
+                error="No readable images uploaded",
+                completed=True,
+            )
         _mark_listing_analysis_failed(job_db, current, owner_subject)
         log_json("listing_analysis_auto_queue_no_files", listing_id=listing_id, actor=owner_subject)
         return
@@ -6785,6 +7713,7 @@ def _run_listing_analysis_for_existing_listing_job(
         valuation_service=valuation_service,
         gpt_item_profiler=gpt_item_profiler,
         stage_images_after_analysis=stage_images_after_analysis,
+        job_id=job_id,
     )
 
 
@@ -6859,6 +7788,7 @@ async def queue_listing_analysis(
         log_json("listing_analysis_queue_no_files", listing_id=listing_id, actor=principal.subject)
         raise HTTPException(status_code=400, detail="No readable images uploaded")
 
+    analysis_job = _create_listing_analysis_job(db, listing_id=listing_id, owner_subject=principal.subject)
     background_tasks.add_task(
         _run_listing_analysis_job_threaded,
         listing_id=listing_id,
@@ -6873,8 +7803,33 @@ async def queue_listing_analysis(
         valuation_service=valuation_service,
         gpt_item_profiler=gpt_item_profiler,
         stage_images_after_analysis=uploaded_file_count > 0,
+        job_id=str(analysis_job.get("job_id") or ""),
     )
-    return {"status": "queued"}
+    return {"status": "queued", "job_id": str(analysis_job.get("job_id") or "")}
+
+
+@app.get("/v1/listings/{listing_id}/analysis-jobs/latest")
+def get_latest_listing_analysis_job(
+    listing_id: str,
+    principal: AuthPrincipal = Depends(get_request_principal),
+    db: Database = Depends(get_db),
+) -> dict:
+    current = next((r for r in db.list_owner_listings(principal.subject, limit=500) if r["listing_id"] == listing_id), None)
+    if current is None:
+        raise HTTPException(status_code=404, detail="listing not found")
+    return _analysis_job_public_payload(db.get_latest_listing_analysis_job(listing_id, principal.subject))
+
+
+@app.get("/v1/analysis-jobs/{job_id}")
+def get_listing_analysis_job(
+    job_id: str,
+    principal: AuthPrincipal = Depends(get_request_principal),
+    db: Database = Depends(get_db),
+) -> dict:
+    job = db.get_listing_analysis_job(job_id, principal.subject)
+    if not job:
+        raise HTTPException(status_code=404, detail="analysis job not found")
+    return _analysis_job_public_payload(job)
 
 
 @app.post("/v1/analyze", response_model=AnalyzeResponse)

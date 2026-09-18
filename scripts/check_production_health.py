@@ -132,6 +132,49 @@ def _dependency_summary(body: dict) -> str:
     return "; ".join(parts)
 
 
+def _required_dependency_failures(body: dict, required: list[str]) -> list[str]:
+    if not required:
+        return []
+    checks = body.get("checks") or []
+    by_name = {
+        str(check.get("name")): check
+        for check in checks
+        if isinstance(check, dict) and check.get("name")
+    }
+    failures: list[str] = []
+    for name in required:
+        check = by_name.get(name)
+        if not check:
+            failures.append(f"{name}=missing")
+            continue
+        status = str(check.get("status") or "unknown")
+        if status != "ok":
+            message = str(check.get("message") or "").strip()
+            failures.append(f"{name}={status}" + (f" ({message})" if message else ""))
+    return failures
+
+
+def _full_dependency_report(body: dict) -> str:
+    checks = body.get("checks") or []
+    if not isinstance(checks, list):
+        return "Dependency response did not include checks."
+    lines = []
+    for check in checks:
+        if not isinstance(check, dict):
+            continue
+        name = check.get("name") or "unknown"
+        status = check.get("status") or "unknown"
+        latency = check.get("latency_ms")
+        message = check.get("message")
+        line = f"- {name}: {status}"
+        if latency is not None:
+            line += f" ({latency} ms)"
+        if message:
+            line += f" - {message}"
+        lines.append(line)
+    return "\n".join(lines) if lines else "No dependency checks returned."
+
+
 def main() -> int:
     if os.environ.get("SEND_TEST_HEALTH_ALERT_EMAIL", "false").lower() == "true":
         _send_email_alert(
@@ -150,6 +193,11 @@ def main() -> int:
     require_dependency_health = (
         os.environ.get("REQUIRE_DEPENDENCY_HEALTH", "false").lower() == "true"
     )
+    required_dependencies = [
+        item.strip()
+        for item in (os.environ.get("REQUIRED_HEALTH_CHECKS") or "").split(",")
+        if item.strip()
+    ]
 
     status_code, health = _request_json(f"{base_url}/v1/health")
     print(f"application health HTTP {status_code}: {health}")
@@ -194,7 +242,10 @@ def main() -> int:
             )
     print(f"dependency health HTTP {status_code}: status={dependencies.get('status')}")
     _print_dependency_report(dependencies)
-    if status_code >= 400 or dependencies.get("status") != "ok":
+    required_failures = _required_dependency_failures(dependencies, required_dependencies)
+    if required_failures:
+        print(f"required dependency failures: {'; '.join(required_failures)}")
+    if status_code >= 400 or dependencies.get("status") != "ok" or required_failures:
         _send_alert(
             "JOUFT production dependency health failed",
             (
@@ -202,7 +253,9 @@ def main() -> int:
                 f"URL: {base_url}/v1/health/dependencies\n"
                 f"HTTP status: {status_code}\n"
                 f"Overall status: {dependencies.get('status')}\n"
-                f"Failing checks: {_dependency_summary(dependencies)}"
+                f"Failing checks: {_dependency_summary(dependencies)}\n"
+                f"Required check failures: {'; '.join(required_failures) if required_failures else 'None'}\n\n"
+                f"Full report:\n{_full_dependency_report(dependencies)}"
             ),
         )
         return 1

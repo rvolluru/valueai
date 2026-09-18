@@ -1,6 +1,10 @@
 import io
+import hashlib
+import hmac
+import json
 import os
 import tempfile
+import time
 
 from fastapi.testclient import TestClient
 from PIL import Image, ImageDraw
@@ -30,6 +34,7 @@ def _build_client():
     os.environ["PHOTOROOM_API_KEY"] = ""
     os.environ["STRIPE_SECRET_KEY"] = ""
     os.environ["STRIPE_PUBLISHABLE_KEY"] = ""
+    os.environ["STRIPE_WEBHOOK_SECRET"] = ""
     os.environ["SHIPPO_API_KEY"] = ""
     os.environ["GOOGLE_PLACES_API_KEY"] = ""
     os.environ["CLERK_ENABLED"] = "false"
@@ -114,6 +119,45 @@ def test_infer_brand_from_item_profile_ignores_low_confidence_label_ocr_when_can
     assert source is None
 
 
+def test_listing_analysis_job_lifecycle_helpers():
+    _build_client()
+
+    from app.deps import get_db
+
+    db = get_db()
+    job = db.create_listing_analysis_job(
+        job_id="analysis-job-test",
+        listing_id="listing-test",
+        owner_subject="owner-test",
+        max_attempts=2,
+    )
+
+    assert job["status"] == "queued"
+    assert job["stage"] == "queued"
+    assert job["attempts"] == 0
+    assert job["max_attempts"] == 2
+
+    running = db.update_listing_analysis_job(
+        job_id="analysis-job-test",
+        owner_subject="owner-test",
+        status="running",
+        stage="analyzing",
+        attempts=1,
+        started=True,
+    )
+    assert running["status"] == "running"
+    assert running["stage"] == "analyzing"
+    assert running["attempts"] == 1
+    assert running["started_at"]
+
+    failed_count = db.mark_stale_listing_analysis_jobs_failed("9999-01-01T00:00:00+00:00")
+    failed = db.get_listing_analysis_job("analysis-job-test", "owner-test")
+    assert failed_count == 1
+    assert failed["status"] == "failed"
+    assert failed["stage"] == "failed"
+    assert failed["completed_at"]
+
+
 def test_dependency_health_reports_core_services_and_redacts_secrets():
     client = _build_client()
 
@@ -133,7 +177,45 @@ def test_dependency_health_reports_core_services_and_redacts_secrets():
     assert checks["google_places"]["status"] == "not_configured"
     assert checks["clerk"]["status"] == "not_configured"
     assert checks["email"]["status"] == "not_configured"
+    assert checks["push_notifications"]["status"] == "not_configured"
     assert "test-key" not in str(body)
+
+
+def test_admin_role_detection_accepts_common_clerk_claim_shapes():
+    from app.auth import AuthPrincipal, principal_has_admin_role
+
+    assert principal_has_admin_role(AuthPrincipal(auth_type="clerk", subject="u1", claims={"role": "admin"}))
+    assert principal_has_admin_role(AuthPrincipal(auth_type="clerk", subject="u1", claims={"roles": ["member", "admin"]}))
+    assert principal_has_admin_role(AuthPrincipal(auth_type="clerk", subject="u1", claims={"public_metadata": {"role": "admin"}}))
+    assert not principal_has_admin_role(AuthPrincipal(auth_type="clerk", subject="u1", claims={"role": "member"}))
+
+
+def test_admin_dashboard_rejects_api_key_without_admin_role():
+    client = _build_client()
+
+    res = client.get("/v1/admin/dashboard", headers={"x-api-key": "test-key"})
+
+    assert res.status_code == 401
+
+
+def test_admin_dashboard_allows_admin_role_dependency_override():
+    client = _build_client()
+
+    from app.auth import AuthPrincipal, require_admin_user
+    from app.main import app
+
+    app.dependency_overrides[require_admin_user] = lambda: AuthPrincipal(
+        auth_type="clerk",
+        subject="admin-user",
+        claims={"sub": "admin-user", "role": "admin"},
+    )
+    try:
+        res = client.get("/v1/admin/dashboard")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert res.status_code == 200, res.text
+    assert res.json()["actor"]["subject"] == "admin-user"
 
 
 def test_register_and_unregister_push_token():
@@ -213,6 +295,283 @@ def test_create_user_notification_pushes_to_registered_expo_token(monkeypatch):
     assert len(sent_payloads) == 1
     assert sent_payloads[0]["json"][0]["to"] == token
     assert sent_payloads[0]["json"][0]["title"] == "Listing liked"
+
+
+def _stripe_signature(payload: dict, secret: str) -> str:
+    body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    timestamp = int(time.time())
+    digest = hmac.new(secret.encode("utf-8"), f"{timestamp}.{body.decode('utf-8')}".encode("utf-8"), hashlib.sha256).hexdigest()
+    return f"t={timestamp},v1={digest}"
+
+
+def test_activate_subscription_rejects_expired_card_before_calling_stripe():
+    client = _build_client()
+
+    from app import deps, settings
+
+    os.environ["STRIPE_SECRET_KEY"] = "sk_test_local"
+    settings.get_settings.cache_clear()
+    db = deps.get_db()
+    db.set_stripe_customer_id("api-key", "cus_test")
+    db.create_payment_method(
+        payment_method_id="pm-local-expired",
+        owner_subject="api-key",
+        provider="stripe",
+        method_type="card",
+        label="Visa expired",
+        last4="4242",
+        brand="visa",
+        exp_month=1,
+        exp_year=2020,
+        email=None,
+        provider_token="pm_test_expired",
+        is_default=True,
+    )
+
+    res = client.post(
+        "/v1/me/subscription/activate",
+        headers={"x-api-key": "test-key"},
+        json={"plan": "starter_15", "billing_cycle": "monthly", "payment_method_id": "pm-local-expired"},
+    )
+
+    assert res.status_code == 402
+    assert "expired" in res.json()["detail"].lower()
+
+
+def test_stripe_webhook_reconciles_payment_failure_and_blocks_entitlement(monkeypatch):
+    client = _build_client()
+
+    from app import deps, settings
+    import app.main as main_module
+    from app.main import _subject_has_subscription_entitlement
+
+    os.environ["STRIPE_WEBHOOK_SECRET"] = "whsec_test"
+    settings.get_settings.cache_clear()
+    db = deps.get_db()
+    db.upsert_user_profile_quiz(
+        owner_subject="member-1",
+        first_name="Mona",
+        last_name="Member",
+        email="mona@example.com",
+        gender=None,
+        birthday=None,
+        tops_size=None,
+        dresses_size=None,
+        bottoms_size=None,
+        shoes_size=None,
+        category_preferences=[],
+        style_descriptors=[],
+        jouft_goals=[],
+        shipping_full_name=None,
+        shipping_address_line1=None,
+        shipping_address_line2=None,
+        shipping_city=None,
+        shipping_state=None,
+        shipping_postal_code=None,
+        shipping_country=None,
+        shipping_email=None,
+        shipping_phone=None,
+        shipping_addresses=[],
+        subscription_plan="starter_15",
+        subscription_billing_cycle="monthly",
+        subscription_status="active",
+        subscription_renewal_date="2026-10-01",
+        payment_methods=[],
+    )
+    db.set_stripe_customer_id("member-1", "cus_failed")
+    db.set_billing_subscription(
+        "member-1",
+        stripe_subscription_id="sub_failed",
+        subscription_plan="starter_15",
+        subscription_billing_cycle="monthly",
+        subscription_status="active",
+        subscription_renewal_date="2026-10-01",
+    )
+    db.update_profile_subscription(
+        "member-1",
+        subscription_plan="starter_15",
+        subscription_billing_cycle="monthly",
+        subscription_status="active",
+        subscription_renewal_date="2026-10-01",
+    )
+    sent_emails = []
+    monkeypatch.setattr(
+        main_module,
+        "_send_subscription_billing_email_if_configured",
+        lambda **kwargs: sent_emails.append(kwargs) or "sent_test",
+    )
+
+    event = {
+        "id": "evt_payment_failed",
+        "type": "invoice.payment_failed",
+        "data": {
+            "object": {
+                "id": "in_failed",
+                "customer": "cus_failed",
+                "subscription": "sub_failed",
+                "hosted_invoice_url": "https://invoice.stripe.test/in_failed",
+            }
+        },
+    }
+    body = json.dumps(event, separators=(",", ":")).encode("utf-8")
+    res = client.post(
+        "/v1/stripe/webhook",
+        content=body,
+        headers={"stripe-signature": _stripe_signature(event, "whsec_test"), "content-type": "application/json"},
+    )
+
+    assert res.status_code == 200, res.text
+    assert res.json()["status"] == "past_due"
+    assert res.json()["email_status"] == "sent_test"
+    assert db.get_billing_profile("member-1")["subscription_status"] == "past_due"
+    assert _subject_has_subscription_entitlement(db, "member-1") is False
+    assert len(sent_emails) == 1
+    assert sent_emails[0]["kind"] == "payment_failed"
+    assert sent_emails[0]["owner_subject"] == "member-1"
+    assert sent_emails[0]["invoice_url"] == "https://invoice.stripe.test/in_failed"
+
+
+def test_stripe_webhook_sends_recovery_email_only_after_past_due(monkeypatch):
+    client = _build_client()
+
+    from app import deps, settings
+    import app.main as main_module
+
+    os.environ["STRIPE_WEBHOOK_SECRET"] = "whsec_test"
+    settings.get_settings.cache_clear()
+    db = deps.get_db()
+    db.upsert_user_profile_quiz(
+        owner_subject="member-recovered",
+        first_name="Recovered",
+        last_name="Member",
+        email="recovered@example.com",
+        gender=None,
+        birthday=None,
+        tops_size=None,
+        dresses_size=None,
+        bottoms_size=None,
+        shoes_size=None,
+        category_preferences=[],
+        style_descriptors=[],
+        jouft_goals=[],
+        shipping_full_name=None,
+        shipping_address_line1=None,
+        shipping_address_line2=None,
+        shipping_city=None,
+        shipping_state=None,
+        shipping_postal_code=None,
+        shipping_country=None,
+        shipping_email=None,
+        shipping_phone=None,
+        shipping_addresses=[],
+        subscription_plan="pro_25",
+        subscription_billing_cycle="monthly",
+        subscription_status="past_due",
+        subscription_renewal_date="2026-10-01",
+        payment_methods=[],
+    )
+    db.set_stripe_customer_id("member-recovered", "cus_recovered")
+    db.set_billing_subscription(
+        "member-recovered",
+        stripe_subscription_id="sub_recovered",
+        subscription_plan="pro_25",
+        subscription_billing_cycle="monthly",
+        subscription_status="past_due",
+        subscription_renewal_date="2026-10-01",
+    )
+    sent_emails = []
+    monkeypatch.setattr(
+        main_module,
+        "_send_subscription_billing_email_if_configured",
+        lambda **kwargs: sent_emails.append(kwargs) or "sent_test",
+    )
+
+    event = {
+        "id": "evt_payment_succeeded",
+        "type": "invoice.payment_succeeded",
+        "data": {"object": {"id": "in_paid", "customer": "cus_recovered", "subscription": "sub_recovered"}},
+    }
+    body = json.dumps(event, separators=(",", ":")).encode("utf-8")
+    res = client.post(
+        "/v1/stripe/webhook",
+        content=body,
+        headers={"stripe-signature": _stripe_signature(event, "whsec_test"), "content-type": "application/json"},
+    )
+
+    assert res.status_code == 200, res.text
+    assert res.json()["status"] == "active"
+    assert res.json()["previous_status"] == "past_due"
+    assert res.json()["email_status"] == "sent_test"
+    assert db.get_billing_profile("member-recovered")["subscription_status"] == "active"
+    assert len(sent_emails) == 1
+    assert sent_emails[0]["kind"] == "payment_recovered"
+
+
+def test_stripe_webhook_reconciles_subscription_cancelation():
+    client = _build_client()
+
+    from app import deps, settings
+    from app.main import _subject_has_subscription_entitlement
+
+    os.environ["STRIPE_WEBHOOK_SECRET"] = "whsec_test"
+    settings.get_settings.cache_clear()
+    db = deps.get_db()
+    db.set_stripe_customer_id("member-2", "cus_cancel")
+    db.set_billing_subscription(
+        "member-2",
+        stripe_subscription_id="sub_cancel",
+        subscription_plan="pro_25",
+        subscription_billing_cycle="annual",
+        subscription_status="active",
+        subscription_renewal_date="2026-10-01",
+    )
+
+    period_end = int(time.time()) + 86400
+    update_event = {
+        "id": "evt_subscription_updated",
+        "type": "customer.subscription.updated",
+        "data": {
+            "object": {
+                "id": "sub_cancel",
+                "customer": "cus_cancel",
+                "status": "active",
+                "cancel_at_period_end": True,
+                "current_period_end": period_end,
+                "metadata": {"owner_subject": "member-2", "plan": "pro_25", "billing_cycle": "annual"},
+            }
+        },
+    }
+    update_body = json.dumps(update_event, separators=(",", ":")).encode("utf-8")
+    update_res = client.post(
+        "/v1/stripe/webhook",
+        content=update_body,
+        headers={"stripe-signature": _stripe_signature(update_event, "whsec_test"), "content-type": "application/json"},
+    )
+    assert update_res.status_code == 200, update_res.text
+    assert db.get_billing_profile("member-2")["subscription_status"] == "canceling"
+    assert _subject_has_subscription_entitlement(db, "member-2") is True
+
+    delete_event = {
+        "id": "evt_subscription_deleted",
+        "type": "customer.subscription.deleted",
+        "data": {
+            "object": {
+                "id": "sub_cancel",
+                "customer": "cus_cancel",
+                "status": "canceled",
+                "metadata": {"owner_subject": "member-2", "plan": "pro_25", "billing_cycle": "annual"},
+            }
+        },
+    }
+    delete_body = json.dumps(delete_event, separators=(",", ":")).encode("utf-8")
+    delete_res = client.post(
+        "/v1/stripe/webhook",
+        content=delete_body,
+        headers={"stripe-signature": _stripe_signature(delete_event, "whsec_test"), "content-type": "application/json"},
+    )
+    assert delete_res.status_code == 200, delete_res.text
+    assert db.get_billing_profile("member-2")["subscription_status"] == "canceled"
+    assert _subject_has_subscription_entitlement(db, "member-2") is False
 
 
 def _stub_item_profile(
@@ -1140,6 +1499,24 @@ def test_create_listing_reuses_recent_analysis_across_accounts_for_same_uploaded
     assert analyze_res.status_code == 200, analyze_res.text
 
     app.dependency_overrides[get_request_principal] = principal_for("user-two")
+    from app.deps import get_db
+
+    db = get_db()
+    db.set_billing_subscription(
+        "user-two",
+        stripe_subscription_id=None,
+        subscription_plan="free",
+        subscription_billing_cycle="monthly",
+        subscription_status="free",
+        subscription_renewal_date=None,
+    )
+    db.update_profile_subscription(
+        "user-two",
+        subscription_plan="free",
+        subscription_billing_cycle="monthly",
+        subscription_status="free",
+        subscription_renewal_date=None,
+    )
     upload = client.post(
         "/v1/uploads/images",
         data={"item_id": "item-account-two-upload"},
