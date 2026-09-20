@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import base64
 import os
 import re
 import smtplib
@@ -44,6 +45,8 @@ from .deps import (
     get_valuation_service,
 )
 from .logging_utils import log_json
+from .experience_agent import build_experience_report
+from .marketplace_intelligence_agent import build_marketplace_intelligence_report
 from .schemas import (
     AnalyzeResponse,
     AdminSupportNoteCreateRequest,
@@ -56,9 +59,13 @@ from .schemas import (
     ConditionOut,
     DependencyHealthCheck,
     DependencyHealthResponse,
+    ExperienceEventCreateRequest,
     HealthResponse,
+    ImageRoleClassificationResponse,
     ListingCreateRequest,
     ListingResponse,
+    ListingSupportRequest,
+    ListingSupportResponse,
     OfferActionRequest,
     OfferCreateRequest,
     OfferResponse,
@@ -95,6 +102,30 @@ from .trade_match_agent import build_trade_match_suggestions
 
 
 app = FastAPI(title="ValueAI Fashion Analyzer", version="0.1.0")
+
+IMAGE_ROLE_VALUES = [
+    "full_front", "full_back", "side_or_profile", "brand_label",
+    "size_or_material_label", "hardware_or_detail", "condition_or_wear",
+    "shoe_sole", "bag_interior", "serial_or_authentication_mark", "other",
+]
+IMAGE_ROLE_REQUIREMENTS = {
+    "clothes": {
+        "required": ["full_front", "brand_label"],
+        "recommended": ["full_back", "size_or_material_label", "condition_or_wear"],
+    },
+    "shoes": {
+        "required": ["side_or_profile", "brand_label", "shoe_sole"],
+        "recommended": ["size_or_material_label", "condition_or_wear"],
+    },
+    "handbag": {
+        "required": ["full_front", "brand_label", "bag_interior"],
+        "recommended": ["full_back", "hardware_or_detail", "condition_or_wear", "serial_or_authentication_mark"],
+    },
+    "accessories": {
+        "required": ["full_front", "brand_label"],
+        "recommended": ["size_or_material_label", "hardware_or_detail", "condition_or_wear"],
+    },
+}
 
 ANALYSIS_JOB_MAX_ATTEMPTS = 2
 ANALYSIS_JOB_ATTEMPT_TIMEOUT_S = int(os.getenv("LISTING_ANALYSIS_ATTEMPT_TIMEOUT_S", "180"))
@@ -441,14 +472,25 @@ def _image_content_hash(data: bytes) -> str:
 
 _ANALYSIS_IMAGE_ROLE_PRIORITY = {
     "full_item": 0,
-    "brand_label": 1,
-    "size_label": 2,
-    "sole_or_bottom": 3,
-    "condition_detail": 4,
-    "accessory_or_box": 5,
-    "close_up": 6,
-    "other": 7,
+    "full_front": 0,
+    "full_back": 1,
+    "side_or_profile": 2,
+    "brand_label": 3,
+    "size_label": 4,
+    "size_or_material_label": 4,
+    "sole_or_bottom": 5,
+    "shoe_sole": 5,
+    "bag_interior": 6,
+    "serial_or_authentication_mark": 7,
+    "hardware_or_detail": 8,
+    "condition_detail": 9,
+    "condition_or_wear": 9,
+    "accessory_or_box": 10,
+    "close_up": 11,
+    "other": 12,
 }
+
+_ANALYSIS_FULL_ITEM_ROLES = {"full_item", "full_front", "full_back", "side_or_profile"}
 
 _ANALYSIS_IMAGE_ROLE_TOKENS = (
     ("brand_label", ("brand", "label", "logo", "tag", "insole", "stamp", "serial")),
@@ -549,7 +591,7 @@ def _canonicalize_analysis_file_entries(entries: list[dict[str, object]]) -> lis
         normalized["role_hint"] = filename_role if filename_role != "other" else explicit_role
         prepared.append(normalized)
 
-    if prepared and not any(entry.get("role_hint") == "full_item" for entry in prepared):
+    if prepared and not any(entry.get("role_hint") in _ANALYSIS_FULL_ITEM_ROLES for entry in prepared):
         best = max(prepared, key=_analysis_full_item_score)
         best["role_hint"] = "full_item"
 
@@ -2421,7 +2463,6 @@ def dependency_health(
         _check_google_places_health(settings),
         _check_clerk_health(settings),
         _check_email_health(settings),
-        _check_push_notification_health(settings),
     ]
     blocking_statuses = {check.status for check in checks if check.status != "not_configured"}
     if "down" in blocking_statuses:
@@ -3977,6 +4018,8 @@ def _google_places_address_suggest(
     city: str | None,
     state: str | None,
     postal_code: str | None,
+    latitude: float | None = None,
+    longitude: float | None = None,
     settings: Settings,
 ) -> dict:
     key = (settings.google_places_api_key or "").strip()
@@ -4003,6 +4046,13 @@ def _google_places_address_suggest(
         "includedRegionCodes": ["us"],
         "languageCode": "en-US",
     }
+    if latitude is not None and longitude is not None:
+        payload["locationBias"] = {
+            "circle": {
+                "center": {"latitude": latitude, "longitude": longitude},
+                "radius": 80000.0,
+            }
+        }
     try:
         with httpx.Client(timeout=settings.google_places_timeout_s) as client:
             resp = client.post(settings.google_places_autocomplete_url, json=payload, headers=headers)
@@ -4113,6 +4163,8 @@ def google_places_address_suggest(
     city: str | None = Query(default=None, max_length=80),
     state: str | None = Query(default=None, max_length=2),
     postal_code: str | None = Query(default=None, max_length=10),
+    latitude: float | None = Query(default=None, ge=-90, le=90),
+    longitude: float | None = Query(default=None, ge=-180, le=180),
     settings: Settings = Depends(get_settings),
 ):
     return _google_places_address_suggest(
@@ -4120,6 +4172,8 @@ def google_places_address_suggest(
         city=city,
         state=state,
         postal_code=postal_code,
+        latitude=latitude,
+        longitude=longitude,
         settings=settings,
     )
 
@@ -4369,6 +4423,52 @@ def _admin_enrich_offer(db: Database, offer: dict) -> dict:
         "offered_listings": [listings[x] for x in offer.get("offered_listing_ids", []) if x in listings],
         "shipments": shipments,
     }
+
+
+@app.post("/v1/experience/events", status_code=202)
+def create_experience_event(
+    payload: ExperienceEventCreateRequest,
+    principal: AuthPrincipal = Depends(get_request_principal),
+    db: Database = Depends(get_db),
+):
+    properties = dict(list(payload.properties.items())[:20])
+    result = db.create_experience_event(
+        event_id=f"uxe-{uuid.uuid4()}",
+        owner_subject=principal.subject,
+        session_id=payload.session_id.strip(),
+        event_name=payload.event_name,
+        platform=payload.platform,
+        screen=payload.screen.strip() if payload.screen else None,
+        entity_type=payload.entity_type,
+        entity_id=payload.entity_id.strip() if payload.entity_id else None,
+        properties=properties,
+    )
+    return {"accepted": True, **result}
+
+
+@app.get("/v1/admin/experience-report")
+def admin_experience_report(
+    days: int = Query(default=30, ge=1, le=180),
+    minimum_sample: int = Query(default=5, ge=3, le=100),
+    principal: AuthPrincipal = Depends(require_admin_user),
+    db: Database = Depends(get_db),
+):
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    events = db.list_experience_events(since=since, limit=50000)
+    report = build_experience_report(events, days=days, minimum_sample=minimum_sample)
+    return {"actor": {"auth_type": principal.auth_type, "subject": principal.subject}, **report}
+
+
+@app.get("/v1/admin/marketplace-intelligence")
+def admin_marketplace_intelligence(
+    days: int = Query(default=30, ge=1, le=365),
+    principal: AuthPrincipal = Depends(require_admin_user),
+    db: Database = Depends(get_db),
+):
+    listings = db.list_recent_listings(limit=50000, include_analysis=False, include_media=False)
+    offers = db.list_all_trade_offers(limit=50000)
+    report = build_marketplace_intelligence_report(listings, offers, days=days)
+    return {"actor": {"auth_type": principal.auth_type, "subject": principal.subject}, **report}
 
 
 @app.get("/v1/admin/dashboard")
@@ -5021,6 +5121,351 @@ def delete_listing(
     if not deleted:
         raise HTTPException(status_code=404, detail="listing not found")
     return {"status": "deleted", "listing_id": listing_id}
+
+
+def _plain_graphql(settings: Settings, query: str, variables: dict) -> dict:
+    if not settings.plain_api_key:
+        raise HTTPException(status_code=503, detail="Customer support is not configured yet")
+    try:
+        response = httpx.post(
+            settings.plain_api_url,
+            headers={
+                "Authorization": f"Bearer {settings.plain_api_key}",
+                "Content-Type": "application/json",
+            },
+            json={"query": query, "variables": variables},
+            timeout=settings.plain_timeout_s,
+        )
+        response.raise_for_status()
+        payload = response.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        log_json("plain_support_request_failed", error=str(exc))
+        raise HTTPException(status_code=502, detail="Support service is temporarily unavailable") from exc
+    if payload.get("errors"):
+        log_json("plain_support_graphql_failed", errors=payload.get("errors"))
+        raise HTTPException(status_code=502, detail="Support service rejected the request")
+    return payload.get("data") or {}
+
+
+def _send_support_email(
+    *,
+    settings: Settings,
+    recipient: str,
+    customer_name: str,
+    subject: str,
+    heading: str,
+    message: str,
+    thread_id: str,
+    listing_id: str,
+) -> str:
+    from_email = str(settings.notification_from_email or settings.ses_from_email or settings.smtp_from_email or "").strip()
+    if not recipient or not from_email:
+        return "skipped_not_configured"
+    support_url = _absolute_public_url(settings.public_app_url, f"/?tab=closet&listing={listing_id}")
+    text_body = (
+        f"Hi {customer_name or 'there'},\n\n{message}\n\n"
+        f"Support reference: {thread_id}\n"
+        + (f"Listing: {support_url}\n" if support_url else "")
+    )
+    cta_html = (
+        f'<a href="{html_escape(support_url)}" style="display:inline-block;background:#111;color:#fff;text-decoration:none;text-transform:uppercase;letter-spacing:2px;font-size:13px;font-weight:700;padding:14px 18px;">View Listing</a>'
+        if support_url else ""
+    )
+    html_body = f"""<!doctype html>
+<html><body style="margin:0;padding:0;background:#f8f4ee;color:#111827;font-family:Arial,Helvetica,sans-serif;">
+<div style="max-width:640px;margin:0 auto;padding:28px 20px;">
+<div style="font-family:Georgia,'Times New Roman',serif;font-size:42px;letter-spacing:4px;color:#64141f;">JOUFT</div>
+<div style="font-size:13px;letter-spacing:5px;text-transform:uppercase;color:#7c7269;margin:4px 0 24px;">Customer Support</div>
+<div style="background:#fff;border:1px solid #ded6cc;padding:24px;">
+<p style="font-size:16px;line-height:1.5;">Hi {html_escape(customer_name or 'there')},</p>
+<h1 style="font-family:Georgia,'Times New Roman',serif;font-size:30px;font-weight:400;">{html_escape(heading)}</h1>
+<p style="font-size:16px;line-height:1.55;color:#4b5563;white-space:pre-wrap;">{html_escape(message)}</p>
+<p style="font-size:13px;color:#6b7280;margin:20px 0;">Support reference: {html_escape(thread_id)}</p>
+{cta_html}</div></div></body></html>"""
+
+    def send_ses() -> str:
+        try:
+            session = boto3.session.Session(
+                aws_access_key_id=(settings.ses_access_key_id or None),
+                aws_secret_access_key=(settings.ses_secret_access_key or None),
+                aws_session_token=(settings.ses_session_token or None),
+                region_name=str(settings.ses_region or settings.aws_region or "us-east-1"),
+            )
+            session.client("ses", endpoint_url=(settings.ses_endpoint_url or None)).send_email(
+                Source=from_email,
+                Destination={"ToAddresses": [recipient]},
+                Message={
+                    "Subject": {"Data": subject, "Charset": "UTF-8"},
+                    "Body": {
+                        "Text": {"Data": text_body, "Charset": "UTF-8"},
+                        "Html": {"Data": html_body, "Charset": "UTF-8"},
+                    },
+                },
+            )
+            return "sent_ses"
+        except Exception as exc:
+            log_json("support_email_ses_failed", recipient=recipient, thread_id=thread_id, error=str(exc)[:300])
+            return "failed_ses"
+
+    def send_smtp() -> str:
+        if not settings.smtp_host:
+            return "skipped_smtp_not_configured"
+        email = EmailMessage()
+        email["Subject"] = subject
+        email["From"] = from_email
+        email["To"] = recipient
+        email.set_content(text_body)
+        email.add_alternative(html_body, subtype="html")
+        try:
+            with smtplib.SMTP(str(settings.smtp_host), int(settings.smtp_port), timeout=20) as smtp:
+                if settings.smtp_use_tls:
+                    smtp.starttls()
+                if settings.smtp_username:
+                    smtp.login(settings.smtp_username, settings.smtp_password or "")
+                smtp.send_message(email)
+            return "sent_smtp"
+        except Exception as exc:
+            log_json("support_email_smtp_failed", recipient=recipient, thread_id=thread_id, error=type(exc).__name__)
+            return "failed_smtp"
+
+    provider = str(settings.email_provider or "auto").strip().lower()
+    if provider == "smtp":
+        return send_smtp()
+    result = send_ses()
+    return result if provider == "ses" or result == "sent_ses" else send_smtp()
+
+
+@app.post("/v1/listings/{listing_id}/support-requests", response_model=ListingSupportResponse)
+def create_listing_support_request(
+    listing_id: str,
+    payload: ListingSupportRequest,
+    background_tasks: BackgroundTasks,
+    principal: AuthPrincipal = Depends(get_request_principal),
+    db: Database = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+):
+    listing = db.get_listing_by_id(listing_id)
+    if not listing or str(listing.get("owner_subject") or "") != principal.subject:
+        raise HTTPException(status_code=404, detail="listing not found")
+
+    email = payload.contact_email.strip().lower()
+    if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email):
+        raise HTTPException(status_code=422, detail="Enter a valid contact email")
+    contact_name = (payload.contact_name or listing.get("owner_name") or "JOUFT member").strip()
+    upsert_data = _plain_graphql(
+        settings,
+        """
+        mutation UpsertCustomer($input: UpsertCustomerInput!) {
+          upsertCustomer(input: $input) {
+            customer { id }
+            error { message code }
+          }
+        }
+        """,
+        {
+            "input": {
+                "identifier": {"emailAddress": email},
+                "onCreate": {
+                    "fullName": contact_name,
+                    "shortName": contact_name.split()[0] if contact_name else "Member",
+                    "email": {"email": email, "isVerified": principal.auth_type == "clerk"},
+                    "externalId": principal.subject,
+                },
+                "onUpdate": {
+                    "fullName": {"value": contact_name},
+                    "externalId": {"value": principal.subject},
+                },
+            }
+        },
+    ).get("upsertCustomer") or {}
+    if upsert_data.get("error") or not (upsert_data.get("customer") or {}).get("id"):
+        log_json("plain_customer_upsert_failed", error=upsert_data.get("error"), actor=principal.subject)
+        raise HTTPException(status_code=502, detail="Could not create the support customer")
+
+    reason_label = payload.reason.replace("_", " ").title()
+    image_urls = _display_image_urls_from_storage_images(_listing_storage_images(
+        listing.get("images"), listing.get("analysis"), listing.get("listed_images")
+    ))
+    listing_url = f"{settings.public_app_url.rstrip('/')}?tab=closet&listing={listing_id}"
+    context_lines = [
+        f"**Issue type:** {reason_label}",
+        f"**Listing:** {listing.get('title') or 'Untitled listing'}",
+        f"**Listing ID:** `{listing_id}`",
+        f"**Brand:** {listing.get('brand') or 'Unknown'}",
+        f"**Category:** {listing.get('category') or 'Unknown'}",
+        f"**Status:** {listing.get('status') or 'Unknown'}",
+        f"**Platform:** {payload.platform or 'Unknown'}",
+        f"**App version:** {payload.app_version or settings.version}",
+        f"**Listing URL:** {listing_url}",
+        "",
+        "**Customer report**",
+        payload.message.strip(),
+    ]
+    if image_urls:
+        context_lines.extend(["", "**Listing images**", *image_urls[:6]])
+    thread_data = _plain_graphql(
+        settings,
+        """
+        mutation CreateThread($input: CreateThreadInput!) {
+          createThread(input: $input) {
+            thread { id status title }
+            error { message code }
+          }
+        }
+        """,
+        {
+            "input": {
+                "title": f"Listing issue: {reason_label} - {listing.get('title') or listing_id}",
+                "customerIdentifier": {"customerId": upsert_data["customer"]["id"]},
+                "components": [{"componentText": {"text": "\n".join(context_lines)}}],
+            }
+        },
+    ).get("createThread") or {}
+    thread = thread_data.get("thread") or {}
+    if thread_data.get("error") or not thread.get("id"):
+        log_json("plain_thread_create_failed", error=thread_data.get("error"), actor=principal.subject, listing_id=listing_id)
+        raise HTTPException(status_code=502, detail="Could not submit the support request")
+    thread_id = str(thread["id"])
+    db.create_listing_support_request(
+        request_id=f"support-{uuid.uuid4()}",
+        plain_thread_id=thread_id,
+        listing_id=listing_id,
+        owner_subject=principal.subject,
+        contact_email=email,
+        contact_name=contact_name,
+        reason=payload.reason,
+        message=payload.message.strip(),
+    )
+    background_tasks.add_task(
+        _send_support_email,
+        settings=settings,
+        recipient=email,
+        customer_name=contact_name.split()[0] if contact_name else "there",
+        subject="We received your JOUFT support request",
+        heading="Your request has been received",
+        message=f"We received your report about {listing.get('title') or 'your listing'}. Our support team will review it and notify you when there is an update.",
+        thread_id=thread_id,
+        listing_id=listing_id,
+    )
+    log_json("listing_support_request_created", actor=principal.subject, listing_id=listing_id, plain_thread_id=thread_id)
+    return ListingSupportResponse(thread_id=thread_id, listing_id=listing_id)
+
+
+def _plain_support_status(value: object) -> str | None:
+    normalized = str(value or "").strip().upper()
+    return {
+        "TODO": "open",
+        "SNOOZED": "pending",
+        "DONE": "resolved",
+    }.get(normalized)
+
+
+def _plain_webhook_message(event_type: str, payload: dict) -> str | None:
+    if event_type == "thread.email_sent":
+        email = payload.get("email") if isinstance(payload.get("email"), dict) else {}
+        return str(email.get("markdownContent") or email.get("textContent") or "").strip() or None
+    if event_type == "thread.chat_sent":
+        chat = payload.get("chat") if isinstance(payload.get("chat"), dict) else {}
+        return str(chat.get("text") or "").strip() or None
+    return None
+
+
+@app.post("/v1/webhooks/plain")
+async def plain_webhook(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: Database = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+):
+    secret = str(settings.plain_webhook_secret or "").strip()
+    if not secret:
+        raise HTTPException(status_code=503, detail="Plain webhook signing is not configured")
+    raw_body = await request.body()
+    incoming_signature = str(request.headers.get("Plain-Request-Signature") or "").strip()
+    if incoming_signature.lower().startswith("sha256="):
+        incoming_signature = incoming_signature.split("=", 1)[1]
+    expected_signature = hmac.new(secret.encode("utf-8"), raw_body, hashlib.sha256).hexdigest()
+    if not incoming_signature or not hmac.compare_digest(incoming_signature.lower(), expected_signature.lower()):
+        raise HTTPException(status_code=401, detail="Invalid Plain webhook signature")
+    try:
+        event = json.loads(raw_body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=400, detail="Invalid Plain webhook payload") from exc
+    if not isinstance(event, dict):
+        raise HTTPException(status_code=400, detail="Invalid Plain webhook payload")
+    event_id = str(event.get("id") or request.headers.get("Plain-Event-Id") or "").strip()
+    event_type = str(event.get("type") or "").strip()
+    payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+    event_type = str(payload.get("eventType") or event_type).strip()
+    thread = payload.get("thread") if isinstance(payload.get("thread"), dict) else {}
+    thread_id = str(thread.get("id") or "").strip()
+    if not event_id or not event_type or not thread_id:
+        raise HTTPException(status_code=400, detail="Plain webhook is missing event identifiers")
+
+    message = _plain_webhook_message(event_type, payload)
+    status = _plain_support_status(thread.get("status"))
+    support_request, applied, previous_status = db.apply_plain_support_webhook(
+        event_id=event_id,
+        event_type=event_type,
+        plain_thread_id=thread_id,
+        status=status,
+        latest_update=message,
+    )
+    if support_request is None:
+        return {"status": "ignored", "reason": "unknown_thread"}
+    if not applied:
+        return {"status": "duplicate"}
+
+    status_changed = bool(status and status != previous_status)
+    is_agent_reply = bool(message and event_type in {"thread.email_sent", "thread.chat_sent"})
+    if event_type == "thread.thread_created":
+        status_changed = False
+    if not status_changed and not is_agent_reply:
+        return {"status": "processed"}
+
+    listing_id = str(support_request.get("listing_id") or "")
+    owner_subject = str(support_request.get("owner_subject") or "")
+    if is_agent_reply:
+        notification_title = "Support replied to your request"
+        notification_body = message[:240]
+        email_subject = "Update on your JOUFT support request"
+        email_heading = "Our support team replied"
+        email_message = message
+    else:
+        status_label = str(status or "updated").title()
+        notification_title = f"Support request {status_label}"
+        notification_body = f"Your support request for listing {listing_id} is now {status_label.lower()}."
+        email_subject = f"Your JOUFT support request is {status_label.lower()}"
+        email_heading = f"Request {status_label.lower()}"
+        email_message = notification_body
+    background_tasks.add_task(
+        _create_user_notification_and_push,
+        db=db,
+        settings=settings,
+        notification_id=f"plain-{event_id}",
+        owner_subject=owner_subject,
+        actor_subject="plain-support",
+        type="support_update",
+        title=notification_title,
+        body=notification_body,
+        entity_id=listing_id,
+        action_tab="closet",
+    )
+    # Plain has already delivered email_sent events. Sending another email here would duplicate the reply.
+    if event_type != "thread.email_sent":
+        background_tasks.add_task(
+            _send_support_email,
+            settings=settings,
+            recipient=str(support_request.get("contact_email") or ""),
+            customer_name=str(support_request.get("contact_name") or "there").split()[0],
+            subject=email_subject,
+            heading=email_heading,
+            message=email_message,
+            thread_id=thread_id,
+            listing_id=listing_id,
+        )
+    log_json("plain_support_webhook_processed", event_id=event_id, event_type=event_type, plain_thread_id=thread_id)
+    return {"status": "processed"}
 
 
 @app.post("/v1/offers", response_model=OfferResponse)
@@ -7081,6 +7526,127 @@ def _upload_extension(filename: str | None, content_type: str | None) -> str:
     return ".jpg"
 
 
+@app.post("/v1/images/classify-roles", response_model=ImageRoleClassificationResponse)
+async def classify_image_roles(
+    images: Annotated[list[UploadFile], File(...)],
+    category: Annotated[str | None, Form()] = None,
+    settings: Settings = Depends(get_settings),
+    principal: AuthPrincipal = Depends(get_request_principal),
+) -> ImageRoleClassificationResponse:
+    _ = principal.subject
+    category_hint = normalize_category(category)
+    if not images or len(images) > settings.max_images_per_request:
+        raise HTTPException(status_code=400, detail=f"Upload 1 to {settings.max_images_per_request} images")
+    if not settings.gemini_api_key:
+        raise HTTPException(status_code=503, detail="Photo checking is temporarily unavailable")
+
+    parts: list[dict] = [{
+        "text": (
+            "Classify each product-listing image by its primary photographic role. "
+            f"Allowed roles: {', '.join(IMAGE_ROLE_VALUES)}. "
+            f"Classify the item into exactly one category: {', '.join(IMAGE_ROLE_REQUIREMENTS)}. "
+            "Determine the category from the full set of images, not from an individual close-up. "
+            "Return exactly one result for every image in the same order. "
+            "Use brand_label only when a visible brand name, logo, stamp, or maker tag can be inspected. "
+            "Do not identify, authenticate, or value the product."
+        )
+    }]
+    readable_count = 0
+    for index, image in enumerate(images):
+        raw = await image.read()
+        if not raw:
+            continue
+        content_type = (image.content_type or "image/jpeg").split(";", 1)[0]
+        if not content_type.startswith("image/"):
+            continue
+        parts.extend([
+            {"text": f"IMAGE_INDEX={index}"},
+            {"inline_data": {"mime_type": content_type, "data": base64.b64encode(raw).decode("ascii")}},
+        ])
+        readable_count += 1
+    if readable_count == 0:
+        raise HTTPException(status_code=400, detail="No readable images uploaded")
+
+    response_schema = {
+        "type": "OBJECT",
+        "properties": {
+            "category": {"type": "STRING", "enum": list(IMAGE_ROLE_REQUIREMENTS)},
+            "category_confidence": {"type": "NUMBER"},
+            "images": {
+                "type": "ARRAY",
+                "items": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "image_index": {"type": "INTEGER"},
+                        "role": {"type": "STRING", "enum": IMAGE_ROLE_VALUES},
+                        "confidence": {"type": "NUMBER"},
+                    },
+                    "required": ["image_index", "role", "confidence"],
+                },
+            },
+        },
+        "required": ["category", "category_confidence", "images"],
+    }
+    model = settings.gpt_item_profile_gemini_model or "gemini-2.5-flash"
+    endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+    started = time.perf_counter()
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            response = await client.post(
+                endpoint,
+                params={"key": settings.gemini_api_key},
+                json={
+                    "contents": [{"role": "user", "parts": parts}],
+                    "generationConfig": {
+                        "temperature": 0,
+                        "responseMimeType": "application/json",
+                        "responseSchema": response_schema,
+                    },
+                },
+            )
+            response.raise_for_status()
+        raw_response = response.json()
+        response_text = raw_response["candidates"][0]["content"]["parts"][0]["text"]
+        parsed = json.loads(response_text)
+    except (httpx.TimeoutException, asyncio.TimeoutError) as exc:
+        raise HTTPException(status_code=504, detail="Photo checking timed out. Retry or continue with your selected photos.") from exc
+    except Exception as exc:
+        log_json("image_role_classification_error", error=str(exc), image_count=readable_count)
+        raise HTTPException(status_code=503, detail="Photo checking failed. Retry or continue with your selected photos.") from exc
+
+    detected_category = normalize_category(parsed.get("category"))
+    if detected_category not in IMAGE_ROLE_REQUIREMENTS:
+        detected_category = category_hint if category_hint in IMAGE_ROLE_REQUIREMENTS else "accessories"
+    try:
+        category_confidence = max(0.0, min(float(parsed.get("category_confidence") or 0), 1.0))
+    except (TypeError, ValueError):
+        category_confidence = 0.0
+
+    assignments_by_index: dict[int, dict] = {}
+    for entry in parsed.get("images") or []:
+        try:
+            image_index = int(entry.get("image_index"))
+            role = str(entry.get("role") or "other")
+            confidence = max(0.0, min(float(entry.get("confidence") or 0), 1.0))
+        except (TypeError, ValueError):
+            continue
+        if 0 <= image_index < len(images) and role in IMAGE_ROLE_VALUES:
+            assignments_by_index[image_index] = {"image_index": image_index, "role": role, "confidence": confidence}
+    assignments = [assignments_by_index.get(index, {"image_index": index, "role": "other", "confidence": 0.0}) for index in range(len(images))]
+    detected = {entry["role"] for entry in assignments}
+    rules = IMAGE_ROLE_REQUIREMENTS[detected_category]
+    return ImageRoleClassificationResponse(
+        category=detected_category,
+        category_confidence=category_confidence,
+        images=assignments,
+        required_roles=rules["required"],
+        recommended_roles=rules["recommended"],
+        missing_required=[role for role in rules["required"] if role not in detected],
+        missing_recommended=[role for role in rules["recommended"] if role not in detected],
+        elapsed_ms=round((time.perf_counter() - started) * 1000, 1),
+    )
+
+
 @app.post("/v1/uploads/images/presign", response_model=PresignImageUploadResponse)
 def presign_image_uploads(
     payload: PresignImageUploadRequest,
@@ -7178,6 +7744,7 @@ def confirm_presigned_image_uploads(
 async def upload_images(
     images: Annotated[list[UploadFile], File(...)],
     item_id: Annotated[str | None, Form()] = None,
+    role_hints: Annotated[str | None, Form()] = None,
     settings: Settings = Depends(get_settings),
     principal: AuthPrincipal = Depends(get_request_principal),
     db: Database = Depends(get_db),
@@ -7185,6 +7752,12 @@ async def upload_images(
 ) -> UploadImagesResponse:
     _ = principal.subject
     item_id = (item_id or "").strip() or f"item-{uuid.uuid4()}"
+    try:
+        parsed_role_hints = json.loads(role_hints) if role_hints else []
+    except json.JSONDecodeError:
+        parsed_role_hints = []
+    if not isinstance(parsed_role_hints, list):
+        parsed_role_hints = []
     if not images:
         raise HTTPException(status_code=400, detail="At least one image is required")
     if len(images) > settings.max_images_per_request:
@@ -7227,7 +7800,10 @@ async def upload_images(
         image_uuid = str(uuid.uuid4())
         ext = ".jpg" if prepared_content_type == "image/jpeg" else (os.path.splitext(str(entry.get("filename") or ""))[1] or ".jpg")
         filename = f"{image_uuid}{ext}"
-        role_hint = "full_item" if idx == 0 else "close_up"
+        requested_role = parsed_role_hints[idx] if idx < len(parsed_role_hints) else None
+        role_hint = _normalized_analysis_image_role(requested_role)
+        if role_hint == "other":
+            role_hint = "full_item" if idx == 0 else "close_up"
         storage_uri = storage.save_upload(
             item_id=item_id,
             filename=filename,

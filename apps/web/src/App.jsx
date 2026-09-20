@@ -638,6 +638,14 @@ function photoGuidanceForCategory(category) {
   return guides[category] || fallback
 }
 
+const IMAGE_ROLE_LABELS = {
+  full_front: 'Full front', full_back: 'Full back', side_or_profile: 'Side/profile',
+  brand_label: 'Brand label', size_or_material_label: 'Size/material label',
+  hardware_or_detail: 'Hardware/detail', condition_or_wear: 'Condition/wear',
+  shoe_sole: 'Shoe sole', bag_interior: 'Bag interior',
+  serial_or_authentication_mark: 'Serial/authentication mark', other: 'Other view',
+}
+
 function PhotoGuideIllustration({ category, title }) {
   const categoryKey = String(category || '').toLowerCase()
   const titleKey = String(title || '').toLowerCase()
@@ -1038,7 +1046,7 @@ async function analyzeItem({ apiBaseUrl, apiKey, bearerToken, images, category, 
   )
 }
 
-async function uploadListingImages({ apiBaseUrl, apiKey, bearerToken, images }) {
+async function uploadListingImages({ apiBaseUrl, apiKey, bearerToken, images, roleAssignments = [] }) {
   const { client, authContext } = createWebApiClient({ apiBaseUrl, apiKey })
   let prepared
   try {
@@ -1083,7 +1091,7 @@ async function uploadListingImages({ apiBaseUrl, apiKey, bearerToken, images }) 
           filename: prepared[index].filename,
           content_type: prepared[index].contentType,
           storage_uri: slot.storage_uri,
-          role_hint: slot.role_hint,
+          role_hint: roleAssignments[index]?.role || slot.role_hint,
           content_hash: prepared[index].contentHash,
         })),
       },
@@ -1092,7 +1100,10 @@ async function uploadListingImages({ apiBaseUrl, apiKey, bearerToken, images }) 
   } catch (err) {
     console.warn('Direct image upload failed; falling back to API upload.', err)
     return client.uploadImages(
-      { images: prepared.map((entry) => ({ file: entry.file })) },
+      {
+        images: prepared.map((entry) => ({ file: entry.file })),
+        roleHints: roleAssignments.map((entry) => entry?.role || 'other'),
+      },
       auth,
     )
   }
@@ -1145,6 +1156,38 @@ async function fetchAdminDashboard({ apiBaseUrl, apiKey, bearerToken, limit = 50
     throw new Error(detail || `API error (${resp.status})`)
   }
   return payload
+}
+
+async function fetchAdminExperienceReport({ apiBaseUrl, apiKey, bearerToken, days = 30 }) {
+  const headers = {}
+  if (bearerToken) headers.Authorization = `Bearer ${bearerToken}`
+  else if (apiKey) headers['x-api-key'] = apiKey
+  const resp = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/v1/admin/experience-report?days=${days}`, { headers })
+  const payload = await resp.json().catch(() => null)
+  if (!resp.ok) throw new Error(payload?.detail || `API error (${resp.status})`)
+  return payload
+}
+
+async function fetchAdminMarketplaceIntelligence({ apiBaseUrl, apiKey, bearerToken, days = 30 }) {
+  const headers = {}
+  if (bearerToken) headers.Authorization = `Bearer ${bearerToken}`
+  else if (apiKey) headers['x-api-key'] = apiKey
+  const resp = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/v1/admin/marketplace-intelligence?days=${days}`, { headers })
+  const payload = await resp.json().catch(() => null)
+  if (!resp.ok) throw new Error(payload?.detail || `API error (${resp.status})`)
+  return payload
+}
+
+async function sendExperienceEvent({ apiBaseUrl, apiKey, bearerToken, event }) {
+  const headers = { 'Content-Type': 'application/json' }
+  if (bearerToken) headers.Authorization = `Bearer ${bearerToken}`
+  else if (apiKey) headers['x-api-key'] = apiKey
+  const resp = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/v1/experience/events`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(event),
+  })
+  if (!resp.ok) throw new Error(`Experience event rejected (${resp.status})`)
 }
 
 async function createAdminSupportNote({ apiBaseUrl, apiKey, bearerToken, note }) {
@@ -1221,6 +1264,11 @@ async function updateListingRemote({ apiBaseUrl, apiKey, bearerToken, listingId,
 async function deleteListingRemote({ apiBaseUrl, apiKey, bearerToken, listingId }) {
   const { client, authContext } = createWebApiClient({ apiBaseUrl, apiKey })
   return client.deleteListing(listingId, authContext(bearerToken))
+}
+
+async function createListingSupportRemote({ apiBaseUrl, apiKey, bearerToken, listingId, payload }) {
+  const { client, authContext } = createWebApiClient({ apiBaseUrl, apiKey })
+  return client.createListingSupportRequest(listingId, payload, authContext(bearerToken))
 }
 
 async function fetchProfileQuizRemote({ apiBaseUrl, apiKey, bearerToken }) {
@@ -2539,11 +2587,16 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   const [debugMode, setDebugMode] = useState(true)
   const [adminAnalyses, setAdminAnalyses] = useState([])
   const [adminDashboard, setAdminDashboard] = useState(null)
+  const [adminExperienceReport, setAdminExperienceReport] = useState(null)
+  const [adminMarketplaceReport, setAdminMarketplaceReport] = useState(null)
   const [adminQueue, setAdminQueue] = useState('failed')
   const [adminActionBusy, setAdminActionBusy] = useState('')
   const [adminLoading, setAdminLoading] = useState(false)
   const [adminError, setAdminError] = useState('')
   const [adminSearch, setAdminSearch] = useState('')
+  const experienceSessionIdRef = useRef(
+    typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `web-${Date.now()}`,
+  )
   const [analysisLoading, setAnalysisLoading] = useState(false)
   const [createListingBusy, setCreateListingBusy] = useState(false)
   const [analysisError, setAnalysisError] = useState('')
@@ -2553,11 +2606,17 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   const [editingListingId, setEditingListingId] = useState(null)
   const [reviewListingId, setReviewListingId] = useState(null)
   const [showCreateListingModal, setShowCreateListingModal] = useState(false)
+  const [createListingStep, setCreateListingStep] = useState(1)
   const [listingModalMode, setListingModalMode] = useState('create')
   const [modalEditingListing, setModalEditingListing] = useState(null)
   const [savedListingNotice, setSavedListingNotice] = useState('')
   const [transientNotice, setTransientNotice] = useState(null)
   const [appAlert, setAppAlert] = useState(null)
+  const [supportListing, setSupportListing] = useState(null)
+  const [supportReason, setSupportReason] = useState('incorrect_brand_or_title')
+  const [supportMessage, setSupportMessage] = useState('')
+  const [supportBusy, setSupportBusy] = useState(false)
+  const [supportError, setSupportError] = useState('')
   const [offerActionBusyById, setOfferActionBusyById] = useState({})
   const [offerAcceptedListingById, setOfferAcceptedListingById] = useState({})
   const [selectedShippingLabel, setSelectedShippingLabel] = useState(null)
@@ -2610,6 +2669,10 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   const [selectedCreateImageIndex, setSelectedCreateImageIndex] = useState(0)
   const [createImageSlots, setCreateImageSlots] = useState(() => Array(6).fill(null))
   const [createSlotPreviewUrls, setCreateSlotPreviewUrls] = useState(() => Array(6).fill(null))
+  const [createImageRoleCheck, setCreateImageRoleCheck] = useState(null)
+  const [createImageRoleBusy, setCreateImageRoleBusy] = useState(false)
+  const [createImageRoleError, setCreateImageRoleError] = useState('')
+  const [createImageRoleRetry, setCreateImageRoleRetry] = useState(0)
   const [selectedEditImageIndex, setSelectedEditImageIndex] = useState(0)
   const [selectedReviewImageIndex, setSelectedReviewImageIndex] = useState(0)
   const [selectedEditHeroImageIndex, setSelectedEditHeroImageIndex] = useState(null)
@@ -2631,12 +2694,59 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   const [selectedMarketListingIndex, setSelectedMarketListingIndex] = useState(null)
   const [likedListingIds, setLikedListingIds] = useState([])
   const [clientStateHydrated, setClientStateHydrated] = useState(false)
+
+  function openListingSupport(item) {
+    setSupportListing(item)
+    setSupportReason('incorrect_brand_or_title')
+    setSupportMessage('')
+    setSupportError('')
+    trackExperience('support_started', { screen: 'listing_support', entityType: 'listing', entityId: listingRecordId(item) })
+  }
+
+  async function submitListingSupport(e) {
+    e?.preventDefault?.()
+    const listingId = listingRecordId(supportListing)
+    if (!listingId || supportMessage.trim().length < 10) {
+      setSupportError('Describe the issue in at least 10 characters.')
+      return
+    }
+    const email = String(profileQuiz?.email || session?.email || '').trim()
+    if (!email) {
+      setSupportError('Add an email address to your profile before submitting.')
+      return
+    }
+    setSupportBusy(true)
+    setSupportError('')
+    try {
+      const bearerToken = clerkEnabled && typeof getBearerToken === 'function' ? await getBearerToken() : ''
+      const result = await createListingSupportRemote({
+        apiBaseUrl,
+        apiKey,
+        bearerToken,
+        listingId,
+        payload: {
+          reason: supportReason,
+          message: supportMessage.trim(),
+          contact_email: email,
+          contact_name: signupFullName || 'JOUFT member',
+          platform: 'web',
+          app_version: 'web',
+        },
+      })
+      setSupportListing(null)
+      showTransientNotice(`Support request submitted${result?.thread_id ? ` • ${result.thread_id}` : ''}.`)
+      trackExperience('support_submitted', { screen: 'listing_support', entityType: 'listing', entityId: listingId, properties: { reason: supportReason } })
+    } catch (err) {
+      setSupportError(err?.message || 'Could not submit the support request.')
+    } finally {
+      setSupportBusy(false)
+    }
+  }
   const forcedLogoutRef = useRef(false)
   const profileSetupAutoOpenedRef = useRef(false)
   const knownIncomingOfferIdsRef = useRef(new Set())
   const offerStatusByIdRef = useRef(new Map())
   const shippingSignatureByOfferRef = useRef(new Map())
-  const createPhotoInsertIndexRef = useRef(null)
   const incomingOfferPollInitializedRef = useRef(false)
   const seenServerNotificationIdsRef = useRef(new Set())
   const profileQuizHydrationStartedRef = useRef('')
@@ -2648,9 +2758,37 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     return `jouft.notifications.${subject}`
   }, [session?.email, session?.id])
 
+  const trackExperience = useCallback(async (eventName, details = {}) => {
+    try {
+      const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
+      await sendExperienceEvent({
+        apiBaseUrl,
+        apiKey: clerkEnabled ? '' : apiKey.trim(),
+        bearerToken,
+        event: {
+          event_name: eventName,
+          session_id: experienceSessionIdRef.current,
+          platform: 'web',
+          screen: details.screen || activeTabRef.current,
+          entity_type: details.entityType || null,
+          entity_id: details.entityId || null,
+          properties: details.properties || {},
+        },
+      })
+    } catch (err) {
+      console.debug('Experience event was not recorded.', err)
+    }
+  }, [apiBaseUrl, apiKey, clerkEnabled, getBearerToken])
+
   useEffect(() => {
     activeTabRef.current = activeTab
-  }, [activeTab])
+    trackExperience('screen_viewed', { screen: activeTab })
+  }, [activeTab, trackExperience])
+
+  useEffect(() => {
+    if (!showCreateListingModal || listingModalMode !== 'create' || images.length === 0) return
+    trackExperience('listing_photos_added', { screen: 'create_listing', properties: { image_count: images.length } })
+  }, [images.length, listingModalMode, showCreateListingModal, trackExperience])
 
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -3697,6 +3835,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
       payload: profilePayloadForSave(),
     })
     applySavedProfileQuiz(saved)
+    trackExperience('profile_saved', { screen: 'profile', entityType: 'profile' })
     return saved
   }
 
@@ -4173,6 +4312,47 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     }
   }, [createImageSlots])
 
+  useEffect(() => {
+    const selectedImages = createImageSlots.filter(Boolean).slice(0, 6)
+    if (!showCreateListingModal || selectedImages.length === 0) {
+      setCreateImageRoleCheck(null)
+      setCreateImageRoleBusy(false)
+      setCreateImageRoleError('')
+      return undefined
+    }
+    let cancelled = false
+    setCreateImageRoleBusy(true)
+    setCreateImageRoleError('')
+    const timer = window.setTimeout(async () => {
+      try {
+        const { client, authContext } = createWebApiClient({ apiBaseUrl, apiKey })
+        const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : ''
+        const result = await client.classifyImageRoles(
+          { images: selectedImages.map((file) => ({ file })) },
+          authContext(bearerToken),
+        )
+        if (!cancelled) {
+          setCreateImageRoleCheck(result)
+          if (result?.category) {
+            setCategory(result.category)
+            if (itemSize && !sizeOptionsForCategory(result.category).includes(itemSize)) setItemSize('')
+          }
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setCreateImageRoleCheck(null)
+          setCreateImageRoleError(err.message || 'Could not check photo coverage. You may retry or continue.')
+        }
+      } finally {
+        if (!cancelled) setCreateImageRoleBusy(false)
+      }
+    }, 500)
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [showCreateListingModal, createImageSlots, createImageRoleRetry, apiBaseUrl, apiKey, clerkEnabled, getBearerToken])
+
   const modalPreviewUrls = listingModalMode === 'edit'
     ? [...editPreviewUrls, ...previewUrls].slice(0, 6)
     : previewUrls.slice(0, 6)
@@ -4195,20 +4375,14 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     return selected ? [selected, ...rest] : rest
   }
 
-  function handleCreatePhotoFiles(fileList, startIndexOverride = null) {
+  function handleCreatePhotoFiles(fileList) {
     const selected = Array.from(fileList || []).slice(0, 6)
     if (selected.length < 1) return
-    const pendingIndex = startIndexOverride ?? createPhotoInsertIndexRef.current
-    createPhotoInsertIndexRef.current = null
-    const startIndex = Number.isInteger(pendingIndex) ? Math.max(0, Math.min(pendingIndex, 5)) : 0
     setCreateImageSlots((prev) => {
-      const next = Array.isArray(prev) && prev.length === 6 ? [...prev] : Array(6).fill(null)
-      selected.slice(0, 6 - startIndex).forEach((file, offset) => {
-        next[startIndex + offset] = file
-      })
-      return next
+      const existing = (Array.isArray(prev) ? prev : []).filter(Boolean)
+      return [...existing, ...selected].slice(0, 6)
     })
-    setSelectedCreateImageIndex(startIndex)
+    setSelectedCreateImageIndex((current) => Math.max(0, current))
     setEditPreviewUrls([])
     setReceiptPromptPending(false)
     setReceiptPromptDismissed(false)
@@ -4460,6 +4634,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     if (idx >= 0) {
       setSelectedMarketListingIndex(idx)
       setSelectedMarketImageIndex(0)
+      trackExperience('marketplace_listing_viewed', { screen: 'market', entityType: 'listing', entityId: item?.id || item?.listing_id })
       if (typeof window !== 'undefined') {
         window.history.pushState({}, '', marketListingHref(item?.id || item?.listing_id))
       }
@@ -4606,8 +4781,22 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
         bearerToken,
         limit: 50,
       })
+      const experienceReport = await fetchAdminExperienceReport({
+        apiBaseUrl,
+        apiKey: clerkEnabled ? '' : apiKey.trim(),
+        bearerToken,
+        days: 30,
+      })
+      const marketplaceReport = await fetchAdminMarketplaceIntelligence({
+        apiBaseUrl,
+        apiKey: clerkEnabled ? '' : apiKey.trim(),
+        bearerToken,
+        days: 30,
+      })
       setAdminAnalyses(payload.items || [])
       setAdminDashboard(dashboard)
+      setAdminExperienceReport(experienceReport)
+      setAdminMarketplaceReport(marketplaceReport)
     } catch (err) {
       setAdminError(err.message || String(err))
     } finally {
@@ -4670,6 +4859,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     setTradeOfferError('')
     setMarketMatchesTargetId(null)
     setActiveTab('trade')
+    trackExperience('trade_composer_started', { screen: 'trade', entityType: 'listing', entityId: targetListing.id })
 
     try {
       const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
@@ -4720,6 +4910,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
           message: tradeOfferMessage.trim(),
         },
       })
+      trackExperience('trade_offer_submitted', { screen: 'trade', entityType: 'listing', entityId: tradeComposerTarget.id, properties: { offered_item_count: tradeOfferListingIds.length } })
       removeSentOfferMatches(tradeComposerTarget.id, tradeOfferListingIds)
       setTradeComposerTarget(null)
       setTradeOfferCandidates([])
@@ -5099,6 +5290,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   }
 
   function resetDraft() {
+    setCreateListingStep(1)
     setItemTitle('')
     setCategory('')
     setUserCondition('')
@@ -5119,6 +5311,9 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     setReceiptPromptDismissed(false)
     setAnalysisError('')
     setSavedListingNotice('')
+    setCreateImageRoleCheck(null)
+    setCreateImageRoleBusy(false)
+    setCreateImageRoleError('')
   }
 
   async function createListingAndRunAsyncAnalysis() {
@@ -5149,6 +5344,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
         apiKey: clerkEnabled ? '' : apiKey.trim(),
         bearerToken,
         images: imagesForAnalysis,
+        roleAssignments: moveArrayItemToFront(createImageRoleCheck?.images || [], selectedCreateImageIndex),
       })
       const uploadedImageUrls = persistableImageUrls((uploaded?.uploaded_images || []).map((entry) => entry?.image_url))
       if (uploadedImageUrls.length < 1) {
@@ -5187,6 +5383,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
         payload: toRemoteListingPayload(draftListing),
       })
       const normalized = fromRemoteListing(created)
+      trackExperience('listing_created', { screen: 'create_listing', entityType: 'listing', entityId: normalized.id, properties: { category, image_count: uploadedImageUrls.length } })
       setMyListings((prev) => [normalized, ...prev])
       setActiveTab('portfolio')
       setAnalysisError('')
@@ -5195,12 +5392,48 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
       scheduleListingRefreshes()
       return true
     } catch (err) {
+      trackExperience('listing_analysis_failed', { screen: 'create_listing', properties: { error_code: 'listing_creation_failed' } })
       setAnalysisError(err.message || String(err))
       setSavedListingNotice('Listing creation failed. Please retry creating the listing.')
       return false
     } finally {
       setCreateListingBusy(false)
     }
+  }
+
+  function submitCreateListingWithPhotoCheck() {
+    const currentImageCount = createImageSlots.filter(Boolean).length
+    if (currentImageCount < 1 || currentImageCount > 6) {
+      setAnalysisError('Upload 1 to 6 images before continuing.')
+      return
+    }
+    if (!userCondition) {
+      setAnalysisError('Select item condition before continuing.')
+      return
+    }
+    if (createImageRoleBusy) {
+      setAppAlert({
+        title: 'Photo Check in Progress',
+        message: 'Gemini is still checking the photo types. This usually takes only a few seconds.',
+        primaryLabel: 'OK',
+      })
+      return
+    }
+    const missing = createImageRoleCheck?.missing_required || []
+    if (missing.length === 0) {
+      createListingAndRunAsyncAnalysis()
+      return
+    }
+    setAppAlert({
+      title: 'Required Photos Missing',
+      message: `For a stronger analysis, add: ${missing.map((role) => IMAGE_ROLE_LABELS[role] || role).join(', ')}. Continue only if these views are not available for this item.`,
+      primaryLabel: 'Continue Anyway',
+      onPrimary: () => {
+        setAppAlert(null)
+        createListingAndRunAsyncAnalysis()
+      },
+      secondaryLabel: 'Add Photos',
+    })
   }
 
   async function updateListingAndRunAsyncAnalysis(listing, { finalStatus = 'Review', publishAfterAnalysis = false } = {}) {
@@ -5323,6 +5556,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
         payload: toRemoteListingPayload(next),
       })
       setMyListings((prev) => prev.map((item) => item.id === listing.id ? fromRemoteListing(updated) : item))
+      trackExperience('listing_published', { screen: 'review_listing', entityType: 'listing', entityId: listing.id })
       setActiveTab('portfolio')
       showClosetSuccess('Listing published to Marketplace.')
     } catch (err) {
@@ -5356,6 +5590,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     setListingModalMode('create')
     setModalEditingListing(null)
     setShowCreateListingModal(true)
+    trackExperience('listing_started', { screen: 'create_listing' })
   }
 
   function openCreateListingFromCloset() {
@@ -6960,7 +7195,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                   {savedListingNotice && <p className="ok-text">{savedListingNotice}</p>}
                   <div className="listing-grid closet-listing-grid">{filteredClosetListings.map((item) => {
                     const isPublished = String(item.status || '').toLowerCase() === 'active'
-                    return <ListingCard key={item.id} item={item} own onEditDraft={openEditListingModal} onReviewListing={openReviewListing} onPublishListing={publishListingToMarketplace} onRemoveListing={removeListingFromCloset} onOpenDetails={isPublished ? openClosetListingMatches : null} matchCount={isPublished ? getMarketplaceMatchesForClosetListing(item).length : null} editorialStyle />
+                    return <ListingCard key={item.id} item={item} own onEditDraft={openEditListingModal} onReviewListing={openReviewListing} onPublishListing={publishListingToMarketplace} onRemoveListing={removeListingFromCloset} onReportIssue={openListingSupport} onOpenDetails={isPublished ? openClosetListingMatches : null} matchCount={isPublished ? getMarketplaceMatchesForClosetListing(item).length : null} editorialStyle />
                   })}</div>
                   {closetFilter === 'all' && myListingsHasMore ? (
                     <div className="load-more-row">
@@ -7590,6 +7825,8 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                       ['valuation', 'Valuation disputes', adminDashboard.counts?.valuation_disputes],
                       ['risk', 'Auth risk', adminDashboard.counts?.suspicious_listings],
                       ['notes', 'Support notes', adminDashboard.counts?.support_notes],
+                      ['experience', 'User experience', adminExperienceReport?.findings?.length],
+                      ['marketplace_intelligence', 'Marketplace insights', adminMarketplaceReport?.summary?.active_listings],
                       ['analysis', 'Recent debug', adminFiltered.length],
                     ].map(([key, label, count]) => (
                       <button key={key} type="button" className={adminQueue === key ? 'primary small' : 'ghost small'} onClick={() => setAdminQueue(key)}>
@@ -7664,6 +7901,12 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                     <div className="admin-grid">
                       {(adminDashboard.support_notes || []).map((note) => <AdminSupportNoteCard key={note.note_id} note={note} />)}
                     </div>
+                  )}
+                  {adminQueue === 'experience' && (
+                    <AdminExperienceReport report={adminExperienceReport} />
+                  )}
+                  {adminQueue === 'marketplace_intelligence' && (
+                    <AdminMarketplaceIntelligence report={adminMarketplaceReport} />
                   )}
                   {adminQueue === 'analysis' && (
                     <div className="admin-grid">
@@ -7870,21 +8113,67 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
         </div>
       )}
 
+      {supportListing && (
+        <div className="listing-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="support-modal-title">
+          <form className="listing-modal-card support-modal-card" onSubmit={submitListingSupport}>
+            <div className="listing-modal-head">
+              <div>
+                <p className="eyebrow">Customer Support</p>
+                <h3 id="support-modal-title">Report a Listing Issue</h3>
+              </div>
+              <button className="ghost small" type="button" onClick={() => setSupportListing(null)} disabled={supportBusy}>Close</button>
+            </div>
+            <p className="tiny-note">{supportListing.title || 'Listing'}</p>
+            <label>
+              <span>Issue type</span>
+              <select value={supportReason} onChange={(e) => setSupportReason(e.target.value)} disabled={supportBusy}>
+                <option value="incorrect_brand_or_title">Incorrect brand or title</option>
+                <option value="incorrect_valuation">Incorrect valuation</option>
+                <option value="incorrect_condition">Incorrect condition</option>
+                <option value="missing_product_information">Missing product information</option>
+                <option value="image_processing_problem">Image-processing problem</option>
+                <option value="authentication_concern">Authentication concern</option>
+                <option value="other">Other</option>
+              </select>
+            </label>
+            <label>
+              <span>What is wrong?</span>
+              <textarea value={supportMessage} onChange={(e) => setSupportMessage(e.target.value)} placeholder="Describe what you expected and what appears incorrect." rows={6} maxLength={4000} disabled={supportBusy} />
+            </label>
+            {supportError && <p className="error-text">{supportError}</p>}
+            <div className="button-row">
+              <button className="primary" type="submit" disabled={supportBusy || supportMessage.trim().length < 10}>{supportBusy ? 'Submitting...' : 'Submit Request'}</button>
+            </div>
+          </form>
+        </div>
+      )}
+
       {showCreateListingModal && (
         <div className="listing-modal-overlay">
           <div className="listing-modal-card">
+            {createListingStep === 1 && createImageRoleBusy && (
+              <div className="image-processing-overlay" role="status" aria-live="polite" aria-busy="true">
+                <span className="image-processing-spinner" aria-hidden="true" />
+                <strong>Analyzing your photos</strong>
+                <p>Identifying the item category and checking each photo type...</p>
+              </div>
+            )}
             <div className="listing-modal-head">
               <h3>Create Listing</h3>
-              <button className="ghost small" type="button" onClick={() => setShowCreateListingModal(false)} disabled={analysisLoading || createListingBusy}>Close</button>
+              <button className="ghost small" type="button" onClick={() => setShowCreateListingModal(false)} disabled={analysisLoading || createListingBusy || createImageRoleBusy}>Close</button>
             </div>
-            <p className="tiny-note listing-modal-note">Step 1: Upload images and select condition.</p>
+            <p className="tiny-note listing-modal-note">
+              {createListingStep === 1
+                ? 'Step 1 of 2: Upload photos. Gemini will identify the category and photo types.'
+                : 'Step 2 of 2: Confirm the category, condition, and size.'}
+            </p>
             {createListingBusy && <p className="ok-text">Uploading photos and creating listing...</p>}
             {analysisLoading && <p className="ok-text">Analyzing photos...</p>}
             {analysisError && <p className="error-text">{analysisError}</p>}
             {savedListingNotice && !analysisLoading && !createListingBusy && <p className="ok-text">{savedListingNotice}</p>}
 
             <div className="listing-modal-fields">
-              <label>
+              {createListingStep === 1 && <label>
                 <span>Photos (1-6)</span>
                 <input
                   id="create-listing-photo-input"
@@ -7898,7 +8187,8 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                     e.target.value = ''
                   }}
                 />
-              </label>
+              </label>}
+              {createListingStep === 2 && <>
               <label>
                 <span>Category</span>
                 <select
@@ -7939,76 +8229,125 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                   })()}
                 </select>
               </label>
+              </>}
             </div>
 
-            <div className="listing-modal-photo-guide">
-              <p className="listing-modal-label"><strong>Suggested photo set</strong></p>
+            {createListingStep === 1 && <div className="listing-modal-photo-guide">
+              <div className="listing-photo-check-head">
+                <p className="listing-modal-label"><strong>Your photos</strong></p>
+                {createImageRoleBusy && <span className="tiny-note">Checking photo types...</span>}
+              </div>
               <div className="listing-modal-image-grid listing-modal-image-grid-top">
-                {photoGuidanceForCategory(category).map(([title, detail], idx) => {
-                  const url = createSlotPreviewUrls[idx]
-                  return url ? (
+                {createSlotPreviewUrls.filter(Boolean).map((url, idx) => {
+                  const assignment = createImageRoleCheck?.images?.[idx]
+                  return (
                     <div key={`${url}-${idx}`} className={`listing-modal-thumb ${idx === selectedCreateImageIndex ? 'is-hero' : ''}`}>
                       <img src={url} alt={`Upload ${idx + 1}`} />
                       {idx === selectedCreateImageIndex && <span className="listing-hero-badge">Hero</span>}
-                      <button
-                        className="listing-modal-set-hero"
-                        type="button"
-                        onClick={() => setSelectedCreateImageIndex(idx)}
-                      >
+                      {assignment?.role && <span className="listing-image-role-badge">{IMAGE_ROLE_LABELS[assignment.role] || 'Other view'}</span>}
+                      <button className="listing-modal-set-hero" type="button" onClick={() => setSelectedCreateImageIndex(idx)}>
                         Set Hero
                       </button>
-                    </div>
-                  ) : (
-                    <label
-                      key={`${category || 'generic'}-photo-guide-${idx}`}
-                      className="listing-modal-photo-placeholder"
-                    >
-                      <span className={idx < 3 ? 'photo-placeholder-priority must' : 'photo-placeholder-priority optional'}>
-                        {idx < 3 ? 'Must' : 'Optional'}
-                      </span>
-                      <input
-                        type="file"
-                        accept="image/*"
-                        multiple
-                        className="listing-modal-photo-placeholder-input"
-                        onChange={(e) => {
-                          handleCreatePhotoFiles(e.target.files, idx)
-                          e.target.value = ''
+                      <button
+                        className="listing-modal-remove-photo"
+                        type="button"
+                        onClick={() => {
+                          setCreateImageSlots((prev) => prev.filter(Boolean).filter((_, imageIdx) => imageIdx !== idx))
+                          setSelectedCreateImageIndex((current) => Math.max(0, current > idx ? current - 1 : current === idx ? 0 : current))
                         }}
-                      />
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  )
+                })}
+              </div>
+
+              <div className="listing-photo-coverage">
+                {!createImageRoleCheck && !createImageRoleBusy && <p className="tiny-note">Upload photos to identify the item category and check coverage.</p>}
+                {createImageRoleCheck?.category && (
+                  <p className="ok-text">
+                    {createImageRoleCheck.category.charAt(0).toUpperCase() + createImageRoleCheck.category.slice(1)}
+                  </p>
+                )}
+                {createImageRoleCheck?.missing_required?.length > 0 && (
+                  <div className="listing-photo-missing required">
+                    <strong>Required photos to add</strong>
+                    <span>{createImageRoleCheck.missing_required.map((role) => IMAGE_ROLE_LABELS[role] || role).join(' · ')}</span>
+                  </div>
+                )}
+                {createImageRoleCheck && createImageRoleCheck.missing_required?.length === 0 && (
+                  <p className="ok-text">Required photo coverage is complete.</p>
+                )}
+                {createImageRoleCheck?.missing_recommended?.length > 0 && (
+                  <div className="listing-photo-missing recommended">
+                    <strong>Recommended next</strong>
+                    <span>{createImageRoleCheck.missing_recommended.map((role) => IMAGE_ROLE_LABELS[role] || role).join(' · ')}</span>
+                  </div>
+                )}
+                {createImageRoleError && (
+                  <div className="listing-photo-missing warning">
+                    <span>{createImageRoleError}</span>
+                    <button className="ghost small" type="button" onClick={() => setCreateImageRoleRetry((value) => value + 1)}>Retry check</button>
+                  </div>
+                )}
+              </div>
+
+              <p className="listing-modal-label"><strong>Photo guidance</strong></p>
+              <div className="listing-photo-guidance-grid">
+                {photoGuidanceForCategory(category).map(([title, detail], idx) => {
+                  return (
+                    <div key={`${category || 'generic'}-photo-guide-${idx}`} className="listing-modal-photo-placeholder is-guidance">
+                      <span className={idx < 3 ? 'photo-placeholder-priority must' : 'photo-placeholder-priority optional'}>
+                        {idx < 3 ? 'Priority' : 'Helpful'}
+                      </span>
                       <span className="photo-placeholder-frame" aria-hidden="true">
                         <span className="photo-placeholder-frame-title">The {title}</span>
                         <PhotoGuideIllustration category={category} title={title} />
                       </span>
                       <strong>{title}</strong>
                       <small>{detail}</small>
-                    </label>
+                    </div>
                   )
                 })}
               </div>
-            </div>
+            </div>}
 
             <div className="button-row listing-modal-actions">
-              <button className="ghost" type="button" onClick={() => setShowCreateListingModal(false)} disabled={analysisLoading || createListingBusy}>Cancel</button>
-              <button
+              <button className="ghost" type="button" onClick={() => createListingStep === 1 ? setShowCreateListingModal(false) : setCreateListingStep(1)} disabled={analysisLoading || createListingBusy}>
+                {createListingStep === 1 ? 'Cancel' : 'Back'}
+              </button>
+              {createListingStep === 1 ? <button
+                className="primary"
+                type="button"
+                disabled={createImageRoleBusy || createImageSlots.filter(Boolean).length === 0}
+                onClick={() => {
+                  const missing = createImageRoleCheck?.missing_required || []
+                  if (missing.length > 0) {
+                    setAppAlert({
+                      title: 'Required Photos Missing',
+                      message: `Add: ${missing.map((role) => IMAGE_ROLE_LABELS[role] || role).join(', ')}. You can continue if these views are unavailable.`,
+                      primaryLabel: 'Continue Anyway',
+                      onPrimary: () => {
+                        setAppAlert(null)
+                        setCreateListingStep(2)
+                      },
+                      secondaryLabel: 'Add Photos',
+                    })
+                    return
+                  }
+                  setCreateListingStep(2)
+                }}
+              >
+                {createImageRoleBusy ? 'Checking Photos...' : 'Continue'}
+              </button> : <button
                 className="primary"
                 type="button"
                 disabled={analysisLoading || createListingBusy}
-                onClick={async () => {
-                  const currentImageCount = createImageSlots.filter(Boolean).length
-                  if (currentImageCount < 1 || currentImageCount > 6) {
-                    setAnalysisError('Upload 1 to 6 images before continuing.')
-                    return
-                  }
-                  if (!userCondition) {
-                    setAnalysisError('Select item condition before continuing.')
-                    return
-                  }
-                  await createListingAndRunAsyncAnalysis()
-                }}
+                onClick={submitCreateListingWithPhotoCheck}
               >
                 {createListingBusy ? 'Creating...' : 'Create Listing'}
-              </button>
+              </button>}
             </div>
           </div>
         </div>
@@ -8207,7 +8546,7 @@ function ListingImage({ src, alt, onFailed }) {
   )
 }
 
-function ListingCard({ item, own = false, onEditDraft = null, onReviewListing = null, onPublishListing = null, onRemoveListing = null, marketplaceCompact = false, onOpenTrade = null, myTradeCandidates = [], onOpenMatches = null, matchPreviewImages = [], matchCount = null, editorialStyle = false, onOpenDetails = null, isOwnListing = false, liked = false, onToggleLike = null }) {
+function ListingCard({ item, own = false, onEditDraft = null, onReviewListing = null, onPublishListing = null, onRemoveListing = null, onReportIssue = null, marketplaceCompact = false, onOpenTrade = null, myTradeCandidates = [], onOpenMatches = null, matchPreviewImages = [], matchCount = null, editorialStyle = false, onOpenDetails = null, isOwnListing = false, liked = false, onToggleLike = null }) {
   const rawGallery = Array.isArray(item.images) && item.images.length > 0
     ? item.images
     : [item.image].filter(Boolean)
@@ -8424,6 +8763,18 @@ function ListingCard({ item, own = false, onEditDraft = null, onReviewListing = 
                         <FiTrash2 aria-hidden="true" />
                       </button>
                     )}
+                    {typeof onReportIssue === 'function' && (
+                      <button
+                        className="editorial-match-btn"
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          onReportIssue(item)
+                        }}
+                      >
+                        <span>REPORT ISSUE</span>
+                      </button>
+                    )}
                     <button
                       className="editorial-match-btn listing-share-icon-btn"
                       type="button"
@@ -8577,6 +8928,133 @@ function ListingCard({ item, own = false, onEditDraft = null, onReviewListing = 
       )}
       </article>
     </>
+  )
+}
+
+function AdminMarketplaceIntelligence({ report }) {
+  if (!report) return <div className="empty-state"><h3>No marketplace report loaded</h3><p>Refresh to analyze inventory and match availability.</p></div>
+  const summary = report.summary || {}
+  const inventoryLeader = report.leaders?.inventory_category
+  const demandLeader = report.leaders?.demand_category
+  return (
+    <div className="experience-report marketplace-intelligence">
+      <div className="experience-summary marketplace-summary">
+        <div><span>Total listings</span><strong>{Number(summary.total_listings || 0)}</strong></div>
+        <div><span>Active listings</span><strong>{Number(summary.active_listings || 0)}</strong></div>
+        <div><span>Created in {report.window_days} days</span><strong>{Number(summary.recent_listings || 0)}</strong></div>
+        <div><span>Match coverage</span><strong>{Number(summary.match_coverage_pct || 0)}%</strong></div>
+        <div className="unmatched-summary"><span>Without matches</span><strong>{Number(summary.active_listings_without_matches || 0)}</strong></div>
+        <div><span>Median matches</span><strong>{Number(summary.median_available_matches || 0)}</strong></div>
+        <div><span>Trade offers</span><strong>{Number(summary.offers || 0)}</strong></div>
+      </div>
+      <div className="marketplace-leaders">
+        <article><span>Largest inventory category</span><strong>{inventoryLeader?.category || 'No data'}</strong><p>{inventoryLeader ? `${inventoryLeader.listings} listings · ${inventoryLeader.inventory_share_pct}% of inventory` : report.definitions?.inventory_popularity}</p></article>
+        <article><span>Most demanded category</span><strong>{demandLeader?.category || 'Not enough offer activity'}</strong><p>{demandLeader ? `${demandLeader.offers_received} offers · ${demandLeader.offers_per_active_listing} per active listing` : report.definitions?.demand_popularity}</p></article>
+      </div>
+      <section className="experience-section unmatched-inventory-section">
+        <div><h3>Active listings without matches</h3><p className="admin-evidence">These listings cannot currently be paired under the production value-tolerance and owner rules.</p></div>
+        <div className="unmatched-reason-grid">
+          {(report.unmatched_inventory?.reason_counts || []).map((reason) => <article key={reason.reason_code}><strong>{reason.listings}</strong><span>{reason.label}</span></article>)}
+        </div>
+        {(report.unmatched_inventory?.listings || []).length ? <div className="admin-data-table-wrap"><table className="admin-data-table unmatched-table"><thead><tr><th>Listing</th><th>Category</th><th>Value</th><th>Why no match</th></tr></thead><tbody>
+          {(report.unmatched_inventory?.listings || []).map((item) => <tr key={item.listing_id}><td><strong>{item.brand}</strong><span>{item.title}</span><small>{item.listing_id}</small></td><td>{item.category}</td><td>{item.estimated_value > 0 ? `$${Number(item.estimated_value).toLocaleString()}` : 'Not valued'}</td><td><strong>{(report.unmatched_inventory?.reason_counts || []).find((reason) => reason.reason_code === item.reason_code)?.label || item.reason_code}</strong><span>{item.reason}</span></td></tr>)}
+        </tbody></table></div> : <p className="admin-evidence">Every active listing currently has at least one eligible match.</p>}
+        {report.unmatched_inventory?.truncated ? <p className="admin-evidence">Showing the 100 highest-value unmatched listings.</p> : null}
+      </section>
+      <section className="experience-section">
+        <h3>Categories</h3>
+        <div className="admin-data-table-wrap"><table className="admin-data-table"><thead><tr><th>Category</th><th>All</th><th>Active</th><th>New</th><th>Inventory</th><th>Offers</th><th>Offers / active</th></tr></thead><tbody>
+          {(report.categories || []).map((item) => <tr key={item.category}><td>{item.category}</td><td>{item.listings}</td><td>{item.active_listings}</td><td>{item.recent_listings}</td><td>{item.inventory_share_pct}%</td><td>{item.offers_received}</td><td>{item.offers_per_active_listing}</td></tr>)}
+        </tbody></table></div>
+      </section>
+      <section className="experience-section">
+        <h3>Value bands</h3>
+        <div className="value-band-grid">
+          {(report.value_bands || []).map((band) => <article key={band.key}><span>{band.label}</span><strong>{band.listings}</strong><small>{band.active_listings} active · {band.share_pct}%</small></article>)}
+        </div>
+      </section>
+      <section className="experience-section">
+        <h3>Match availability by category</h3>
+        <div className="admin-data-table-wrap"><table className="admin-data-table"><thead><tr><th>Category</th><th>Valued active</th><th>With matches</th><th>Coverage</th><th>Median matches</th></tr></thead><tbody>
+          {(report.match_coverage_by_category || []).map((item) => <tr key={item.category}><td>{item.category}</td><td>{item.valued_active_listings}</td><td>{item.listings_with_matches}</td><td>{item.coverage_pct}%</td><td>{item.median_available_matches}</td></tr>)}
+        </tbody></table></div>
+        <p className="admin-evidence">{report.definitions?.available_match}</p>
+      </section>
+    </div>
+  )
+}
+
+function AdminExperienceReport({ report }) {
+  if (!report) return <div className="empty-state"><h3>No experience report loaded</h3><p>Refresh to analyze the last 30 days.</p></div>
+  const sample = report.sample || {}
+  return (
+    <div className="experience-report">
+      <div className="experience-summary">
+        <div><span>Users</span><strong>{Number(sample.users || 0)}</strong></div>
+        <div><span>Sessions</span><strong>{Number(sample.sessions || 0)}</strong></div>
+        <div><span>Events</span><strong>{Number(sample.events || 0)}</strong></div>
+        <div><span>Data quality</span><strong>{report.data_quality === 'sufficient' ? 'Ready' : 'Collecting'}</strong></div>
+      </div>
+      {report.data_quality !== 'sufficient' ? (
+        <p className="admin-evidence">Findings are withheld until at least {report.minimum_sample} users are represented.</p>
+      ) : null}
+      <section className="experience-report-summary">
+        <span>Agent report · Last {report.window_days} days</span>
+        <p>{report.executive_summary}</p>
+        <small>{report.methodology}</small>
+      </section>
+      <section className="experience-section">
+        <h3>Priority findings</h3>
+        {(report.findings || []).length ? (report.findings || []).map((finding, index) => (
+          <article className="experience-finding" key={`${finding.title}-${index}`}>
+            <span className={`experience-severity ${finding.severity}`}>{finding.severity}</span>
+            <div><strong>{finding.title}</strong><p>{finding.evidence}</p><p className="admin-evidence">Recommended: {finding.recommendation}</p></div>
+          </article>
+        )) : <p className="admin-evidence">No statistically meaningful problems detected in this window.</p>}
+      </section>
+      <section className="experience-section">
+        <h3>Recommended next steps</h3>
+        {(report.next_steps || []).length ? <div className="experience-next-steps">
+          {(report.next_steps || []).map((step) => (
+            <article key={`${step.priority}-${step.title}`}>
+              <span>{step.priority}</span>
+              <div><strong>{step.title}</strong><p>{step.action}</p><small>Success measure: {step.success_metric}</small></div>
+            </article>
+          ))}
+        </div> : <p className="admin-evidence">Continue collecting telemetry and review again after the next reporting window.</p>}
+      </section>
+      <section className="experience-section">
+        <h3>Journey funnels</h3>
+        <div className="experience-funnels">
+          {(report.funnels || []).map((funnel) => (
+            <article className="admin-card" key={funnel.key}>
+              <h4>{funnel.label}</h4>
+              <div className="experience-steps">
+                {(funnel.steps || []).map((step) => (
+                  <div key={step.event_name}>
+                    <span>{step.label}</span><strong>{step.users}</strong>
+                    {step.conversion_from_previous_pct != null ? <small>{step.conversion_from_previous_pct}% continued</small> : <small>Entry</small>}
+                  </div>
+                ))}
+              </div>
+            </article>
+          ))}
+        </div>
+      </section>
+      <section className="experience-section">
+        <h3>Repeated friction</h3>
+        {(report.friction_signals || []).length ? (
+          <div className="experience-friction-list">
+            {(report.friction_signals || []).map((signal, index) => (
+              <div key={`${signal.event_name}-${signal.screen}-${index}`}>
+                <strong>{signal.screen}: {signal.reason}</strong>
+                <span>{signal.occurrences} occurrences · {signal.affected_users} users</span>
+              </div>
+            ))}
+          </div>
+        ) : <p className="admin-evidence">No error or failure events recorded.</p>}
+      </section>
+    </div>
   )
 }
 

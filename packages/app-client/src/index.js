@@ -192,7 +192,31 @@ export function createApiClient(options) {
     });
   }
 
-  async function uploadImages({ images = [], itemId }, auth = {}) {
+  async function classifyImageRoles({ images = [], category }, auth = {}) {
+    const resolvedAuth = await resolveAuth(auth);
+    const fd = new FormData();
+    images.forEach((img, idx) => {
+      if (img?.uri && !img?.file) {
+        fd.append("images", {
+          uri: img.uri,
+          name: img.fileName || `image-${idx + 1}.jpg`,
+          type: img.mimeType || "image/jpeg",
+        });
+        return;
+      }
+      fd.append("images", img.file || img);
+    });
+    if (category) fd.append("category", category);
+    return requestFormData({
+      apiBaseUrl,
+      path: "/v1/images/classify-roles",
+      auth: resolvedAuth,
+      formData: fd,
+      fetchImpl,
+    });
+  }
+
+  async function uploadImages({ images = [], itemId, roleHints = [] }, auth = {}) {
     const resolvedAuth = await resolveAuth(auth);
     const fd = new FormData();
     images.forEach((img, idx) => {
@@ -207,6 +231,7 @@ export function createApiClient(options) {
       fd.append("images", img.file || img);
     });
     if (itemId) fd.append("item_id", itemId);
+    if (roleHints.length) fd.append("role_hints", JSON.stringify(roleHints));
     return requestFormData({
       apiBaseUrl,
       path: "/v1/uploads/images",
@@ -289,6 +314,7 @@ export function createApiClient(options) {
     put,
     delete: del,
     analyzeItem,
+    classifyImageRoles,
     uploadImages,
     createImageUploadSlots,
     confirmImageUploads,
@@ -304,6 +330,8 @@ export function createApiClient(options) {
     createListing: (payload, auth = {}) => post("/v1/listings", payload, auth),
     updateListing: (listingId, payload, auth = {}) => put(`/v1/listings/${encodeURIComponent(listingId)}`, payload, auth),
     deleteListing: (listingId, auth = {}) => del(`/v1/listings/${encodeURIComponent(listingId)}`, auth),
+    createListingSupportRequest: (listingId, payload, auth = {}) =>
+      post(`/v1/listings/${encodeURIComponent(listingId)}/support-requests`, payload, auth),
     listMyListings: (limit = 100, auth = {}, options = {}) => {
       const offset = Math.max(0, Number(options.offset || 0));
       return get(`/v1/listings?mine=true&limit=${limit}&offset=${offset}`, auth);

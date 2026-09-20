@@ -152,6 +152,10 @@ class Settings(BaseSettings):
     google_places_autocomplete_url: str = "https://places.googleapis.com/v1/places:autocomplete"
     google_places_details_url: str = "https://places.googleapis.com/v1/places/{place_id}"
     google_places_timeout_s: float = 8.0
+    plain_api_key: str | None = None
+    plain_api_url: str = "https://core-api.uk.plain.com/graphql/v1"
+    plain_timeout_s: float = 15.0
+    plain_webhook_secret: str | None = None
     stripe_secret_key: str | None = None
     stripe_publishable_key: str | None = None
     stripe_webhook_secret: str | None = None

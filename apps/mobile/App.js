@@ -19,13 +19,23 @@ import {
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
 import * as ImageManipulator from 'expo-image-manipulator';
+import * as Location from 'expo-location';
 import * as WebBrowser from 'expo-web-browser';
 import Constants from 'expo-constants';
+import { useFonts } from 'expo-font';
 import { StatusBar } from 'expo-status-bar';
 import { ClerkProvider, useAuth, useClerk, useOAuth, useSignIn, useSignUp, useUser } from '@clerk/clerk-expo';
 import { tokenCache } from '@clerk/clerk-expo/token-cache';
 import { FontAwesome, Ionicons } from '@expo/vector-icons';
 import { createMobileApiClient } from './src/lib/apiClient';
+import { PlusJakartaSans_400Regular } from '@expo-google-fonts/plus-jakarta-sans/400Regular';
+import { PlusJakartaSans_500Medium } from '@expo-google-fonts/plus-jakarta-sans/500Medium';
+import { PlusJakartaSans_600SemiBold } from '@expo-google-fonts/plus-jakarta-sans/600SemiBold';
+import { PlusJakartaSans_700Bold } from '@expo-google-fonts/plus-jakarta-sans/700Bold';
+import { PlusJakartaSans_800ExtraBold } from '@expo-google-fonts/plus-jakarta-sans/800ExtraBold';
+import { BodoniModa_500Medium } from '@expo-google-fonts/bodoni-moda/500Medium';
+import { BodoniModa_600SemiBold } from '@expo-google-fonts/bodoni-moda/600SemiBold';
+import { BodoniModa_700Bold } from '@expo-google-fonts/bodoni-moda/700Bold';
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -66,6 +76,28 @@ const PASSWORD_REQUIREMENTS = [
   'At least one letter',
   'At least one uppercase letter',
   'At least one number',
+];
+const IMAGE_ROLE_LABELS = {
+  full_front: 'Full front', full_back: 'Full back', side_or_profile: 'Side/profile',
+  brand_label: 'Brand label', size_or_material_label: 'Size/material label',
+  hardware_or_detail: 'Hardware/detail', condition_or_wear: 'Condition/wear',
+  shoe_sole: 'Shoe sole', bag_interior: 'Bag interior',
+  serial_or_authentication_mark: 'Serial/authentication mark', other: 'Other view',
+};
+const IMAGE_ROLE_REQUIREMENTS = {
+  clothes: { required: ['full_front', 'brand_label'], recommended: ['full_back', 'size_or_material_label', 'condition_or_wear'] },
+  shoes: { required: ['side_or_profile', 'brand_label', 'shoe_sole'], recommended: ['size_or_material_label', 'condition_or_wear'] },
+  handbag: { required: ['full_front', 'brand_label', 'bag_interior'], recommended: ['full_back', 'hardware_or_detail', 'condition_or_wear', 'serial_or_authentication_mark'] },
+  accessories: { required: ['full_front', 'brand_label'], recommended: ['size_or_material_label', 'hardware_or_detail', 'condition_or_wear'] },
+};
+const SUPPORT_REASONS = [
+  ['incorrect_brand_or_title', 'Brand or title'],
+  ['incorrect_valuation', 'Valuation'],
+  ['incorrect_condition', 'Condition'],
+  ['missing_product_information', 'Missing information'],
+  ['image_processing_problem', 'Images'],
+  ['authentication_concern', 'Authentication'],
+  ['other', 'Other'],
 ];
 const LISTINGS_PAGE_SIZE = 24;
 const TAB_LABELS = {
@@ -154,6 +186,26 @@ const theme = {
   success: '#155e4a',
   error: '#a82222',
 };
+const fonts = {
+  body: 'PlusJakartaSans_400Regular',
+  bodyMedium: 'PlusJakartaSans_500Medium',
+  bodySemibold: 'PlusJakartaSans_600SemiBold',
+  bodyBold: 'PlusJakartaSans_700Bold',
+  bodyExtraBold: 'PlusJakartaSans_800ExtraBold',
+  display: 'BodoniModa_500Medium',
+  displaySemibold: 'BodoniModa_600SemiBold',
+  displayBold: 'BodoniModa_700Bold',
+};
+let defaultFontsApplied = false;
+
+function applyDefaultFonts() {
+  if (defaultFontsApplied) return;
+  Text.defaultProps = Text.defaultProps || {};
+  Text.defaultProps.style = [{ fontFamily: fonts.body }, Text.defaultProps.style];
+  TextInput.defaultProps = TextInput.defaultProps || {};
+  TextInput.defaultProps.style = [{ fontFamily: fonts.body }, TextInput.defaultProps.style];
+  defaultFontsApplied = true;
+}
 const ALERT_CATEGORIES = [
   { key: 'likes', label: 'Likes' },
   { key: 'trades', label: 'Trades' },
@@ -199,7 +251,7 @@ async function prepareMobileImageForUpload(image, index) {
   };
 }
 
-async function uploadImagesWithDirectFallback({ apiClient, images, auth }) {
+async function uploadImagesWithDirectFallback({ apiClient, images, auth, roleAssignments = [] }) {
   let prepared = [];
   try {
     prepared = await Promise.all((images || []).map((image, index) => prepareMobileImageForUpload(image, index)));
@@ -236,11 +288,14 @@ async function uploadImagesWithDirectFallback({ apiClient, images, auth }) {
         filename: prepared[index]?.fileName || `upload-${index + 1}.jpg`,
         content_type: prepared[index]?.mimeType || 'image/jpeg',
         storage_uri: slot.storage_uri,
-        role_hint: slot.role_hint,
+        role_hint: roleAssignments[index]?.role || slot.role_hint,
       })),
     }, auth);
   } catch (e) {
-    return apiClient.uploadImages({ images: prepared }, auth);
+    return apiClient.uploadImages({
+      images: prepared,
+      roleHints: roleAssignments.map((entry) => entry?.role || 'other'),
+    }, auth);
   }
 }
 
@@ -1099,23 +1154,13 @@ function OfferCard({ offer, apiBaseUrl, onPress = null }) {
   );
 }
 
-function TopBrandHeader() {
-  return (
-    <View style={styles.brandWrap}>
-      <View style={styles.brandMainRow}>
-        <Text style={styles.brandLogoCaption}>TRADE · ELEVATE · BELONG.</Text>
-        <Image source={JOUFT_LOGO_IMAGE} style={styles.brandLogoImage} resizeMode="contain" accessibilityLabel="TRADE · ELEVATE · BELONG. JOUFT" />
-      </View>
-    </View>
-  );
-}
-
 function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, clerkUserLabel = '', clerkUserProfile = {}, onSignOut = null }) {
   const { width: viewportWidth } = useWindowDimensions();
   const [apiBaseUrl, setApiBaseUrl] = useState(API_DEFAULT);
   const [authMode, setAuthMode] = useState('api_key');
   const [apiKey, setApiKey] = useState('local-dev-key');
   const [bearerToken, setBearerToken] = useState('');
+  const experienceSessionIdRef = useRef(`mobile-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`);
 
   const [activeTab, setActiveTab] = useState(TEMP_SHOW_PROFILE_QUESTIONNAIRE_ON_LOGIN ? 'profile' : 'marketplace');
   const [offerFilter, setOfferFilter] = useState('pending');
@@ -1142,11 +1187,21 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
   const [tradeOfferBusy, setTradeOfferBusy] = useState(false);
   const [tradeOfferError, setTradeOfferError] = useState('');
   const [appAlert, setAppAlert] = useState(null);
+  const [supportListing, setSupportListing] = useState(null);
+  const [supportReason, setSupportReason] = useState('incorrect_brand_or_title');
+  const [supportMessage, setSupportMessage] = useState('');
+  const [supportBusy, setSupportBusy] = useState(false);
+  const [supportError, setSupportError] = useState('');
   const [offerActionBusyById, setOfferActionBusyById] = useState({});
   const [offerAcceptedListingById, setOfferAcceptedListingById] = useState({});
   const [offerImageIndexByListingId, setOfferImageIndexByListingId] = useState({});
+  const [createImageRoleCheck, setCreateImageRoleCheck] = useState(null);
+  const [createImageRoleBusy, setCreateImageRoleBusy] = useState(false);
+  const [createImageRoleError, setCreateImageRoleError] = useState('');
+  const [createImageRoleRetry, setCreateImageRoleRetry] = useState(0);
   const [shippingAddresses, setShippingAddresses] = useState([]);
   const [profileShippingAddresses, setProfileShippingAddresses] = useState([]);
+  const [expandedProfileAddressId, setExpandedProfileAddressId] = useState('');
   const [profileQuiz, setProfileQuiz] = useState(null);
   const [profileSaveBusy, setProfileSaveBusy] = useState(false);
   const [profileSaveMsg, setProfileSaveMsg] = useState('');
@@ -1163,6 +1218,8 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
   const [shippingBusyByOffer, setShippingBusyByOffer] = useState({});
   const [addressSuggestionsById, setAddressSuggestionsById] = useState({});
   const [addressSuggestBusyById, setAddressSuggestBusyById] = useState({});
+  const [addressLocationBiasById, setAddressLocationBiasById] = useState({});
+  const [addressLocationBusyById, setAddressLocationBusyById] = useState({});
   const [pushEnabled, setPushEnabled] = useState(true);
   const [alertPrefs, setAlertPrefs] = useState(DEFAULT_ALERT_PREFS);
   const [alertStateHydrated, setAlertStateHydrated] = useState(false);
@@ -1198,7 +1255,33 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
 
+  useEffect(() => {
+    if (!notice) return undefined;
+    const displayedNotice = notice;
+    const timer = setTimeout(() => {
+      setNotice((current) => (current === displayedNotice ? '' : current));
+    }, 3000);
+    return () => clearTimeout(timer);
+  }, [notice]);
+
   const apiClient = useMemo(() => createMobileApiClient({ apiBaseUrl }), [apiBaseUrl]);
+
+  async function trackExperience(eventName, details = {}) {
+    if (!authReady()) return;
+    try {
+      await apiClient.trackExperience({
+        event_name: eventName,
+        session_id: experienceSessionIdRef.current,
+        platform: Platform.OS === 'android' ? 'android' : 'ios',
+        screen: details.screen || activeTab,
+        entity_type: details.entityType || null,
+        entity_id: details.entityId || null,
+        properties: details.properties || {},
+      }, await authContext());
+    } catch (err) {
+      console.debug('Experience event was not recorded.', err?.message || err);
+    }
+  }
   useEffect(() => {
     const count = editImageUrls.length + images.length;
     if (editingListingId) {
@@ -1223,6 +1306,14 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
 	  const registeredPushTokenRef = useRef('');
 	  const profileSetupCheckedRef = useRef('');
 	  const mainScrollRef = useRef(null);
+  const createImageRoleRequestRef = useRef(0);
+  const addressSuggestionTimersRef = useRef(new Map());
+  const addressSuggestionQueriesRef = useRef(new Map());
+
+  useEffect(() => () => {
+    addressSuggestionTimersRef.current.forEach((timer) => clearTimeout(timer));
+    addressSuggestionTimersRef.current.clear();
+  }, []);
   const normalizedProfileGender = profileQuiz?.gender === 'male' || profileQuiz?.gender === 'female' || profileQuiz?.gender === 'other'
     ? profileQuiz.gender
     : '';
@@ -1258,6 +1349,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     setSelectedListing(listing);
     setSelectedListingSource(source || 'marketplace');
 	    setSelectedListingIndex(idx);
+	    if (source !== 'closet') trackExperience('marketplace_listing_viewed', { screen: 'marketplace', entityType: 'listing', entityId: listingIdOf(listing) });
 	    setFailedDetailImages({});
 	    requestAnimationFrame(() => {
 	      mainScrollRef.current?.scrollTo?.({ y: 0, animated: false });
@@ -1321,6 +1413,48 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     }
     if (authMode === 'bearer' && bearerToken.trim()) return { bearerToken: bearerToken.trim() };
     return { apiKey: apiKey.trim() };
+  }
+
+  function openListingSupport(listing) {
+    setSupportListing(listing);
+    setSupportReason('incorrect_brand_or_title');
+    setSupportMessage('');
+    setSupportError('');
+    trackExperience('support_started', { screen: 'listing_support', entityType: 'listing', entityId: listingIdOf(listing) });
+  }
+
+  async function submitListingSupport() {
+    const listingId = String(supportListing?.listing_id || supportListing?.id || '').trim();
+    const email = String(profileQuiz?.email || clerkUserProfile?.email || '').trim();
+    if (!listingId || supportMessage.trim().length < 10) {
+      setSupportError('Describe the issue in at least 10 characters.');
+      return;
+    }
+    if (!email) {
+      setSupportError('Add an email address to your profile before submitting.');
+      return;
+    }
+    setSupportBusy(true);
+    setSupportError('');
+    try {
+      const contactName = [profileQuiz?.first_name || clerkUserProfile?.firstName, profileQuiz?.last_name || clerkUserProfile?.lastName]
+        .filter(Boolean).join(' ').trim() || clerkUserLabel || 'JOUFT member';
+      const result = await apiClient.createListingSupportRequest(listingId, {
+        reason: supportReason,
+        message: supportMessage.trim(),
+        contact_email: email,
+        contact_name: contactName,
+        platform: Platform.OS === 'android' ? 'android' : 'ios',
+        app_version: Constants.expoConfig?.version || null,
+      }, await authContext());
+      setSupportListing(null);
+      setNotice(`Support request submitted${result?.thread_id ? ` • ${result.thread_id}` : ''}.`);
+      trackExperience('support_submitted', { screen: 'listing_support', entityType: 'listing', entityId: listingId, properties: { reason: supportReason } });
+    } catch (err) {
+      setSupportError(err?.message || 'Could not submit the support request.');
+    } finally {
+      setSupportBusy(false);
+    }
   }
 
   function profileSetupSectionFor(profile = profileQuiz, availablePaymentMethods = paymentMethods) {
@@ -1468,6 +1602,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
       const editable = normalizeProfileShippingAddresses(profile?.shipping_addresses, profile);
       setShippingAddresses(normalized);
       setProfileShippingAddresses(editable);
+      setExpandedProfileAddressId((current) => current || editable[0]?.id || '');
       return normalized;
     } catch (e) {
       if (profileHydrationRetry < 5) {
@@ -1694,10 +1829,12 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
 
   function addProfileShippingAddress() {
     setProfileSaveMsg('');
+    const addressId = makeId('ship');
+    setExpandedProfileAddressId(addressId);
     setProfileShippingAddresses((prev) => ([
       ...prev,
       {
-        id: makeId('ship'),
+        id: addressId,
         label: `Address ${prev.length + 1}`,
         full_name: '',
         address_line1: '',
@@ -1716,6 +1853,77 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     setProfileShippingAddresses((prev) => prev.map((entry) => (
       entry.id === addressId ? { ...entry, [field]: value } : entry
     )));
+  }
+
+  function updateAddressLine1WithSuggestions(entry, value) {
+    if (!entry?.id) return;
+    updateProfileShippingAddress(entry.id, 'address_line1', value);
+    const query = String(value || '').trim();
+    addressSuggestionQueriesRef.current.set(entry.id, query);
+    const existingTimer = addressSuggestionTimersRef.current.get(entry.id);
+    if (existingTimer) clearTimeout(existingTimer);
+    if (query.length < 3) {
+      setAddressSuggestionsById((prev) => ({ ...prev, [entry.id]: [] }));
+      setAddressSuggestBusyById((prev) => ({ ...prev, [entry.id]: false }));
+      return;
+    }
+    const timer = setTimeout(() => {
+      loadAddressSuggestionsFor({ ...entry, address_line1: value }, query);
+    }, 150);
+    addressSuggestionTimersRef.current.set(entry.id, timer);
+  }
+
+  async function locateAddressSuggestions(entry) {
+    if (!entry?.id) return;
+    setAddressLocationBusyById((prev) => ({ ...prev, [entry.id]: true }));
+    setProfileSaveMsg('');
+    try {
+      const permission = await Location.requestForegroundPermissionsAsync();
+      if (permission.status !== 'granted') {
+        setProfileSaveMsg('Location permission was not granted. Address suggestions will continue without location.');
+        return;
+      }
+      const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      const bias = {
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude,
+      };
+      setAddressLocationBiasById((prev) => ({ ...prev, [entry.id]: bias }));
+      const nearbyAddresses = await Location.reverseGeocodeAsync(bias);
+      const nearby = nearbyAddresses?.[0];
+      if (nearby) {
+        const streetAddress = [nearby.streetNumber, nearby.street || nearby.name]
+          .filter(Boolean)
+          .join(' ')
+          .trim();
+        const currentLocationSuggestion = {
+          street_address: streetAddress,
+          city: nearby.city || nearby.subregion || '',
+          state: nearby.region || '',
+          postal_code: nearby.postalCode || '',
+          country: nearby.isoCountryCode || nearby.country || 'US',
+          formatted: [
+            streetAddress,
+            nearby.city || nearby.subregion,
+            nearby.region,
+            nearby.postalCode,
+          ].filter(Boolean).join(', '),
+          provider: 'device_location',
+        };
+        if (streetAddress) {
+          setAddressSuggestionsById((prev) => ({ ...prev, [entry.id]: [currentLocationSuggestion] }));
+        }
+      }
+      setProfileSaveMsg('Current location found. Select the suggested address or continue typing.');
+      const query = String(entry.address_line1 || '').trim();
+      if (query.length >= 3) {
+        await loadAddressSuggestionsFor(entry, query, bias);
+      }
+    } catch (e) {
+      setProfileSaveMsg('Current location is unavailable. Address suggestions will continue without location.');
+    } finally {
+      setAddressLocationBusyById((prev) => ({ ...prev, [entry.id]: false }));
+    }
   }
 
   function removeProfileShippingAddress(addressId) {
@@ -1774,13 +1982,14 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     });
   }
 
-  async function loadAddressSuggestionsFor(entry) {
+  async function loadAddressSuggestionsFor(entry, queryOverride = null, locationOverride = null) {
     if (!entry?.id) return;
-    const query = String(entry.address_line1 || '').trim();
+    const query = String(queryOverride ?? entry.address_line1 ?? '').trim();
     if (!query) {
       setProfileSaveMsg('Enter address line 1 before finding suggestions.');
       return;
     }
+    if (queryOverride === null) addressSuggestionQueriesRef.current.set(entry.id, query);
     setAddressSuggestBusyById((prev) => ({ ...prev, [entry.id]: true }));
     setProfileSaveMsg('');
     try {
@@ -1790,16 +1999,22 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
           city: entry.city || '',
           state: entry.state || '',
           postalCode: entry.postal_code || '',
+          ...(locationOverride || addressLocationBiasById[entry.id] || {}),
         },
         await authContext(),
       );
       const suggestions = Array.isArray(payload?.suggestions) ? payload.suggestions.slice(0, 5) : [];
+      if (addressSuggestionQueriesRef.current.get(entry.id) !== query) return;
       setAddressSuggestionsById((prev) => ({ ...prev, [entry.id]: suggestions }));
       if (suggestions.length === 0) setProfileSaveMsg('No address suggestions found.');
     } catch (e) {
-      setProfileSaveMsg(e.message || 'Failed to load address suggestions.');
+      if (addressSuggestionQueriesRef.current.get(entry.id) === query) {
+        setProfileSaveMsg(e.message || 'Failed to load address suggestions.');
+      }
     } finally {
-      setAddressSuggestBusyById((prev) => ({ ...prev, [entry.id]: false }));
+      if (addressSuggestionQueriesRef.current.get(entry.id) === query) {
+        setAddressSuggestBusyById((prev) => ({ ...prev, [entry.id]: false }));
+      }
     }
   }
 
@@ -1895,6 +2110,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
       const editable = normalizeProfileShippingAddresses(saved?.shipping_addresses, saved);
       setShippingAddresses(normalized);
       setProfileShippingAddresses(editable);
+      trackExperience('profile_saved', { screen: 'profile', entityType: 'profile', properties: { section: 'shipping' } });
       await reloadProfileTabAfterSave('Shipping addresses saved.');
     } catch (e) {
       setError(e.message || 'Failed to save shipping addresses.');
@@ -1917,6 +2133,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
       });
       const saved = await apiClient.saveProfileQuiz(payload, await authContext());
       setProfileQuiz(normalizeProfileQuiz(saved));
+      trackExperience('profile_saved', { screen: 'profile', entityType: 'profile', properties: { section: 'style' } });
       await reloadProfileTabAfterSave('Profile saved.');
     } catch (e) {
       setError(e.message || 'Failed to save style preferences.');
@@ -1943,7 +2160,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
       || null;
     if (amount > 0 && paymentMethods.length === 0) {
       setProfileSaveMsg('Add a payment method before activating a paid plan.');
-      setProfileSection('payments');
+      setProfileSection('subscription');
       setPaymentMsg('Add a payment method before activating a paid plan.');
       return;
     }
@@ -1982,7 +2199,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     } catch (e) {
       const message = e.message || 'Failed to activate subscription.';
       if (message.toLowerCase().includes('payment method')) {
-        setProfileSection('payments');
+        setProfileSection('subscription');
         setPaymentMsg(message);
       } else {
         setError(message);
@@ -1990,6 +2207,18 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     } finally {
       setProfileSaveBusy(false);
     }
+  }
+
+  function saveActiveProfileSection() {
+    if (profileSection === 'shipping') {
+      saveProfileShippingAddresses();
+      return;
+    }
+    if (profileSection === 'subscription') {
+      saveSubscriptionSettings(subscriptionPlan, subscriptionCycle);
+      return;
+    }
+    saveStylePreferences();
   }
 
   function confirmSubscriptionActivation({ planLabel, amount, cycle, paymentMethod }) {
@@ -2047,6 +2276,18 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
         returnURL: `${Constants.expoConfig?.scheme || 'com.jouft.app.dev'}://stripe-redirect`,
         allowsDelayedPaymentMethods: false,
         primaryButtonLabel: 'Save payment method',
+        ...(Platform.OS === 'ios'
+          ? {
+              applePay: {
+                merchantCountryCode: 'US',
+              },
+            }
+          : {
+              googlePay: {
+                merchantCountryCode: 'US',
+                testEnv: publishableKey.startsWith('pk_test_'),
+              },
+            }),
       });
       if (initResult.error) {
         throw new Error(initResult.error.message || 'Failed to initialize Stripe payment sheet.');
@@ -2142,6 +2383,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     setSelectedListingSource(null);
     setTradeComposerTarget(targetListing);
     setActiveTab('tradeComposer');
+    trackExperience('trade_composer_started', { screen: 'tradeComposer', entityType: 'listing', entityId: targetListing.listing_id });
     requestAnimationFrame(() => {
       mainScrollRef.current?.scrollTo?.({ y: 0, animated: false });
     });
@@ -2224,6 +2466,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
         },
         await authContext(),
       );
+      trackExperience('trade_offer_submitted', { screen: 'tradeComposer', entityType: 'listing', entityId: tradeComposerTarget.listing_id, properties: { offered_item_count: tradeOfferListingIds.length } });
       setMarketplaceListings((prev) => removeSentOfferMatchesFromListings(prev, tradeComposerTarget.listing_id, tradeOfferListingIds));
       closeTradeComposer();
       setNotice('Trade offer sent.');
@@ -2466,6 +2709,18 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
 
   useEffect(() => {
     if (!authReady()) return;
+    trackExperience('screen_viewed', { screen: activeTab });
+    if (activeTab === 'create') trackExperience('listing_started', { screen: 'create' });
+    if (activeTab === 'profile') trackExperience('profile_started', { screen: 'profile', entityType: 'profile' });
+  }, [activeTab]);
+
+  useEffect(() => {
+    if (activeTab !== 'create' || editingListingId || images.length === 0) return;
+    trackExperience('listing_photos_added', { screen: 'create', properties: { image_count: images.length } });
+  }, [activeTab, editingListingId, images.length]);
+
+  useEffect(() => {
+    if (!authReady()) return;
     if (activeTab === 'marketplace' && marketplaceListings.length === 0) {
       loadMarketplace();
       return;
@@ -2555,6 +2810,43 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
       registeredPushTokenRef.current = '';
     }
   }, [clerkEnabled, authMode, bearerToken, apiKey, pushEnabled, pushToken]);
+
+  useEffect(() => {
+    if (!authReady()) return;
+    if (activeTab !== 'create' || editingListingId || images.length === 0) {
+      setCreateImageRoleCheck(null);
+      setCreateImageRoleBusy(false);
+      setCreateImageRoleError('');
+      return;
+    }
+    const requestId = createImageRoleRequestRef.current + 1;
+    createImageRoleRequestRef.current = requestId;
+    setCreateImageRoleBusy(true);
+    setCreateImageRoleError('');
+    const timer = setTimeout(async () => {
+      try {
+        const result = await apiClient.classifyImageRoles(
+          { images },
+          await authContext(),
+        );
+        if (createImageRoleRequestRef.current === requestId) {
+          setCreateImageRoleCheck(result);
+          if (result?.category) {
+            setCategory(result.category);
+            if (itemSize && !sizeOptionsForCategory(result.category).includes(itemSize)) setItemSize('');
+          }
+        }
+      } catch (e) {
+        if (createImageRoleRequestRef.current === requestId) {
+          setCreateImageRoleCheck(null);
+          setCreateImageRoleError(e.message || 'Could not check photo coverage. You may retry by adding or removing a photo.');
+        }
+      } finally {
+        if (createImageRoleRequestRef.current === requestId) setCreateImageRoleBusy(false);
+      }
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [activeTab, editingListingId, images, apiClient, createImageRoleRetry]);
 
   useEffect(() => {
     if (!authReady()) return;
@@ -2844,6 +3136,9 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     setItemSize('');
     setTradeNotes('');
     setAnalysisResult(null);
+    setCreateImageRoleCheck(null);
+    setCreateImageRoleBusy(false);
+    setCreateImageRoleError('');
   }
 
   function moveArrayItemToFront(list, index) {
@@ -2955,6 +3250,71 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     return imagesChanged || nextCondition !== originalCondition;
   }
 
+  function submitCreateListingWithPhotoCheck() {
+    if (createImageRoleBusy) {
+      setAppAlert({
+        title: 'Photo Check in Progress',
+        message: 'Gemini is still checking the photo types. This usually takes only a few seconds.',
+        primaryLabel: 'OK',
+      });
+      return;
+    }
+    const missing = createImageRoleCheck?.missing_required || [];
+    if (missing.length === 0) {
+      publishListing();
+      return;
+    }
+    setAppAlert({
+      title: 'Required Photos Missing',
+      message: `For a stronger analysis, add: ${missing.map((role) => IMAGE_ROLE_LABELS[role] || role).join(', ')}. Continue only if these views are not available for this item.`,
+      primaryLabel: 'Continue Anyway',
+      onPrimary: () => {
+        setAppAlert(null);
+        publishListing();
+      },
+      secondaryLabel: 'Add Photos',
+    });
+  }
+
+  function continueCreatePhotoStep() {
+    if (createImageRoleBusy) {
+      setAppAlert({
+        title: 'Photo Check in Progress',
+        message: 'Wait for Gemini to identify the category and photo types before continuing.',
+        primaryLabel: 'OK',
+      });
+      return;
+    }
+    if (!createImageRoleCheck) {
+      setAppAlert({
+        title: 'Photo Check Unavailable',
+        message: 'Gemini could not check these photos. You can retry or continue and select the category manually.',
+        primaryLabel: 'Continue Manually',
+        onPrimary: () => {
+          setAppAlert(null);
+          setWizardStep(2);
+        },
+        secondaryLabel: 'Add Photos',
+      });
+      return;
+    }
+    const missing = createImageRoleCheck.missing_required || [];
+    if (missing.length > 0) {
+      setAppAlert({
+        title: 'Required Photos Missing',
+        message: `Add: ${missing.map((role) => IMAGE_ROLE_LABELS[role] || role).join(', ')}. You can continue if these views are unavailable.`,
+        primaryLabel: 'Continue Anyway',
+        onPrimary: () => {
+          setAppAlert(null);
+          setWizardStep(2);
+        },
+        secondaryLabel: 'Add Photos',
+      });
+      return;
+    }
+    setWizardStep(2);
+  }
+
   async function waitForUploadedListingImages(imageUrls) {
     const urls = persistableImageUrls(imageUrls)
       .map((url) => normalizeImageUrl(url, apiBaseUrl))
@@ -3050,6 +3410,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
         closeListingDetails();
       }
       setNotice('Listing published to Marketplace.');
+      trackExperience('listing_published', { screen: 'closet', entityType: 'listing', entityId: listingId });
     } catch (e) {
       setError(e.message || String(e));
     } finally {
@@ -3117,7 +3478,12 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     try {
       const auth = await authContext();
       const uploaded = imagesForAnalysis.length > 0
-        ? await uploadImagesWithDirectFallback({ apiClient, images: imagesForAnalysis, auth })
+        ? await uploadImagesWithDirectFallback({
+          apiClient,
+          images: imagesForAnalysis,
+          auth,
+          roleAssignments: isEditing ? [] : moveArrayItemToFront(createImageRoleCheck?.images || [], selectedHeroImageIndex),
+        })
         : null;
       const uploadedImageUrls = persistableImageUrls(uploadedImageUrlsFromPayload(uploaded));
       if (imagesForAnalysis.length > 0 && uploadedImageUrls.length < 1) {
@@ -3154,6 +3520,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
         }
       } else {
         const created = await apiClient.createListing(payload, auth);
+        trackExperience('listing_created', { screen: 'create', entityType: 'listing', entityId: created?.listing_id, properties: { category, image_count: orderedImageUrls.length } });
         setNotice('Listing created. AI analysis is running in the background.');
         setTimeout(loadCloset, 4000);
         setTimeout(loadCloset, 10000);
@@ -3162,6 +3529,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
       resetListingForm();
       setActiveTab('closet');
     } catch (e) {
+      if (!isEditing) trackExperience('listing_analysis_failed', { screen: 'create', properties: { error_code: 'listing_creation_failed' } });
       setError(e.message || String(e));
     } finally {
       setLoading(false);
@@ -3194,6 +3562,9 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
             </TouchableOpacity>
           </View>
           <View style={styles.offerDetailBody}>
+            <TouchableOpacity style={styles.secondaryBtnCompact} onPress={() => openListingSupport(selectedListing)}>
+              <Text style={styles.secondaryBtnText}>Report an Issue</Text>
+            </TouchableOpacity>
             {closetMatches.length > 0 ? closetMatches.map((item) => {
               const isOwnListing = isOwnMarketplaceListing(item);
               return (
@@ -3265,6 +3636,11 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                 <Text style={styles.primaryBtnText}>Publish</Text>
               </TouchableOpacity>
             </View>
+          ) : null}
+          {(selectedListingSource === 'closet' || isOwnListing) ? (
+            <TouchableOpacity style={styles.secondaryBtnCompact} onPress={() => openListingSupport(selectedListing)}>
+              <Text style={styles.secondaryBtnText}>Report an Issue</Text>
+            </TouchableOpacity>
           ) : null}
         </View>
 
@@ -3404,6 +3780,11 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     && !selectedOfferActionBusy,
   );
   const offerCarouselWidth = Math.max(260, viewportWidth - 46);
+  const createListingReady = images.length >= 1
+    && images.length <= 6
+    && Boolean(category)
+    && Boolean(userCondition)
+    && Boolean(itemSize);
 
   return (
     <SafeAreaView style={styles.root} edges={['top', 'right', 'bottom', 'left']}>
@@ -3411,7 +3792,11 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
 	      <ScrollView
 	        ref={mainScrollRef}
 	        style={styles.mainScroll}
-	        contentContainerStyle={[styles.content, (tradeComposerTarget || selectedOffer) && styles.tradeComposerContent]}
+	        contentContainerStyle={[
+            styles.content,
+            (tradeComposerTarget || selectedOffer) && styles.tradeComposerContent,
+            activeTab === 'profile' && styles.profileContentWithFooter,
+          ]}
 	        keyboardShouldPersistTaps="handled"
 	        scrollEventThrottle={250}
 	        onScroll={({ nativeEvent }) => {
@@ -3436,8 +3821,6 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
 	          ) : null
 	        }
 	      >
-        <TopBrandHeader />
-
         {!!error && <Text style={styles.error}>{error}</Text>}
         {!!notice && <Text style={styles.notice}>{notice}</Text>}
         {loading && !marketplaceLoading && !closetLoading && <ActivityIndicator style={{ marginTop: 8 }} color={theme.brand} />}
@@ -3574,20 +3957,17 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
           <View style={styles.section}>
             <SectionHeader
               title={editingListingId ? 'Edit Listing' : 'Create Listing'}
-              subtitle={editingListingId ? 'UPDATE • REVIEW • SAVE' : 'UPLOAD • CONDITION • CREATE'}
-              rightText={editingListingId ? 'Cancel Edit' : null}
-              onRightPress={editingListingId ? cancelEditListing : null}
+              subtitle={editingListingId ? 'UPDATE • REVIEW • SAVE' : wizardStep === 1 ? 'UPLOAD • IDENTIFY' : 'CONDITION • SIZE • CREATE'}
+              rightText={editingListingId ? 'Cancel Edit' : wizardStep === 2 ? 'Back' : null}
+              onRightPress={editingListingId ? cancelEditListing : wizardStep === 2 ? () => setWizardStep(1) : null}
             />
-            {editingListingId ? (
-              <View style={styles.stepRow}>
-                {[1, 2, 3].map((step) => (
-                  <View key={step} style={[styles.stepPill, wizardStep === step && styles.stepPillActive]}>
-                    <Text style={[styles.stepPillText, wizardStep === step && styles.stepPillTextActive]}>{step}</Text>
-                  </View>
-                ))}
-              </View>
-            ) : null}
-
+            <View style={styles.stepRow}>
+              {(editingListingId ? [1, 2, 3] : [1, 2]).map((step) => (
+                <View key={step} style={[styles.stepPill, wizardStep === step && styles.stepPillActive]}>
+                  <Text style={[styles.stepPillText, wizardStep === step && styles.stepPillTextActive]}>{step}</Text>
+                </View>
+              ))}
+            </View>
             {editingListingId ? (
               <View style={styles.editImagePanel}>
                 <Text style={styles.label}>Listing Images ({editImageUrls.length + images.length}/6)</Text>
@@ -3629,57 +4009,150 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
               </View>
             ) : null}
 
-            {!editingListingId && (
-              <>
-                <TouchableOpacity style={styles.primaryBtn} onPress={pickImages}>
-                  <Text style={styles.primaryBtnText}>Choose Photos (1-6)</Text>
-                </TouchableOpacity>
-                <Text style={styles.helperText}>Selected: {images.length}</Text>
-                {images.length > 0 ? (
-                  <View style={styles.editImageGrid}>
-                    {images.map((asset, index) => (
-                      <View key={`${asset?.uri || 'pending'}-${index}`} style={[styles.editImageTile, selectedHeroImageIndex === index && styles.editImageTileHero]}>
-                        <Image source={{ uri: asset.uri }} style={styles.editImageThumb} resizeMode="cover" />
-                        {selectedHeroImageIndex === index ? <Text style={styles.editImageHeroBadge}>Hero</Text> : null}
-                        <TouchableOpacity style={styles.editImageHeroButton} onPress={() => setSelectedHeroImageIndex(index)}>
-                          <Text style={styles.editImageHeroButtonText}>Set Hero</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity style={styles.editImageRemove} onPress={() => removePendingImageAt(index)}>
-                          <Text style={styles.editImageRemoveText}>Remove</Text>
+            {!editingListingId && wizardStep === 1 && (
+                <View style={styles.createFormGroup}>
+                  <View style={styles.createGroupHeader}>
+                    <View style={styles.createStepNumber}><Text style={styles.createStepNumberText}>1</Text></View>
+                    <View style={styles.tradeTargetCopy}>
+                      <Text style={styles.createGroupTitle}>Add Photos</Text>
+                      <Text style={styles.helperText}>Use clear views of the full item, label, details, and wear.</Text>
+                    </View>
+                    <Text style={styles.createPhotoCount}>{images.length}/6</Text>
+                  </View>
+                  {images.length > 0 ? (
+                    <View style={styles.createImageGrid}>
+                      {images.map((asset, index) => (
+                        <View key={`${asset?.uri || 'pending'}-${index}`} style={[styles.createImageTile, selectedHeroImageIndex === index && styles.editImageTileHero]}>
+                          <Image source={{ uri: asset.uri }} style={styles.createImageThumb} resizeMode="cover" />
+                          <Text style={styles.createImageNumber}>{index + 1}</Text>
+                          {createImageRoleCheck?.images?.[index]?.role ? (
+                            <Text style={styles.createImageRoleBadge} numberOfLines={1}>
+                              {IMAGE_ROLE_LABELS[createImageRoleCheck.images[index].role] || 'Other view'}
+                            </Text>
+                          ) : null}
+                          {selectedHeroImageIndex === index ? <Text style={styles.editImageHeroBadge}>Hero</Text> : null}
+                          <View style={styles.createImageActions}>
+                            <TouchableOpacity style={styles.createImageAction} onPress={() => setSelectedHeroImageIndex(index)}>
+                              <Ionicons name={selectedHeroImageIndex === index ? 'star' : 'star-outline'} size={17} color={theme.brand} />
+                              <Text style={styles.createImageActionText}>{selectedHeroImageIndex === index ? 'Hero' : 'Make Hero'}</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity style={styles.createImageRemoveButton} onPress={() => removePendingImageAt(index)} accessibilityLabel={`Remove photo ${index + 1}`}>
+                              <Ionicons name="trash-outline" size={18} color="#b42318" />
+                            </TouchableOpacity>
+                          </View>
+                        </View>
+                      ))}
+                    </View>
+                  ) : (
+                    <View style={styles.createPhotoEmpty}>
+                      <Ionicons name="images-outline" size={34} color={theme.brand} />
+                      <Text style={styles.createPhotoEmptyTitle}>Your item photos will appear here</Text>
+                      <Text style={styles.helperText}>Add between 1 and 6 images.</Text>
+                    </View>
+                  )}
+                  <TouchableOpacity
+                    style={[styles.primaryBtn, images.length >= 6 && styles.primaryBtnDisabled]}
+                    onPress={pickImages}
+                    disabled={images.length >= 6}
+                  >
+                    <View style={styles.createButtonContent}>
+                      <Ionicons name="camera-outline" size={19} color="#fff" />
+                      <Text style={styles.primaryBtnText}>{images.length > 0 ? 'Add More Photos' : 'Choose Photos'}</Text>
+                    </View>
+                  </TouchableOpacity>
+                  <View style={styles.createPhotoCheckPanel}>
+                    <View style={styles.createPhotoCheckHeader}>
+                      <Text style={styles.createPhotoCheckTitle}>Photo Coverage</Text>
+                      {createImageRoleBusy ? <ActivityIndicator size="small" color={theme.brand} /> : null}
+                    </View>
+                    {createImageRoleCheck?.category ? (
+                      <Text style={styles.createPhotoCheckCategory}>
+                        {createImageRoleCheck.category.charAt(0).toUpperCase() + createImageRoleCheck.category.slice(1)}
+                      </Text>
+                    ) : null}
+                    {category ? (
+                      <View style={styles.createGuidanceBlock}>
+                        <Text style={styles.createGuidanceRequired}>Required views</Text>
+                        <Text style={styles.createGuidanceText}>
+                          {(IMAGE_ROLE_REQUIREMENTS[category]?.required || []).map((role) => IMAGE_ROLE_LABELS[role] || role).join(' • ')}
+                        </Text>
+                        <Text style={styles.createGuidanceRecommended}>Helpful views</Text>
+                        <Text style={styles.createGuidanceText}>
+                          {(IMAGE_ROLE_REQUIREMENTS[category]?.recommended || []).map((role) => IMAGE_ROLE_LABELS[role] || role).join(' • ')}
+                        </Text>
+                      </View>
+                    ) : null}
+                    {category && images.length === 0 ? <Text style={styles.helperText}>Add photos and Gemini will assign each image to a view.</Text> : null}
+                    {createImageRoleBusy ? <Text style={styles.helperText}>Checking photo types with Gemini...</Text> : null}
+                    {createImageRoleCheck?.missing_required?.length > 0 ? (
+                      <View style={styles.createGuidanceBlock}>
+                        <Text style={styles.createGuidanceRequired}>Add these required photos</Text>
+                        <Text style={styles.createGuidanceText}>
+                          {createImageRoleCheck.missing_required.map((role) => IMAGE_ROLE_LABELS[role] || role).join(' • ')}
+                        </Text>
+                      </View>
+                    ) : null}
+                    {createImageRoleCheck && createImageRoleCheck.missing_required?.length === 0 ? (
+                      <Text style={styles.createPhotoCheckSuccess}>Required photo coverage is complete.</Text>
+                    ) : null}
+                    {createImageRoleCheck?.missing_recommended?.length > 0 ? (
+                      <View style={styles.createGuidanceBlock}>
+                        <Text style={styles.createGuidanceRecommended}>Recommended next</Text>
+                        <Text style={styles.createGuidanceText}>
+                          {createImageRoleCheck.missing_recommended.map((role) => IMAGE_ROLE_LABELS[role] || role).join(' • ')}
+                        </Text>
+                      </View>
+                    ) : null}
+                    {createImageRoleError ? (
+                      <View style={styles.createGuidanceBlock}>
+                        <Text style={styles.helperText}>{createImageRoleError}</Text>
+                        <TouchableOpacity style={styles.secondaryBtnCompact} onPress={() => setCreateImageRoleRetry((value) => value + 1)}>
+                          <Text style={styles.secondaryBtnText}>Retry Check</Text>
                         </TouchableOpacity>
                       </View>
-                    ))}
+                    ) : null}
                   </View>
-                ) : null}
+                </View>
+            )}
+            {!editingListingId && wizardStep === 2 && (
+                <View style={styles.createFormGroup}>
+                  <View style={styles.createGroupHeader}>
+                    <View style={styles.createStepNumber}><Text style={styles.createStepNumberText}>2</Text></View>
+                    <View style={styles.tradeTargetCopy}>
+                      <Text style={styles.createGroupTitle}>Item Basics</Text>
+                      <Text style={styles.helperText}>AI will identify and value the item after creation.</Text>
+                    </View>
+                  </View>
                 <Text style={styles.label}>Category</Text>
-                <View style={styles.modeRow}>
+                <View style={styles.createOptionGrid}>
                   {[
-                    { key: 'clothes', label: 'Clothes' },
-                    { key: 'shoes', label: 'Shoes' },
-                    { key: 'handbag', label: 'Handbag' },
-                    { key: 'accessories', label: 'Accessories' },
+                    { key: 'clothes', label: 'Clothes', icon: 'shirt-outline' },
+                    { key: 'shoes', label: 'Shoes', icon: 'footsteps-outline' },
+                    { key: 'handbag', label: 'Handbag', icon: 'bag-handle-outline' },
+                    { key: 'accessories', label: 'Accessories', icon: 'watch-outline' },
                   ].map((option) => {
                     const selected = category === option.key;
                     return (
                       <TouchableOpacity
                         key={`create-category-${option.key}`}
-                        style={[styles.modeBtn, selected && styles.modeBtnActive]}
+                        style={[styles.createOptionButton, selected && styles.modeBtnActive]}
                         onPress={() => {
                           setCategory(option.key);
                           if (itemSize && !sizeOptionsForCategory(option.key).includes(itemSize)) setItemSize('');
                         }}
                       >
+                        <Ionicons name={option.icon} size={20} color={selected ? '#fff' : theme.brand} />
                         <Text style={[styles.modeBtnText, selected && styles.modeBtnTextActive]}>{option.label}</Text>
                       </TouchableOpacity>
                     );
                   })}
                 </View>
                 <Text style={styles.label}>Condition</Text>
-                <View style={styles.modeRow}>
+                <View style={styles.createConditionRow}>
                   {['NewWithTags', 'New', 'LikeNew'].map((condition) => (
                     <TouchableOpacity
                       key={condition}
-                      style={[styles.modeBtn, userCondition === condition && styles.modeBtnActive]}
+                      style={[styles.createConditionButton, userCondition === condition && styles.modeBtnActive]}
                       onPress={() => setUserCondition(condition)}
                     >
                       <Text style={[styles.modeBtnText, userCondition === condition && styles.modeBtnTextActive]}>
@@ -3716,7 +4189,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                     </View>
                   );
                 })()}
-              </>
+                </View>
             )}
 
             {wizardStep === 2 && editingListingId && (
@@ -3810,9 +4283,9 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                   <Text style={styles.primaryBtnText}>Next</Text>
                 </TouchableOpacity>
               )}
-              {(!editingListingId || wizardStep === 3) && (
+              {editingListingId && wizardStep === 3 && (
                 <TouchableOpacity style={[styles.primaryBtn, loading && styles.primaryBtnDisabled]} onPress={publishListing} disabled={loading}>
-                  <Text style={styles.primaryBtnText}>{editingListingId ? 'Save Changes' : 'Create Listing'}</Text>
+                  <Text style={styles.primaryBtnText}>Save Changes</Text>
                 </TouchableOpacity>
               )}
             </View>
@@ -3997,27 +4470,26 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
               </>
             ) : null}
 
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>
+            <View style={styles.profileSectionGrid}>
               {[
-                { key: 'account', label: 'Account' },
-                { key: 'style', label: 'Style' },
-                { key: 'shipping', label: 'Shipping' },
-                { key: 'subscription', label: 'Plan' },
-                { key: 'payments', label: 'Payments' },
-                { key: 'legal', label: 'Legal' },
+                { key: 'account', label: 'Account', icon: 'person-outline' },
+                { key: 'style', label: 'Style', icon: 'shirt-outline' },
+                { key: 'shipping', label: 'Shipping', icon: 'location-outline' },
+                { key: 'subscription', label: 'Subscription', icon: 'card-outline' },
               ].map((section) => {
                 const active = profileSection === section.key;
                 return (
                   <TouchableOpacity
                     key={section.key}
-                    style={[styles.filterButton, active && styles.filterButtonActive]}
+                    style={[styles.profileSectionButton, active && styles.filterButtonActive]}
                     onPress={() => setProfileSection(section.key)}
                   >
+                    <Ionicons name={section.icon} size={18} color={active ? '#fff' : theme.brand} />
                     <Text style={[styles.filterButtonText, active && styles.filterButtonTextActive]}>{section.label}</Text>
                   </TouchableOpacity>
                 );
               })}
-            </ScrollView>
+            </View>
 
             {profileSection === 'account' ? (
               <>
@@ -4064,13 +4536,6 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
               keyboardType="numbers-and-punctuation"
             />
             {!!profileSaveMsg && <Text style={styles.notice}>{profileSaveMsg}</Text>}
-            <TouchableOpacity
-              style={[styles.primaryBtn, profileSaveBusy && styles.primaryBtnDisabled]}
-              onPress={saveStylePreferences}
-              disabled={profileSaveBusy}
-            >
-              <Text style={styles.primaryBtnText}>{profileSaveBusy ? 'Saving...' : 'Save Account'}</Text>
-            </TouchableOpacity>
             <View style={styles.profileDivider} />
             <Text style={styles.label}>Notifications</Text>
             <View style={styles.modeRow}>
@@ -4261,13 +4726,6 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                 );
               })}
             </View>
-            <TouchableOpacity
-              style={[styles.primaryBtn, profileSaveBusy && styles.primaryBtnDisabled]}
-              onPress={saveStylePreferences}
-              disabled={profileSaveBusy}
-            >
-              <Text style={styles.primaryBtnText}>{profileSaveBusy ? 'Saving...' : 'Save Style Preferences'}</Text>
-            </TouchableOpacity>
               </>
             ) : null}
 
@@ -4288,6 +4746,9 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                   <View style={styles.labelBlockHeader}>
                     <Text style={styles.offerLaneLabel}>{entry.label || 'Address'}</Text>
                     <View style={styles.addressActionRow}>
+                      <TouchableOpacity style={styles.secondaryBtnCompact} onPress={() => setExpandedProfileAddressId((current) => current === entry.id ? '' : entry.id)}>
+                        <Text style={styles.secondaryBtnText}>{expandedProfileAddressId === entry.id ? 'Collapse' : 'Edit'}</Text>
+                      </TouchableOpacity>
                       <TouchableOpacity style={styles.secondaryBtnCompact} onPress={() => setProfileShippingDefault(entry.id)}>
                         <Text style={styles.secondaryBtnText}>{entry.is_default ? 'Default' : 'Set Default'}</Text>
                       </TouchableOpacity>
@@ -4296,12 +4757,32 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                       </TouchableOpacity>
                     </View>
                   </View>
+                  {expandedProfileAddressId === entry.id ? <>
                   <Text style={styles.label}>Label</Text>
                   <TextInput value={entry.label} onChangeText={(value) => updateProfileShippingAddress(entry.id, 'label', value)} style={styles.input} />
                   <Text style={styles.label}>Full Name</Text>
                   <TextInput value={entry.full_name} onChangeText={(value) => updateProfileShippingAddress(entry.id, 'full_name', value)} style={styles.input} />
                   <Text style={styles.label}>Address Line 1</Text>
-                  <TextInput value={entry.address_line1} onChangeText={(value) => updateProfileShippingAddress(entry.id, 'address_line1', value)} style={styles.input} />
+                  <View style={styles.addressInputRow}>
+                    <TextInput
+                      value={entry.address_line1}
+                      onChangeText={(value) => updateAddressLine1WithSuggestions(entry, value)}
+                      style={[styles.input, styles.addressInput]}
+                      autoComplete="street-address"
+                      textContentType="fullStreetAddress"
+                    />
+                    <TouchableOpacity
+                      style={[styles.addressLocateButton, addressLocationBiasById[entry.id] && styles.addressLocateButtonActive]}
+                      onPress={() => locateAddressSuggestions(entry)}
+                      disabled={Boolean(addressLocationBusyById[entry.id])}
+                      accessibilityRole="button"
+                      accessibilityLabel="Use current location"
+                    >
+                      {addressLocationBusyById[entry.id]
+                        ? <ActivityIndicator size="small" color={theme.brand} />
+                        : <Ionicons name="locate-outline" size={21} color={addressLocationBiasById[entry.id] ? '#fff' : theme.brand} />}
+                    </TouchableOpacity>
+                  </View>
                   <TouchableOpacity
                     style={styles.secondaryBtnCompact}
                     onPress={() => loadAddressSuggestionsFor(entry)}
@@ -4348,17 +4829,15 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                       <TextInput value={entry.country} onChangeText={(value) => updateProfileShippingAddress(entry.id, 'country', value)} style={styles.input} autoCapitalize="characters" />
                     </View>
                   </View>
+                  </> : (
+                    <Text style={styles.profileAddressSummary}>
+                      {[entry.full_name, entry.address_line1, entry.address_line2, [entry.city, entry.state, entry.postal_code].filter(Boolean).join(' '), entry.country].filter(Boolean).join('\n') || 'Address details not completed'}
+                    </Text>
+                  )}
                 </View>
               ))
             )}
             {!!profileSaveMsg && <Text style={styles.notice}>{profileSaveMsg}</Text>}
-            <TouchableOpacity
-              style={[styles.primaryBtn, profileSaveBusy && styles.primaryBtnDisabled]}
-              onPress={saveProfileShippingAddresses}
-              disabled={profileSaveBusy}
-            >
-              <Text style={styles.primaryBtnText}>{profileSaveBusy ? 'Saving...' : 'Save Shipping Addresses'}</Text>
-            </TouchableOpacity>
               </>
             ) : null}
 
@@ -4456,17 +4935,10 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
               {profileQuiz?.subscription_renewal_date ? ` • Renews ${profileQuiz.subscription_renewal_date}` : ''}
             </Text>
             {!!profileSaveMsg && <Text style={styles.notice}>{profileSaveMsg}</Text>}
-            <TouchableOpacity
-              style={[styles.primaryBtn, profileSaveBusy && styles.primaryBtnDisabled]}
-              onPress={() => saveSubscriptionSettings(subscriptionPlan, subscriptionCycle)}
-              disabled={profileSaveBusy}
-            >
-              <Text style={styles.primaryBtnText}>{profileSaveBusy ? 'Activating...' : (subscriptionPlan === 'free' ? 'Use Free Plan' : 'Activate Subscription')}</Text>
-            </TouchableOpacity>
               </>
             ) : null}
 
-            {profileSection === 'payments' ? (
+            {profileSection === 'subscription' ? (
               <>
             <View style={styles.profileDivider} />
             <View style={styles.labelBlockHeader}>
@@ -4517,7 +4989,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
               </>
             ) : null}
 
-            {profileSection === 'legal' ? (
+            {profileSection === 'account' ? (
               <>
             <View style={styles.profileDivider} />
             <Text style={styles.label}>Legal & Contact</Text>
@@ -4547,7 +5019,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
               </>
             ) : null}
 
-            {clerkEnabled && onSignOut ? (
+            {profileSection === 'account' && clerkEnabled && onSignOut ? (
               <View style={styles.profileSignOutFooter}>
                 <TouchableOpacity style={styles.secondaryBtn} onPress={onSignOut}>
                   <Text style={styles.secondaryBtnText}>Sign Out</Text>
@@ -4918,6 +5390,69 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
           );
         })() : null}
       </ScrollView>
+      <Modal
+        visible={activeTab === 'create' && !editingListingId && wizardStep === 1 && createImageRoleBusy}
+        animationType="fade"
+        transparent
+        statusBarTranslucent
+        onRequestClose={() => {}}
+      >
+        <View style={styles.imageProcessingOverlay} accessibilityRole="progressbar" accessibilityLabel="Analyzing your photos">
+          <View style={styles.imageProcessingCard}>
+            <ActivityIndicator size="large" color={theme.brand} />
+            <Text style={styles.imageProcessingTitle}>Analyzing your photos</Text>
+            <Text style={styles.imageProcessingMessage}>Identifying the item category and checking each photo type...</Text>
+          </View>
+        </View>
+      </Modal>
+      {activeTab === 'profile' ? (
+        <View style={styles.profileSaveFooter}>
+          <View style={styles.createListingFooterCopy}>
+            <Text style={styles.offerLaneLabel}>{titleCase(profileSection)}</Text>
+            <Text style={styles.createListingFooterStatus} numberOfLines={1}>
+              {profileSaveMsg || 'Review your changes before saving'}
+            </Text>
+          </View>
+          <TouchableOpacity
+            style={[styles.primaryBtnCompact, styles.profileSaveFooterButton, profileSaveBusy && styles.primaryBtnDisabled]}
+            onPress={saveActiveProfileSection}
+            disabled={profileSaveBusy}
+          >
+            {profileSaveBusy ? (
+              <ActivityIndicator color="#fff" size="small" />
+            ) : (
+              <Text style={styles.primaryBtnText}>
+                {profileSection === 'shipping'
+                  ? 'Save Addresses'
+                  : profileSection === 'subscription'
+                    ? (subscriptionPlan === 'free' ? 'Use Free Plan' : 'Activate Plan')
+                    : 'Save'}
+              </Text>
+            )}
+          </TouchableOpacity>
+        </View>
+      ) : null}
+      {activeTab === 'create' && !editingListingId ? (
+        <View style={styles.createListingFooter}>
+          <View style={styles.createListingFooterCopy}>
+            <Text style={styles.offerLaneLabel}>Listing setup</Text>
+            <Text style={styles.createListingFooterStatus} numberOfLines={1}>
+              {wizardStep === 1
+                ? `${images.length}/6 photos • ${category ? `${category} detected` : 'identifying category'}`
+                : createListingReady
+                  ? 'Ready for AI analysis'
+                  : `${category || 'category'} • ${userCondition ? displayConditionLabel(userCondition) : 'condition'} • ${itemSize || 'size'}`}
+            </Text>
+          </View>
+          <TouchableOpacity
+            style={[styles.primaryBtnCompact, styles.createListingFooterButton, ((wizardStep === 1 ? images.length < 1 || createImageRoleBusy : !createListingReady) || loading) && styles.primaryBtnDisabled]}
+            onPress={wizardStep === 1 ? continueCreatePhotoStep : submitCreateListingWithPhotoCheck}
+            disabled={(wizardStep === 1 ? images.length < 1 || createImageRoleBusy : !createListingReady) || loading}
+          >
+            {loading ? <ActivityIndicator color="#fff" size="small" /> : <Text style={styles.primaryBtnText}>{wizardStep === 1 ? 'Continue' : 'Create Listing'}</Text>}
+          </TouchableOpacity>
+        </View>
+      ) : null}
       {tradeComposerTarget ? (
         <View style={styles.tradeComposerFooter}>
           <View style={styles.tradeComposerFooterCopy}>
@@ -4972,6 +5507,56 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
           </View>
         </View>
       ) : null}
+      <Modal
+        visible={Boolean(supportListing)}
+        animationType="slide"
+        transparent
+        onRequestClose={() => !supportBusy && setSupportListing(null)}
+      >
+        <View style={styles.appAlertOverlay}>
+          <View style={styles.supportModalCard}>
+            <View style={styles.supportModalHeader}>
+              <View style={styles.offerDetailTitleWrap}>
+                <Text style={styles.sectionEyebrow}>Customer Support</Text>
+                <Text style={styles.offerDetailTitle}>Report a Listing Issue</Text>
+              </View>
+              <TouchableOpacity style={styles.secondaryBtnCompact} onPress={() => setSupportListing(null)} disabled={supportBusy}>
+                <Text style={styles.secondaryBtnText}>Close</Text>
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.helperText} numberOfLines={2}>{supportListing?.title || 'Listing'}</Text>
+            <View style={styles.supportReasonGrid}>
+              {SUPPORT_REASONS.map(([value, label]) => (
+                <TouchableOpacity
+                  key={value}
+                  style={[styles.supportReasonButton, supportReason === value && styles.supportReasonButtonActive]}
+                  onPress={() => setSupportReason(value)}
+                >
+                  <Text style={[styles.supportReasonText, supportReason === value && styles.supportReasonTextActive]}>{label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            <Text style={styles.offerLaneLabel}>What is wrong?</Text>
+            <TextInput
+              style={[styles.input, styles.supportMessageInput]}
+              value={supportMessage}
+              onChangeText={setSupportMessage}
+              placeholder="Describe what you expected and what appears incorrect."
+              multiline
+              maxLength={4000}
+              editable={!supportBusy}
+            />
+            {supportError ? <Text style={styles.error}>{supportError}</Text> : null}
+            <TouchableOpacity
+              style={[styles.primaryBtn, (supportBusy || supportMessage.trim().length < 10) && styles.primaryBtnDisabled]}
+              onPress={submitListingSupport}
+              disabled={supportBusy || supportMessage.trim().length < 10}
+            >
+              {supportBusy ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryBtnText}>Submit Request</Text>}
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
       <Modal
         visible={Boolean(appAlert)}
         animationType="fade"
@@ -5776,6 +6361,20 @@ function AppContent() {
 }
 
 export default function App() {
+  const [fontsLoaded, fontError] = useFonts({
+    PlusJakartaSans_400Regular,
+    PlusJakartaSans_500Medium,
+    PlusJakartaSans_600SemiBold,
+    PlusJakartaSans_700Bold,
+    PlusJakartaSans_800ExtraBold,
+    BodoniModa_500Medium,
+    BodoniModa_600SemiBold,
+    BodoniModa_700Bold,
+  });
+
+  if (!fontsLoaded && !fontError) return null;
+  if (fontsLoaded) applyDefaultFonts();
+
   return (
     <RootErrorBoundary>
       <AppContent />
@@ -5787,6 +6386,7 @@ const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: theme.bg },
   mainScroll: { flex: 1 },
   content: { paddingBottom: 18 },
+  profileContentWithFooter: { paddingBottom: 104 },
   tradeComposerContent: {
     flexGrow: 1,
     backgroundColor: theme.surface,
@@ -5839,6 +6439,37 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: 18,
   },
+  imageProcessingOverlay: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+    backgroundColor: 'rgba(24, 18, 18, 0.58)',
+  },
+  imageProcessingCard: {
+    width: '100%',
+    maxWidth: 360,
+    alignItems: 'center',
+    gap: 12,
+    borderWidth: 1,
+    borderColor: theme.line,
+    backgroundColor: '#fffdf9',
+    paddingHorizontal: 28,
+    paddingVertical: 34,
+  },
+  imageProcessingTitle: {
+    color: theme.text,
+    fontFamily: fonts.display,
+    fontSize: 23,
+    lineHeight: 29,
+    textAlign: 'center',
+  },
+  imageProcessingMessage: {
+    color: theme.muted,
+    fontSize: 14,
+    lineHeight: 20,
+    textAlign: 'center',
+  },
 	  appAlertCard: {
 	    borderWidth: 1,
 	    borderColor: 'rgba(92, 18, 28, 0.22)',
@@ -5861,7 +6492,7 @@ const styles = StyleSheet.create({
   },
   appAlertTitle: {
     color: theme.brand,
-    fontFamily: 'Didot',
+    fontFamily: fonts.display,
     fontSize: 36,
     lineHeight: 38,
   },
@@ -5876,6 +6507,45 @@ const styles = StyleSheet.create({
     gap: 10,
     marginTop: 8,
   },
+  supportModalCard: {
+    borderWidth: 1,
+    borderColor: theme.line,
+    backgroundColor: theme.surface,
+    padding: 18,
+    gap: 12,
+  },
+  supportModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  supportReasonGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  supportReasonButton: {
+    borderWidth: 1,
+    borderColor: theme.lineStrong,
+    backgroundColor: '#fff',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  supportReasonButtonActive: {
+    borderColor: theme.brand,
+    backgroundColor: theme.brandSoft,
+  },
+  supportReasonText: {
+    color: theme.text,
+    fontFamily: fonts.bodySemibold,
+    fontSize: 11,
+  },
+  supportReasonTextActive: { color: theme.brand },
+  supportMessageInput: {
+    minHeight: 120,
+    textAlignVertical: 'top',
+  },
 	  rootErrorCard: {
     margin: 16,
     borderWidth: 1,
@@ -5889,7 +6559,7 @@ const styles = StyleSheet.create({
     color: theme.text,
     fontSize: 30,
     lineHeight: 34,
-    fontFamily: 'Didot',
+    fontFamily: fonts.display,
   },
   mobileAuthAnnounceBar: {
     backgroundColor: theme.brand,
@@ -5953,7 +6623,7 @@ const styles = StyleSheet.create({
   },
   mobileAuthTitle: {
     color: theme.text,
-    fontFamily: 'Didot',
+    fontFamily: fonts.display,
     fontSize: 41,
     lineHeight: 43,
   },
@@ -6033,7 +6703,7 @@ const styles = StyleSheet.create({
   },
   mobileAuthSectionTitle: {
     color: theme.text,
-    fontFamily: 'Didot',
+    fontFamily: fonts.display,
     fontSize: 31,
     lineHeight: 34,
   },
@@ -6211,41 +6881,6 @@ const styles = StyleSheet.create({
     textDecorationLine: 'underline',
   },
 
-  brandWrap: {
-    backgroundColor: theme.surface,
-    borderBottomWidth: 1,
-    borderColor: theme.line,
-    marginBottom: 10,
-  },
-  brandStrip: {
-    backgroundColor: theme.brand,
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-  },
-  brandStripText: {
-    color: '#f9f4ef',
-    textAlign: 'center',
-    fontSize: 10,
-    letterSpacing: 1.4,
-    fontWeight: '500',
-  },
-  brandMainRow: {
-    paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 10,
-    gap: 4,
-  },
-  brandLogoCaption: {
-    color: theme.brand,
-    fontSize: 9,
-    letterSpacing: 3.2,
-    fontWeight: '800',
-    textTransform: 'uppercase',
-  },
-  brandLogoImage: {
-    width: 230,
-    height: 54,
-  },
   brandSubWordmark: {
     color: theme.muted,
     marginTop: -2,
@@ -6413,7 +7048,7 @@ const styles = StyleSheet.create({
     color: theme.text,
     fontSize: 31,
     lineHeight: 35,
-    fontFamily: 'Didot',
+    fontFamily: fonts.display,
   },
 	  headerAction: {
 	    borderWidth: 1,
@@ -6654,7 +7289,7 @@ const styles = StyleSheet.create({
     minWidth: 0,
     gap: 4,
   },
-  offerTitle: { color: '#171511', fontSize: 20, lineHeight: 24, fontFamily: 'Didot' },
+  offerTitle: { color: '#171511', fontSize: 20, lineHeight: 24, fontFamily: fonts.display },
   offerMeta: { color: '#574f46', fontSize: 12 },
   offerStatusBadge: {
     borderWidth: 1,
@@ -6910,7 +7545,7 @@ const styles = StyleSheet.create({
     color: '#1c1713',
     fontSize: 20,
     lineHeight: 23,
-    fontFamily: 'Didot',
+    fontFamily: fonts.display,
   },
   offerDetailBody: {
     padding: 12,
@@ -7172,7 +7807,7 @@ const styles = StyleSheet.create({
     color: '#191510',
     fontSize: 16,
     lineHeight: 20,
-    fontFamily: 'Didot',
+    fontFamily: fonts.display,
   },
   offerDetailItemMeta: {
     color: '#5c5349',
@@ -7242,9 +7877,55 @@ const styles = StyleSheet.create({
     marginTop: 12,
     paddingTop: 12,
   },
+  profileSectionGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 4,
+  },
+  profileSectionButton: {
+    width: '48%',
+    minHeight: 48,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 7,
+    borderWidth: 1,
+    borderColor: theme.line,
+    backgroundColor: '#fff',
+    paddingHorizontal: 8,
+    paddingVertical: 9,
+  },
   profileAddressRow: {
     flexDirection: 'row',
     gap: 8,
+  },
+  profileAddressSummary: {
+    color: theme.muted,
+    fontSize: 13,
+    lineHeight: 19,
+  },
+  addressInputRow: {
+    flexDirection: 'row',
+    alignItems: 'stretch',
+    gap: 8,
+  },
+  addressInput: {
+    flex: 1,
+    marginBottom: 0,
+  },
+  addressLocateButton: {
+    width: 50,
+    minHeight: 50,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: theme.line,
+    backgroundColor: '#fff',
+  },
+  addressLocateButtonActive: {
+    borderColor: theme.brand,
+    backgroundColor: theme.brand,
   },
   addressSuggestionList: {
     gap: 6,
@@ -7344,6 +8025,267 @@ const styles = StyleSheet.create({
   stepPillActive: { backgroundColor: theme.brand, borderColor: theme.brand },
   stepPillText: { color: '#524941', fontWeight: '600' },
   stepPillTextActive: { color: '#fff' },
+	createFormGroup: {
+	  borderTopWidth: 1,
+	  borderTopColor: theme.line,
+	  paddingTop: 14,
+	  gap: 12,
+	},
+	createGroupHeader: {
+	  flexDirection: 'row',
+	  alignItems: 'flex-start',
+	  gap: 10,
+	},
+	createStepNumber: {
+	  width: 28,
+	  height: 28,
+	  alignItems: 'center',
+	  justifyContent: 'center',
+	  backgroundColor: theme.brand,
+	},
+	createStepNumberText: {
+	  color: '#fff',
+	  fontSize: 13,
+	  fontWeight: '800',
+	},
+	createGroupTitle: {
+	  color: theme.text,
+	  fontSize: 18,
+	  lineHeight: 22,
+	  fontWeight: '700',
+	},
+	createPhotoCount: {
+	  color: theme.brand,
+	  fontSize: 12,
+	  lineHeight: 28,
+	  fontWeight: '800',
+	},
+	createPhotoEmpty: {
+	  minHeight: 150,
+	  alignItems: 'center',
+	  justifyContent: 'center',
+	  gap: 7,
+	  borderWidth: 1,
+	  borderStyle: 'dashed',
+	  borderColor: 'rgba(90, 18, 27, 0.4)',
+	  backgroundColor: '#faf8f4',
+	  padding: 18,
+	},
+	createPhotoEmptyTitle: {
+	  color: theme.text,
+	  fontSize: 15,
+	  fontWeight: '700',
+	  textAlign: 'center',
+	},
+	createImageGrid: {
+	  flexDirection: 'row',
+	  flexWrap: 'wrap',
+	  gap: 10,
+	},
+	createImageTile: {
+	  position: 'relative',
+	  width: '48%',
+	  borderWidth: 1,
+	  borderColor: theme.line,
+	  backgroundColor: '#fff',
+	  overflow: 'hidden',
+	},
+	createImageThumb: {
+	  width: '100%',
+	  height: 150,
+	  backgroundColor: '#ece7df',
+	},
+	createImageNumber: {
+	  position: 'absolute',
+	  top: 8,
+	  left: 8,
+	  width: 24,
+	  height: 24,
+	  color: '#fff',
+	  backgroundColor: 'rgba(20, 17, 15, 0.76)',
+	  fontSize: 12,
+	  lineHeight: 24,
+	  fontWeight: '800',
+	  textAlign: 'center',
+	},
+	createImageRoleBadge: {
+	  position: 'absolute',
+	  left: 8,
+	  right: 8,
+	  bottom: 50,
+	  color: '#fff',
+	  backgroundColor: 'rgba(90, 18, 27, 0.9)',
+	  paddingHorizontal: 7,
+	  paddingVertical: 5,
+	  fontSize: 10,
+	  fontWeight: '800',
+	  textTransform: 'uppercase',
+	  textAlign: 'center',
+	},
+	createImageActions: {
+	  minHeight: 42,
+	  flexDirection: 'row',
+	  alignItems: 'center',
+	  justifyContent: 'space-between',
+	  borderTopWidth: 1,
+	  borderTopColor: theme.line,
+	},
+	createImageAction: {
+	  flex: 1,
+	  minHeight: 42,
+	  flexDirection: 'row',
+	  alignItems: 'center',
+	  gap: 6,
+	  paddingHorizontal: 9,
+	},
+	createImageActionText: {
+	  color: theme.text,
+	  fontSize: 10,
+	  fontWeight: '700',
+	  textTransform: 'uppercase',
+	},
+	createImageRemoveButton: {
+	  width: 42,
+	  minHeight: 42,
+	  alignItems: 'center',
+	  justifyContent: 'center',
+	  borderLeftWidth: 1,
+	  borderLeftColor: theme.line,
+	},
+	createButtonContent: {
+	  flexDirection: 'row',
+	  alignItems: 'center',
+	  justifyContent: 'center',
+	  gap: 8,
+	},
+	createPhotoCheckPanel: {
+	  borderWidth: 1,
+	  borderColor: theme.line,
+	  backgroundColor: '#faf8f4',
+	  padding: 12,
+	  gap: 9,
+	},
+	createPhotoCheckHeader: {
+	  flexDirection: 'row',
+	  alignItems: 'center',
+	  justifyContent: 'space-between',
+	},
+  createPhotoCheckTitle: {
+    color: '#6c6359',
+    fontSize: 11,
+    lineHeight: 16,
+    fontFamily: fonts.bodyBold,
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+  },
+	createGuidanceBlock: {
+	  gap: 5,
+	},
+	createGuidanceRequired: {
+	  color: '#b42318',
+	  fontSize: 11,
+	  lineHeight: 16,
+	  fontFamily: fonts.bodyBold,
+	  letterSpacing: 1,
+	  textTransform: 'uppercase',
+	},
+	createGuidanceRecommended: {
+	  color: theme.brand,
+	  fontSize: 11,
+	  lineHeight: 16,
+	  fontFamily: fonts.bodyBold,
+	  letterSpacing: 1,
+	  textTransform: 'uppercase',
+	},
+	createGuidanceText: {
+	  color: theme.text,
+	  fontSize: 14,
+	  lineHeight: 20,
+	  fontFamily: fonts.body,
+	},
+	createPhotoCheckCategory: {
+	  color: theme.brand,
+	  fontSize: 14,
+	  lineHeight: 20,
+	  fontFamily: fonts.bodySemibold,
+	},
+	createPhotoCheckSuccess: {
+	  color: '#167552',
+	  fontSize: 14,
+	  lineHeight: 20,
+	  fontFamily: fonts.bodySemibold,
+	},
+	createOptionGrid: {
+	  flexDirection: 'row',
+	  flexWrap: 'wrap',
+	  gap: 8,
+	},
+	createOptionButton: {
+	  width: '48%',
+	  minHeight: 54,
+	  flexDirection: 'row',
+	  alignItems: 'center',
+	  justifyContent: 'center',
+	  gap: 8,
+	  borderWidth: 1,
+	  borderColor: theme.line,
+	  backgroundColor: '#fff',
+	},
+	createConditionRow: {
+	  flexDirection: 'row',
+	  gap: 8,
+	},
+	createConditionButton: {
+	  flex: 1,
+	  minHeight: 50,
+	  alignItems: 'center',
+	  justifyContent: 'center',
+	  borderWidth: 1,
+	  borderColor: theme.line,
+	  backgroundColor: '#fff',
+	  paddingHorizontal: 4,
+	},
+	createListingFooter: {
+	  flexDirection: 'row',
+	  alignItems: 'center',
+	  gap: 12,
+	  paddingHorizontal: 16,
+	  paddingVertical: 11,
+	  borderTopWidth: 1,
+	  borderTopColor: theme.line,
+	  backgroundColor: '#fff',
+	},
+  profileSaveFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 11,
+    borderTopWidth: 1,
+    borderTopColor: theme.line,
+    backgroundColor: '#fff',
+  },
+  profileSaveFooterButton: {
+    minWidth: 126,
+    minHeight: 44,
+    marginTop: 0,
+    justifyContent: 'center',
+  },
+	createListingFooterCopy: {
+	  flex: 1,
+	  minWidth: 0,
+	},
+	createListingFooterStatus: {
+	  color: theme.muted,
+	  fontSize: 12,
+	  lineHeight: 16,
+	},
+	createListingFooterButton: {
+	  minWidth: 136,
+	  minHeight: 44,
+	  marginTop: 0,
+	  justifyContent: 'center',
+	},
 	  editImagePanel: {
 	    borderWidth: 1,
 	    borderColor: theme.line,

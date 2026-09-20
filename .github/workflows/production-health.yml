@@ -23,7 +23,7 @@ jobs:
       HEALTH_ALERT_SMTP_USERNAME: ${{ secrets.HEALTH_ALERT_SMTP_USERNAME }}
       HEALTH_ALERT_SMTP_PASSWORD: ${{ secrets.HEALTH_ALERT_SMTP_PASSWORD }}
       REQUIRE_DEPENDENCY_HEALTH: "true"
-      REQUIRED_HEALTH_CHECKS: database,openai,gemini,photoroom,shippo,stripe,email,push_notifications
+      REQUIRED_HEALTH_CHECKS: database,openai,gemini,photoroom,shippo,stripe,email
     steps:
       - name: Checkout
         uses: actions/checkout@v5

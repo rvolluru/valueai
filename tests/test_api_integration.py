@@ -32,6 +32,8 @@ def _build_client():
     os.environ["GEMINI_API_KEY"] = ""
     os.environ["OPENAI_API_KEY"] = ""
     os.environ["PHOTOROOM_API_KEY"] = ""
+    os.environ["PLAIN_API_KEY"] = ""
+    os.environ["PLAIN_WEBHOOK_SECRET"] = "test-plain-webhook-secret"
     os.environ["STRIPE_SECRET_KEY"] = ""
     os.environ["STRIPE_PUBLISHABLE_KEY"] = ""
     os.environ["STRIPE_WEBHOOK_SECRET"] = ""
@@ -68,6 +70,120 @@ def test_health_endpoint_remains_public_and_lightweight():
 
     assert res.status_code == 200
     assert res.json() == {"status": "ok"}
+
+
+def test_listing_support_request_creates_plain_customer_and_thread(monkeypatch):
+    client = _build_client()
+    listing_payload = {
+        "title": "Support Test Bag",
+        "mode": "trade",
+        "category": "handbag",
+        "brand": "Test Brand",
+        "condition": "LikeNew",
+        "estimated_value": 250,
+        "images": ["https://example.test/bag.jpg"],
+        "description": "A listing used to verify support submission.",
+        "status": "Review",
+    }
+    created = client.post("/v1/listings", json=listing_payload, headers={"x-api-key": "test-key"})
+    assert created.status_code == 200, created.text
+    listing_id = created.json()["listing_id"]
+
+    calls = []
+
+    def fake_plain_graphql(settings, query, variables):
+        calls.append((query, variables))
+        if "UpsertCustomer" in query:
+            return {"upsertCustomer": {"customer": {"id": "c_test"}, "error": None}}
+        return {"createThread": {"thread": {"id": "th_test", "status": "TODO"}, "error": None}}
+
+    monkeypatch.setattr("app.main._plain_graphql", fake_plain_graphql)
+    response = client.post(
+        f"/v1/listings/{listing_id}/support-requests",
+        headers={"x-api-key": "test-key"},
+        json={
+            "reason": "incorrect_valuation",
+            "message": "The estimated valuation appears too low.",
+            "contact_email": "member@example.com",
+            "contact_name": "Test Member",
+            "platform": "web",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["thread_id"] == "th_test"
+    assert len(calls) == 2
+    assert listing_id in calls[1][1]["input"]["components"][0]["componentText"]["text"]
+
+
+def test_listing_support_request_rejects_unknown_listing():
+    client = _build_client()
+    response = client.post(
+        "/v1/listings/missing/support-requests",
+        headers={"x-api-key": "test-key"},
+        json={
+            "reason": "other",
+            "message": "This listing has an unexpected issue.",
+            "contact_email": "member@example.com",
+        },
+    )
+    assert response.status_code == 404
+
+
+def test_plain_webhook_updates_support_request_and_is_idempotent(monkeypatch):
+    client = _build_client()
+    from app import deps
+
+    db = deps.get_db()
+    db.create_listing_support_request(
+        request_id="support-test",
+        plain_thread_id="th_support_test",
+        listing_id="listing-test",
+        owner_subject="api-key",
+        contact_email="member@example.com",
+        contact_name="Test Member",
+        reason="other",
+        message="Original support request message.",
+    )
+    sent_emails = []
+    monkeypatch.setattr("app.main._send_support_email", lambda **kwargs: sent_emails.append(kwargs) or "sent")
+    event = {
+        "id": "pEv_support_done",
+        "type": "thread.status_changed",
+        "payload": {
+            "eventType": "thread.status_changed",
+            "thread": {"id": "th_support_test", "status": "DONE"},
+        },
+    }
+    raw = json.dumps(event, separators=(",", ":")).encode()
+    signature = hmac.new(b"test-plain-webhook-secret", raw, hashlib.sha256).hexdigest()
+
+    response = client.post(
+        "/v1/webhooks/plain",
+        content=raw,
+        headers={"Content-Type": "application/json", "Plain-Request-Signature": signature},
+    )
+    duplicate = client.post(
+        "/v1/webhooks/plain",
+        content=raw,
+        headers={"Content-Type": "application/json", "Plain-Request-Signature": signature},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "processed"
+    assert duplicate.json()["status"] == "duplicate"
+    assert db.get_listing_support_request_by_thread("th_support_test")["status"] == "resolved"
+    assert len(sent_emails) == 1
+
+
+def test_plain_webhook_rejects_invalid_signature():
+    client = _build_client()
+    response = client.post(
+        "/v1/webhooks/plain",
+        json={"id": "pEv_bad", "type": "thread.thread_created", "payload": {}},
+        headers={"Plain-Request-Signature": "invalid"},
+    )
+    assert response.status_code == 401
 
 
 def test_dependency_health_requires_authentication():
@@ -177,7 +293,7 @@ def test_dependency_health_reports_core_services_and_redacts_secrets():
     assert checks["google_places"]["status"] == "not_configured"
     assert checks["clerk"]["status"] == "not_configured"
     assert checks["email"]["status"] == "not_configured"
-    assert checks["push_notifications"]["status"] == "not_configured"
+    assert "push_notifications" not in checks
     assert "test-key" not in str(body)
 
 
@@ -216,6 +332,60 @@ def test_admin_dashboard_allows_admin_role_dependency_override():
 
     assert res.status_code == 200, res.text
     assert res.json()["actor"]["subject"] == "admin-user"
+
+
+def test_experience_events_are_ingested_and_admin_report_is_role_restricted():
+    client = _build_client()
+    event = {
+        "event_name": "listing_started",
+        "session_id": "session-test",
+        "platform": "web",
+        "screen": "create_listing",
+        "properties": {"entry_point": "closet"},
+    }
+
+    created = client.post("/v1/experience/events", headers={"x-api-key": "test-key"}, json=event)
+    assert created.status_code == 202, created.text
+    assert client.get("/v1/admin/experience-report", headers={"x-api-key": "test-key"}).status_code == 401
+
+    from app.auth import AuthPrincipal, require_admin_user
+    from app.main import app
+
+    app.dependency_overrides[require_admin_user] = lambda: AuthPrincipal(
+        auth_type="clerk",
+        subject="admin-user",
+        claims={"role": "admin"},
+    )
+    try:
+        report = client.get("/v1/admin/experience-report?days=30")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert report.status_code == 200, report.text
+    assert report.json()["sample"]["events"] == 1
+    assert report.json()["funnels"][0]["steps"][0]["users"] == 1
+
+
+def test_marketplace_intelligence_report_requires_admin_role():
+    client = _build_client()
+    assert client.get("/v1/admin/marketplace-intelligence", headers={"x-api-key": "test-key"}).status_code == 401
+
+    from app.auth import AuthPrincipal, require_admin_user
+    from app.main import app
+
+    app.dependency_overrides[require_admin_user] = lambda: AuthPrincipal(
+        auth_type="clerk",
+        subject="admin-user",
+        claims={"role": "admin"},
+    )
+    try:
+        report = client.get("/v1/admin/marketplace-intelligence")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert report.status_code == 200, report.text
+    assert report.json()["summary"]["total_listings"] == 0
+    assert report.json()["definitions"]["available_match"].startswith("Another owner's active")
 
 
 def test_register_and_unregister_push_token():
@@ -2769,3 +2939,69 @@ def test_marketplace_lists_only_active_but_mine_includes_review() -> None:
     mine_ids = {item["listing_id"] for item in mine_res.json()["items"]}
     assert active_id in mine_ids
     assert review_id in mine_ids
+
+
+def test_image_role_classification_reports_category_coverage(monkeypatch) -> None:
+    client = _build_client()
+    os.environ["GEMINI_API_KEY"] = "test-gemini-key"
+
+    from app import settings
+    from app import main
+
+    settings.get_settings.cache_clear()
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "candidates": [{
+                    "content": {
+                        "parts": [{
+                            "text": json.dumps({
+                                "category": "clothes",
+                                "category_confidence": 0.97,
+                                "images": [
+                                    {"image_index": 0, "role": "full_front", "confidence": 0.98},
+                                    {"image_index": 1, "role": "brand_label", "confidence": 0.94},
+                                ]
+                            })
+                        }]
+                    }
+                }]
+            }
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, *args, **kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr(main.httpx, "AsyncClient", FakeAsyncClient)
+    files = [
+        ("images", ("front.jpg", _make_image("FRONT"), "image/jpeg")),
+        ("images", ("label.jpg", _make_image("LABEL"), "image/jpeg")),
+    ]
+
+    response = client.post(
+        "/v1/images/classify-roles",
+        data={"category": "clothes"},
+        files=files,
+        headers={"x-api-key": "test-key"},
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert [entry["role"] for entry in payload["images"]] == ["full_front", "brand_label"]
+    assert payload["category"] == "clothes"
+    assert payload["category_confidence"] == 0.97
+    assert payload["missing_required"] == []
+    assert payload["missing_recommended"] == ["full_back", "size_or_material_label", "condition_or_wear"]

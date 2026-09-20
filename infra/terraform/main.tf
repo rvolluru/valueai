@@ -2,6 +2,8 @@ data "aws_availability_zones" "available" {
   state = "available"
 }
 
+data "aws_caller_identity" "current" {}
+
 locals {
   azs                       = slice(data.aws_availability_zones.available.names, 0, 2)
   cloudwatch_log_group_name = var.create_cloudwatch_log_group ? aws_cloudwatch_log_group.api[0].name : var.existing_cloudwatch_log_group_name
@@ -219,6 +221,32 @@ resource "aws_iam_role_policy" "ecs_task_s3" {
   })
 }
 
+resource "aws_iam_role_policy" "ecs_task_ses" {
+  name = "${var.project_name}-task-ses-policy"
+  role = aws_iam_role.ecs_task.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid      = "ReadSesQuota"
+        Effect   = "Allow"
+        Action   = ["ses:GetSendQuota"]
+        Resource = "*"
+      },
+      {
+        Sid    = "SendJouftEmail"
+        Effect = "Allow"
+        Action = [
+          "ses:SendEmail",
+          "ses:SendRawEmail",
+          "ses:SendTemplatedEmail"
+        ]
+        Resource = "arn:aws:ses:${var.ses_region}:${data.aws_caller_identity.current.account_id}:identity/${var.ses_identity}"
+      }
+    ]
+  })
+}
+
 resource "aws_ecs_cluster" "this" {
   name = "${var.project_name}-cluster"
 }
@@ -327,6 +355,8 @@ resource "aws_ecs_task_definition" "api" {
         { name = "OPENAI_API_KEY", value = var.openai_api_key },
         { name = "GEMINI_API_KEY", value = var.gemini_api_key },
         { name = "PHOTOROOM_API_KEY", value = var.photoroom_api_key },
+        { name = "PLAIN_API_KEY", value = var.plain_api_key },
+        { name = "PLAIN_WEBHOOK_SECRET", value = var.plain_webhook_secret },
         { name = "IMAGE_STAGING_PHOTOROOM_ENABLED", value = tostring(var.image_staging_photoroom_enabled) },
         { name = "PHOTOROOM_BACKGROUND_COLOR", value = var.photoroom_background_color },
         { name = "PHOTOROOM_OUTPUT_FORMAT", value = var.photoroom_output_format },
@@ -345,6 +375,9 @@ resource "aws_ecs_task_definition" "api" {
         { name = "SHIPPO_FLAT_RATE_MAX_WEIGHT_OZ", value = tostring(var.shippo_flat_rate_max_weight_oz) },
         { name = "SHIPPO_DEFAULT_CONTACT_EMAIL", value = var.shippo_default_contact_email },
         { name = "SHIPPO_DEFAULT_CONTACT_PHONE", value = var.shippo_default_contact_phone },
+        { name = "EMAIL_PROVIDER", value = var.email_provider },
+        { name = "SES_REGION", value = var.ses_region },
+        { name = "SES_FROM_EMAIL", value = var.ses_from_email },
         { name = "NOTIFICATION_FROM_EMAIL", value = var.notification_from_email },
         { name = "PUBLIC_APP_URL", value = var.public_app_url },
         { name = "PUBLIC_API_URL", value = var.public_api_url },

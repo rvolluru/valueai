@@ -49,6 +49,34 @@ async function requestJson({ apiBaseUrl, path, method = 'GET', auth = {}, body, 
 
 export function createMobileApiClient({ apiBaseUrl }) {
   return {
+    trackExperience(event, auth = {}) {
+      return requestJson({
+        apiBaseUrl,
+        path: '/v1/experience/events',
+        method: 'POST',
+        auth,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(event),
+      });
+    },
+    async classifyImageRoles({ images = [], category }, auth = {}) {
+      const fd = new FormData();
+      images.forEach((img, idx) => {
+        fd.append('images', {
+          uri: img.uri,
+          name: img.fileName || `upload-${idx + 1}.jpg`,
+          type: img.mimeType || 'image/jpeg',
+        });
+      });
+      if (category) fd.append('category', category);
+      return requestJson({
+        apiBaseUrl,
+        path: '/v1/images/classify-roles',
+        method: 'POST',
+        auth,
+        body: fd,
+      });
+    },
     async analyzeItem({ images = [], category, userCondition, itemDescription, debug = true }, auth = {}) {
       const fd = new FormData();
       images.forEach((img, idx) => {
@@ -70,7 +98,7 @@ export function createMobileApiClient({ apiBaseUrl }) {
         body: fd,
       });
     },
-    async uploadImages({ images = [], itemId = '' }, auth = {}) {
+    async uploadImages({ images = [], itemId = '', roleHints = [] }, auth = {}) {
       const fd = new FormData();
       images.forEach((img, idx) => {
         fd.append('images', {
@@ -80,6 +108,7 @@ export function createMobileApiClient({ apiBaseUrl }) {
         });
       });
       if (itemId) fd.append('item_id', itemId);
+      if (roleHints.length) fd.append('role_hints', JSON.stringify(roleHints));
       return requestJson({
         apiBaseUrl,
         path: '/v1/uploads/images',
@@ -174,6 +203,16 @@ export function createMobileApiClient({ apiBaseUrl }) {
         path: `/v1/listings/${encodeURIComponent(listingId)}`,
         method: 'DELETE',
         auth,
+      });
+    },
+    createListingSupportRequest(listingId, payload, auth = {}) {
+      return requestJson({
+        apiBaseUrl,
+        path: `/v1/listings/${encodeURIComponent(listingId)}/support-requests`,
+        method: 'POST',
+        auth,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
       });
     },
     listListings(params = {}, auth = {}) {
@@ -378,12 +417,14 @@ export function createMobileApiClient({ apiBaseUrl }) {
         body: JSON.stringify({}),
       });
     },
-    addressSuggestions({ q = '', city = '', state = '', postalCode = '' } = {}, auth = {}) {
+    addressSuggestions({ q = '', city = '', state = '', postalCode = '', latitude = null, longitude = null } = {}, auth = {}) {
       const query = new URLSearchParams();
       if (q) query.set('q', q);
       if (city) query.set('city', city);
       if (state) query.set('state', state);
       if (postalCode) query.set('postal_code', postalCode);
+      if (Number.isFinite(latitude)) query.set('latitude', String(latitude));
+      if (Number.isFinite(longitude)) query.set('longitude', String(longitude));
       return requestJson({
         apiBaseUrl,
         path: `/v1/google/places/address-suggest?${query.toString()}`,

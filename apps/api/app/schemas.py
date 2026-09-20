@@ -52,6 +52,24 @@ class UploadImagesResponse(BaseModel):
     uploaded_images: list[UploadedImageOut] = Field(default_factory=list)
 
 
+class ImageRoleClassification(BaseModel):
+    image_index: int = Field(ge=0)
+    role: str
+    confidence: float = Field(ge=0, le=1)
+
+
+class ImageRoleClassificationResponse(BaseModel):
+    category: str
+    category_confidence: float = Field(ge=0, le=1)
+    images: list[ImageRoleClassification] = Field(default_factory=list)
+    required_roles: list[str] = Field(default_factory=list)
+    recommended_roles: list[str] = Field(default_factory=list)
+    missing_required: list[str] = Field(default_factory=list)
+    missing_recommended: list[str] = Field(default_factory=list)
+    elapsed_ms: float
+    warning: str | None = None
+
+
 class PresignImageUploadItem(BaseModel):
     filename: str | None = None
     content_type: str = "image/jpeg"
@@ -195,6 +213,33 @@ class AdminSupportNoteCreateRequest(BaseModel):
     note: str = ""
 
 
+class ExperienceEventCreateRequest(BaseModel):
+    event_name: Literal[
+        "screen_viewed",
+        "profile_started",
+        "profile_saved",
+        "listing_started",
+        "listing_photos_added",
+        "listing_photo_check_failed",
+        "listing_analysis_started",
+        "listing_analysis_failed",
+        "listing_created",
+        "listing_published",
+        "marketplace_listing_viewed",
+        "trade_composer_started",
+        "trade_offer_submitted",
+        "support_started",
+        "support_submitted",
+        "ui_error",
+    ]
+    session_id: str = Field(min_length=1, max_length=100)
+    platform: Literal["web", "ios", "android"]
+    screen: str | None = Field(default=None, max_length=80)
+    entity_type: Literal["listing", "trade", "profile", "support"] | None = None
+    entity_id: str | None = Field(default=None, max_length=120)
+    properties: dict[str, str | int | float | bool | None] = Field(default_factory=dict)
+
+
 class PushTokenRegisterRequest(BaseModel):
     token: str
     device_id: str | None = None
@@ -318,6 +363,29 @@ class ListingResponse(ListingCreateRequest):
     owner_subject: str
     owner_name: str | None = None
     created_at: str
+
+
+class ListingSupportRequest(BaseModel):
+    reason: Literal[
+        "incorrect_brand_or_title",
+        "incorrect_valuation",
+        "incorrect_condition",
+        "missing_product_information",
+        "image_processing_problem",
+        "authentication_concern",
+        "other",
+    ]
+    message: str = Field(min_length=10, max_length=4000)
+    contact_email: str = Field(min_length=3, max_length=320)
+    contact_name: str | None = Field(default=None, max_length=200)
+    platform: Literal["web", "ios", "android"] | None = None
+    app_version: str | None = Field(default=None, max_length=100)
+
+
+class ListingSupportResponse(BaseModel):
+    status: Literal["submitted"] = "submitted"
+    thread_id: str
+    listing_id: str
 
 
 class OfferCreateRequest(BaseModel):

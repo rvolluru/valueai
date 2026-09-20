@@ -449,6 +449,46 @@ class Database:
               updated_at TEXT NOT NULL
             )
             """,
+            """
+            CREATE TABLE IF NOT EXISTS listing_support_requests (
+              request_id TEXT PRIMARY KEY,
+              plain_thread_id TEXT NOT NULL UNIQUE,
+              listing_id TEXT NOT NULL,
+              owner_subject TEXT NOT NULL,
+              contact_email TEXT NOT NULL,
+              contact_name TEXT,
+              reason TEXT NOT NULL,
+              message TEXT NOT NULL,
+              status TEXT NOT NULL DEFAULT 'submitted',
+              latest_update TEXT,
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS plain_webhook_events (
+              event_id TEXT PRIMARY KEY,
+              event_type TEXT NOT NULL,
+              plain_thread_id TEXT,
+              received_at TEXT NOT NULL
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS experience_events (
+              event_id TEXT PRIMARY KEY,
+              owner_subject TEXT NOT NULL,
+              session_id TEXT NOT NULL,
+              event_name TEXT NOT NULL,
+              platform TEXT NOT NULL,
+              screen TEXT,
+              entity_type TEXT,
+              entity_id TEXT,
+              properties_json TEXT NOT NULL DEFAULT '{}',
+              occurred_at TEXT NOT NULL
+            )
+            """,
+            "CREATE INDEX IF NOT EXISTS idx_experience_events_occurred_at ON experience_events (occurred_at)",
+            "CREATE INDEX IF NOT EXISTS idx_experience_events_owner_subject ON experience_events (owner_subject)",
         ]
         for stmt in statements:
             self.execute(stmt)
@@ -1275,6 +1315,137 @@ class Database:
             data = dict(row) if isinstance(row, sqlite3.Row) else {k: row[idx] for idx, k in enumerate(keys)}
             out.append({k: data.get(k) for k in keys})
         return out
+
+    def create_experience_event(
+        self,
+        *,
+        event_id: str,
+        owner_subject: str,
+        session_id: str,
+        event_name: str,
+        platform: str,
+        screen: str | None,
+        entity_type: str | None,
+        entity_id: str | None,
+        properties: dict,
+    ) -> dict:
+        occurred_at = utc_now_iso()
+        self.execute(
+            f"""INSERT INTO experience_events
+            (event_id, owner_subject, session_id, event_name, platform, screen, entity_type, entity_id, properties_json, occurred_at)
+            VALUES ({self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param})""",
+            (
+                event_id,
+                owner_subject,
+                session_id,
+                event_name,
+                platform,
+                screen,
+                entity_type,
+                entity_id,
+                json.dumps(properties, separators=(",", ":")),
+                occurred_at,
+            ),
+        )
+        self.commit()
+        return {"event_id": event_id, "occurred_at": occurred_at}
+
+    def list_experience_events(self, *, since: str, limit: int = 10000) -> list[dict]:
+        keys = [
+            "event_id", "owner_subject", "session_id", "event_name", "platform", "screen",
+            "entity_type", "entity_id", "properties_json", "occurred_at",
+        ]
+        query = (
+            f"SELECT {', '.join(keys)} FROM experience_events "
+            f"WHERE occurred_at >= {self.param} ORDER BY occurred_at ASC LIMIT {self.param}"
+        )
+        if self._sqlite_conn is not None:
+            with self._sqlite_lock:
+                rows = self._sqlite_conn.execute(query, (since, limit)).fetchall()
+        else:
+            cur = self._pg.cursor()
+            cur.execute(query, (since, limit))
+            rows = cur.fetchall()
+            cur.close()
+        events: list[dict] = []
+        for row in rows:
+            event = dict(zip(keys, row))
+            try:
+                properties = json.loads(event.pop("properties_json") or "{}")
+                event["properties"] = properties if isinstance(properties, dict) else {}
+            except (TypeError, json.JSONDecodeError):
+                event["properties"] = {}
+            events.append(event)
+        return events
+
+    def create_listing_support_request(
+        self,
+        *,
+        request_id: str,
+        plain_thread_id: str,
+        listing_id: str,
+        owner_subject: str,
+        contact_email: str,
+        contact_name: str | None,
+        reason: str,
+        message: str,
+    ) -> dict:
+        now = utc_now_iso()
+        self.execute(
+            f"""INSERT INTO listing_support_requests
+            (request_id, plain_thread_id, listing_id, owner_subject, contact_email, contact_name, reason, message, status, created_at, updated_at)
+            VALUES ({self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param})""",
+            (request_id, plain_thread_id, listing_id, owner_subject, contact_email, contact_name, reason, message, "submitted", now, now),
+        )
+        self.commit()
+        return self.get_listing_support_request_by_thread(plain_thread_id) or {}
+
+    def get_listing_support_request_by_thread(self, plain_thread_id: str) -> dict | None:
+        keys = ["request_id", "plain_thread_id", "listing_id", "owner_subject", "contact_email", "contact_name", "reason", "message", "status", "latest_update", "created_at", "updated_at"]
+        query = f"SELECT {', '.join(keys)} FROM listing_support_requests WHERE plain_thread_id = {self.param} LIMIT 1"
+        if self._sqlite_conn is not None:
+            with self._sqlite_lock:
+                row = self._sqlite_conn.execute(query, (plain_thread_id,)).fetchone()
+        else:
+            cur = self._pg_cursor()
+            cur.execute(query, (plain_thread_id,))
+            row = cur.fetchone()
+            cur.close()
+        if not row:
+            return None
+        return dict(row) if isinstance(row, sqlite3.Row) else {key: row[idx] for idx, key in enumerate(keys)}
+
+    def apply_plain_support_webhook(
+        self,
+        *,
+        event_id: str,
+        event_type: str,
+        plain_thread_id: str,
+        status: str | None,
+        latest_update: str | None,
+    ) -> tuple[dict | None, bool, str | None]:
+        now = utc_now_iso()
+        previous = self.get_listing_support_request_by_thread(plain_thread_id)
+        if previous is None:
+            return None, False, None
+        previous_status = str(previous.get("status") or "")
+        try:
+            self.execute(
+                f"INSERT INTO plain_webhook_events (event_id, event_type, plain_thread_id, received_at) VALUES ({self.param}, {self.param}, {self.param}, {self.param})",
+                (event_id, event_type, plain_thread_id, now),
+            )
+        except Exception:
+            if self._pg is not None:
+                self._pg.rollback()
+            return previous, False, previous_status
+        next_status = status or previous_status
+        next_update = latest_update if latest_update is not None else previous.get("latest_update")
+        self.execute(
+            f"UPDATE listing_support_requests SET status = {self.param}, latest_update = {self.param}, updated_at = {self.param} WHERE plain_thread_id = {self.param}",
+            (next_status, next_update, now, plain_thread_id),
+        )
+        self.commit()
+        return self.get_listing_support_request_by_thread(plain_thread_id), True, previous_status
 
     def create_admin_support_note(
         self,

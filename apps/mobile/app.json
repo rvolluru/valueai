@@ -12,7 +12,13 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.jouft.app.dev",
+      "entitlements": {
+        "com.apple.developer.in-app-payments": [
+          "merchant.com.jouft.app"
+        ]
+      },
       "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "Allow Jouft to use your location to prioritize nearby address suggestions.",
         "LSApplicationQueriesSchemes": [
           "fb",
           "fbapi",
@@ -31,6 +37,12 @@
     },
     "plugins": [
       "expo-image-picker",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Allow Jouft to use your location to prioritize nearby address suggestions."
+        }
+      ],
       "expo-web-browser",
       "expo-notifications",
       "expo-font",
@@ -38,7 +50,7 @@
         "@stripe/stripe-react-native",
         {
           "merchantIdentifier": "merchant.com.jouft.app",
-          "enableGooglePay": false
+          "enableGooglePay": true
         }
       ]
     ],

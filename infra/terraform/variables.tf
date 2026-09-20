@@ -184,6 +184,35 @@ variable "notification_from_email" {
   default = "notifications@jouft.com"
 }
 
+variable "email_provider" {
+  type        = string
+  description = "Email delivery provider used by the API. Production uses the ECS task role with SES."
+  default     = "ses"
+
+  validation {
+    condition     = contains(["auto", "ses", "smtp"], var.email_provider)
+    error_message = "email_provider must be auto, ses, or smtp."
+  }
+}
+
+variable "ses_region" {
+  type        = string
+  description = "AWS region containing the verified SES identity."
+  default     = "us-east-1"
+}
+
+variable "ses_from_email" {
+  type        = string
+  description = "Verified sender address used for transactional application email."
+  default     = "notifications@jouft.com"
+}
+
+variable "ses_identity" {
+  type        = string
+  description = "Verified SES domain identity used to scope the ECS task send policy."
+  default     = "jouft.com"
+}
+
 variable "public_app_url" {
   type    = string
   default = "https://jouft.com"
@@ -379,6 +408,18 @@ variable "brand_gap_min" {
 }
 
 variable "stripe_secret_key" {
+  type      = string
+  default   = ""
+  sensitive = true
+}
+
+variable "plain_api_key" {
+  type      = string
+  default   = ""
+  sensitive = true
+}
+
+variable "plain_webhook_secret" {
   type      = string
   default   = ""
   sensitive = true
