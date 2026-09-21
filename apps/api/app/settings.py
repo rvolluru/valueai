@@ -96,6 +96,7 @@ class Settings(BaseSettings):
     image_staging_photoroom_enabled: bool = True
     photoroom_api_key: str | None = None
     photoroom_segment_url: str = "https://sdk.photoroom.com/v1/segment"
+    photoroom_account_url: str = "https://image-api.photoroom.com/v2/account"
     photoroom_timeout_s: float = 20.0
     photoroom_output_format: str = "jpg"
     photoroom_background_color: str = "#FFFFFF"
@@ -116,6 +117,8 @@ class Settings(BaseSettings):
     max_images_per_request: int = Field(default=6, ge=1, le=8)
     gemini_api_key: str | None = None
     openai_api_key: str | None = None
+    listing_assistant_model: str = "gpt-5-mini"
+    listing_assistant_timeout_s: float = Field(default=30.0, ge=5.0, le=120.0)
 
     clerk_enabled: bool = False
     clerk_issuer: str | None = None

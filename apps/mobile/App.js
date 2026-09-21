@@ -77,6 +77,23 @@ const PASSWORD_REQUIREMENTS = [
   'At least one uppercase letter',
   'At least one number',
 ];
+
+function valueHasAdminRole(value) {
+  if (!value) return false;
+  if (typeof value === 'string') return value.trim().toLowerCase() === 'admin';
+  if (Array.isArray(value)) return value.some(valueHasAdminRole);
+  return false;
+}
+
+function hasAdminRoleFromObject(value) {
+  if (!value || typeof value !== 'object') return false;
+  const candidates = [value.role, value.roles, value.orgRole, value.org_role, value.permissions];
+  for (const key of ['publicMetadata', 'privateMetadata', 'unsafeMetadata', 'metadata']) {
+    const metadata = value[key];
+    if (metadata && typeof metadata === 'object') candidates.push(metadata.role, metadata.roles, metadata.permissions);
+  }
+  return candidates.some(valueHasAdminRole);
+}
 const IMAGE_ROLE_LABELS = {
   full_front: 'Full front', full_back: 'Full back', side_or_profile: 'Side/profile',
   brand_label: 'Brand label', size_or_material_label: 'Size/material label',
@@ -84,6 +101,21 @@ const IMAGE_ROLE_LABELS = {
   shoe_sole: 'Shoe sole', bag_interior: 'Bag interior',
   serial_or_authentication_mark: 'Serial/authentication mark', other: 'Other view',
 };
+const IMAGE_ROLE_GUIDANCE = {
+  full_front: 'To identify the item and its overall style, add a clear photo of the complete front.',
+  full_back: 'To understand the complete design and condition, add a clear photo of the back.',
+  side_or_profile: 'To identify the shape and style, add a clear side or profile photo.',
+  brand_label: 'To identify the brand, add a clear photo of the brand label or logo.',
+  size_or_material_label: 'To confirm the size and material, add a clear photo of the size or care label.',
+  hardware_or_detail: 'To identify important design details, add a close-up of the hardware or construction.',
+  condition_or_wear: 'To assess condition accurately, add a close-up of any wear, marks, or damage.',
+  shoe_sole: 'To assess wear and confirm shoe details, add a clear photo of the sole.',
+  bag_interior: 'To identify the bag and assess its condition, add a clear photo of the interior.',
+  serial_or_authentication_mark: 'To capture identifying details, add a clear photo of the serial or maker mark.',
+};
+function imageRoleGuidance(role) {
+  return IMAGE_ROLE_GUIDANCE[role] || `For a more complete analysis, add a clear ${String(IMAGE_ROLE_LABELS[role] || role).toLowerCase()} photo.`;
+}
 const IMAGE_ROLE_REQUIREMENTS = {
   clothes: { required: ['full_front', 'brand_label'], recommended: ['full_back', 'size_or_material_label', 'condition_or_wear'] },
   shoes: { required: ['side_or_profile', 'brand_label', 'shoe_sole'], recommended: ['size_or_material_label', 'condition_or_wear'] },
@@ -1156,6 +1188,7 @@ function OfferCard({ offer, apiBaseUrl, onPress = null }) {
 
 function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, clerkUserLabel = '', clerkUserProfile = {}, onSignOut = null }) {
   const { width: viewportWidth } = useWindowDimensions();
+  const hasAdminRole = useMemo(() => hasAdminRoleFromObject(clerkUserProfile), [clerkUserProfile]);
   const [apiBaseUrl, setApiBaseUrl] = useState(API_DEFAULT);
   const [authMode, setAuthMode] = useState('api_key');
   const [apiKey, setApiKey] = useState('local-dev-key');
@@ -1242,6 +1275,25 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
   const [itemSize, setItemSize] = useState('');
   const [tradeNotes, setTradeNotes] = useState('');
   const [analysisResult, setAnalysisResult] = useState(null);
+  const [createListingMode, setCreateListingMode] = useState('standard');
+  const [listingChatStage, setListingChatStage] = useState('collect');
+  const [listingChatListing, setListingChatListing] = useState(null);
+  const [listingChatMatches, setListingChatMatches] = useState([]);
+  const [listingChatTradeTarget, setListingChatTradeTarget] = useState(null);
+  const [listingAssistantMessages, setListingAssistantMessages] = useState([]);
+  const [listingAssistantConversationId, setListingAssistantConversationId] = useState(null);
+  const [listingAssistantInput, setListingAssistantInput] = useState('');
+  const [listingAssistantBusy, setListingAssistantBusy] = useState(false);
+  const [listingAssistantError, setListingAssistantError] = useState('');
+  const [listingAnalysisProgress, setListingAnalysisProgress] = useState('');
+  const listingChatPhotoGateOpen = images.length > 0
+    && !createImageRoleBusy
+    && Boolean(createImageRoleCheck)
+    && (createImageRoleCheck?.missing_required || []).length === 0;
+
+  useEffect(() => {
+    if (!hasAdminRole && createListingMode === 'chat') setCreateListingMode('standard');
+  }, [createListingMode, hasAdminRole]);
 
   const [loading, setLoading] = useState(false);
   const [marketplaceLoading, setMarketplaceLoading] = useState(false);
@@ -1280,6 +1332,217 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
       }, await authContext());
     } catch (err) {
       console.debug('Experience event was not recorded.', err?.message || err);
+    }
+  }
+
+  async function sendListingAssistantMessage(contentOverride = null, interactionType = 'typed') {
+    if (!hasAdminRole) return;
+    const content = String(contentOverride ?? listingAssistantInput).trim();
+    if (!content || listingAssistantBusy) return;
+    const userMessage = { role: 'user', content, interaction_type: interactionType, message_id: `mobile-${Date.now()}-${Math.random().toString(36).slice(2, 10)}` };
+    const nextMessages = [...listingAssistantMessages, userMessage].slice(-12);
+    setListingAssistantMessages(nextMessages);
+    setListingAssistantInput('');
+    setListingAssistantBusy(true);
+    setListingAssistantError('');
+    try {
+      if (listingChatStage === 'published') {
+        const normalizedContent = content.toLowerCase();
+        if (listingChatTradeTarget && /\b(no|not now|cancel|maybe later)\b/.test(normalizedContent)) {
+          setListingChatTradeTarget(null);
+          setListingAssistantMessages((current) => [...current, { role: 'assistant', content: 'No problem. The item will stay in your liked listings, and you can start a trade later.' }].slice(-12));
+          return;
+        }
+        if (listingChatTradeTarget && /\b(yes|send|start|make|submit|go ahead|trade offer)\b/.test(normalizedContent)) {
+          const currentAddresses = completeShippingAddresses(shippingAddresses.length > 0 ? shippingAddresses : await loadProfileAddresses());
+          if (currentAddresses.length === 0) {
+            setListingAssistantMessages((current) => [...current, { role: 'assistant', content: 'Before I can send the trade offer, please add a complete shipping address in Profile. Your selected match is still saved in your liked listings.' }].slice(-12));
+            return;
+          }
+          const targetId = listingIdOf(listingChatTradeTarget);
+          const offeredId = listingIdOf(listingChatListing);
+          if (!targetId || !offeredId) throw new Error('The selected trade items are no longer available.');
+          const targetValue = Number(listingChatTradeTarget?.estimated_value || listingChatTradeTarget?.estimatedValue || 0);
+          const offeredValue = Number(listingChatListing?.estimated_value || listingChatListing?.estimatedValue || 0);
+          if (!targetValue || !offeredValue || Math.abs(offeredValue - targetValue) / targetValue > 0.3) {
+            setListingAssistantMessages((current) => [...current, { role: 'assistant', content: 'I can’t send this offer because the two listings are outside the eligible trade-value range. The item is still saved in your liked listings.' }].slice(-12));
+            setListingChatTradeTarget(null);
+            return;
+          }
+          await apiClient.createOffer({ target_listing_id: targetId, offered_listing_ids: [offeredId], message: '' }, await authContext());
+          setMarketplaceListings((current) => removeSentOfferMatchesFromListings(current, targetId, [offeredId]));
+          setListingChatMatches((current) => current.filter((match) => listingIdOf(match) !== targetId));
+          setListingAssistantMessages((current) => [...current, { role: 'assistant', content: `Your trade offer for “${listingChatTradeTarget?.title || 'the selected item'}” has been sent. The owner has been notified, and you can follow its status in Trade Inbox.` }].slice(-12));
+          setListingChatTradeTarget(null);
+          return;
+        }
+        if (/\b(no|none|not interested|nothing)\b/.test(normalizedContent)) {
+          setListingAssistantMessages((current) => [...current, { role: 'assistant', content: 'No problem. Your listing is live, and I’ll keep watching for new matches.' }].slice(-12));
+          return;
+        }
+        const ordinalWords = { first: 0, '1': 0, second: 1, '2': 1, third: 2, '3': 2 };
+        const ordinal = Object.entries(ordinalWords).find(([word]) => new RegExp(`\\b${word}(?:st|nd|rd)?\\b`).test(normalizedContent));
+        let selectedMatch = ordinal ? listingChatMatches[ordinal[1]] : null;
+        if (!selectedMatch) {
+          const mentioned = listingChatMatches.filter((match) => {
+            const title = String(match?.title || '').toLowerCase();
+            const brand = String(match?.brand || '').toLowerCase();
+            return (title.length > 3 && normalizedContent.includes(title)) || (brand.length > 3 && normalizedContent.includes(brand));
+          });
+          if (mentioned.length === 1) selectedMatch = mentioned[0];
+        }
+        if (!selectedMatch && listingChatMatches.length === 1 && /\b(yes|it|this one|that one|like it)\b/.test(normalizedContent)) selectedMatch = listingChatMatches[0];
+        if (!selectedMatch) {
+          setListingAssistantMessages((current) => [...current, { role: 'assistant', content: 'Which matched item do you like? You can say “the first one,” “the second one,” or type the item title.' }].slice(-12));
+          return;
+        }
+        const selectedId = String(selectedMatch?.listing_id || selectedMatch?.id || '');
+        if (!likedListingIds.includes(selectedId)) {
+          await apiClient.likeListing(selectedId, await authContext());
+          setLikedListingIds((current) => current.includes(selectedId) ? current : [...current, selectedId]);
+        }
+        setListingChatTradeTarget(selectedMatch);
+        const shippingCharge = estimatedSenderShippingChargeForListings([listingChatListing])?.display || 'the carrier-calculated shipping fee';
+        setListingAssistantMessages((current) => [...current, { role: 'assistant', content: `I’ve saved “${selectedMatch?.title || 'that item'}” to your liked listings. Would you like to offer “${listingChatListing?.title || 'your new listing'}” in trade? If the trade is accepted, you will be charged ${shippingCharge} to ship your item. Say “send the trade offer” to continue.` }].slice(-12));
+        return;
+      }
+      const result = await apiClient.chatWithListingAssistant({
+        conversation_id: listingAssistantConversationId,
+        messages: listingAssistantConversationId ? [userMessage] : nextMessages,
+        context: {
+          step: wizardStep === 2 ? 2 : 1,
+          category: category || null,
+          condition: userCondition || null,
+          size: itemSize || null,
+          photo_count: images.length,
+          identified_photo_roles: (createImageRoleCheck?.images || []).flatMap((image) => [image.role, ...(image.additional_roles || [])]).filter(Boolean),
+          missing_required_photo_roles: createImageRoleCheck?.missing_required || [],
+          workflow_stage: ({ collect: 'collecting', confirm: 'ready_for_review' })[listingChatStage] || listingChatStage,
+          listing_id: listingIdOf(listingChatListing) || null,
+          brand: listingChatListing?.brand || null,
+          title: listingChatListing?.title || itemTitle || null,
+          description: listingChatListing?.description || itemDescription || null,
+        },
+      }, await authContext());
+      setListingAssistantConversationId(result?.conversation_id || listingAssistantConversationId);
+      applyListingAssistantSuggestions(result?.suggestions || {});
+      if (result?.stage === 'ready_for_review' && listingChatStage === 'collect') setListingChatStage('confirm');
+      if (result?.action === 'create_analyze') {
+        await submitCreateListingWithPhotoCheck();
+        return;
+      }
+      if (listingChatStage === 'review' && result?.action === 'update' && listingChatListing) {
+        const suggestions = result?.suggestions || {};
+        const listingId = listingIdOf(listingChatListing);
+        const next = {
+          ...listingChatListing,
+          category: suggestions.category || listingChatListing.category,
+          condition: suggestions.condition || listingChatListing.condition,
+          size: suggestions.size || listingChatListing.size,
+          brand: suggestions.brand || listingChatListing.brand,
+          title: suggestions.title || listingChatListing.title,
+          description: suggestions.description || listingChatListing.description,
+        };
+        const updated = await apiClient.updateListing(listingId, next, await authContext());
+        setListingChatListing(updated);
+        await loadCloset();
+      }
+      if (listingChatStage === 'review' && result?.action === 'publish') {
+        await publishChatListing();
+        return;
+      }
+      setListingAssistantMessages((current) => [...current, {
+        role: 'assistant',
+        content: result?.reply || 'I could not prepare a response.',
+        suggestions: result?.suggestions || {},
+        missing_fields: result?.missing_fields || [],
+        quick_replies: result?.quick_replies || [],
+      }].slice(-12));
+    } catch (err) {
+      setListingAssistantError(err?.message ? `I understood your request, but could not save it: ${err.message}` : 'I could not respond right now. Please try again in a moment.');
+    } finally {
+      setListingAssistantBusy(false);
+    }
+  }
+
+  function applyListingAssistantSuggestions(suggestions = {}) {
+    if (suggestions.category) {
+      setCategory(suggestions.category);
+      if (itemSize && !sizeOptionsForCategory(suggestions.category).includes(itemSize)) setItemSize('');
+    }
+    if (suggestions.condition) setUserCondition(suggestions.condition);
+    if (suggestions.size) setItemSize(suggestions.size);
+  }
+
+  function chooseListingAssistantCondition(value) {
+    const label = value === 'NewWithTags' ? 'New with tags' : value === 'LikeNew' ? 'Like new' : 'New';
+    void sendListingAssistantMessage(label, 'quick_reply');
+  }
+
+  function chooseListingAssistantSize(value) {
+    void sendListingAssistantMessage(value, 'quick_reply');
+  }
+
+  async function reviewChatListing() {
+    if (!listingAssistantConversationId) {
+      try {
+        const result = await apiClient.chatWithListingAssistant({
+          conversation_id: null,
+          messages: [{ role: 'user', content: 'I am ready to review this listing.' }],
+          context: { step: 2, category: category || null, condition: userCondition || null, size: itemSize || null, photo_count: images.length, identified_photo_roles: (createImageRoleCheck?.images || []).flatMap((image) => [image.role, ...(image.additional_roles || [])]).filter(Boolean), missing_required_photo_roles: createImageRoleCheck?.missing_required || [] },
+        }, await authContext());
+        setListingAssistantConversationId(result?.conversation_id || null);
+      } catch (err) {
+        // Review remains available if the assistant service is temporarily unavailable.
+      }
+    }
+    setListingChatStage('confirm');
+    setListingAssistantMessages((current) => [...current, {
+      role: 'assistant',
+      content: 'Everything looks ready! Please review the summary below. If it looks right, I’ll create your draft and begin the analysis, which can take up to two minutes.',
+    }].slice(-12));
+  }
+
+  async function publishChatListing() {
+    const listingId = listingIdOf(listingChatListing);
+    if (!listingId) return;
+    setLoading(true);
+    setListingAssistantError('');
+    try {
+      const updated = await apiClient.updateListing(listingId, {
+        ...listingChatListing,
+        status: 'Active',
+        tags: [listingChatListing?.condition || 'LikeNew', listingChatListing?.brand || 'unknown', 'trade'].filter(Boolean),
+      }, await authContext());
+      setListingChatListing(updated);
+      setListingChatStage('published');
+      if (listingAssistantConversationId) await apiClient.updateListingAssistantConversation(listingAssistantConversationId, {
+        stage: 'published', listing_id: listingId,
+        context: { listing_id: listingId, category: updated?.category, condition: updated?.condition, size: updated?.size, brand: updated?.brand, title: updated?.title, description: updated?.description },
+        messages: [{ role: 'assistant', interaction_type: 'workflow', content: 'Your listing is live! I’m checking the marketplace for potential matches now.', metadata: { event: 'listing_published' } }],
+      }, await authContext());
+      setListingAssistantMessages((current) => [...current, { role: 'assistant', content: 'Your listing is live! I’m checking the marketplace for potential matches now.' }].slice(-12));
+      const auth = await authContext();
+      let market = await apiClient.listMarketplace(100, auth, { offset: 0 });
+      const marketItems = [...(Array.isArray(market?.items) ? market.items : [])];
+      while (market?.has_more && Number.isFinite(Number(market?.next_offset)) && marketItems.length < 1000) {
+        market = await apiClient.listMarketplace(100, auth, { offset: Number(market.next_offset) });
+        marketItems.push(...(Array.isArray(market?.items) ? market.items : []));
+      }
+      setMarketplaceListings(marketItems);
+      setMarketplaceHasMore(Boolean(market?.has_more));
+      setMarketplaceNextOffset(Number.isFinite(Number(market?.next_offset)) ? Number(market.next_offset) : 0);
+      const published = marketItems.find((item) => listingIdOf(item) === listingId);
+      const chatMatches = getMarketplaceMatchesForClosetListing(published || updated, marketItems, marketplaceActorSubject);
+      setListingChatMatches(chatMatches);
+      setListingAssistantMessages((current) => [...current, { role: 'assistant', content: chatMatches.length
+        ? `I found ${chatMatches.length} potential ${chatMatches.length === 1 ? 'match' : 'matches'}. Do you like any of them? You can refer to an item by number or title.`
+        : 'I did not find a close match yet. Your listing is live, and I’ll keep checking as marketplace inventory changes.' }].slice(-12));
+      await loadCloset();
+    } catch (err) {
+      setListingAssistantError(err?.message || 'I could not publish the listing. Please try again.');
+    } finally {
+      setLoading(false);
     }
   }
   useEffect(() => {
@@ -1521,6 +1784,71 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
       setClosetLoading(false);
     }
   }
+
+  useEffect(() => {
+    if (listingChatStage !== 'analyzing' || !listingIdOf(listingChatListing)) return undefined;
+    let cancelled = false;
+    let attempts = 0;
+    let timer = null;
+    const listingId = listingIdOf(listingChatListing);
+    const poll = async () => {
+      if (cancelled) return;
+      attempts += 1;
+      try {
+        const auth = await authContext();
+        const job = await apiClient.getLatestListingAnalysisJob(listingId, auth);
+        if (cancelled) return;
+        const jobStatus = String(job?.status || '').toLowerCase();
+        const jobAttempt = Number(job?.attempts || 0);
+        const jobMaxAttempts = Number(job?.max_attempts || 0);
+        if (jobStatus === 'retrying') {
+          setListingAnalysisProgress(`The first attempt did not finish. Retrying${jobMaxAttempts ? ` (${Math.min(jobAttempt + 1, jobMaxAttempts)} of ${jobMaxAttempts})` : ''}...`);
+        } else if (jobStatus === 'running') {
+          setListingAnalysisProgress(`Analyzing photos${jobAttempt ? ` (attempt ${jobAttempt}${jobMaxAttempts ? ` of ${jobMaxAttempts}` : ''})` : ''}...`);
+        } else if (jobStatus === 'queued') {
+          setListingAnalysisProgress('Analysis is queued and will begin shortly...');
+        }
+        if (jobStatus === 'failed') {
+          setListingChatStage('failed');
+          setListingAnalysisProgress('');
+          const detail = String(job?.error || '').trim();
+          const content = detail
+            ? `I wasn’t able to finish the analysis: ${detail}. Your draft is safely saved, and you can retry from My Closet.`
+            : 'I wasn’t able to finish the analysis this time, but your draft is safely saved. You can retry from My Closet whenever you’re ready.';
+          setListingAssistantMessages((current) => [...current, { role: 'assistant', content }].slice(-12));
+          if (listingAssistantConversationId) await apiClient.updateListingAssistantConversation(listingAssistantConversationId, { stage: 'failed', listing_id: listingId, context: { listing_id: listingId }, messages: [{ role: 'assistant', interaction_type: 'workflow', content, metadata: { event: 'analysis_failed', error: detail || null } }] }, auth);
+          return;
+        }
+
+        const payload = await apiClient.listMyListings(100, auth, { offset: 0 });
+        const refreshed = (Array.isArray(payload?.items) ? payload.items : []).find((item) => listingIdOf(item) === listingId);
+        if (!refreshed || cancelled) return;
+        setListingChatListing(refreshed);
+        setMyListings((current) => current.map((item) => listingIdOf(item) === listingId ? refreshed : item));
+        const status = String(refreshed?.status || '').toLowerCase();
+        if (status === 'analysisfailed') {
+          setListingChatStage('failed');
+          setListingAnalysisProgress('');
+          const content = 'I wasn’t able to finish the analysis this time, but your draft is safely saved. You can retry from My Closet whenever you’re ready.';
+          setListingAssistantMessages((current) => [...current, { role: 'assistant', content }].slice(-12));
+          if (listingAssistantConversationId) await apiClient.updateListingAssistantConversation(listingAssistantConversationId, { stage: 'failed', listing_id: listingId, context: { listing_id: listingId }, messages: [{ role: 'assistant', interaction_type: 'workflow', content, metadata: { event: 'analysis_failed' } }] }, await authContext());
+        } else if (jobStatus === 'succeeded' || status !== 'analyzing') {
+          setListingChatStage('review');
+          setListingAnalysisProgress('');
+          const content = 'Your analysis is ready! Take a look at the listing details below. Is there anything you’d like to change before publishing?';
+          setListingAssistantMessages((current) => [...current, { role: 'assistant', content }].slice(-12));
+          if (listingAssistantConversationId) await apiClient.updateListingAssistantConversation(listingAssistantConversationId, { stage: 'review', listing_id: listingId, context: { listing_id: listingId, category: refreshed?.category, condition: refreshed?.condition, size: refreshed?.size, brand: refreshed?.brand, title: refreshed?.title, description: refreshed?.description }, messages: [{ role: 'assistant', interaction_type: 'workflow', content, metadata: { event: 'analysis_completed' } }] }, await authContext());
+        }
+      } catch (err) {
+        if (attempts >= 3) setListingAnalysisProgress('Analysis is still running. Reconnecting to check its progress...');
+      } finally {
+        if (!cancelled) timer = setTimeout(poll, attempts < 30 ? 4000 : 10000);
+      }
+    };
+    setListingAnalysisProgress('Analysis is queued and will begin shortly...');
+    poll();
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [apiClient, listingAssistantConversationId, listingChatListing?.listing_id, listingChatStage]);
 
   async function loadMoreMarketplace() {
     if (marketplaceLoading || marketplacePageLoading || !marketplaceHasMore) return;
@@ -3136,9 +3464,19 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     setItemSize('');
     setTradeNotes('');
     setAnalysisResult(null);
+    setCreateListingMode('standard');
+    setListingChatStage('collect');
+    setListingChatListing(null);
+    setListingChatMatches([]);
+    setListingChatTradeTarget(null);
     setCreateImageRoleCheck(null);
     setCreateImageRoleBusy(false);
     setCreateImageRoleError('');
+    setListingAssistantMessages([]);
+    setListingAssistantConversationId(null);
+    setListingAssistantInput('');
+    setListingAssistantBusy(false);
+    setListingAssistantError('');
   }
 
   function moveArrayItemToFront(list, index) {
@@ -3521,6 +3859,19 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
       } else {
         const created = await apiClient.createListing(payload, auth);
         trackExperience('listing_created', { screen: 'create', entityType: 'listing', entityId: created?.listing_id, properties: { category, image_count: orderedImageUrls.length } });
+        if (createListingMode === 'chat') {
+          setListingChatListing(created);
+          setListingChatStage('analyzing');
+          if (listingAssistantConversationId) await apiClient.updateListingAssistantConversation(listingAssistantConversationId, {
+            stage: 'analyzing', listing_id: created?.listing_id,
+            context: { category, condition: draftCondition, size: itemSize || null, title: created?.title, listing_id: created?.listing_id },
+            messages: [{ role: 'assistant', interaction_type: 'workflow', content: 'Your draft is saved! I’m now identifying the item, reviewing its condition, researching its market value, and preparing the listing. This can take up to two minutes.', metadata: { event: 'analysis_started', summary: { category, condition: draftCondition, size: itemSize || null, title: created?.title } } }],
+          }, auth);
+          setListingAssistantMessages((current) => [...current, { role: 'assistant', content: 'Your draft is saved! I’m now identifying the item, reviewing its condition, researching its market value, and preparing the listing. This can take up to two minutes.' }].slice(-12));
+          setNotice('');
+          setTimeout(loadCloset, 4000);
+          return;
+        }
         setNotice('Listing created. AI analysis is running in the background.');
         setTimeout(loadCloset, 4000);
         setTimeout(loadCloset, 10000);
@@ -3747,6 +4098,11 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     String(item?.status || '').trim().toLowerCase() === 'active'
     && getCrossOwnerMatches(item, marketplaceActorSubject).length > 0
   ));
+  useEffect(() => {
+    if (activeTab !== 'marketplace' || marketplaceLoading || marketplacePageLoading || !marketplaceHasMore) return;
+    if (matchedMarketplaceListings.length >= 6) return;
+    void loadMoreMarketplace();
+  }, [activeTab, marketplaceHasMore, marketplaceLoading, marketplacePageLoading, matchedMarketplaceListings.length]);
   const tradeComposerSelectedListings = tradeOfferCandidates
     .filter((listing) => tradeOfferListingIds.includes(listing?.listing_id));
   const tradeComposerTargetValue = Number(tradeComposerTarget?.estimated_value || 0);
@@ -3958,16 +4314,25 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
             <SectionHeader
               title={editingListingId ? 'Edit Listing' : 'Create Listing'}
               subtitle={editingListingId ? 'UPDATE • REVIEW • SAVE' : wizardStep === 1 ? 'UPLOAD • IDENTIFY' : 'CONDITION • SIZE • CREATE'}
-              rightText={editingListingId ? 'Cancel Edit' : wizardStep === 2 ? 'Back' : null}
-              onRightPress={editingListingId ? cancelEditListing : wizardStep === 2 ? () => setWizardStep(1) : null}
+              rightText={editingListingId ? 'Cancel Edit' : createListingMode === 'standard' && wizardStep === 2 ? 'Back' : null}
+              onRightPress={editingListingId ? cancelEditListing : createListingMode === 'standard' && wizardStep === 2 ? () => setWizardStep(1) : null}
             />
-            <View style={styles.stepRow}>
+            {!editingListingId && hasAdminRole ? (
+              <View style={styles.createModeRow} accessibilityRole="tablist">
+                {['standard', 'chat'].map((mode) => (
+                  <TouchableOpacity key={mode} style={[styles.createModeButton, createListingMode === mode && styles.modeBtnActive]} onPress={() => { setCreateListingMode(mode); setWizardStep(1); }} accessibilityRole="tab" accessibilityState={{ selected: createListingMode === mode }}>
+                    <Text style={[styles.modeBtnText, createListingMode === mode && styles.modeBtnTextActive]}>{titleCase(mode)}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            ) : null}
+            {(editingListingId || createListingMode === 'standard') ? <View style={styles.stepRow}>
               {(editingListingId ? [1, 2, 3] : [1, 2]).map((step) => (
                 <View key={step} style={[styles.stepPill, wizardStep === step && styles.stepPillActive]}>
                   <Text style={[styles.stepPillText, wizardStep === step && styles.stepPillTextActive]}>{step}</Text>
                 </View>
               ))}
-            </View>
+            </View> : null}
             {editingListingId ? (
               <View style={styles.editImagePanel}>
                 <Text style={styles.label}>Listing Images ({editImageUrls.length + images.length}/6)</Text>
@@ -4009,7 +4374,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
               </View>
             ) : null}
 
-            {!editingListingId && wizardStep === 1 && (
+            {!editingListingId && createListingMode === 'standard' && wizardStep === 1 && (
                 <View style={styles.createFormGroup}>
                   <View style={styles.createGroupHeader}>
                     <View style={styles.createStepNumber}><Text style={styles.createStepNumberText}>1</Text></View>
@@ -4027,7 +4392,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                           <Text style={styles.createImageNumber}>{index + 1}</Text>
                           {createImageRoleCheck?.images?.[index]?.role ? (
                             <Text style={styles.createImageRoleBadge} numberOfLines={1}>
-                              {IMAGE_ROLE_LABELS[createImageRoleCheck.images[index].role] || 'Other view'}
+                              {[createImageRoleCheck.images[index].role, ...(createImageRoleCheck.images[index].additional_roles || [])].map((role) => IMAGE_ROLE_LABELS[role] || 'Other view').join(' + ')}
                             </Text>
                           ) : null}
                           {selectedHeroImageIndex === index ? <Text style={styles.editImageHeroBadge}>Hero</Text> : null}
@@ -4114,7 +4479,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                   </View>
                 </View>
             )}
-            {!editingListingId && wizardStep === 2 && (
+            {!editingListingId && createListingMode === 'standard' && wizardStep === 2 && (
                 <View style={styles.createFormGroup}>
                   <View style={styles.createGroupHeader}>
                     <View style={styles.createStepNumber}><Text style={styles.createStepNumberText}>2</Text></View>
@@ -4191,6 +4556,131 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                 })()}
                 </View>
             )}
+
+            {!editingListingId && hasAdminRole && createListingMode === 'chat' ? (
+              <View style={styles.listingAssistantPanel}>
+                <View style={styles.listingChatHeader}>
+                  <View style={styles.listingChatAvatar}><Text style={styles.listingChatAvatarText}>J</Text></View>
+                  <View>
+                    <Text style={styles.listingAssistantTitle}>Jouft Listing Assistant</Text>
+                    <Text style={styles.listingAssistantSubtitle}>Ready to create your listing</Text>
+                  </View>
+                </View>
+                <View style={styles.listingChatPhotos}>
+                  <View style={styles.listingChatAssistantTurn}>
+                    <View style={styles.listingChatAvatar}><Text style={styles.listingChatAvatarText}>J</Text></View>
+                    <View style={styles.listingChatAssistantBubble}>
+                      <Text style={styles.listingAssistantMessageText}>Hi! Let’s create your listing together. Start by sharing a few clear photos, and I’ll guide you through the rest.</Text>
+                      <Text style={styles.listingAssistantSubtitle}>{images.length}/6 photos added</Text>
+                      <TouchableOpacity style={styles.listingChatPhotoButton} onPress={pickImages} disabled={images.length >= 6}>
+                        <Text style={styles.secondaryBtnText}>{images.length ? 'Add More Photos' : 'Choose Photos'}</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                  {images.length ? (
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.listingChatPhotoRow} style={styles.listingChatUserPhotos}>
+                      {images.map((asset, index) => (
+                        <View key={`${asset?.uri || 'chat-photo'}-${index}`} style={styles.listingChatPhotoTile}>
+                          <Image source={{ uri: asset.uri }} style={styles.listingChatPhoto} />
+                          {createImageRoleCheck?.images?.[index]?.role ? <Text style={styles.listingChatPhotoRole} numberOfLines={2}>{[createImageRoleCheck.images[index].role, ...(createImageRoleCheck.images[index].additional_roles || [])].map((role) => IMAGE_ROLE_LABELS[role] || 'Other view').join(' + ')}</Text> : null}
+                          <TouchableOpacity style={styles.listingChatPhotoRemove} onPress={() => removePendingImageAt(index)} accessibilityLabel={`Remove photo ${index + 1}`}>
+                            <Ionicons name="close" size={17} color={theme.brand} />
+                          </TouchableOpacity>
+                        </View>
+                      ))}
+                    </ScrollView>
+                  ) : null}
+                  {createImageRoleBusy ? <View style={styles.listingChatAssistantTurn}><View style={styles.listingChatAvatar}><Text style={styles.listingChatAvatarText}>J</Text></View><View style={styles.listingChatAssistantBubble}><Text style={styles.helperText}>I’m reviewing the photos and identifying each view...</Text></View></View> : null}
+                  {createImageRoleCheck?.missing_required?.length ? (
+                    <View style={styles.listingChatAssistantTurn} accessibilityRole="summary">
+                      <View style={styles.listingChatAvatar}><Text style={styles.listingChatAvatarText}>J</Text></View>
+                      <View style={styles.listingChatGuidance}>
+                        <Text style={styles.listingChatGuidanceTitle}>These photos are a great start. Could you add {createImageRoleCheck.missing_required.length === 1 ? 'one more view' : 'a few more views'}?</Text>
+                        {createImageRoleCheck.missing_required.map((role) => <Text key={role} style={styles.listingChatGuidanceText}>{imageRoleGuidance(role)}</Text>)}
+                      </View>
+                    </View>
+                  ) : null}
+                </View>
+                  {listingChatPhotoGateOpen ? <View style={styles.listingAssistantBody}>
+                    {listingAssistantMessages.length === 0 ? (
+                      <View style={styles.listingChatAssistantTurn}>
+                        <View style={styles.listingChatAvatar}><Text style={styles.listingChatAvatarText}>J</Text></View>
+                        <View style={styles.listingChatAssistantBubble}>
+                          <Text style={styles.listingAssistantWelcome}>Thanks for the photos! How would you describe the item’s condition?</Text>
+                          <View style={styles.listingChatQuickReplies}>
+                            {[
+                              ['NewWithTags', 'New with tags'],
+                              ['New', 'New'],
+                              ['LikeNew', 'Like new'],
+                            ].map(([value, label]) => (
+                              <TouchableOpacity key={value} style={styles.listingChatQuickReply} onPress={() => chooseListingAssistantCondition(value)}>
+                                <Text style={styles.listingChatQuickReplyText}>{label}</Text>
+                              </TouchableOpacity>
+                            ))}
+                          </View>
+                        </View>
+                      </View>
+                    ) : null}
+                    {listingAssistantMessages.map((message, index) => {
+                      const showSizeChoices = message.role === 'assistant'
+                        && index === listingAssistantMessages.length - 1
+                        && !itemSize
+                        && Array.isArray(message.missing_fields)
+                        && message.missing_fields.includes('size');
+                      return (
+                        <React.Fragment key={`${message.role}-${index}`}>
+                          <View style={[styles.listingChatAssistantTurn, message.role === 'user' && styles.listingChatUserTurn]}>
+                            {message.role === 'assistant' ? <View style={styles.listingChatAvatar}><Text style={styles.listingChatAvatarText}>J</Text></View> : null}
+                            <View style={[styles.listingAssistantMessage, message.role === 'user' && styles.listingAssistantUserMessage]}>
+                              <Text style={[styles.listingAssistantMessageText, message.role === 'user' && styles.listingAssistantUserMessageText]}>{message.content}</Text>
+                              {message.role === 'user' && message.interaction_type === 'quick_reply' ? <Text style={styles.listingChatSelectedLabel}>Selected</Text> : null}
+                              {showSizeChoices ? <View style={styles.listingChatQuickReplies}>{sizeOptionsForCategory(category).map((size) => <TouchableOpacity key={size} style={styles.listingChatQuickReply} onPress={() => chooseListingAssistantSize(size)}><Text style={styles.listingChatQuickReplyText}>{size}</Text></TouchableOpacity>)}</View> : null}
+                            </View>
+                          </View>
+                          {message.role === 'assistant' && /review (?:the summary|everything)/i.test(message.content) ? <View style={styles.listingChatAssistantTurn}><View style={styles.listingChatAvatar}><Text style={styles.listingChatAvatarText}>J</Text></View><View style={styles.listingChatCaptured}><Text style={styles.listingAssistantTitle}>Here’s what I have so far</Text><Text style={styles.helperText}>Category: {category ? titleCase(category) : 'I still need this'}</Text><Text style={styles.helperText}>Condition: {userCondition ? displayConditionLabel(userCondition) : 'I still need this'}</Text><Text style={styles.helperText}>Size: {itemSize || 'I still need this'}</Text></View></View> : null}
+                          {message.role === 'assistant' && message.content.startsWith('Your analysis is ready') && listingChatListing ? <View style={styles.listingChatResult}>{listingGallery(listingChatListing, apiBaseUrl)[0] ? <Image source={{ uri: listingGallery(listingChatListing, apiBaseUrl)[0] }} style={styles.listingChatResultImage} /> : null}<View style={styles.tradeTargetCopy}><Text style={styles.offerLaneLabel}>{listingChatListing?.brand || 'Unknown brand'}</Text><Text style={styles.listingAssistantTitle}>{listingChatListing?.title || 'Listing draft'}</Text><Text style={styles.helperText}>{titleCase(listingChatListing?.category || category)} • {listingChatListing?.size || itemSize || 'Size not provided'} • {displayConditionLabel(listingChatListing?.condition || userCondition)}</Text>{Number(listingChatListing?.estimated_value || 0) > 0 ? <Text style={styles.helperText}>Estimated trade value: {money(listingChatListing.estimated_value)}</Text> : null}</View></View> : null}
+                          {message.role === 'assistant' && /^(I found|I did not find)/.test(message.content) && listingChatStage === 'published' ? <View style={styles.listingChatWorkflowCard}><Text style={styles.listingAssistantTitle}>{listingChatMatches.length ? `${listingChatMatches.length} potential ${listingChatMatches.length === 1 ? 'match' : 'matches'} found` : 'Your listing is live'}</Text><Text style={styles.helperText}>{listingChatMatches.length ? 'Tell me which item you like by number or title.' : 'No close matches are available yet. We’ll keep matching it as marketplace inventory changes.'}</Text>{listingChatMatches.slice(0, 3).map((match, matchIndex) => { const matchImage = listingGallery(match, apiBaseUrl)[0]; return <View key={listingIdOf(match)} style={styles.listingChatMatchRow}>{matchImage ? <Image source={{ uri: matchImage }} style={styles.listingChatMatchImage} /> : null}<View style={styles.tradeTargetCopy}><Text style={styles.offerLaneLabel}>Match {matchIndex + 1} • {match?.brand || 'Unknown brand'}</Text><Text style={styles.listingAssistantTitle} numberOfLines={2}>{match?.title || 'Matched listing'}</Text><Text style={styles.helperText}>{match?.size || 'Size not provided'} • {displayConditionLabel(match?.condition)}</Text></View></View>; })}<TouchableOpacity style={styles.primaryBtnCompact} onPress={() => setActiveTab('closet')}><Text style={styles.primaryBtnText}>View in My Closet</Text></TouchableOpacity></View> : null}
+                        </React.Fragment>
+                      );
+                    })}
+                    {listingAssistantBusy ? <ActivityIndicator size="small" color={theme.brand} style={styles.listingAssistantBusy} /> : null}
+                    {listingAssistantError ? <Text style={styles.listingAssistantError}>{listingAssistantError}</Text> : null}
+                    {listingChatStage === 'confirm' ? (
+                      <View style={styles.listingChatWorkflowCard}>
+                        <Text style={styles.listingAssistantTitle}>Ready to create and analyze</Text>
+                        <Text style={styles.helperText}>Tell me what you’d like to change, or say “go ahead” to create the private draft and begin analysis.</Text>
+                      </View>
+                    ) : null}
+                    {listingChatStage === 'analyzing' ? (
+                      <View style={[styles.listingChatWorkflowCard, styles.listingChatAnalyzing]}>
+                        <ActivityIndicator color={theme.brand} />
+                        <View style={styles.tradeTargetCopy}><Text style={styles.listingAssistantTitle}>Analyzing your listing</Text><Text style={styles.helperText}>{listingAnalysisProgress || 'Identifying the item, evaluating condition, researching value, and preparing the draft. This can take several minutes.'}</Text></View>
+                      </View>
+                    ) : null}
+                    {['collect', 'confirm', 'review', 'published'].includes(listingChatStage) ? (
+                      <View style={styles.listingAssistantComposer}>
+                        <TextInput
+                          style={[styles.input, styles.listingAssistantInput]}
+                          value={listingAssistantInput}
+                          onChangeText={setListingAssistantInput}
+                          placeholder={listingChatStage === 'published' ? (listingChatTradeTarget ? 'Say “send the trade offer” or “not now”' : 'Tell me which matched item you like') : listingChatStage === 'review' ? 'Describe a change or say “publish it”' : 'Reply to the assistant'}
+                          multiline
+                          maxLength={2000}
+                          editable={!listingAssistantBusy}
+                        />
+                        <TouchableOpacity
+                          style={[styles.listingAssistantSend, (!listingAssistantInput.trim() || listingAssistantBusy) && styles.primaryBtnDisabled]}
+                          onPress={() => sendListingAssistantMessage()}
+                          disabled={!listingAssistantInput.trim() || listingAssistantBusy}
+                          accessibilityLabel="Send message"
+                        >
+                          <Ionicons name="send" size={19} color="#fff" />
+                        </TouchableOpacity>
+                      </View>
+                    ) : null}
+                  </View> : null}
+              </View>
+            ) : null}
 
             {wizardStep === 2 && editingListingId && (
               <>
@@ -5432,12 +5922,14 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
           </TouchableOpacity>
         </View>
       ) : null}
-      {activeTab === 'create' && !editingListingId ? (
+      {activeTab === 'create' && !editingListingId && createListingMode !== 'chat' ? (
         <View style={styles.createListingFooter}>
           <View style={styles.createListingFooterCopy}>
             <Text style={styles.offerLaneLabel}>Listing setup</Text>
             <Text style={styles.createListingFooterStatus} numberOfLines={1}>
-              {wizardStep === 1
+              {createListingMode === 'chat'
+                ? `${images.length}/6 photos • ${category || 'category'} • ${userCondition ? displayConditionLabel(userCondition) : 'condition'}`
+                : wizardStep === 1
                 ? `${images.length}/6 photos • ${category ? `${category} detected` : 'identifying category'}`
                 : createListingReady
                   ? 'Ready for AI analysis'
@@ -5445,11 +5937,11 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
             </Text>
           </View>
           <TouchableOpacity
-            style={[styles.primaryBtnCompact, styles.createListingFooterButton, ((wizardStep === 1 ? images.length < 1 || createImageRoleBusy : !createListingReady) || loading) && styles.primaryBtnDisabled]}
-            onPress={wizardStep === 1 ? continueCreatePhotoStep : submitCreateListingWithPhotoCheck}
-            disabled={(wizardStep === 1 ? images.length < 1 || createImageRoleBusy : !createListingReady) || loading}
+            style={[styles.primaryBtnCompact, styles.createListingFooterButton, ((createListingMode === 'chat' ? listingChatStage !== 'collect' || !createListingReady || createImageRoleBusy : wizardStep === 1 ? images.length < 1 || createImageRoleBusy : !createListingReady) || loading) && styles.primaryBtnDisabled]}
+            onPress={createListingMode === 'chat' ? reviewChatListing : wizardStep === 1 ? continueCreatePhotoStep : submitCreateListingWithPhotoCheck}
+            disabled={(createListingMode === 'chat' ? listingChatStage !== 'collect' || !createListingReady || createImageRoleBusy : wizardStep === 1 ? images.length < 1 || createImageRoleBusy : !createListingReady) || loading}
           >
-            {loading ? <ActivityIndicator color="#fff" size="small" /> : <Text style={styles.primaryBtnText}>{wizardStep === 1 ? 'Continue' : 'Create Listing'}</Text>}
+            {loading ? <ActivityIndicator color="#fff" size="small" /> : <Text style={styles.primaryBtnText}>{createListingMode === 'chat' ? (listingChatStage === 'collect' ? 'Review Listing' : 'Continue in Chat') : wizardStep === 2 ? 'Create Listing' : 'Continue'}</Text>}
           </TouchableOpacity>
         </View>
       ) : null}
@@ -6306,6 +6798,8 @@ function ClerkMobileApp() {
     firstName: user?.firstName || '',
     lastName: user?.lastName || '',
     email: user?.primaryEmailAddress?.emailAddress || '',
+    publicMetadata: user?.publicMetadata || {},
+    unsafeMetadata: user?.unsafeMetadata || {},
   };
 
   return (
@@ -8165,6 +8659,151 @@ const styles = StyleSheet.create({
 	  padding: 12,
 	  gap: 9,
 	},
+  listingAssistantPanel: {
+    borderWidth: 1,
+    borderColor: theme.line,
+    backgroundColor: '#f8f7f5',
+  },
+  createModeRow: {
+    flexDirection: 'row',
+    borderWidth: 1,
+    borderColor: theme.line,
+    marginBottom: 14,
+  },
+  createModeButton: {
+    flex: 1,
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#fffdf9',
+  },
+  listingChatPhotos: {
+    padding: 12,
+    borderTopWidth: 1,
+    borderTopColor: theme.line,
+    gap: 10,
+  },
+  listingChatHeader: { minHeight: 62, paddingHorizontal: 14, paddingVertical: 11, flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: theme.line },
+  listingChatAvatar: { width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.brand },
+  listingChatAvatarText: { color: '#fff', fontFamily: fonts.display, fontSize: 14 },
+  listingChatAssistantTurn: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
+  listingChatUserTurn: { justifyContent: 'flex-end' },
+  listingChatAssistantBubble: { maxWidth: '84%', paddingHorizontal: 11, paddingVertical: 10, gap: 9, borderWidth: 1, borderColor: theme.line, backgroundColor: '#fff' },
+  listingChatPhotoButton: { minHeight: 42, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: theme.line, backgroundColor: '#fff' },
+  listingChatQuickReplies: { flexDirection: 'row', flexWrap: 'wrap', gap: 7 },
+  listingChatQuickReply: { minHeight: 38, justifyContent: 'center', paddingHorizontal: 10, borderWidth: 1, borderColor: theme.brand, backgroundColor: '#fff' },
+  listingChatQuickReplyText: { color: theme.brand, fontFamily: fonts.bodyBold, fontSize: 11 },
+  listingChatUserPhotos: { marginLeft: 38 },
+  listingChatPhotoRow: { gap: 9 },
+  listingChatPhotoTile: { width: 116, position: 'relative' },
+  listingChatPhoto: { width: 116, height: 116, backgroundColor: '#eee' },
+  listingChatPhotoRole: { marginTop: 4, color: '#62584f', fontFamily: fonts.body, fontSize: 11 },
+  listingChatPhotoRemove: { position: 'absolute', top: 5, right: 5, width: 30, height: 30, alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff' },
+  listingChatGuidance: { maxWidth: '84%', borderWidth: 1, borderColor: theme.line, backgroundColor: '#fff', paddingHorizontal: 12, paddingVertical: 10, gap: 4 },
+  listingChatGuidanceTitle: { color: theme.text, fontFamily: fonts.bodyBold, fontSize: 12 },
+  listingChatGuidanceText: { color: '#3b3029', fontFamily: fonts.body, fontSize: 12, lineHeight: 18 },
+  listingChatCaptured: { maxWidth: '84%', borderWidth: 1, borderColor: theme.line, backgroundColor: '#fff', padding: 11, gap: 3 },
+  listingChatWorkflowCard: { marginLeft: 38, padding: 12, gap: 10, borderWidth: 1, borderColor: theme.line, backgroundColor: '#fff' },
+  listingChatAnalyzing: { flexDirection: 'row', alignItems: 'center' },
+  listingChatActionRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  listingChatResult: { marginLeft: 38, padding: 11, flexDirection: 'row', gap: 11, borderWidth: 1, borderColor: theme.line, backgroundColor: '#fff' },
+  listingChatResultImage: { width: 92, height: 112, backgroundColor: '#eee' },
+  listingChatMatchRow: { flexDirection: 'row', gap: 9, alignItems: 'center', paddingTop: 8, borderTopWidth: 1, borderTopColor: theme.line },
+  listingChatMatchImage: { width: 64, height: 72, backgroundColor: '#eee' },
+  listingAssistantToggle: {
+    minHeight: 62,
+    paddingHorizontal: 14,
+    paddingVertical: 11,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  listingAssistantTitle: {
+    color: theme.text,
+    fontFamily: fonts.bodyBold,
+    fontSize: 14,
+  },
+  listingAssistantSubtitle: {
+    color: '#756b61',
+    fontFamily: fonts.body,
+    fontSize: 12,
+    marginTop: 2,
+  },
+  listingAssistantBody: {
+    borderTopWidth: 1,
+    borderTopColor: theme.line,
+    padding: 12,
+    gap: 9,
+  },
+  listingAssistantWelcome: {
+    color: '#5f554b',
+    fontFamily: fonts.body,
+    fontSize: 13,
+    lineHeight: 19,
+  },
+  listingAssistantMessage: {
+    alignSelf: 'flex-start',
+    maxWidth: '88%',
+    borderWidth: 1,
+    borderColor: theme.line,
+    backgroundColor: '#f4efe8',
+    paddingHorizontal: 11,
+    paddingVertical: 9,
+    gap: 8,
+  },
+  listingAssistantUserMessage: {
+    alignSelf: 'flex-end',
+    borderColor: theme.brand,
+    backgroundColor: theme.brand,
+  },
+  listingAssistantMessageText: {
+    color: theme.text,
+    fontFamily: fonts.body,
+    fontSize: 13,
+    lineHeight: 19,
+  },
+  listingAssistantUserMessageText: { color: '#fff' },
+  listingChatSelectedLabel: {
+    marginTop: 4,
+    color: 'rgba(255,255,255,0.78)',
+    fontSize: 10,
+    fontFamily: fonts.bodyBold,
+    textTransform: 'uppercase',
+  },
+  listingAssistantApply: {
+    alignSelf: 'flex-start',
+    borderWidth: 1,
+    borderColor: theme.brand,
+    paddingHorizontal: 9,
+    paddingVertical: 7,
+    backgroundColor: '#fff',
+  },
+  listingAssistantApplyText: {
+    color: theme.brand,
+    fontFamily: fonts.bodyBold,
+    fontSize: 10,
+    textTransform: 'uppercase',
+  },
+  listingAssistantBusy: { alignSelf: 'flex-start', marginVertical: 4 },
+  listingAssistantError: { color: theme.error, fontFamily: fonts.bodyBold, fontSize: 12 },
+  listingAssistantComposer: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 8,
+  },
+  listingAssistantInput: {
+    flex: 1,
+    minHeight: 62,
+    maxHeight: 120,
+    textAlignVertical: 'top',
+  },
+  listingAssistantSend: {
+    width: 46,
+    height: 46,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: theme.brand,
+  },
 	createPhotoCheckHeader: {
 	  flexDirection: 'row',
 	  alignItems: 'center',

@@ -297,6 +297,88 @@ def test_dependency_health_reports_core_services_and_redacts_secrets():
     assert "test-key" not in str(body)
 
 
+def test_photoroom_health_uses_account_endpoint_without_processing_image(monkeypatch):
+    _build_client()
+    from app.main import _check_photoroom_health
+    from app.settings import Settings
+
+    calls = []
+
+    class Response:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {"images": {"available": 83, "subscription": 100}}
+
+    class Client:
+        def __init__(self, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def get(self, url, **kwargs):
+            calls.append((url, kwargs))
+            return Response()
+
+    monkeypatch.setattr("app.main.httpx.Client", Client)
+    settings = Settings(
+        image_staging_photoroom_enabled=True,
+        photoroom_api_key="photo-test-key",
+    )
+
+    result = _check_photoroom_health(settings)
+
+    assert result.status == "ok"
+    assert result.message == "account reachable; images_available=83"
+    assert calls == [(
+        "https://image-api.photoroom.com/v2/account",
+        {"headers": {"x-api-key": "photo-test-key"}},
+    )]
+
+
+def test_photoroom_health_reports_account_auth_failure(monkeypatch):
+    _build_client()
+    from app.main import _check_photoroom_health
+    from app.settings import Settings
+
+    class Response:
+        status_code = 401
+        text = '{"error":{"message":"Unauthorized"}}'
+
+        @staticmethod
+        def json():
+            return {"error": {"message": "Unauthorized"}}
+
+    class Client:
+        def __init__(self, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def get(self, url, **kwargs):
+            return Response()
+
+    monkeypatch.setattr("app.main.httpx.Client", Client)
+    settings = Settings(
+        image_staging_photoroom_enabled=True,
+        photoroom_api_key="invalid-key",
+    )
+
+    result = _check_photoroom_health(settings)
+
+    assert result.status == "down"
+    assert "401" in result.message
+
+
 def test_admin_role_detection_accepts_common_clerk_claim_shapes():
     from app.auth import AuthPrincipal, principal_has_admin_role
 
@@ -2963,8 +3045,8 @@ def test_image_role_classification_reports_category_coverage(monkeypatch) -> Non
                                 "category": "clothes",
                                 "category_confidence": 0.97,
                                 "images": [
-                                    {"image_index": 0, "role": "full_front", "confidence": 0.98},
-                                    {"image_index": 1, "role": "brand_label", "confidence": 0.94},
+                                    {"image_index": 0, "role": "full_front", "confidence": 0.98, "additional_roles": []},
+                                    {"image_index": 1, "role": "hardware_or_detail", "confidence": 0.94, "additional_roles": ["brand_label"]},
                                 ]
                             })
                         }]
@@ -3000,8 +3082,294 @@ def test_image_role_classification_reports_category_coverage(monkeypatch) -> Non
 
     assert response.status_code == 200, response.text
     payload = response.json()
-    assert [entry["role"] for entry in payload["images"]] == ["full_front", "brand_label"]
+    assert [entry["role"] for entry in payload["images"]] == ["full_front", "hardware_or_detail"]
+    assert payload["images"][1]["additional_roles"] == ["brand_label"]
     assert payload["category"] == "clothes"
     assert payload["category_confidence"] == 0.97
     assert payload["missing_required"] == []
     assert payload["missing_recommended"] == ["full_back", "size_or_material_label", "condition_or_wear"]
+
+
+def test_listing_assistant_returns_structured_optional_suggestions(monkeypatch) -> None:
+    client = _build_client()
+    os.environ["OPENAI_API_KEY"] = "test-openai-key"
+
+    from app import main, settings
+
+    settings.get_settings.cache_clear()
+    captured = {}
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {
+                "output": [{
+                    "content": [{
+                        "type": "output_text",
+                        "text": json.dumps({
+                            "reply": "Add a clear photo of the interior before continuing.",
+                            "suggestions": {"category": "handbag", "condition": None, "size": None},
+                            "missing_fields": ["condition", "size"],
+                            "ready_to_create": False,
+                        }),
+                    }]
+                }]
+            }
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, url, **kwargs):
+            captured["url"] = url
+            captured["json"] = kwargs["json"]
+            return FakeResponse()
+
+    monkeypatch.setattr(main.httpx, "AsyncClient", FakeAsyncClient)
+    response = client.post(
+        "/v1/listing-assistant/chat",
+        headers={"x-api-key": "test-key"},
+        json={
+            "messages": [{"role": "user", "content": "This is a handbag. What photo is missing?"}],
+            "context": {
+                "step": 1,
+                "photo_count": 2,
+                "missing_required_photo_roles": ["bag_interior"],
+            },
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["suggestions"]["category"] == "handbag"
+    assert "interior" in response.json()["reply"].lower()
+    assert captured == {}, "Unambiguous listing updates should not incur an OpenAI request"
+
+    condition_response = client.post(
+        "/v1/listing-assistant/chat",
+        headers={"x-api-key": "test-key"},
+        json={
+            "messages": [{"role": "user", "content": "Change the condition to new with tags"}],
+            "context": {"step": 2, "photo_count": 3, "category": "accessories"},
+        },
+    )
+    assert condition_response.status_code == 200, condition_response.text
+    payload = condition_response.json()
+    assert payload["suggestions"]["condition"] == "NewWithTags"
+    assert payload["missing_fields"] == ["size"]
+    assert "what size" in payload["reply"].lower()
+    assert [option["value"] for option in payload["quick_replies"]] == ["One Size", "Mini", "Small", "Medium", "Large", "Adjustable"]
+
+    update_response = client.post(
+        "/v1/listing-assistant/chat",
+        headers={"x-api-key": "test-key"},
+        json={
+            "messages": [{"role": "user", "content": "Change the title to Prada Galleria handbag"}],
+            "context": {
+                "step": 2,
+                "workflow_stage": "review",
+                "photo_count": 4,
+                "category": "handbag",
+                "condition": "LikeNew",
+                "size": "Medium",
+            },
+        },
+    )
+    assert update_response.status_code == 200, update_response.text
+    update_payload = update_response.json()
+    assert update_payload["action"] == "update"
+    assert update_payload["suggestions"]["title"] == "Prada Galleria handbag"
+    assert "anything else" in update_payload["reply"].lower()
+
+    size_update_response = client.post(
+        "/v1/listing-assistant/chat",
+        headers={"x-api-key": "test-key"},
+        json={
+            "messages": [{"role": "user", "content": "change the size to large"}],
+            "context": {
+                "step": 2,
+                "workflow_stage": "review",
+                "photo_count": 4,
+                "category": "handbag",
+                "condition": "New",
+                "size": "Small",
+                "brand": "Prada",
+                "title": "Prada Galleria Bag",
+                "description": "Pre-owned Prada bag.",
+            },
+        },
+    )
+    assert size_update_response.status_code == 200, size_update_response.text
+    size_payload = size_update_response.json()
+    assert size_payload["action"] == "update"
+    assert size_payload["suggestions"] == {
+        "category": None,
+        "condition": None,
+        "size": "Large",
+        "brand": None,
+        "title": None,
+        "description": None,
+    }
+    assert "updated the size" in size_payload["reply"].lower()
+    assert "category" not in size_payload["reply"].lower()
+
+    publish_response = client.post(
+        "/v1/listing-assistant/chat",
+        headers={"x-api-key": "test-key"},
+        json={
+            "messages": [{"role": "user", "content": "It looks good. Publish it."}],
+            "context": {
+                "step": 2,
+                "workflow_stage": "review",
+                "photo_count": 4,
+                "category": "handbag",
+                "condition": "LikeNew",
+                "size": "Medium",
+            },
+        },
+    )
+    assert publish_response.status_code == 200, publish_response.text
+    assert publish_response.json()["action"] == "publish"
+
+    create_response = client.post(
+        "/v1/listing-assistant/chat",
+        headers={"x-api-key": "test-key"},
+        json={
+            "messages": [{"role": "user", "content": "reviewed"}],
+            "context": {
+                "step": 2,
+                "workflow_stage": "ready_for_review",
+                "photo_count": 4,
+                "category": "accessories",
+                "condition": "New",
+                "size": "Medium",
+                "missing_required_photo_roles": ["bag_interior"],
+            },
+        },
+    )
+    assert create_response.status_code == 200, create_response.text
+    assert create_response.json()["action"] == "none"
+    assert create_response.json()["missing_fields"] == ["photos"]
+    assert "interior" in create_response.json()["reply"].lower()
+
+
+def test_listing_assistant_requires_openai_configuration() -> None:
+    client = _build_client()
+
+    response = client.post(
+        "/v1/listing-assistant/chat",
+        headers={"x-api-key": "test-key"},
+        json={"messages": [{"role": "user", "content": "What photo should I add?"}]},
+    )
+
+    assert response.status_code == 503
+
+
+def test_listing_assistant_message_ids_preserve_repeated_turns_and_make_retries_idempotent() -> None:
+    client = _build_client()
+    os.environ["OPENAI_API_KEY"] = "test-openai-key"
+
+    from app import settings
+
+    settings.get_settings.cache_clear()
+    context = {
+        "step": 2,
+        "workflow_stage": "review",
+        "photo_count": 4,
+        "category": "handbag",
+        "condition": "New",
+        "size": "Medium",
+        "title": "Original title",
+    }
+    first = client.post(
+        "/v1/listing-assistant/chat",
+        headers={"x-api-key": "test-key"},
+        json={"messages": [{"message_id": "turn-1", "role": "user", "content": "change the title to Updated title"}], "context": context},
+    )
+    assert first.status_code == 200, first.text
+    conversation_id = first.json()["conversation_id"]
+
+    second_payload = {
+        "conversation_id": conversation_id,
+        "messages": [{"message_id": "turn-2", "role": "user", "content": "change the title to Updated title"}],
+        "context": {**context, "title": "Updated title"},
+    }
+    second = client.post("/v1/listing-assistant/chat", headers={"x-api-key": "test-key"}, json=second_payload)
+    assert second.status_code == 200, second.text
+    retry = client.post("/v1/listing-assistant/chat", headers={"x-api-key": "test-key"}, json=second_payload)
+    assert retry.status_code == 200, retry.text
+    assert retry.json() == second.json()
+
+    restored = client.get(
+        f"/v1/listing-assistant/conversations/{conversation_id}",
+        headers={"x-api-key": "test-key"},
+    )
+    assert restored.status_code == 200, restored.text
+    user_messages = [message for message in restored.json()["conversation"]["messages"] if message["role"] == "user"]
+    assert [message["message_id"] for message in user_messages] == ["turn-1", "turn-2"]
+
+
+def test_listing_assistant_null_client_fields_do_not_erase_confirmed_state() -> None:
+    client = _build_client()
+    os.environ["OPENAI_API_KEY"] = "test-openai-key"
+
+    from app import settings
+
+    settings.get_settings.cache_clear()
+    condition = client.post(
+        "/v1/listing-assistant/chat",
+        headers={"x-api-key": "test-key"},
+        json={
+            "messages": [{"message_id": "condition-turn", "role": "user", "content": "change the condition to new"}],
+            "context": {"photo_count": 4, "category": "handbag"},
+        },
+    )
+    assert condition.status_code == 200, condition.text
+    conversation_id = condition.json()["conversation_id"]
+
+    size = client.post(
+        "/v1/listing-assistant/chat",
+        headers={"x-api-key": "test-key"},
+        json={
+            "conversation_id": conversation_id,
+            "messages": [{"message_id": "size-turn", "role": "user", "content": "change the size to large"}],
+            "context": {"photo_count": 4, "category": "handbag"},
+        },
+    )
+    assert size.status_code == 200, size.text
+    restored = client.get(
+        f"/v1/listing-assistant/conversations/{conversation_id}",
+        headers={"x-api-key": "test-key"},
+    )
+    assert restored.status_code == 200, restored.text
+    assert restored.json()["conversation"]["context"]["condition"] == "New"
+    assert restored.json()["conversation"]["context"]["size"] == "Large"
+    assert "review the summary below" in size.json()["reply"].lower()
+
+    lifecycle = client.patch(
+        f"/v1/listing-assistant/conversations/{conversation_id}",
+        headers={"x-api-key": "test-key"},
+        json={
+            "stage": "review",
+            "context": {},
+            "messages": [{
+                "message_id": "analysis-complete-event",
+                "role": "assistant",
+                "interaction_type": "workflow",
+                "content": "Your analysis is ready.",
+                "metadata": {"event": "analysis_completed"},
+            }],
+        },
+    )
+    assert lifecycle.status_code == 200, lifecycle.text
+    conversation = lifecycle.json()["conversation"]
+    assert conversation["stage"] == "review"
+    assert conversation["context"]["workflow_stage"] == "review"
+    assert conversation["context"]["step"] == 2
+    assert conversation["messages"][-1]["metadata"]["event"] == "analysis_completed"

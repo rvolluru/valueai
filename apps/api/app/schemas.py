@@ -56,6 +56,7 @@ class ImageRoleClassification(BaseModel):
     image_index: int = Field(ge=0)
     role: str
     confidence: float = Field(ge=0, le=1)
+    additional_roles: list[str] = Field(default_factory=list)
 
 
 class ImageRoleClassificationResponse(BaseModel):
@@ -68,6 +69,62 @@ class ImageRoleClassificationResponse(BaseModel):
     missing_recommended: list[str] = Field(default_factory=list)
     elapsed_ms: float
     warning: str | None = None
+
+
+class ListingAssistantMessage(BaseModel):
+    message_id: str | None = Field(default=None, max_length=120)
+    role: Literal["user", "assistant"]
+    content: str = Field(min_length=1, max_length=2000)
+    interaction_type: Literal["typed", "quick_reply", "workflow"] = "typed"
+    metadata: dict = Field(default_factory=dict)
+
+
+class ListingAssistantContext(BaseModel):
+    step: Literal[1, 2] = 1
+    category: Literal["clothes", "shoes", "handbag", "accessories"] | None = None
+    condition: ConditionGrade | None = None
+    size: str | None = Field(default=None, max_length=80)
+    photo_count: int = Field(default=0, ge=0, le=6)
+    identified_photo_roles: list[str] = Field(default_factory=list, max_length=20)
+    missing_required_photo_roles: list[str] = Field(default_factory=list, max_length=10)
+    workflow_stage: Literal["collecting", "ready_for_review", "analyzing", "review", "published", "failed"] | None = None
+    listing_id: str | None = Field(default=None, max_length=120)
+    brand: str | None = Field(default=None, max_length=200)
+    title: str | None = Field(default=None, max_length=300)
+    description: str | None = Field(default=None, max_length=4000)
+
+
+class ListingAssistantRequest(BaseModel):
+    conversation_id: str | None = Field(default=None, max_length=120)
+    messages: list[ListingAssistantMessage] = Field(min_length=1, max_length=12)
+    context: ListingAssistantContext = Field(default_factory=ListingAssistantContext)
+
+
+class ListingAssistantSuggestions(BaseModel):
+    category: Literal["clothes", "shoes", "handbag", "accessories"] | None = None
+    condition: ConditionGrade | None = None
+    size: str | None = Field(default=None, max_length=80)
+    brand: str | None = Field(default=None, max_length=200)
+    title: str | None = Field(default=None, max_length=300)
+    description: str | None = Field(default=None, max_length=4000)
+
+
+class ListingAssistantResponse(BaseModel):
+    conversation_id: str | None = None
+    reply: str
+    suggestions: ListingAssistantSuggestions = Field(default_factory=ListingAssistantSuggestions)
+    missing_fields: list[Literal["photos", "category", "condition", "size"]] = Field(default_factory=list)
+    ready_to_create: bool = False
+    stage: Literal["collecting", "ready_for_review", "analyzing", "review", "published", "failed"] = "collecting"
+    quick_replies: list[dict] = Field(default_factory=list)
+    action: Literal["none", "create_analyze", "update", "publish"] = "none"
+
+
+class ListingConversationUpdateRequest(BaseModel):
+    stage: Literal["collecting", "ready_for_review", "analyzing", "review", "published", "failed"]
+    listing_id: str | None = Field(default=None, max_length=120)
+    context: dict = Field(default_factory=dict)
+    messages: list[ListingAssistantMessage] = Field(default_factory=list, max_length=10)
 
 
 class PresignImageUploadItem(BaseModel):

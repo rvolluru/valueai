@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import PurePosixPath
@@ -487,6 +488,29 @@ class Database:
               occurred_at TEXT NOT NULL
             )
             """,
+            """
+            CREATE TABLE IF NOT EXISTS listing_conversations (
+              conversation_id TEXT PRIMARY KEY,
+              owner_subject TEXT NOT NULL,
+              listing_id TEXT,
+              stage TEXT NOT NULL DEFAULT 'collecting',
+              context_json TEXT NOT NULL DEFAULT '{}',
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS listing_conversation_messages (
+              message_id TEXT PRIMARY KEY,
+              conversation_id TEXT NOT NULL,
+              role TEXT NOT NULL,
+              content TEXT NOT NULL,
+              metadata_json TEXT NOT NULL DEFAULT '{}',
+              created_at TEXT NOT NULL
+            )
+            """,
+            "CREATE INDEX IF NOT EXISTS idx_listing_conversations_owner ON listing_conversations (owner_subject, updated_at)",
+            "CREATE INDEX IF NOT EXISTS idx_listing_conversation_messages ON listing_conversation_messages (conversation_id, created_at)",
             "CREATE INDEX IF NOT EXISTS idx_experience_events_occurred_at ON experience_events (occurred_at)",
             "CREATE INDEX IF NOT EXISTS idx_experience_events_owner_subject ON experience_events (owner_subject)",
         ]
@@ -598,6 +622,74 @@ class Database:
         if not row:
             return None
         return self._listing_row_to_dict(row)
+
+    def get_listing_conversation(self, conversation_id: str, owner_subject: str) -> dict | None:
+        row = self.fetchone(
+            f"SELECT conversation_id, owner_subject, listing_id, stage, context_json, created_at, updated_at FROM listing_conversations WHERE conversation_id = {self.param} AND owner_subject = {self.param}",
+            (conversation_id, owner_subject),
+        )
+        if not row:
+            return None
+        values = dict(row) if isinstance(row, sqlite3.Row) else dict(zip(("conversation_id", "owner_subject", "listing_id", "stage", "context_json", "created_at", "updated_at"), row))
+        values["context"] = json.loads(values.pop("context_json") or "{}")
+        values["messages"] = self.list_listing_conversation_messages(conversation_id)
+        return values
+
+    def get_active_listing_conversation(self, owner_subject: str) -> dict | None:
+        row = self.fetchone(
+            f"SELECT conversation_id FROM listing_conversations WHERE owner_subject = {self.param} AND stage NOT IN ('published', 'failed') ORDER BY updated_at DESC LIMIT 1",
+            (owner_subject,),
+        )
+        if not row:
+            return None
+        conversation_id = row["conversation_id"] if isinstance(row, sqlite3.Row) else row[0]
+        return self.get_listing_conversation(str(conversation_id), owner_subject)
+
+    def upsert_listing_conversation(self, *, conversation_id: str, owner_subject: str, stage: str, context: dict, listing_id: str | None = None) -> dict:
+        now = utc_now_iso()
+        existing = self.get_listing_conversation(conversation_id, owner_subject)
+        if existing:
+            self.execute(
+                f"UPDATE listing_conversations SET listing_id = {self.param}, stage = {self.param}, context_json = {self.param}, updated_at = {self.param} WHERE conversation_id = {self.param} AND owner_subject = {self.param}",
+                (listing_id or existing.get("listing_id"), stage, json.dumps(context), now, conversation_id, owner_subject),
+            )
+        else:
+            self.execute(
+                f"INSERT INTO listing_conversations (conversation_id, owner_subject, listing_id, stage, context_json, created_at, updated_at) VALUES ({self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param})",
+                (conversation_id, owner_subject, listing_id, stage, json.dumps(context), now, now),
+            )
+        self.commit()
+        return self.get_listing_conversation(conversation_id, owner_subject) or {}
+
+    def add_listing_conversation_message(self, *, conversation_id: str, role: str, content: str, metadata: dict | None = None, message_id: str | None = None) -> dict:
+        message_id = str(message_id or uuid.uuid4())
+        existing = self.fetchone(
+            f"SELECT message_id, role, content, metadata_json, created_at FROM listing_conversation_messages WHERE message_id = {self.param}",
+            (message_id,),
+        )
+        if existing:
+            values = dict(existing) if isinstance(existing, sqlite3.Row) else dict(zip(("message_id", "role", "content", "metadata_json", "created_at"), existing))
+            values["metadata"] = json.loads(values.pop("metadata_json") or "{}")
+            return values
+        created_at = utc_now_iso()
+        self.execute(
+            f"INSERT INTO listing_conversation_messages (message_id, conversation_id, role, content, metadata_json, created_at) VALUES ({self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param})",
+            (message_id, conversation_id, role, content, json.dumps(metadata or {}), created_at),
+        )
+        self.commit()
+        return {"message_id": message_id, "role": role, "content": content, "metadata": metadata or {}, "created_at": created_at}
+
+    def list_listing_conversation_messages(self, conversation_id: str, limit: int = 100) -> list[dict]:
+        rows = self.fetchall(
+            f"SELECT message_id, role, content, metadata_json, created_at FROM listing_conversation_messages WHERE conversation_id = {self.param} ORDER BY created_at ASC LIMIT {self.param}",
+            (conversation_id, limit),
+        )
+        result = []
+        for row in rows:
+            values = dict(row) if isinstance(row, sqlite3.Row) else dict(zip(("message_id", "role", "content", "metadata_json", "created_at"), row))
+            values["metadata"] = json.loads(values.pop("metadata_json") or "{}")
+            result.append(values)
+        return result
 
     def get_listings_by_ids(self, listing_ids: list[str]) -> dict[str, dict]:
         unique_ids = [x for x in dict.fromkeys(listing_ids) if isinstance(x, str) and x.strip()]
@@ -1115,6 +1207,26 @@ class Database:
         except Exception:
             self._pg.rollback()
             raise
+        finally:
+            cur.close()
+
+    def fetchone(self, sql: str, params: tuple = ()):
+        if self._sqlite_conn is not None:
+            with self._sqlite_lock:
+                return self._sqlite_conn.execute(sql, params).fetchone()
+        cur = self._pg_cursor()
+        try:
+            return cur.execute(sql, params).fetchone()
+        finally:
+            cur.close()
+
+    def fetchall(self, sql: str, params: tuple = ()):
+        if self._sqlite_conn is not None:
+            with self._sqlite_lock:
+                return self._sqlite_conn.execute(sql, params).fetchall()
+        cur = self._pg_cursor()
+        try:
+            return cur.execute(sql, params).fetchall()
         finally:
             cur.close()
 

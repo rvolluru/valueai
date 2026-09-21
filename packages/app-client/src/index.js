@@ -307,6 +307,11 @@ export function createApiClient(options) {
     });
   }
 
+  async function chatWithListingAssistant({ conversation_id = null, messages = [], context = {} }, auth = {}) {
+    const resolvedAuth = await resolveAuth(auth);
+    return post("/v1/listing-assistant/chat", { conversation_id, messages, context }, resolvedAuth);
+  }
+
   return {
     get,
     post,
@@ -319,6 +324,9 @@ export function createApiClient(options) {
     createImageUploadSlots,
     confirmImageUploads,
     queueListingAnalysis,
+    chatWithListingAssistant,
+    getActiveListingAssistantConversation: (auth = {}) => get("/v1/listing-assistant/conversations/active", auth),
+    updateListingAssistantConversation: (conversationId, payload, auth = {}) => patch(`/v1/listing-assistant/conversations/${encodeURIComponent(conversationId)}`, payload, auth),
     listListings: (params = {}, auth = {}) => {
       const query = new URLSearchParams();
       Object.entries(params).forEach(([k, v]) => {

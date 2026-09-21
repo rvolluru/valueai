@@ -153,3 +153,11 @@ def require_admin_user(
     if not principal_has_admin_role(principal):
         raise _forbidden("Admin role required")
     return principal
+
+
+def require_admin_or_api_key(
+    principal: AuthPrincipal = Depends(get_request_principal),
+) -> AuthPrincipal:
+    if principal.auth_type != "api_key" and not principal_has_admin_role(principal):
+        raise _forbidden("Admin role required")
+    return principal

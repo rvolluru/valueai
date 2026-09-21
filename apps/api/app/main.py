@@ -28,14 +28,14 @@ from fastapi.responses import HTMLResponse
 from fastapi.responses import RedirectResponse
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from PIL import Image, ImageDraw, ImageFilter, ImageOps, ImageStat
+from PIL import Image, ImageFilter, ImageOps, ImageStat
 from starlette.datastructures import Headers
 
 from brand.types import ImageInput
 from valuation import ValuationConfig, ValuationService
 from valuation.types import ValuationRequest
 
-from .auth import AuthPrincipal, get_request_principal, require_admin_user, require_clerk_user
+from .auth import AuthPrincipal, get_request_principal, require_admin_or_api_key, require_admin_user, require_clerk_user
 from .db import Database, PersistedImage, utc_now_iso
 from .deps import (
     get_db,
@@ -63,6 +63,9 @@ from .schemas import (
     HealthResponse,
     ImageRoleClassificationResponse,
     ListingCreateRequest,
+    ListingAssistantRequest,
+    ListingAssistantResponse,
+    ListingConversationUpdateRequest,
     ListingResponse,
     ListingSupportRequest,
     ListingSupportResponse,
@@ -2222,25 +2225,27 @@ def _check_photoroom_health(settings: Settings) -> DependencyHealthCheck:
         )
     if not settings.health_photoroom_live_probe_enabled:
         return _dependency_health_check(
-            "photoroom", "ok", message="configured; live processing probe disabled"
+            "photoroom", "ok", message="configured; live account probe disabled"
         )
     started = time.perf_counter()
     try:
-        probe = Image.new("RGB", (96, 96), color="white")
-        draw = ImageDraw.Draw(probe)
-        draw.rectangle((24, 24, 72, 72), fill="black")
-        buf = BytesIO()
-        probe.save(buf, format="PNG")
-        _, _, debug = _remove_background_with_photoroom(buf.getvalue(), "image/png", settings)
-        if debug.get("reason") == "success":
-            return _dependency_health_check("photoroom", "ok", started_at=started)
-        status_code = debug.get("status_code")
-        status = "down" if status_code in {401, 403, 429} else "degraded"
+        with httpx.Client(timeout=10.0) as client:
+            response = client.get(
+                settings.photoroom_account_url,
+                headers={"x-api-key": settings.photoroom_api_key or ""},
+            )
+        if response.status_code < 400:
+            payload = response.json()
+            images = payload.get("images") if isinstance(payload, dict) else None
+            available = images.get("available") if isinstance(images, dict) else None
+            message = f"account reachable; images_available={available}" if available is not None else "account reachable"
+            return _dependency_health_check("photoroom", "ok", started_at=started, message=message)
+        status = "down" if response.status_code in {401, 403, 429} else "degraded"
         return _dependency_health_check(
             "photoroom",
             status,
             started_at=started,
-            message=f"probe_failed: {debug.get('reason') or debug.get('error') or status_code}",
+            message=_health_http_message(response),
         )
     except Exception as exc:
         return _dependency_health_check("photoroom", "down", started_at=started, message=str(exc))
@@ -7512,6 +7517,335 @@ def auth_me(principal: AuthPrincipal = Depends(require_clerk_user), settings: Se
     )
 
 
+def _openai_response_text(payload: dict) -> str:
+    direct = payload.get("output_text")
+    if isinstance(direct, str) and direct.strip():
+        return direct.strip()
+    for output in payload.get("output") or []:
+        if not isinstance(output, dict):
+            continue
+        for content in output.get("content") or []:
+            if not isinstance(content, dict):
+                continue
+            text = content.get("text")
+            if isinstance(text, str) and text.strip():
+                return text.strip()
+    return ""
+
+
+LISTING_CHAT_SIZE_OPTIONS = {
+    "clothes": ["XXS", "XS", "S", "M", "L", "XL", "XXL"],
+    "shoes": ["US 5", "US 5.5", "US 6", "US 6.5", "US 7", "US 7.5", "US 8", "US 8.5", "US 9", "US 9.5", "US 10", "US 11", "US 12"],
+    "handbag": ["Mini", "Small", "Medium", "Large"],
+    "accessories": ["One Size", "Mini", "Small", "Medium", "Large", "Adjustable"],
+}
+
+
+def _listing_chat_direct_changes(message: str, context: dict) -> dict:
+    text = re.sub(r"[-_]", " ", str(message or "").strip().lower())
+    changes: dict[str, str] = {}
+    if re.search(r"(?:^|\b(?:change|update|set)\s+(?:the\s+)?condition\s+(?:to|as)|\b(?:condition|item)\s+is)\s+(?:new with tags|nwt)\b", text) or text in {"new with tags", "nwt"}:
+        changes["condition"] = "NewWithTags"
+    elif re.search(r"(?:^|\b(?:change|update|set)\s+(?:the\s+)?condition\s+(?:to|as)|\b(?:condition|item)\s+is)\s+like new\b", text) or text == "like new":
+        changes["condition"] = "LikeNew"
+    elif re.search(r"(?:condition\s+(?:to|is)|item\s+is)\s+new\b", text):
+        changes["condition"] = "New"
+    for category in ("clothes", "shoes", "handbag", "accessories"):
+        if text == category or re.search(rf"(?:\bcategory\s+(?:to|is)\s+|\bthis\s+is\s+(?:a|an)\s+){category}\b", text):
+            changes["category"] = category
+            break
+    category = changes.get("category") or context.get("category")
+    for option in LISTING_CHAT_SIZE_OPTIONS.get(str(category), []):
+        if text == option.lower() or re.search(rf"\bsize\s+(?:(?:is|to)\s+)?{re.escape(option.lower())}\b", text):
+            changes["size"] = option
+            break
+    if str(context.get("workflow_stage") or "") == "review":
+        for field in ("title", "brand", "description"):
+            match = re.search(rf"(?:change|update|set)\s+(?:the\s+)?{field}\s+(?:to|as)\s+(.+)", str(message or "").strip(), re.IGNORECASE)
+            if match:
+                changes[field] = match.group(1).strip().rstrip(".")
+    return changes
+
+
+def _listing_chat_orchestrate(context: dict, suggestions: dict, action: str = "none", natural_reply: str = "") -> dict:
+    state = {**context, **{key: value for key, value in suggestions.items() if value is not None}}
+    if str(context.get("workflow_stage") or "") == "review":
+        changed = [key for key, value in suggestions.items() if value is not None]
+        if action == "publish":
+            return {"state": state, "missing_fields": [], "quick_replies": [], "ready_to_create": True, "stage": "review", "action": "publish", "reply": "I’ll publish the listing now."}
+        if changed:
+            labels = {"condition": "condition", "category": "category", "size": "size", "brand": "brand", "title": "title", "description": "description"}
+            names = ", ".join(labels[key] for key in changed)
+            return {"state": state, "missing_fields": [], "quick_replies": [], "ready_to_create": True, "stage": "review", "action": "update", "reply": f"Done — I’ve updated the {names}. Would you like to change anything else, or should I publish the listing?"}
+        return {"state": state, "missing_fields": [], "quick_replies": [], "ready_to_create": True, "stage": "review", "action": "none", "reply": natural_reply.strip() or "What would you like to change? You can tell me the title, brand, description, category, condition, or size. When everything looks right, just tell me to publish it."}
+    missing = []
+    missing_photo_roles = [str(role) for role in (state.get("missing_required_photo_roles") or []) if role]
+    if int(state.get("photo_count") or 0) < 1 or missing_photo_roles:
+        missing.append("photos")
+    if not state.get("category"):
+        missing.append("category")
+    if not state.get("condition"):
+        missing.append("condition")
+    if not state.get("size"):
+        missing.append("size")
+    next_field = missing[0] if missing else None
+    if action == "create_analyze" and not missing:
+        return {"state": state, "missing_fields": [], "quick_replies": [], "ready_to_create": True, "stage": "ready_for_review", "action": "create_analyze", "reply": "Great — I’ll create your private draft and start the analysis now. This can take up to two minutes."}
+    quick_replies: list[dict] = []
+    if next_field == "category":
+        quick_replies = [{"label": value.title(), "value": value} for value in LISTING_CHAT_SIZE_OPTIONS]
+    elif next_field == "condition":
+        quick_replies = [{"label": "New with tags", "value": "NewWithTags"}, {"label": "New", "value": "New"}, {"label": "Like new", "value": "LikeNew"}]
+    elif next_field == "size" and state.get("category"):
+        quick_replies = [{"label": value, "value": value} for value in LISTING_CHAT_SIZE_OPTIONS.get(str(state["category"]), [])]
+    labels = {"NewWithTags": "New with tags", "LikeNew": "Like new", "New": "New"}
+    acknowledged = []
+    if suggestions.get("condition"):
+        acknowledged.append(f"the condition to {labels.get(suggestions['condition'], suggestions['condition'])}")
+    if suggestions.get("category"):
+        acknowledged.append(f"the category to {str(suggestions['category']).title()}")
+    if suggestions.get("size"):
+        acknowledged.append(f"the size to {suggestions['size']}")
+    prefix = f"Done — I’ve updated {' and '.join(acknowledged)}. " if acknowledged else ""
+    photo_role_labels = {
+        "full_front": "the complete front",
+        "full_back": "the complete back",
+        "side_or_profile": "a side or profile view",
+        "brand_label": "the brand label or logo",
+        "size_or_material_label": "the size or material label",
+        "hardware_or_detail": "the hardware or important details",
+        "condition_or_wear": "any wear or condition details",
+        "shoe_sole": "the shoe sole",
+        "bag_interior": "the bag interior",
+        "serial_or_authentication_mark": "the serial or maker mark",
+    }
+    photo_question = (
+        f"These photos are a great start. Please add a clear photo of {photo_role_labels.get(missing_photo_roles[0], missing_photo_roles[0].replace('_', ' '))} so I can complete the item details."
+        if missing_photo_roles
+        else "Please add at least one clear photo to get started."
+    )
+    questions = {
+        "photos": photo_question,
+        "category": "Which category best describes the item?",
+        "condition": "How would you describe the item’s condition?",
+        "size": "What size is the item?",
+    }
+    fallback_reply = prefix + (questions[next_field] if next_field else "Everything is ready. Please review the summary below and tell me what you’d like to change, or say ‘looks good’ to continue.")
+    reply = natural_reply.strip() if natural_reply.strip() and not prefix else fallback_reply
+    return {"state": state, "missing_fields": missing, "quick_replies": quick_replies, "ready_to_create": not missing, "stage": "ready_for_review" if not missing else "collecting", "action": "none", "reply": reply}
+
+
+@app.post("/v1/listing-assistant/chat", response_model=ListingAssistantResponse)
+async def listing_assistant_chat(
+    request: ListingAssistantRequest,
+    settings: Settings = Depends(get_settings),
+    db: Database = Depends(get_db),
+    principal: AuthPrincipal = Depends(require_admin_or_api_key),
+) -> ListingAssistantResponse:
+    if not str(settings.openai_api_key or "").strip():
+        raise HTTPException(status_code=503, detail="Listing assistant is temporarily unavailable")
+
+    conversation_id = str(request.conversation_id or f"conversation-{uuid.uuid4()}")
+    existing = db.get_listing_conversation(conversation_id, principal.subject)
+    if request.conversation_id and not existing:
+        raise HTTPException(status_code=404, detail="Listing conversation not found")
+    request_context = request.context.model_dump()
+    # Optional client fields can lag one render behind a confirmed assistant turn.
+    # Do not let those nulls erase state already persisted for the conversation.
+    context = {
+        **(existing or {}).get("context", {}),
+        **{key: value for key, value in request_context.items() if value is not None},
+    }
+    persisted_messages = (existing or {}).get("messages", [])
+    incoming = [message.model_dump() for message in request.messages]
+    persisted_ids = {message.get("message_id") for message in persisted_messages if message.get("message_id")}
+    new_incoming = [message for message in incoming if not message.get("message_id") or message.get("message_id") not in persisted_ids]
+    if incoming and not new_incoming:
+        previous = next((message for message in reversed(persisted_messages) if message.get("role") == "assistant"), None)
+        if previous:
+            metadata = previous.get("metadata") or {}
+            return ListingAssistantResponse.model_validate({
+                "conversation_id": conversation_id,
+                "reply": previous.get("content") or "What would you like to do next?",
+                "suggestions": metadata.get("suggestions") or {},
+                "missing_fields": metadata.get("missing_fields") or [],
+                "ready_to_create": bool(metadata.get("ready_to_create")),
+                "stage": metadata.get("stage") or (existing or {}).get("stage") or "collecting",
+                "quick_replies": metadata.get("quick_replies") or [],
+                "action": metadata.get("action") or "none",
+            })
+    combined_messages = [*persisted_messages, *new_incoming][-20:]
+    conversation = "\n".join(f"{message['role'].upper()}: {str(message['content']).strip()}" for message in combined_messages)
+    instructions = (
+        "You are Jouft's warm, polished listing concierge. Sound friendly, encouraging, and natural without being chatty. "
+        "Guide the member to complete a fashion listing by asking one clear question at a time. Acknowledge answers briefly "
+        "and explain why a requested detail helps when useful. The listing needs 1-6 photos, category, user-observed condition, and a size selection. "
+        "Size is required for every supported category, including handbags and accessories; use options such as Mini, Small, Medium, Large, One Size, or Adjustable when appropriate. "
+        "Use the current listing context to avoid asking for information already captured. "
+        "Never estimate or disclose monetary value, authenticate an item, claim a brand/model from unseen evidence, "
+        "or override the member's condition assessment. Never scold or use alarming language. Keep the reply concise and actionable. "
+        "Extract category, condition, size, brand, title, or description when the user's own message clearly supplies it. "
+        "When workflow_stage is review, set action to publish only when the member clearly asks to publish, post, or make the listing live. "
+        "Before analysis, set action to create_analyze when all required details are present and the member clearly asks to proceed, create the draft, or start analysis. "
+        "Set action to update when the member requests a listing detail change; otherwise use none. "
+        "Condition must be one of NewWithTags, New, or LikeNew. Category must be clothes, shoes, handbag, or accessories. "
+        "Use null for every field that should not change. Mark ready_to_create true only when photos, category, condition, "
+        "and size are present. Use friendly display labels such as 'New with tags', never internal enum names such as 'NewWithTags'. Return the still-missing fields."
+    )
+    schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "reply": {"type": "string"},
+            "suggestions": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "category": {"type": ["string", "null"], "enum": ["clothes", "shoes", "handbag", "accessories", None]},
+                    "condition": {"type": ["string", "null"], "enum": ["NewWithTags", "New", "LikeNew", None]},
+                    "size": {"type": ["string", "null"]},
+                    "brand": {"type": ["string", "null"]},
+                    "title": {"type": ["string", "null"]},
+                    "description": {"type": ["string", "null"]},
+                },
+                "required": ["category", "condition", "size", "brand", "title", "description"],
+            },
+            "missing_fields": {
+                "type": "array",
+                "items": {"type": "string", "enum": ["photos", "category", "condition", "size"]},
+            },
+            "ready_to_create": {"type": "boolean"},
+            "action": {"type": "string", "enum": ["none", "create_analyze", "update", "publish"]},
+        },
+        "required": ["reply", "suggestions", "missing_fields", "ready_to_create", "action"],
+    }
+    try:
+        latest_user_message = next((str(message.get("content") or "") for message in reversed(new_incoming or incoming) if message.get("role") == "user"), "")
+        direct_changes = _listing_chat_direct_changes(latest_user_message, context)
+        direct_publish = str(context.get("workflow_stage") or "") == "review" and bool(re.search(r"\b(publish|post|make (?:it|the listing) live|go live)\b", latest_user_message, re.IGNORECASE))
+        direct_create = str(context.get("workflow_stage") or "") != "review" and bool(re.search(r"\b(go ahead|proceed|reviewed|create (?:it|the listing|the draft)|start (?:the )?analysis|analyze (?:it|the listing)|looks good)\b", latest_user_message, re.IGNORECASE))
+        if direct_changes or direct_publish or direct_create:
+            direct_action = "publish" if direct_publish else "create_analyze" if direct_create else "update"
+            parsed = {"reply": "", "suggestions": {"category": None, "condition": None, "size": None, "brand": None, "title": None, "description": None}, "missing_fields": [], "ready_to_create": False, "action": direct_action}
+            parsed["suggestions"].update(direct_changes)
+        else:
+            async with httpx.AsyncClient(timeout=settings.listing_assistant_timeout_s) as client:
+                response = await client.post(
+                "https://api.openai.com/v1/responses",
+                headers={
+                    "Authorization": f"Bearer {settings.openai_api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": settings.listing_assistant_model,
+                    "instructions": instructions,
+                    "input": f"CURRENT LISTING CONTEXT:\n{json.dumps(context)}\n\nCONVERSATION:\n{conversation}",
+                    "text": {
+                        "format": {
+                            "type": "json_schema",
+                            "name": "listing_assistant_response",
+                            "strict": True,
+                            "schema": schema,
+                        }
+                    },
+                },
+                )
+            if response.status_code >= 400:
+                log_json("listing_assistant_openai_error", status_code=response.status_code)
+                raise HTTPException(status_code=502, detail="Listing assistant could not respond. Please try again.")
+            raw_text = _openai_response_text(response.json())
+            parsed = json.loads(raw_text)
+        suggestions = {
+            key: value
+            for key, value in (parsed.get("suggestions") or {}).items()
+            if value is not None and str(value).strip() != str(context.get(key) or "").strip()
+        }
+        orchestrated = _listing_chat_orchestrate(context, suggestions, parsed.get("action") or "none", parsed.get("reply") or "")
+        stage = orchestrated["stage"]
+        db.upsert_listing_conversation(conversation_id=conversation_id, owner_subject=principal.subject, stage=stage, context=orchestrated["state"])
+        for message in new_incoming:
+            db.add_listing_conversation_message(
+                conversation_id=conversation_id,
+                role=message["role"],
+                content=message["content"],
+                message_id=message.get("message_id"),
+                metadata={"interaction_type": message.get("interaction_type") or "typed", **(message.get("metadata") or {})},
+            )
+        db.add_listing_conversation_message(conversation_id=conversation_id, role="assistant", content=orchestrated["reply"], metadata={"suggestions": suggestions, "stage": stage, "missing_fields": orchestrated["missing_fields"], "ready_to_create": orchestrated["ready_to_create"], "quick_replies": orchestrated["quick_replies"], "action": orchestrated["action"]})
+        return ListingAssistantResponse.model_validate({
+            "conversation_id": conversation_id,
+            "reply": orchestrated["reply"],
+            "suggestions": suggestions,
+            "missing_fields": orchestrated["missing_fields"],
+            "ready_to_create": orchestrated["ready_to_create"],
+            "stage": stage,
+            "quick_replies": orchestrated["quick_replies"],
+            "action": orchestrated["action"],
+        })
+    except HTTPException:
+        raise
+    except (httpx.HTTPError, json.JSONDecodeError, ValueError) as exc:
+        log_json("listing_assistant_error", error=str(exc), actor=principal.subject)
+        raise HTTPException(status_code=502, detail="Listing assistant could not respond. Please try again.") from exc
+
+
+@app.get("/v1/listing-assistant/conversations/active")
+def get_active_listing_assistant_conversation(
+    db: Database = Depends(get_db),
+    principal: AuthPrincipal = Depends(require_admin_or_api_key),
+) -> dict:
+    return {"conversation": db.get_active_listing_conversation(principal.subject)}
+
+
+@app.get("/v1/listing-assistant/conversations/{conversation_id}")
+def get_listing_assistant_conversation(
+    conversation_id: str,
+    db: Database = Depends(get_db),
+    principal: AuthPrincipal = Depends(require_admin_or_api_key),
+) -> dict:
+    conversation = db.get_listing_conversation(conversation_id, principal.subject)
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Listing conversation not found")
+    return {"conversation": conversation}
+
+
+@app.patch("/v1/listing-assistant/conversations/{conversation_id}")
+def update_listing_assistant_conversation(
+    conversation_id: str,
+    request: ListingConversationUpdateRequest,
+    db: Database = Depends(get_db),
+    principal: AuthPrincipal = Depends(require_admin_or_api_key),
+) -> dict:
+    conversation = db.get_listing_conversation(conversation_id, principal.subject)
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Listing conversation not found")
+    if request.listing_id:
+        listing = db.get_listing_by_id(request.listing_id)
+        if not listing or listing.get("owner_subject") != principal.subject:
+            raise HTTPException(status_code=404, detail="Listing not found")
+    next_context = {**conversation.get("context", {}), **request.context}
+    next_context["workflow_stage"] = request.stage
+    if request.stage in {"ready_for_review", "analyzing", "review", "published", "failed"}:
+        next_context["step"] = 2
+    updated = db.upsert_listing_conversation(
+        conversation_id=conversation_id,
+        owner_subject=principal.subject,
+        stage=request.stage,
+        context=next_context,
+        listing_id=request.listing_id or conversation.get("listing_id"),
+    )
+    for message in request.messages:
+        db.add_listing_conversation_message(
+            conversation_id=conversation_id,
+            role=message.role,
+            content=message.content,
+            message_id=message.message_id,
+            metadata={"interaction_type": message.interaction_type, **message.metadata},
+        )
+    updated = db.get_listing_conversation(conversation_id, principal.subject) or updated
+    return {"conversation": updated}
+
+
 def _upload_extension(filename: str | None, content_type: str | None) -> str:
     normalized_type = (content_type or "").split(";")[0].strip().lower()
     if normalized_type in {"image/jpeg", "image/jpg"}:
@@ -7547,7 +7881,10 @@ async def classify_image_roles(
             f"Classify the item into exactly one category: {', '.join(IMAGE_ROLE_REQUIREMENTS)}. "
             "Determine the category from the full set of images, not from an individual close-up. "
             "Return exactly one result for every image in the same order. "
-            "Use brand_label only when a visible brand name, logo, stamp, or maker tag can be inspected. "
+            "Assign one primary role and zero or more additional_roles when the same image clearly serves multiple purposes. "
+            "Include brand_label as either the primary role or an additional role only when a visible brand name, logo, "
+            "distinctive brand monogram, stamp, or maker tag can be inspected. Branded hardware may remain hardware_or_detail "
+            "as its primary role while also including brand_label in additional_roles. Do not treat generic shapes or hardware as branding. "
             "Do not identify, authenticate, or value the product."
         )
     }]
@@ -7580,8 +7917,12 @@ async def classify_image_roles(
                         "image_index": {"type": "INTEGER"},
                         "role": {"type": "STRING", "enum": IMAGE_ROLE_VALUES},
                         "confidence": {"type": "NUMBER"},
+                        "additional_roles": {
+                            "type": "ARRAY",
+                            "items": {"type": "STRING", "enum": IMAGE_ROLE_VALUES},
+                        },
                     },
-                    "required": ["image_index", "role", "confidence"],
+                    "required": ["image_index", "role", "confidence", "additional_roles"],
                 },
             },
         },
@@ -7628,12 +7969,17 @@ async def classify_image_roles(
             image_index = int(entry.get("image_index"))
             role = str(entry.get("role") or "other")
             confidence = max(0.0, min(float(entry.get("confidence") or 0), 1.0))
+            additional_roles = [
+                str(value) for value in (entry.get("additional_roles") or [])
+                if str(value) in IMAGE_ROLE_VALUES and str(value) != role
+            ]
         except (TypeError, ValueError):
             continue
         if 0 <= image_index < len(images) and role in IMAGE_ROLE_VALUES:
-            assignments_by_index[image_index] = {"image_index": image_index, "role": role, "confidence": confidence}
-    assignments = [assignments_by_index.get(index, {"image_index": index, "role": "other", "confidence": 0.0}) for index in range(len(images))]
+            assignments_by_index[image_index] = {"image_index": image_index, "role": role, "confidence": confidence, "additional_roles": additional_roles}
+    assignments = [assignments_by_index.get(index, {"image_index": index, "role": "other", "confidence": 0.0, "additional_roles": []}) for index in range(len(images))]
     detected = {entry["role"] for entry in assignments}
+    detected.update(role for entry in assignments for role in entry["additional_roles"])
     rules = IMAGE_ROLE_REQUIREMENTS[detected_category]
     return ImageRoleClassificationResponse(
         category=detected_category,

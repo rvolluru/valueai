@@ -49,6 +49,22 @@ async function requestJson({ apiBaseUrl, path, method = 'GET', auth = {}, body, 
 
 export function createMobileApiClient({ apiBaseUrl }) {
   return {
+    chatWithListingAssistant({ conversation_id = null, messages = [], context = {} }, auth = {}) {
+      return requestJson({
+        apiBaseUrl,
+        path: '/v1/listing-assistant/chat',
+        method: 'POST',
+        auth,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ conversation_id, messages, context }),
+      });
+    },
+    getActiveListingAssistantConversation(auth = {}) {
+      return requestJson({ apiBaseUrl, path: '/v1/listing-assistant/conversations/active', method: 'GET', auth });
+    },
+    updateListingAssistantConversation(conversationId, payload, auth = {}) {
+      return requestJson({ apiBaseUrl, path: `/v1/listing-assistant/conversations/${encodeURIComponent(conversationId)}`, method: 'PATCH', auth, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    },
     trackExperience(event, auth = {}) {
       return requestJson({
         apiBaseUrl,
@@ -175,6 +191,14 @@ export function createMobileApiClient({ apiBaseUrl }) {
         method: 'POST',
         auth,
         body: fd,
+      });
+    },
+    getLatestListingAnalysisJob(listingId, auth = {}) {
+      return requestJson({
+        apiBaseUrl,
+        path: `/v1/listings/${encodeURIComponent(listingId)}/analysis-jobs/latest`,
+        method: 'GET',
+        auth,
       });
     },
     createListing(payload, auth = {}) {

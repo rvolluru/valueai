@@ -1,4 +1,4 @@
-import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import {
   UserButton,
   useAuth,
@@ -644,6 +644,23 @@ const IMAGE_ROLE_LABELS = {
   hardware_or_detail: 'Hardware/detail', condition_or_wear: 'Condition/wear',
   shoe_sole: 'Shoe sole', bag_interior: 'Bag interior',
   serial_or_authentication_mark: 'Serial/authentication mark', other: 'Other view',
+}
+
+const IMAGE_ROLE_GUIDANCE = {
+  full_front: 'To identify the item and its overall style, add a clear photo of the complete front.',
+  full_back: 'To understand the complete design and condition, add a clear photo of the back.',
+  side_or_profile: 'To identify the shape and style, add a clear side or profile photo.',
+  brand_label: 'To identify the brand, add a clear photo of the brand label or logo.',
+  size_or_material_label: 'To confirm the size and material, add a clear photo of the size or care label.',
+  hardware_or_detail: 'To identify important design details, add a close-up of the hardware or construction.',
+  condition_or_wear: 'To assess condition accurately, add a close-up of any wear, marks, or damage.',
+  shoe_sole: 'To assess wear and confirm shoe details, add a clear photo of the sole.',
+  bag_interior: 'To identify the bag and assess its condition, add a clear photo of the interior.',
+  serial_or_authentication_mark: 'To capture identifying details, add a clear photo of the serial or maker mark.',
+}
+
+function imageRoleGuidance(role) {
+  return IMAGE_ROLE_GUIDANCE[role] || `For a more complete analysis, add a clear ${String(IMAGE_ROLE_LABELS[role] || role).toLowerCase()} photo.`
 }
 
 function PhotoGuideIllustration({ category, title }) {
@@ -2607,6 +2624,21 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   const [reviewListingId, setReviewListingId] = useState(null)
   const [showCreateListingModal, setShowCreateListingModal] = useState(false)
   const [createListingStep, setCreateListingStep] = useState(1)
+  const [createListingMode, setCreateListingMode] = useState('standard')
+  const [listingChatStage, setListingChatStage] = useState('collect')
+  const [listingChatListing, setListingChatListing] = useState(null)
+  const [listingChatMatches, setListingChatMatches] = useState([])
+  const [listingChatTradeTarget, setListingChatTradeTarget] = useState(null)
+  const [listingAssistantMessages, setListingAssistantMessages] = useState([])
+  const [listingAssistantConversationId, setListingAssistantConversationId] = useState(null)
+  const [listingAssistantInput, setListingAssistantInput] = useState('')
+  const [listingAssistantBusy, setListingAssistantBusy] = useState(false)
+  const [listingAssistantError, setListingAssistantError] = useState('')
+  const listingAssistantMessagesRef = useRef(null)
+
+  useEffect(() => {
+    if (!hasAdminRole && createListingMode === 'chat') setCreateListingMode('standard')
+  }, [createListingMode, hasAdminRole])
   const [listingModalMode, setListingModalMode] = useState('create')
   const [modalEditingListing, setModalEditingListing] = useState(null)
   const [savedListingNotice, setSavedListingNotice] = useState('')
@@ -2671,6 +2703,10 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   const [createSlotPreviewUrls, setCreateSlotPreviewUrls] = useState(() => Array(6).fill(null))
   const [createImageRoleCheck, setCreateImageRoleCheck] = useState(null)
   const [createImageRoleBusy, setCreateImageRoleBusy] = useState(false)
+  const listingChatPhotoGateOpen = createImageSlots.filter(Boolean).length > 0
+    && !createImageRoleBusy
+    && Boolean(createImageRoleCheck)
+    && (createImageRoleCheck?.missing_required || []).length === 0
   const [createImageRoleError, setCreateImageRoleError] = useState('')
   const [createImageRoleRetry, setCreateImageRoleRetry] = useState(0)
   const [selectedEditImageIndex, setSelectedEditImageIndex] = useState(0)
@@ -3034,7 +3070,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     return matches.filter((candidate) => !isSameListingOwner(listing, candidate))
   }
 
-  function getMarketplaceMatchesForClosetListing(listing) {
+  function getMarketplaceMatchesForClosetListing(listing, marketplaceItems = marketListings) {
     if (!listing) return []
     const targetId = String(listing.id || listing.listing_id || '').trim()
     if (!targetId) return []
@@ -3045,7 +3081,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
       if (candidateId) matchesById.set(candidateId, candidate)
     }
 
-    for (const marketplaceListing of marketListings) {
+    for (const marketplaceListing of marketplaceItems) {
       if (String(marketplaceListing?.status || '').toLowerCase() !== 'active') continue
       if (isSameListingOwner(listing, marketplaceListing)) continue
       const marketplaceMatches = Array.isArray(marketplaceListing?.matches) ? marketplaceListing.matches : []
@@ -4221,6 +4257,55 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   }
 
   useEffect(() => {
+    const transcript = listingAssistantMessagesRef.current
+    if (transcript) transcript.scrollTo({ top: transcript.scrollHeight, behavior: 'smooth' })
+  }, [listingAssistantMessages, listingAssistantBusy])
+
+  useEffect(() => {
+    if (listingChatStage !== 'analyzing' || !listingChatListing?.id) return undefined
+    let cancelled = false
+    let attempts = 0
+    let timer = null
+    const poll = async () => {
+      attempts += 1
+      try {
+        const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
+        const page = await fetchMyListings({ apiBaseUrl, apiKey: clerkEnabled ? '' : apiKey.trim(), bearerToken, limit: 100, offset: 0 })
+        const refreshed = page.items.map(fromRemoteListing).find((item) => item?.id === listingChatListing.id)
+        if (!refreshed || cancelled) return
+        setListingChatListing(refreshed)
+        setMyListings((current) => current.map((item) => item.id === refreshed.id ? refreshed : item))
+        const status = String(refreshed.status || '').toLowerCase()
+        if (status === 'analysisfailed') {
+          setListingChatStage('failed')
+          const content = 'I wasn’t able to finish the analysis this time, but your draft is safely saved. You can retry from My Closet whenever you’re ready.'
+          setListingAssistantMessages((current) => [...current, { role: 'assistant', content }].slice(-12))
+          if (listingAssistantConversationId) {
+            const { client, authContext } = createWebApiClient({ apiBaseUrl, apiKey })
+            await client.updateListingAssistantConversation(listingAssistantConversationId, { stage: 'failed', listing_id: refreshed.id, context: { listing_id: refreshed.id }, messages: [{ role: 'assistant', interaction_type: 'workflow', content, metadata: { event: 'analysis_failed' } }] }, authContext(bearerToken || ''))
+          }
+        } else if (status !== 'analyzing') {
+          setListingChatStage('review')
+          const content = 'Your analysis is ready! Take a look at the listing details below. Is there anything you’d like to change before publishing?'
+          setListingAssistantMessages((current) => [...current, { role: 'assistant', content }].slice(-12))
+          if (listingAssistantConversationId) {
+            const { client, authContext } = createWebApiClient({ apiBaseUrl, apiKey })
+            await client.updateListingAssistantConversation(listingAssistantConversationId, { stage: 'review', listing_id: refreshed.id, context: { listing_id: refreshed.id, category: refreshed.category, condition: refreshed.condition, size: refreshed.size, brand: refreshed.brand, title: refreshed.title, description: refreshed.description }, messages: [{ role: 'assistant', interaction_type: 'workflow', content, metadata: { event: 'analysis_completed' } }] }, authContext(bearerToken || ''))
+          }
+        } else if (attempts >= 30) {
+          if (timer) window.clearInterval(timer)
+          setListingAssistantMessages((current) => [...current, { role: 'assistant', content: 'Analysis is still running. Your draft is safe in My Closet, and you can leave this screen while it finishes.' }].slice(-12))
+        }
+      } catch {
+        // A transient polling error should not fail the background analysis.
+      }
+    }
+    void poll()
+    timer = window.setInterval(() => { if (attempts < 30) void poll() }, 4000)
+    return () => { cancelled = true; window.clearInterval(timer) }
+  }, [apiBaseUrl, apiKey, clerkEnabled, getBearerToken, listingAssistantConversationId, listingChatListing?.id, listingChatStage])
+
+  useEffect(() => {
     let cancelled = false
     ;(async () => {
       setMyListingsLoading(true)
@@ -4553,6 +4638,12 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
       return `${item.title} ${item.brand} ${item.category} ${item.city} ${item.wants}`.toLowerCase().includes(q)
     })
   }, [allListings, deferredMarketSearch])
+  useEffect(() => {
+    if (activeTab !== 'market' || deferredMarketSearch.trim()) return
+    if (marketListingsLoading || marketListingsPageLoading || !marketListingsHasMore) return
+    if (filteredListings.length >= 6) return
+    void loadMoreMarketListings()
+  }, [activeTab, deferredMarketSearch, filteredListings.length, loadMoreMarketListings, marketListingsHasMore, marketListingsLoading, marketListingsPageLoading])
   const marketplaceNavCount = useMemo(
     () => allListings.filter((item) => (
       String(item?.status || '').toLowerCase() === 'active'
@@ -5291,6 +5382,11 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
 
   function resetDraft() {
     setCreateListingStep(1)
+    setCreateListingMode('standard')
+    setListingChatStage('collect')
+    setListingChatListing(null)
+    setListingChatMatches([])
+    setListingChatTradeTarget(null)
     setItemTitle('')
     setCategory('')
     setUserCondition('')
@@ -5314,6 +5410,246 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     setCreateImageRoleCheck(null)
     setCreateImageRoleBusy(false)
     setCreateImageRoleError('')
+    setListingAssistantMessages([])
+    setListingAssistantConversationId(null)
+    setListingAssistantInput('')
+    setListingAssistantBusy(false)
+    setListingAssistantError('')
+  }
+
+  async function sendListingAssistantMessage(contentOverride = null, interactionType = 'typed') {
+    if (!hasAdminRole) return
+    const content = String(contentOverride ?? listingAssistantInput).trim()
+    if (!content || listingAssistantBusy) return
+    const userMessage = { role: 'user', content, interaction_type: interactionType, message_id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `web-${Date.now()}-${Math.random()}` }
+    const nextMessages = [...listingAssistantMessages, userMessage].slice(-12)
+    setListingAssistantMessages(nextMessages)
+    setListingAssistantInput('')
+    setListingAssistantBusy(true)
+    setListingAssistantError('')
+    try {
+      if (listingChatStage === 'published') {
+        const normalizedContent = content.toLowerCase()
+        if (listingChatTradeTarget && /\b(no|not now|cancel|maybe later)\b/.test(normalizedContent)) {
+          setListingChatTradeTarget(null)
+          setListingAssistantMessages((current) => [...current, { role: 'assistant', content: 'No problem. The item will stay in your liked listings, and you can start a trade later.' }].slice(-12))
+          return
+        }
+        if (listingChatTradeTarget && /\b(yes|send|start|make|submit|go ahead|trade offer)\b/.test(normalizedContent)) {
+          if (completeProfileShippingAddresses.length === 0) {
+            setListingAssistantMessages((current) => [...current, { role: 'assistant', content: 'Before I can send the trade offer, please add a complete shipping address in Profile. Your selected match is still saved in your liked listings.' }].slice(-12))
+            return
+          }
+          const targetId = String(listingChatTradeTarget.id || listingChatTradeTarget.listing_id || '')
+          const offeredId = String(listingChatListing?.id || listingChatListing?.listing_id || '')
+          if (!targetId || !offeredId) throw new Error('The selected trade items are no longer available.')
+          const targetValue = Number(listingChatTradeTarget.estimatedValue || listingChatTradeTarget.estimated_value || 0)
+          const offeredValue = Number(listingChatListing?.estimatedValue || listingChatListing?.estimated_value || 0)
+          if (!targetValue || !offeredValue || Math.abs(offeredValue - targetValue) / targetValue > 0.3) {
+            setListingAssistantMessages((current) => [...current, { role: 'assistant', content: 'I can’t send this offer because the two listings are outside the eligible trade-value range. The item is still saved in your liked listings.' }].slice(-12))
+            setListingChatTradeTarget(null)
+            return
+          }
+          const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
+          await createOfferRemote({
+            apiBaseUrl,
+            apiKey: clerkEnabled ? '' : apiKey.trim(),
+            bearerToken,
+            payload: { target_listing_id: targetId, offered_listing_ids: [offeredId], message: '' },
+          })
+          removeSentOfferMatches(targetId, [offeredId])
+          setListingChatMatches((current) => current.filter((match) => String(match.id || match.listing_id || '') !== targetId))
+          setListingAssistantMessages((current) => [...current, { role: 'assistant', content: `Your trade offer for “${listingChatTradeTarget.title || 'the selected item'}” has been sent. The owner has been notified, and you can follow its status in Trade Inbox.` }].slice(-12))
+          setListingChatTradeTarget(null)
+          return
+        }
+        if (/\b(no|none|not interested|nothing)\b/.test(normalizedContent)) {
+          setListingAssistantMessages((current) => [...current, { role: 'assistant', content: 'No problem. Your listing is live, and I’ll keep watching for new matches.' }].slice(-12))
+          return
+        }
+        const ordinalWords = { first: 0, '1': 0, second: 1, '2': 1, third: 2, '3': 2 }
+        const ordinal = Object.entries(ordinalWords).find(([word]) => new RegExp(`\\b${word}(?:st|nd|rd)?\\b`).test(normalizedContent))
+        let selectedMatch = ordinal ? listingChatMatches[ordinal[1]] : null
+        if (!selectedMatch) {
+          const mentioned = listingChatMatches.filter((match) => {
+            const title = String(match?.title || '').toLowerCase()
+            const brand = String(match?.brand || '').toLowerCase()
+            return (title.length > 3 && normalizedContent.includes(title)) || (brand.length > 3 && normalizedContent.includes(brand))
+          })
+          if (mentioned.length === 1) selectedMatch = mentioned[0]
+        }
+        if (!selectedMatch && listingChatMatches.length === 1 && /\b(yes|it|this one|that one|like it)\b/.test(normalizedContent)) selectedMatch = listingChatMatches[0]
+        if (!selectedMatch) {
+          setListingAssistantMessages((current) => [...current, { role: 'assistant', content: 'Which matched item do you like? You can say “the first one,” “the second one,” or type the item title.' }].slice(-12))
+          return
+        }
+        const selectedId = String(selectedMatch.id || selectedMatch.listing_id || '')
+        if (!likedListingIds.includes(selectedId)) {
+          const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
+          await likeListingRemote({ apiBaseUrl, apiKey: clerkEnabled ? '' : apiKey.trim(), bearerToken, listingId: selectedId })
+          setLikedListingIds((current) => current.includes(selectedId) ? current : [...current, selectedId])
+        }
+        setListingChatTradeTarget(selectedMatch)
+        const shippingCharge = estimatedSenderShippingChargeForListings([listingChatListing])?.display || 'the carrier-calculated shipping fee'
+        setListingAssistantMessages((current) => [...current, { role: 'assistant', content: `I’ve saved “${selectedMatch.title || 'that item'}” to your liked listings. Would you like to offer “${listingChatListing?.title || 'your new listing'}” in trade? If the trade is accepted, you will be charged ${shippingCharge} to ship your item. Say “send the trade offer” to continue.` }].slice(-12))
+        return
+      }
+      const { client, authContext } = createWebApiClient({ apiBaseUrl, apiKey })
+      const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : ''
+      const result = await client.chatWithListingAssistant({
+        conversation_id: listingAssistantConversationId,
+        messages: listingAssistantConversationId ? [userMessage] : nextMessages,
+        context: {
+          step: createListingStep,
+          category: category || null,
+          condition: userCondition || null,
+          size: itemSize || null,
+          photo_count: createImageSlots.filter(Boolean).length,
+          identified_photo_roles: (createImageRoleCheck?.images || []).flatMap((image) => [image.role, ...(image.additional_roles || [])]).filter(Boolean),
+          missing_required_photo_roles: createImageRoleCheck?.missing_required || [],
+          workflow_stage: ({ collect: 'collecting', confirm: 'ready_for_review' })[listingChatStage] || listingChatStage,
+          listing_id: listingChatListing?.id || null,
+          brand: listingChatListing?.brand || null,
+          title: listingChatListing?.title || itemTitle || null,
+          description: listingChatListing?.description || itemDescription || null,
+        },
+      }, authContext(bearerToken))
+      setListingAssistantConversationId(result?.conversation_id || listingAssistantConversationId)
+      applyListingAssistantSuggestions(result?.suggestions || {})
+      if (result?.stage === 'ready_for_review' && listingChatStage === 'collect') setListingChatStage('confirm')
+      if (result?.action === 'create_analyze') {
+        await submitCreateListingWithPhotoCheck()
+        return
+      }
+      if (listingChatStage === 'review' && result?.action === 'update' && listingChatListing) {
+        const suggestions = result?.suggestions || {}
+        const next = {
+          ...listingChatListing,
+          category: suggestions.category || listingChatListing.category,
+          condition: suggestions.condition || listingChatListing.condition,
+          size: suggestions.size || listingChatListing.size,
+          brand: suggestions.brand || listingChatListing.brand,
+          title: suggestions.title || listingChatListing.title,
+          description: suggestions.description || listingChatListing.description,
+        }
+        const updated = await updateListingRemote({
+          apiBaseUrl,
+          apiKey: clerkEnabled ? '' : apiKey.trim(),
+          bearerToken,
+          listingId: listingChatListing.id,
+          payload: toRemoteListingPayload(next),
+        })
+        const normalized = fromRemoteListing(updated)
+        setListingChatListing(normalized)
+        setMyListings((current) => current.map((item) => item.id === normalized.id ? normalized : item))
+      }
+      if (listingChatStage === 'review' && result?.action === 'publish') {
+        await publishChatListing()
+        return
+      }
+      setListingAssistantMessages((current) => [...current, {
+        role: 'assistant',
+        content: result?.reply || 'I could not prepare a response.',
+        suggestions: result?.suggestions || {},
+        missing_fields: result?.missing_fields || [],
+        quick_replies: result?.quick_replies || [],
+      }].slice(-12))
+    } catch (err) {
+      setListingAssistantError(err?.message ? `I understood your request, but could not save it: ${err.message}` : 'I could not respond right now. Please try again in a moment.')
+    } finally {
+      setListingAssistantBusy(false)
+    }
+  }
+
+  function applyListingAssistantSuggestions(suggestions = {}) {
+    if (suggestions.category) {
+      setCategory(suggestions.category)
+      if (itemSize && !sizeOptionsForCategory(suggestions.category).includes(itemSize)) setItemSize('')
+    }
+    if (suggestions.condition) setUserCondition(suggestions.condition)
+    if (suggestions.size) setItemSize(suggestions.size)
+  }
+
+  function chooseListingAssistantCondition(value) {
+    const label = value === 'NewWithTags' ? 'New with tags' : value === 'LikeNew' ? 'Like new' : 'New'
+    void sendListingAssistantMessage(label, 'quick_reply')
+  }
+
+  function chooseListingAssistantSize(value) {
+    void sendListingAssistantMessage(value, 'quick_reply')
+  }
+
+  async function reviewChatListing() {
+    if (!listingAssistantConversationId) {
+      try {
+        const { client, authContext } = createWebApiClient({ apiBaseUrl, apiKey })
+        const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : ''
+        const result = await client.chatWithListingAssistant({
+          conversation_id: null,
+          messages: [{ role: 'user', content: 'I am ready to review this listing.' }],
+          context: { step: 2, category: category || null, condition: userCondition || null, size: itemSize || null, photo_count: createImageSlots.filter(Boolean).length, identified_photo_roles: (createImageRoleCheck?.images || []).flatMap((image) => [image.role, ...(image.additional_roles || [])]).filter(Boolean), missing_required_photo_roles: createImageRoleCheck?.missing_required || [] },
+        }, authContext(bearerToken))
+        setListingAssistantConversationId(result?.conversation_id || null)
+      } catch {
+        // Review remains available if the assistant service is temporarily unavailable.
+      }
+    }
+    setListingChatStage('confirm')
+    setListingAssistantMessages((current) => [...current, {
+      role: 'assistant',
+      content: 'Everything looks ready! Please review the summary below. If it looks right, I’ll create your draft and begin the analysis, which can take up to two minutes.',
+    }].slice(-12))
+  }
+
+  async function publishChatListing() {
+    if (!listingChatListing) return
+    setCreateListingBusy(true)
+    setListingAssistantError('')
+    try {
+      const next = { ...listingChatListing, status: 'Active', tags: [listingChatListing.condition || 'LikeNew', listingChatListing.brand || 'unknown', 'trade'].filter(Boolean) }
+      const updated = await updateListingRemote({
+        apiBaseUrl,
+        apiKey: clerkEnabled ? '' : apiKey.trim(),
+        bearerToken: clerkEnabled && getBearerToken ? await getBearerToken() : null,
+        listingId: listingChatListing.id,
+        payload: toRemoteListingPayload(next),
+      })
+      const normalized = fromRemoteListing(updated)
+      setListingChatListing(normalized)
+      setListingChatStage('published')
+      if (listingAssistantConversationId) {
+        const { client, authContext } = createWebApiClient({ apiBaseUrl, apiKey })
+        const token = clerkEnabled && getBearerToken ? await getBearerToken() : ''
+        await client.updateListingAssistantConversation(listingAssistantConversationId, {
+          stage: 'published', listing_id: normalized.id,
+          context: { listing_id: normalized.id, category: normalized.category, condition: normalized.condition, size: normalized.size, brand: normalized.brand, title: normalized.title, description: normalized.description },
+          messages: [{ role: 'assistant', interaction_type: 'workflow', content: 'Your listing is live! I’m checking the marketplace for potential matches now.', metadata: { event: 'listing_published' } }],
+        }, authContext(token))
+      }
+      setListingAssistantMessages((current) => [...current, { role: 'assistant', content: 'Your listing is live! I’m checking the marketplace for potential matches now.' }].slice(-12))
+      const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
+      let market = await fetchMarketplaceListings({ apiBaseUrl, apiKey: clerkEnabled ? '' : apiKey.trim(), bearerToken, limit: 100, offset: 0 })
+      const marketRecords = [...market.items]
+      while (market.hasMore && market.nextOffset != null && marketRecords.length < 1000) {
+        market = await fetchMarketplaceListings({ apiBaseUrl, apiKey: clerkEnabled ? '' : apiKey.trim(), bearerToken, limit: 100, offset: market.nextOffset })
+        marketRecords.push(...market.items)
+      }
+      const marketItems = marketRecords.map(fromRemoteListing).filter(Boolean)
+      setMarketListings(marketItems)
+      setMarketListingsHasMore(market.hasMore)
+      setMarketListingsNextOffset(market.nextOffset || 0)
+      const publishedListing = marketItems.find((item) => item.id === normalized.id)
+      const chatMatches = getMarketplaceMatchesForClosetListing(publishedListing || normalized, marketItems)
+      setListingChatMatches(chatMatches)
+      setListingAssistantMessages((current) => [...current, { role: 'assistant', content: chatMatches.length
+        ? `I found ${chatMatches.length} potential ${chatMatches.length === 1 ? 'match' : 'matches'}. Do you like any of them? You can refer to an item by number or title.`
+        : 'I did not find a close match yet. Your listing is live, and I’ll keep checking as marketplace inventory changes.' }].slice(-12))
+      setMyListings((current) => current.map((item) => item.id === normalized.id ? normalized : item))
+    } catch (err) {
+      setListingAssistantError(err.message || 'I could not publish the listing. Please try again.')
+    } finally {
+      setCreateListingBusy(false)
+    }
   }
 
   async function createListingAndRunAsyncAnalysis() {
@@ -5385,6 +5721,21 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
       const normalized = fromRemoteListing(created)
       trackExperience('listing_created', { screen: 'create_listing', entityType: 'listing', entityId: normalized.id, properties: { category, image_count: uploadedImageUrls.length } })
       setMyListings((prev) => [normalized, ...prev])
+      if (createListingMode === 'chat') {
+        setListingChatListing(normalized)
+        setListingChatStage('analyzing')
+        if (listingAssistantConversationId) {
+          const { client, authContext } = createWebApiClient({ apiBaseUrl, apiKey })
+          await client.updateListingAssistantConversation(listingAssistantConversationId, {
+            stage: 'analyzing', listing_id: normalized.id,
+            context: { category, condition: draftCondition, size: itemSize || null, title: normalized.title, listing_id: normalized.id },
+            messages: [{ role: 'assistant', interaction_type: 'workflow', content: 'Your draft is saved! I’m now identifying the item, reviewing its condition, researching its market value, and preparing the listing. This can take up to two minutes.', metadata: { event: 'analysis_started', summary: { category, condition: draftCondition, size: itemSize || null, title: normalized.title } } }],
+          }, authContext(bearerToken || ''))
+        }
+        setListingAssistantMessages((current) => [...current, { role: 'assistant', content: 'Your draft is saved! I’m now identifying the item, reviewing its condition, researching its market value, and preparing the listing. This can take up to two minutes.' }].slice(-12))
+        scheduleListingRefreshes()
+        return normalized
+      }
       setActiveTab('portfolio')
       setAnalysisError('')
       showClosetSuccess('Listing created. AI analysis is running in the background.')
@@ -8162,8 +8513,14 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
               <h3>Create Listing</h3>
               <button className="ghost small" type="button" onClick={() => setShowCreateListingModal(false)} disabled={analysisLoading || createListingBusy || createImageRoleBusy}>Close</button>
             </div>
+            {hasAdminRole && <div className="listing-create-mode" role="group" aria-label="Listing creation method">
+              <button className={createListingMode === 'standard' ? 'is-active' : ''} type="button" onClick={() => { setCreateListingMode('standard'); setCreateListingStep(1) }}>Standard</button>
+              <button className={createListingMode === 'chat' ? 'is-active' : ''} type="button" onClick={() => { setCreateListingMode('chat'); setCreateListingStep(1) }}>Chat</button>
+            </div>}
             <p className="tiny-note listing-modal-note">
-              {createListingStep === 1
+              {createListingMode === 'chat'
+                ? 'Upload photos, then describe the item naturally. The conversation will capture the listing details.'
+                : createListingStep === 1
                 ? 'Step 1 of 2: Upload photos. Gemini will identify the category and photo types.'
                 : 'Step 2 of 2: Confirm the category, condition, and size.'}
             </p>
@@ -8172,7 +8529,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
             {analysisError && <p className="error-text">{analysisError}</p>}
             {savedListingNotice && !analysisLoading && !createListingBusy && <p className="ok-text">{savedListingNotice}</p>}
 
-            <div className="listing-modal-fields">
+            {createListingMode === 'standard' && <div className="listing-modal-fields">
               {createListingStep === 1 && <label>
                 <span>Photos (1-6)</span>
                 <input
@@ -8230,9 +8587,9 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                 </select>
               </label>
               </>}
-            </div>
+            </div>}
 
-            {createListingStep === 1 && <div className="listing-modal-photo-guide">
+            {createListingMode === 'standard' && createListingStep === 1 && <div className="listing-modal-photo-guide">
               <div className="listing-photo-check-head">
                 <p className="listing-modal-label"><strong>Your photos</strong></p>
                 {createImageRoleBusy && <span className="tiny-note">Checking photo types...</span>}
@@ -8313,11 +8670,126 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
               </div>
             </div>}
 
+            {hasAdminRole && createListingMode === 'chat' && <section className="listing-assistant is-open listing-chat-create">
+                <div className="listing-chat-header">
+                  <span className="listing-chat-avatar" aria-hidden="true">J</span>
+                  <div><strong>Jouft Listing Assistant</strong><small>Ready to create your listing</small></div>
+                </div>
+                <div className="listing-chat-photos">
+                  <div className="listing-chat-turn assistant">
+                    <span className="listing-chat-avatar" aria-hidden="true">J</span>
+                    <div className="listing-chat-bubble">
+                      <p>Hi! Let’s create your listing together. Start by sharing a few clear photos, and I’ll guide you through the rest.</p>
+                      <div className="listing-chat-photo-action">
+                        <span>{createImageSlots.filter(Boolean).length}/6 photos added</span>
+                        <label className="ghost small listing-chat-upload">
+                          <span>{createImageSlots.filter(Boolean).length ? 'Add more photos' : 'Choose photos'}</span>
+                          <input type="file" accept="image/*" multiple onChange={(event) => { handleCreatePhotoFiles(event.target.files); event.target.value = '' }} />
+                        </label>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="listing-chat-thumb-row user-photos">
+                    {createSlotPreviewUrls.filter(Boolean).map((url, index) => (
+                      <div className="listing-chat-thumb" key={`${url}-${index}`}>
+                        <img src={url} alt={`Item photo ${index + 1}`} />
+                        {createImageRoleCheck?.images?.[index]?.role && <span>{[createImageRoleCheck.images[index].role, ...(createImageRoleCheck.images[index].additional_roles || [])].map((role) => IMAGE_ROLE_LABELS[role] || 'Other view').join(' + ')}</span>}
+                        <button type="button" aria-label={`Remove photo ${index + 1}`} onClick={() => setCreateImageSlots((current) => current.filter(Boolean).filter((_, photoIndex) => photoIndex !== index))}>×</button>
+                      </div>
+                    ))}
+                  </div>
+                  {createImageRoleBusy && <div className="listing-chat-turn assistant"><span className="listing-chat-avatar" aria-hidden="true">J</span><p className="listing-chat-bubble listing-assistant-thinking">I’m reviewing the photos and identifying each view...</p></div>}
+                  {createImageRoleCheck?.missing_required?.length > 0 && (
+                    <div className="listing-chat-turn assistant" role="status">
+                      <span className="listing-chat-avatar" aria-hidden="true">J</span>
+                      <div className="listing-chat-guidance">
+                        <strong>These photos are a great start. Could you add {createImageRoleCheck.missing_required.length === 1 ? 'one more view' : 'a few more views'}?</strong>
+                        {createImageRoleCheck.missing_required.map((role) => <p key={role}>{imageRoleGuidance(role)}</p>)}
+                      </div>
+                    </div>
+                  )}
+                </div>
+                {listingChatPhotoGateOpen && <div className="listing-assistant-body">
+                  <div ref={listingAssistantMessagesRef} className="listing-assistant-messages" aria-live="polite">
+                    {listingAssistantMessages.length === 0 && (
+                      <div className="listing-chat-turn assistant">
+                        <span className="listing-chat-avatar" aria-hidden="true">J</span>
+                        <div className="listing-chat-bubble">
+                          <p>Thanks for the photos! How would you describe the item’s condition?</p>
+                          <div className="listing-chat-quick-replies">
+                            <button type="button" onClick={() => chooseListingAssistantCondition('NewWithTags')}>New with tags</button>
+                            <button type="button" onClick={() => chooseListingAssistantCondition('New')}>New</button>
+                            <button type="button" onClick={() => chooseListingAssistantCondition('LikeNew')}>Like new</button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                    {listingAssistantMessages.map((message, index) => {
+                      const showSizeChoices = message.role === 'assistant'
+                        && index === listingAssistantMessages.length - 1
+                        && !itemSize
+                        && Array.isArray(message.missing_fields)
+                        && message.missing_fields.includes('size')
+                      return (
+                        <Fragment key={`${message.role}-${index}`}>
+                          <div className={`listing-chat-turn ${message.role}${message.interaction_type === 'quick_reply' ? ' quick-reply-selection' : ''}`}>
+                            {message.role === 'assistant' && <span className="listing-chat-avatar" aria-hidden="true">J</span>}
+                            <div className={`listing-assistant-message ${message.role}`}>
+                              <p>{message.content}</p>
+                              {message.role === 'user' && message.interaction_type === 'quick_reply' && <small className="listing-chat-selected-label">Selected</small>}
+                              {showSizeChoices && <div className="listing-chat-quick-replies">{sizeOptionsForCategory(category).map((size) => <button key={size} type="button" onClick={() => chooseListingAssistantSize(size)}>{size}</button>)}</div>}
+                            </div>
+                          </div>
+                          {message.role === 'assistant' && /review (?:the summary|everything)/i.test(message.content) && <div className="listing-chat-turn assistant"><span className="listing-chat-avatar" aria-hidden="true">J</span><div className="listing-chat-captured"><strong>Here’s what I have so far</strong><span>Category: {category ? category.charAt(0).toUpperCase() + category.slice(1) : 'I still need this'}</span><span>Condition: {displayConditionLabel(userCondition) || 'I still need this'}</span><span>Size: {itemSize || 'I still need this'}</span></div></div>}
+                          {message.role === 'assistant' && message.content.startsWith('Your analysis is ready') && listingChatListing && <div className="listing-chat-result">{getListingGallery(listingChatListing)[0] && <img src={getListingGallery(listingChatListing)[0]} alt={listingChatListing.title || 'Analyzed item'} />}<div><small>{listingChatListing.brand || 'Unknown brand'}</small><strong>{listingChatListing.title || 'Listing draft'}</strong><span>{listingChatListing.category || category} · {listingChatListing.size || itemSize || 'Size not provided'} · {displayConditionLabel(listingChatListing.condition || userCondition)}</span>{Number(listingChatListing.estimatedValue || 0) > 0 && <span>Estimated trade value: {money(listingChatListing.estimatedValue)}</span>}{listingChatListing.description && <p>{listingChatListing.description}</p>}</div></div>}
+                          {message.role === 'assistant' && /^(I found|I did not find)/.test(message.content) && listingChatStage === 'published' && <div className="listing-chat-workflow-card"><strong>{listingChatMatches.length ? `${listingChatMatches.length} potential ${listingChatMatches.length === 1 ? 'match' : 'matches'} found` : 'Your listing is live'}</strong><p>{listingChatMatches.length ? 'Tell me which item you like by number or title.' : 'No close matches are available yet. We’ll keep matching it as marketplace inventory changes.'}</p>{listingChatMatches.length > 0 && <div className="listing-chat-match-grid">{listingChatMatches.slice(0, 3).map((match, matchIndex) => <article key={match.id || match.listing_id}>{getListingGallery(match)[0] && <img src={getListingGallery(match)[0]} alt={match.title || 'Matched item'} />}<div><small>Match {matchIndex + 1} · {match.brand || 'Unknown brand'}</small><strong>{match.title || 'Matched listing'}</strong><span>{match.size || 'Size not provided'} · {displayConditionLabel(match.condition)}</span></div></article>)}</div>}<button className="primary small" type="button" onClick={() => { setShowCreateListingModal(false); setActiveTab('portfolio') }}>View in My Closet</button></div>}
+                        </Fragment>
+                      )
+                    })}
+                    {listingAssistantBusy && <div className="listing-chat-turn assistant"><span className="listing-chat-avatar" aria-hidden="true">J</span><p className="listing-assistant-thinking">Thinking...</p></div>}
+                  </div>
+                  {listingChatStage === 'confirm' && (
+                    <div className="listing-chat-workflow-card">
+                      <strong>Ready to create and analyze</strong>
+                      <p>Tell me what you’d like to change, or say “go ahead” to create the private draft and begin analysis.</p>
+                    </div>
+                  )}
+                  {listingChatStage === 'analyzing' && (
+                    <div className="listing-chat-workflow-card analyzing" role="status">
+                      <span className="image-processing-spinner" aria-hidden="true" />
+                      <div><strong>Analyzing your listing</strong><p>Identifying the item, evaluating condition, researching value, and preparing the draft. This may take up to two minutes.</p></div>
+                    </div>
+                  )}
+                  {listingAssistantError && <p className="error-text listing-chat-error">{listingAssistantError}</p>}
+                  {['collect', 'confirm', 'review', 'published'].includes(listingChatStage) && (
+                    <div className="listing-assistant-compose">
+                      <textarea
+                        rows={2}
+                        maxLength={2000}
+                        value={listingAssistantInput}
+                        onChange={(event) => setListingAssistantInput(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter' && !event.shiftKey) {
+                            event.preventDefault()
+                            sendListingAssistantMessage()
+                          }
+                        }}
+                        placeholder={listingChatStage === 'published' ? (listingChatTradeTarget ? 'Say “send the trade offer” or “not now”' : 'Tell me which matched item you like') : listingChatStage === 'review' ? 'Describe a change or say “publish it”' : 'Reply to the assistant'}
+                        disabled={listingAssistantBusy}
+                      />
+                      <button className="primary small" type="button" onClick={() => sendListingAssistantMessage()} disabled={listingAssistantBusy || !listingAssistantInput.trim()}>
+                        Send
+                      </button>
+                    </div>
+                  )}
+                </div>}
+            </section>}
+
             <div className="button-row listing-modal-actions">
-              <button className="ghost" type="button" onClick={() => createListingStep === 1 ? setShowCreateListingModal(false) : setCreateListingStep(1)} disabled={analysisLoading || createListingBusy}>
-                {createListingStep === 1 ? 'Cancel' : 'Back'}
+              <button className="ghost" type="button" onClick={() => createListingMode === 'chat' || createListingStep === 1 ? setShowCreateListingModal(false) : setCreateListingStep(1)} disabled={analysisLoading || createListingBusy}>
+                {createListingMode === 'chat' || createListingStep === 1 ? 'Cancel' : 'Back'}
               </button>
-              {createListingStep === 1 ? <button
+              {createListingMode === 'chat' ? null : createListingStep === 1 ? <button
                 className="primary"
                 type="button"
                 disabled={createImageRoleBusy || createImageSlots.filter(Boolean).length === 0}
