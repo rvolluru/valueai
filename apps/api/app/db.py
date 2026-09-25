@@ -10,6 +10,16 @@ from pathlib import PurePosixPath
 from urllib.parse import urlparse
 
 
+VALID_LISTING_CONDITIONS = frozenset({"NewWithTags", "New", "LikeNew"})
+
+
+def validate_listing_condition(value: object) -> str:
+    condition = str(value or "").strip()
+    if condition not in VALID_LISTING_CONDITIONS:
+        raise ValueError("condition must be NewWithTags, New, or LikeNew")
+    return condition
+
+
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -489,6 +499,60 @@ class Database:
             )
             """,
             """
+            CREATE TABLE IF NOT EXISTS payment_authorizations (
+              authorization_id TEXT PRIMARY KEY, owner_subject TEXT NOT NULL, purpose TEXT NOT NULL,
+              amount INTEGER NOT NULL, currency TEXT NOT NULL, description TEXT NOT NULL,
+              terms_version TEXT NOT NULL, authorization_text TEXT NOT NULL, consent_confirmed INTEGER NOT NULL,
+              ip_address TEXT, user_agent TEXT, platform TEXT, payment_method_id TEXT,
+              created_at TEXT NOT NULL
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS payment_transactions (
+              transaction_id TEXT PRIMARY KEY, owner_subject TEXT NOT NULL, purpose TEXT NOT NULL,
+              amount INTEGER NOT NULL, currency TEXT NOT NULL, status TEXT NOT NULL,
+              authorization_id TEXT, stripe_customer_id TEXT, stripe_subscription_id TEXT,
+              stripe_invoice_id TEXT, stripe_payment_intent_id TEXT, stripe_charge_id TEXT,
+              receipt_url TEXT, description TEXT, metadata_json TEXT NOT NULL DEFAULT '{}',
+              created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS stripe_webhook_events (
+              event_id TEXT PRIMARY KEY, event_type TEXT NOT NULL, payload_json TEXT NOT NULL, received_at TEXT NOT NULL
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS payment_disputes (
+              dispute_id TEXT PRIMARY KEY, transaction_id TEXT, owner_subject TEXT,
+              stripe_charge_id TEXT, stripe_payment_intent_id TEXT, amount INTEGER, currency TEXT,
+              reason TEXT, status TEXT, evidence_due_by TEXT, evidence_json TEXT NOT NULL DEFAULT '{}',
+              raw_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS terms_acceptances (
+              acceptance_id TEXT PRIMARY KEY, owner_subject TEXT NOT NULL, terms_version TEXT NOT NULL,
+              context TEXT NOT NULL, acceptance_text TEXT NOT NULL, ip_address TEXT, user_agent TEXT,
+              platform TEXT, created_at TEXT NOT NULL
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS compliance_requests (
+              request_id TEXT PRIMARY KEY, owner_subject TEXT NOT NULL, request_type TEXT NOT NULL,
+              status TEXT NOT NULL DEFAULT 'submitted', details TEXT NOT NULL DEFAULT '',
+              resolution TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS trade_cases (
+              case_id TEXT PRIMARY KEY, offer_id TEXT NOT NULL, owner_subject TEXT NOT NULL,
+              case_type TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'submitted', description TEXT NOT NULL,
+              evidence_json TEXT NOT NULL DEFAULT '[]', resolution TEXT NOT NULL DEFAULT '',
+              created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+            )
+            """,
+            """
             CREATE TABLE IF NOT EXISTS listing_conversations (
               conversation_id TEXT PRIMARY KEY,
               owner_subject TEXT NOT NULL,
@@ -582,6 +646,14 @@ class Database:
                 if self._pg is not None:
                     self._pg.rollback()
                 pass
+        # Older seed/import paths allowed resale condition labels that are not
+        # valid listing conditions. Keep persisted listings within the public
+        # API contract so one legacy record cannot invalidate an entire feed.
+        self.execute(
+            f"UPDATE listings SET condition = {self.param} "
+            f"WHERE condition NOT IN ({self.param}, {self.param}, {self.param})",
+            ("LikeNew", "NewWithTags", "New", "LikeNew"),
+        )
         self.commit()
 
     @staticmethod
@@ -1230,6 +1302,18 @@ class Database:
         finally:
             cur.close()
 
+    def _fetch_dicts(self, sql: str, params: tuple = ()) -> list[dict]:
+        if self._sqlite_conn is not None:
+            with self._sqlite_lock:
+                return [dict(row) for row in self._sqlite_conn.execute(sql, params).fetchall()]
+        cur = self._pg_cursor()
+        try:
+            cur.execute(sql, params)
+            columns = [item.name for item in cur.description]
+            return [dict(zip(columns, row)) for row in cur.fetchall()]
+        finally:
+            cur.close()
+
     def commit(self) -> None:
         if self._sqlite_conn is not None:
             with self._sqlite_lock:
@@ -1461,6 +1545,162 @@ class Database:
         )
         self.commit()
         return {"event_id": event_id, "occurred_at": occurred_at}
+
+    def create_payment_authorization(self, **values) -> dict:
+        now = utc_now_iso()
+        keys = ("authorization_id", "owner_subject", "purpose", "amount", "currency", "description", "terms_version", "authorization_text", "consent_confirmed", "ip_address", "user_agent", "platform", "payment_method_id")
+        params = tuple(values.get(key) for key in keys)
+        self.execute(
+            f"INSERT INTO payment_authorizations ({', '.join(keys)}, created_at) VALUES ({', '.join([self.param] * (len(keys) + 1))})",
+            (*params, now),
+        )
+        self.commit()
+        return {**{key: values.get(key) for key in keys}, "created_at": now}
+
+    def upsert_payment_transaction(self, **values) -> dict:
+        now = utc_now_iso()
+        keys = ("transaction_id", "owner_subject", "purpose", "amount", "currency", "status", "authorization_id", "stripe_customer_id", "stripe_subscription_id", "stripe_invoice_id", "stripe_payment_intent_id", "stripe_charge_id", "receipt_url", "description", "metadata_json")
+        payload = {**values, "metadata_json": json.dumps(values.get("metadata") or {}, separators=(",", ":"))}
+        assignments = ", ".join(f"{key}=excluded.{key}" for key in keys[1:])
+        self.execute(
+            f"INSERT INTO payment_transactions ({', '.join(keys)}, created_at, updated_at) VALUES ({', '.join([self.param] * (len(keys) + 2))}) ON CONFLICT(transaction_id) DO UPDATE SET {assignments}, updated_at=excluded.updated_at",
+            (*(payload.get(key) for key in keys), now, now),
+        )
+        self.commit()
+        return {**values, "created_at": now, "updated_at": now}
+
+    def record_stripe_webhook_event(self, event_id: str, event_type: str, payload: dict) -> bool:
+        try:
+            self.execute(
+                f"INSERT INTO stripe_webhook_events (event_id, event_type, payload_json, received_at) VALUES ({self.param}, {self.param}, {self.param}, {self.param})",
+                (event_id, event_type, json.dumps(payload, separators=(",", ":")), utc_now_iso()),
+            )
+            self.commit()
+            return True
+        except Exception:
+            if self._pg is not None:
+                self._pg.rollback()
+            return False
+
+    def get_payment_transaction_by_stripe_reference(self, *references: str | None) -> dict | None:
+        refs = [str(value).strip() for value in references if str(value or "").strip()]
+        if not refs:
+            return None
+        for ref in refs:
+            query = f"SELECT * FROM payment_transactions WHERE stripe_charge_id = {self.param} OR stripe_payment_intent_id = {self.param} OR stripe_invoice_id = {self.param} OR stripe_subscription_id = {self.param} LIMIT 1"
+            if self._sqlite_conn is not None:
+                row = self._sqlite_conn.execute(query, (ref, ref, ref, ref)).fetchone()
+            else:
+                cur = self._pg_cursor(); cur.execute(query, (ref, ref, ref, ref)); row = cur.fetchone(); columns = [item.name for item in cur.description]; cur.close()
+                if row:
+                    return dict(zip(columns, row))
+            if row:
+                return dict(row)
+        return None
+
+    def upsert_payment_dispute(self, **values) -> None:
+        now = utc_now_iso()
+        keys = ("dispute_id", "transaction_id", "owner_subject", "stripe_charge_id", "stripe_payment_intent_id", "amount", "currency", "reason", "status", "evidence_due_by", "evidence_json", "raw_json")
+        payload = {**values, "evidence_json": json.dumps(values.get("evidence") or {}, separators=(",", ":")), "raw_json": json.dumps(values.get("raw") or {}, separators=(",", ":"))}
+        assignments = ", ".join(f"{key}=excluded.{key}" for key in keys[1:])
+        self.execute(
+            f"INSERT INTO payment_disputes ({', '.join(keys)}, created_at, updated_at) VALUES ({', '.join([self.param] * (len(keys) + 2))}) ON CONFLICT(dispute_id) DO UPDATE SET {assignments}, updated_at=excluded.updated_at",
+            (*(payload.get(key) for key in keys), now, now),
+        )
+        self.commit()
+
+    def get_payment_authorization(self, authorization_id: str) -> dict | None:
+        query = f"SELECT * FROM payment_authorizations WHERE authorization_id = {self.param} LIMIT 1"
+        if self._sqlite_conn is not None:
+            row = self._sqlite_conn.execute(query, (authorization_id,)).fetchone()
+        else:
+            cur = self._pg_cursor(); cur.execute(query, (authorization_id,)); row = cur.fetchone(); columns = [item.name for item in cur.description]; cur.close()
+            return dict(zip(columns, row)) if row else None
+        return dict(row) if row else None
+
+    def get_payment_dispute(self, dispute_id: str) -> dict | None:
+        query = f"SELECT * FROM payment_disputes WHERE dispute_id = {self.param} LIMIT 1"
+        if self._sqlite_conn is not None:
+            row = self._sqlite_conn.execute(query, (dispute_id,)).fetchone()
+        else:
+            cur = self._pg_cursor(); cur.execute(query, (dispute_id,)); row = cur.fetchone(); columns = [item.name for item in cur.description]; cur.close()
+            return dict(zip(columns, row)) if row else None
+        return dict(row) if row else None
+
+    def get_payment_transaction(self, transaction_id: str) -> dict | None:
+        query = f"SELECT * FROM payment_transactions WHERE transaction_id = {self.param} LIMIT 1"
+        if self._sqlite_conn is not None:
+            row = self._sqlite_conn.execute(query, (transaction_id,)).fetchone()
+        else:
+            cur = self._pg_cursor(); cur.execute(query, (transaction_id,)); row = cur.fetchone(); columns = [item.name for item in cur.description]; cur.close()
+            return dict(zip(columns, row)) if row else None
+        return dict(row) if row else None
+
+    def create_terms_acceptance(self, **values) -> dict:
+        now = utc_now_iso()
+        keys = ("acceptance_id", "owner_subject", "terms_version", "context", "acceptance_text", "ip_address", "user_agent", "platform")
+        self.execute(
+            f"INSERT INTO terms_acceptances ({', '.join(keys)}, created_at) VALUES ({', '.join([self.param] * (len(keys) + 1))})",
+            (*(values.get(key) for key in keys), now),
+        )
+        self.commit()
+        return {**{key: values.get(key) for key in keys}, "created_at": now}
+
+    def list_terms_acceptances(self, owner_subject: str, limit: int = 50) -> list[dict]:
+        safe_limit = max(1, min(int(limit or 50), 100))
+        return self._fetch_dicts(
+            f"SELECT acceptance_id, owner_subject, terms_version, context, acceptance_text, platform, created_at "
+            f"FROM terms_acceptances WHERE owner_subject = {self.param} ORDER BY created_at DESC LIMIT {safe_limit}",
+            (owner_subject,),
+        )
+
+    def create_compliance_request(self, **values) -> dict:
+        now = utc_now_iso()
+        keys = ("request_id", "owner_subject", "request_type", "status", "details", "resolution")
+        self.execute(
+            f"INSERT INTO compliance_requests ({', '.join(keys)}, created_at, updated_at) VALUES ({', '.join([self.param] * (len(keys) + 2))})",
+            (*(values.get(key) for key in keys), now, now),
+        )
+        self.commit()
+        return {**{key: values.get(key) for key in keys}, "created_at": now, "updated_at": now}
+
+    def list_compliance_requests(self, owner_subject: str, limit: int = 50) -> list[dict]:
+        safe_limit = max(1, min(int(limit or 50), 100))
+        return self._fetch_dicts(
+            f"SELECT request_id, owner_subject, request_type, status, details, resolution, created_at, updated_at "
+            f"FROM compliance_requests WHERE owner_subject = {self.param} ORDER BY created_at DESC LIMIT {safe_limit}",
+            (owner_subject,),
+        )
+
+    def create_trade_case(self, **values) -> dict:
+        now = utc_now_iso()
+        keys = ("case_id", "offer_id", "owner_subject", "case_type", "status", "description", "evidence_json", "resolution")
+        payload = {**values, "evidence_json": json.dumps(values.get("evidence") or [], separators=(",", ":"))}
+        self.execute(
+            f"INSERT INTO trade_cases ({', '.join(keys)}, created_at, updated_at) VALUES ({', '.join([self.param] * (len(keys) + 2))})",
+            (*(payload.get(key) for key in keys), now, now),
+        )
+        self.commit()
+        return {**values, "created_at": now, "updated_at": now}
+
+    def list_trade_cases(self, owner_subject: str, offer_id: str | None = None, limit: int = 50) -> list[dict]:
+        safe_limit = max(1, min(int(limit or 50), 100))
+        where = f"owner_subject = {self.param}"
+        params: tuple = (owner_subject,)
+        if offer_id:
+            where += f" AND offer_id = {self.param}"
+            params = (owner_subject, offer_id)
+        rows = self._fetch_dicts(
+            f"SELECT case_id, offer_id, owner_subject, case_type, status, description, evidence_json, resolution, created_at, updated_at "
+            f"FROM trade_cases WHERE {where} ORDER BY created_at DESC LIMIT {safe_limit}",
+            params,
+        )
+        for row in rows:
+            try:
+                row["evidence"] = json.loads(row.pop("evidence_json") or "[]")
+            except Exception:
+                row["evidence"] = []
+        return rows
 
     def list_experience_events(self, *, since: str, limit: int = 10000) -> list[dict]:
         keys = [
@@ -1897,6 +2137,7 @@ class Database:
         analysis: dict | None,
         status: str,
     ) -> str:
+        condition = validate_listing_condition(condition)
         created_at = utc_now_iso()
         updated_at = created_at
         image, images = self._canonical_listing_images(
@@ -2002,6 +2243,7 @@ class Database:
         analysis: dict | None,
         status: str,
     ) -> bool:
+        condition = validate_listing_condition(condition)
         updated_at = utc_now_iso()
         image, images = self._canonical_listing_images(
             image=image,

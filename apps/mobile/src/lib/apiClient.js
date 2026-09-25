@@ -59,6 +59,16 @@ export function createMobileApiClient({ apiBaseUrl }) {
         body: JSON.stringify({ conversation_id, messages, context }),
       });
     },
+    chatWithAppAssistant({ messages = [], context = {} }, auth = {}) {
+      return requestJson({
+        apiBaseUrl,
+        path: '/v1/app-assistant/chat',
+        method: 'POST',
+        auth,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messages, context }),
+      });
+    },
     getActiveListingAssistantConversation(auth = {}) {
       return requestJson({ apiBaseUrl, path: '/v1/listing-assistant/conversations/active', method: 'GET', auth });
     },
@@ -516,6 +526,39 @@ export function createMobileApiClient({ apiBaseUrl }) {
       return requestJson({
         apiBaseUrl,
         path: '/v1/me/subscription/activate',
+        method: 'POST',
+        auth,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload || {}),
+      });
+    },
+    cancelSubscription(auth = {}) {
+      return requestJson({
+        apiBaseUrl,
+        path: '/v1/me/subscription/cancel',
+        method: 'POST',
+        auth,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cancel_at_period_end: true }),
+      });
+    },
+    subscriptionAcknowledgments(auth = {}) {
+      return requestJson({ apiBaseUrl, path: '/v1/me/subscription/acknowledgments', method: 'GET', auth });
+    },
+    createComplianceRequest(payload, auth = {}) {
+      return requestJson({
+        apiBaseUrl,
+        path: '/v1/me/compliance-requests',
+        method: 'POST',
+        auth,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload || {}),
+      });
+    },
+    createTradeCase(offerId, payload, auth = {}) {
+      return requestJson({
+        apiBaseUrl,
+        path: `/v1/offers/${encodeURIComponent(offerId)}/cases`,
         method: 'POST',
         auth,
         headers: { 'Content-Type': 'application/json' },

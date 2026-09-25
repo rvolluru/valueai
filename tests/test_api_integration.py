@@ -72,6 +72,184 @@ def test_health_endpoint_remains_public_and_lightweight():
     assert res.json() == {"status": "ok"}
 
 
+def test_terms_acceptance_and_privacy_requests_are_auditable():
+    client = _build_client()
+    headers = {"x-api-key": "test-key"}
+
+    current = client.get("/v1/terms/current")
+    assert current.status_code == 200
+    assert current.json()["version"] == "2026-09-22"
+
+    stale = client.post(
+        "/v1/me/terms-acceptances",
+        headers=headers,
+        json={"terms_version": "old", "context": "account", "acceptance_text": "I agree", "platform": "web"},
+    )
+    assert stale.status_code == 409
+
+    accepted = client.post(
+        "/v1/me/terms-acceptances",
+        headers=headers,
+        json={
+            "terms_version": "2026-09-22",
+            "context": "account",
+            "acceptance_text": "I agree to JOUFT Terms version 2026-09-22.",
+            "platform": "web",
+        },
+    )
+    assert accepted.status_code == 200, accepted.text
+    history = client.get("/v1/me/terms-acceptances", headers=headers)
+    assert history.status_code == 200
+    assert history.json()["items"][0]["terms_version"] == "2026-09-22"
+
+    privacy = client.post(
+        "/v1/me/compliance-requests",
+        headers=headers,
+        json={"request_type": "access", "details": "Please provide my account data."},
+    )
+    assert privacy.status_code == 200, privacy.text
+    requests = client.get("/v1/me/compliance-requests", headers=headers)
+    assert requests.status_code == 200
+    assert requests.json()["items"][0]["request_type"] == "access"
+    assert requests.json()["items"][0]["status"] == "submitted"
+
+
+def test_trade_cases_are_structured_and_limited_to_trade_participants():
+    client = _build_client()
+    from app import deps
+
+    db = deps.get_db()
+    db.create_trade_offer(
+        offer_id="case-offer",
+        target_listing_id="target",
+        offered_listing_id="offered",
+        offered_listing_ids=["offered"],
+        from_subject="api-key",
+        to_subject="other-member",
+        message="Trade",
+    )
+    created = client.post(
+        "/v1/offers/case-offer/cases",
+        headers={"x-api-key": "test-key"},
+        json={
+            "case_type": "not_as_described",
+            "description": "The received item differs materially from the listing photos.",
+            "evidence": ["https://example.com/evidence.jpg"],
+        },
+    )
+    assert created.status_code == 200, created.text
+    cases = client.get("/v1/offers/case-offer/cases", headers={"x-api-key": "test-key"})
+    assert cases.status_code == 200, cases.text
+    assert cases.json()["items"][0]["case_type"] == "not_as_described"
+    assert cases.json()["items"][0]["evidence"] == ["https://example.com/evidence.jpg"]
+
+
+def test_database_normalizes_legacy_listing_conditions():
+    _build_client()
+    from app import deps
+
+    db = deps.get_db()
+    db.insert_listing(
+        listing_id="legacy-good-condition",
+        owner_subject="marketplace-seller",
+        owner_name="Seller",
+        title="Pre-owned jacket",
+        mode="trade",
+        category="clothes",
+        brand="Example",
+        condition="LikeNew",
+        size="Medium",
+        estimated_value=300,
+        city="New York",
+        image=None,
+        images=[],
+        description="",
+        wants="",
+        tags=[],
+        source_item_id=None,
+        analysis=None,
+        status="Active",
+    )
+    db.execute(
+        f"UPDATE listings SET condition = {db.param} WHERE listing_id = {db.param}",
+        ("Good", "legacy-good-condition"),
+    )
+    db.commit()
+
+    db.initialize()
+
+    assert db.get_listing_by_id("legacy-good-condition")["condition"] == "LikeNew"
+
+
+def test_database_rejects_unsupported_listing_condition():
+    _build_client()
+    from app import deps
+
+    db = deps.get_db()
+    try:
+        db.insert_listing(
+            listing_id="invalid-chat-condition",
+            owner_subject="marketplace-seller",
+            owner_name="Seller",
+            title="Chat-created jacket",
+            mode="trade",
+            category="clothes",
+            brand="Example",
+            condition="Good",
+            size="Medium",
+            estimated_value=300,
+            city="New York",
+            image=None,
+            images=[],
+            description="",
+            wants="",
+            tags=[],
+            source_item_id=None,
+            analysis=None,
+            status="Review",
+        )
+    except ValueError as exc:
+        assert str(exc) == "condition must be NewWithTags, New, or LikeNew"
+    else:
+        raise AssertionError("Unsupported listing condition was persisted")
+
+    assert db.get_listing_by_id("invalid-chat-condition") is None
+
+    valid = {
+        "listing_id": "valid-chat-condition",
+        "owner_subject": "marketplace-seller",
+        "owner_name": "Seller",
+        "title": "Chat-created jacket",
+        "mode": "trade",
+        "category": "clothes",
+        "brand": "Example",
+        "condition": "LikeNew",
+        "size": "Medium",
+        "estimated_value": 300,
+        "city": "New York",
+        "image": None,
+        "images": [],
+        "description": "",
+        "wants": "",
+        "tags": [],
+        "source_item_id": None,
+        "analysis": None,
+        "status": "Review",
+    }
+    db.insert_listing(**valid)
+    valid.pop("owner_name")
+    valid["condition"] = "Fair"
+
+    try:
+        db.update_listing(**valid)
+    except ValueError as exc:
+        assert str(exc) == "condition must be NewWithTags, New, or LikeNew"
+    else:
+        raise AssertionError("Unsupported listing condition update was persisted")
+
+    assert db.get_listing_by_id("valid-chat-condition")["condition"] == "LikeNew"
+
+
 def test_listing_support_request_creates_plain_customer_and_thread(monkeypatch):
     client = _build_client()
     listing_payload = {
@@ -3090,32 +3268,19 @@ def test_image_role_classification_reports_category_coverage(monkeypatch) -> Non
     assert payload["missing_recommended"] == ["full_back", "size_or_material_label", "condition_or_wear"]
 
 
-def test_listing_assistant_returns_structured_optional_suggestions(monkeypatch) -> None:
-    client = _build_client()
-    os.environ["OPENAI_API_KEY"] = "test-openai-key"
+def _mock_listing_assistant_model(monkeypatch):
+    from app import main
 
-    from app import main, settings
-
-    settings.get_settings.cache_clear()
-    captured = {}
+    calls = []
 
     class FakeResponse:
         status_code = 200
 
+        def __init__(self, payload):
+            self.payload = payload
+
         def json(self):
-            return {
-                "output": [{
-                    "content": [{
-                        "type": "output_text",
-                        "text": json.dumps({
-                            "reply": "Add a clear photo of the interior before continuing.",
-                            "suggestions": {"category": "handbag", "condition": None, "size": None},
-                            "missing_fields": ["condition", "size"],
-                            "ready_to_create": False,
-                        }),
-                    }]
-                }]
-            }
+            return {"output": [{"content": [{"type": "output_text", "text": json.dumps(self.payload)}]}]}
 
     class FakeAsyncClient:
         def __init__(self, *args, **kwargs):
@@ -3128,11 +3293,50 @@ def test_listing_assistant_returns_structured_optional_suggestions(monkeypatch) 
             return False
 
         async def post(self, url, **kwargs):
-            captured["url"] = url
-            captured["json"] = kwargs["json"]
-            return FakeResponse()
+            model_input = kwargs["json"]["input"]
+            calls.append(model_input)
+            latest_raw = model_input.rsplit("USER:", 1)[-1].strip()
+            latest = latest_raw.casefold()
+            suggestions = {"category": None, "condition": None, "size": None, "brand": None, "title": None, "description": None}
+            action = "none"
+            if "handbag" in latest:
+                suggestions["category"] = "handbag"
+            if "condition to new with tags" in latest:
+                suggestions["condition"] = "NewWithTags"
+            elif "condition to new" in latest:
+                suggestions["condition"] = "New"
+            if "size to large" in latest:
+                suggestions["size"] = "Large"
+            if "title to " in latest:
+                title_offset = latest.index("title to ") + len("title to ")
+                suggestions["title"] = latest_raw[title_offset:].splitlines()[0].strip()
+            if any(value is not None for value in suggestions.values()):
+                action = "update"
+            if "publish it" in latest:
+                action = "publish"
+            elif latest == "reviewed":
+                action = "create_analyze"
+            reply = "Please add a clear photo of the interior." if latest == "reviewed" else "I understood your request."
+            return FakeResponse({
+                "reply": reply,
+                "suggestions": suggestions,
+                "missing_fields": [],
+                "ready_to_create": False,
+                "action": action,
+            })
 
     monkeypatch.setattr(main.httpx, "AsyncClient", FakeAsyncClient)
+    return calls
+
+
+def test_listing_assistant_returns_structured_optional_suggestions(monkeypatch) -> None:
+    client = _build_client()
+    os.environ["OPENAI_API_KEY"] = "test-openai-key"
+
+    from app import main, settings
+
+    settings.get_settings.cache_clear()
+    model_calls = _mock_listing_assistant_model(monkeypatch)
     response = client.post(
         "/v1/listing-assistant/chat",
         headers={"x-api-key": "test-key"},
@@ -3149,7 +3353,7 @@ def test_listing_assistant_returns_structured_optional_suggestions(monkeypatch) 
     assert response.status_code == 200, response.text
     assert response.json()["suggestions"]["category"] == "handbag"
     assert "interior" in response.json()["reply"].lower()
-    assert captured == {}, "Unambiguous listing updates should not incur an OpenAI request"
+    assert len(model_calls) == 1, "Natural-language listing updates must be interpreted by the model"
 
     condition_response = client.post(
         "/v1/listing-assistant/chat",
@@ -3271,13 +3475,302 @@ def test_listing_assistant_requires_openai_configuration() -> None:
     assert response.status_code == 503
 
 
-def test_listing_assistant_message_ids_preserve_repeated_turns_and_make_retries_idempotent() -> None:
+def test_application_assistant_uses_model_for_natural_language_and_confirms_trade(monkeypatch) -> None:
+    client = _build_client()
+    os.environ["OPENAI_API_KEY"] = "test-openai-key"
+
+    from app import deps, main, settings
+    from app.schemas import OfferResponse
+
+    settings.get_settings.cache_clear()
+    db = deps.get_db()
+    common = {
+        "owner_name": "Member",
+        "mode": "trade",
+        "category": "handbag",
+        "condition": "LikeNew",
+        "size": "Medium",
+        "estimated_value": 500,
+        "city": "New York",
+        "image": None,
+        "images": [],
+        "description": "Test listing",
+        "wants": "",
+        "tags": [],
+        "source_item_id": None,
+        "analysis": None,
+        "status": "Active",
+    }
+    db.insert_listing(listing_id="own-prada", owner_subject="api-key", title="Prada Galleria Bag", brand="Prada", **common)
+    db.insert_listing(listing_id="market-gucci", owner_subject="another-member", title="Gucci Marmont Bag", brand="Gucci", **common)
+    db.insert_listing(listing_id="market-chanel", owner_subject="third-member", title="Chanel Flap Bag", brand="Chanel", **common)
+
+    model_outputs = [
+        {
+            "intent": "show_tradeable_items",
+            "reply": "Show compatible marketplace items.",
+            "listing_reference": None,
+            "target_reference": None,
+            "offered_reference": None,
+            "search_terms": [],
+            "navigation": "marketplace",
+        },
+        {
+            "intent": "show_matches",
+            "reply": "Show matches for the first listing.",
+            "listing_reference": None,
+            "listing_reference_scope": "marketplace",
+            "listing_reference_index": 1,
+            "target_reference": None,
+            "offered_reference": None,
+            "search_terms": [],
+            "navigation": None,
+        },
+        {
+            "intent": "show_matches",
+            "reply": "Show matches for the second listing.",
+            "listing_reference": None,
+            "listing_reference_scope": "marketplace",
+            "listing_reference_index": 2,
+            "target_reference": None,
+            "offered_reference": None,
+            "search_terms": [],
+            "navigation": None,
+        },
+        {
+            "intent": "prepare_trade",
+            "reply": "I can prepare that trade.",
+            "listing_reference": None,
+            "target_reference": "market-gucci",
+            "offered_reference": "own-prada",
+            "search_terms": [],
+            "navigation": None,
+        },
+        {
+            "intent": "confirm_action",
+            "reply": "Yes, send it.",
+            "listing_reference": None,
+            "target_reference": None,
+            "offered_reference": None,
+            "search_terms": [],
+            "navigation": None,
+        },
+    ]
+
+    class FakeResponse:
+        status_code = 200
+
+        def __init__(self, payload):
+            self.payload = payload
+
+        def json(self):
+            return {"output": [{"content": [{"type": "output_text", "text": json.dumps(self.payload)}]}]}
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, url, **kwargs):
+            return FakeResponse(model_outputs.pop(0))
+
+    monkeypatch.setattr(main.httpx, "AsyncClient", FakeAsyncClient)
+    created_offers = []
+
+    def fake_create_offer(payload, **kwargs):
+        created_offers.append(payload.model_dump())
+        return OfferResponse(
+            offer_id="offer-1",
+            target_listing_id="market-gucci",
+            offered_listing_id="own-prada",
+            offered_listing_ids=["own-prada"],
+            from_subject="api-key",
+            to_subject="another-member",
+            status="pending",
+            message="",
+            created_at="2026-09-22T00:00:00Z",
+            updated_at="2026-09-22T00:00:00Z",
+        )
+
+    monkeypatch.setattr(main, "create_offer", fake_create_offer)
+
+    search = client.post(
+        "/v1/app-assistant/chat",
+        headers={"x-api-key": "test-key"},
+        json={"messages": [{"role": "user", "content": "Show me the marketplace items I can trade for"}]},
+    )
+    assert search.status_code == 200, search.text
+    assert [item["listing_id"] for item in search.json()["listings"]] == ["market-chanel", "market-gucci"]
+
+    matches = client.post(
+        "/v1/app-assistant/chat",
+        headers={"x-api-key": "test-key"},
+        json={
+            "messages": [{"role": "user", "content": "Show matched items for the first listing"}],
+            "context": search.json()["context"],
+        },
+    )
+    assert matches.status_code == 200, matches.text
+    assert [item["listing_id"] for item in matches.json()["listings"]] == ["own-prada"]
+    assert matches.json()["context"]["selected_listing_id"] == "market-chanel"
+    assert matches.json()["context"]["marketplace_result_ids"] == ["market-chanel", "market-gucci"]
+
+    second_matches = client.post(
+        "/v1/app-assistant/chat",
+        headers={"x-api-key": "test-key"},
+        json={
+            "messages": [{"role": "user", "content": "Show matched items for the second listing"}],
+            "context": matches.json()["context"],
+        },
+    )
+    assert second_matches.status_code == 200, second_matches.text
+    assert [item["listing_id"] for item in second_matches.json()["listings"]] == ["own-prada"]
+    assert second_matches.json()["context"]["selected_listing_id"] == "market-gucci"
+    assert second_matches.json()["context"]["marketplace_result_ids"] == ["market-chanel", "market-gucci"]
+
+    prepare = client.post(
+        "/v1/app-assistant/chat",
+        headers={"x-api-key": "test-key"},
+        json={
+            "messages": [{"role": "user", "content": "Use my Prada for that one"}],
+            "context": second_matches.json()["context"],
+        },
+    )
+    assert prepare.status_code == 200, prepare.text
+    assert prepare.json()["requires_confirmation"] is True
+    assert prepare.json()["pending_action"]["type"] == "send_trade_offer"
+    assert created_offers == []
+
+    confirm = client.post(
+        "/v1/app-assistant/chat",
+        headers={"x-api-key": "test-key"},
+        json={
+            "messages": [{"role": "user", "content": "That sounds right, please take care of it"}],
+            "context": prepare.json()["context"],
+        },
+    )
+    assert confirm.status_code == 200, confirm.text
+    assert confirm.json()["pending_action"] is None
+    assert confirm.json()["navigation"] == "inbox"
+    assert len(created_offers) == 1
+
+
+def test_application_assistant_disambiguates_and_publishes_named_listing(monkeypatch) -> None:
+    client = _build_client()
+    os.environ["OPENAI_API_KEY"] = "test-openai-key"
+
+    from app import deps, main, settings
+
+    settings.get_settings.cache_clear()
+    db = deps.get_db()
+    common = {
+        "owner_name": "Member",
+        "mode": "trade",
+        "category": "handbag",
+        "condition": "New",
+        "size": "Medium",
+        "estimated_value": 500,
+        "city": "New York",
+        "image": None,
+        "images": [],
+        "description": "Test listing",
+        "wants": "",
+        "tags": [],
+        "source_item_id": None,
+        "analysis": None,
+        "status": "Review",
+    }
+    db.insert_listing(listing_id="publish-prada-1", owner_subject="api-key", title="TestPrada Tote Bag", brand="TestPrada", **common)
+    db.insert_listing(listing_id="publish-prada-2", owner_subject="api-key", title="TestPrada Tote Bag", brand="TestPrada", **common)
+    db.insert_listing(
+        listing_id="publish-match-1",
+        owner_subject="another-member",
+        title="Compatible Marketplace Bag",
+        brand="OtherBrand",
+        **{**common, "status": "Active"},
+    )
+
+    model_outputs = [
+        {"intent": "publish_listing", "reply": "", "listing_reference": None, "target_reference": None, "offered_reference": None, "search_terms": [], "navigation": None},
+        {"intent": "publish_listing", "reply": "", "listing_reference": "publish-prada-1", "target_reference": None, "offered_reference": None, "search_terms": [], "navigation": None},
+        {"intent": "confirm_action", "reply": "", "listing_reference": None, "target_reference": None, "offered_reference": None, "search_terms": [], "navigation": None},
+        {"intent": "show_matches", "reply": "Listing publish-prada-1 matches internal ID publish-match-1.", "listing_reference": None, "target_reference": None, "offered_reference": None, "search_terms": [], "navigation": None},
+    ]
+
+    class FakeResponse:
+        status_code = 200
+
+        def __init__(self, payload):
+            self.payload = payload
+
+        def json(self):
+            return {"output": [{"content": [{"type": "output_text", "text": json.dumps(self.payload)}]}]}
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, url, **kwargs):
+            return FakeResponse(model_outputs.pop(0))
+
+    monkeypatch.setattr(main.httpx, "AsyncClient", FakeAsyncClient)
+    ambiguous = client.post(
+        "/v1/app-assistant/chat",
+        headers={"x-api-key": "test-key"},
+        json={"messages": [{"role": "user", "content": "Publish my TestPrada bag"}]},
+    )
+    assert ambiguous.status_code == 200, ambiguous.text
+    assert {item["listing_id"] for item in ambiguous.json()["listings"]} == {"publish-prada-1", "publish-prada-2"}
+    assert ambiguous.json()["requires_confirmation"] is False
+
+    selected = client.post(
+        "/v1/app-assistant/chat",
+        headers={"x-api-key": "test-key"},
+        json={"messages": [{"role": "user", "content": "The first one"}], "context": ambiguous.json()["context"]},
+    )
+    assert selected.status_code == 200, selected.text
+    assert selected.json()["requires_confirmation"] is True
+    assert selected.json()["pending_action"]["type"] == "publish_listing"
+
+    confirmed = client.post(
+        "/v1/app-assistant/chat",
+        headers={"x-api-key": "test-key"},
+        json={"messages": [{"role": "user", "content": "Yes, make it live"}], "context": selected.json()["context"]},
+    )
+    assert confirmed.status_code == 200, confirmed.text
+    assert confirmed.json()["pending_action"] is None
+    assert confirmed.json()["listings"][0]["status"] == "Active"
+
+    matches = client.post(
+        "/v1/app-assistant/chat",
+        headers={"x-api-key": "test-key"},
+        json={"messages": [{"role": "user", "content": "Show me matched listings with images"}], "context": confirmed.json()["context"]},
+    )
+    assert matches.status_code == 200, matches.text
+    assert [item["listing_id"] for item in matches.json()["listings"]] == ["publish-match-1"]
+    assert "publish-prada-1" not in matches.json()["reply"]
+    assert "publish-match-1" not in matches.json()["reply"]
+
+
+def test_listing_assistant_message_ids_preserve_repeated_turns_and_make_retries_idempotent(monkeypatch) -> None:
     client = _build_client()
     os.environ["OPENAI_API_KEY"] = "test-openai-key"
 
     from app import settings
 
     settings.get_settings.cache_clear()
+    model_calls = _mock_listing_assistant_model(monkeypatch)
     context = {
         "step": 2,
         "workflow_stage": "review",
@@ -3305,6 +3798,7 @@ def test_listing_assistant_message_ids_preserve_repeated_turns_and_make_retries_
     retry = client.post("/v1/listing-assistant/chat", headers={"x-api-key": "test-key"}, json=second_payload)
     assert retry.status_code == 200, retry.text
     assert retry.json() == second.json()
+    assert len(model_calls) == 2
 
     restored = client.get(
         f"/v1/listing-assistant/conversations/{conversation_id}",
@@ -3315,13 +3809,14 @@ def test_listing_assistant_message_ids_preserve_repeated_turns_and_make_retries_
     assert [message["message_id"] for message in user_messages] == ["turn-1", "turn-2"]
 
 
-def test_listing_assistant_null_client_fields_do_not_erase_confirmed_state() -> None:
+def test_listing_assistant_null_client_fields_do_not_erase_confirmed_state(monkeypatch) -> None:
     client = _build_client()
     os.environ["OPENAI_API_KEY"] = "test-openai-key"
 
     from app import settings
 
     settings.get_settings.cache_clear()
+    _mock_listing_assistant_model(monkeypatch)
     condition = client.post(
         "/v1/listing-assistant/chat",
         headers={"x-api-key": "test-key"},

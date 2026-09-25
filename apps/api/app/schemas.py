@@ -127,6 +127,36 @@ class ListingConversationUpdateRequest(BaseModel):
     messages: list[ListingAssistantMessage] = Field(default_factory=list, max_length=10)
 
 
+class AppAssistantContext(BaseModel):
+    result_listing_ids: list[str] = Field(default_factory=list, max_length=20)
+    marketplace_result_ids: list[str] = Field(default_factory=list, max_length=20)
+    closet_result_ids: list[str] = Field(default_factory=list, max_length=20)
+    selected_listing_id: str | None = Field(default=None, max_length=120)
+    pending_action: dict | None = None
+    active_screen: str | None = Field(default=None, max_length=80)
+
+
+class AppAssistantRequest(BaseModel):
+    messages: list[ListingAssistantMessage] = Field(min_length=1, max_length=20)
+    context: AppAssistantContext = Field(default_factory=AppAssistantContext)
+
+
+class AppAssistantResponse(BaseModel):
+    reply: str
+    intent: Literal[
+        "create_listing", "publish_listing", "show_closet", "search_marketplace", "show_tradeable_items", "show_matches",
+        "prepare_trade", "confirm_action", "cancel_action", "show_trades",
+        "track_shipping", "navigate", "help",
+    ] = "help"
+    navigation: Literal["create", "closet", "marketplace", "inbox", "profile"] | None = None
+    listings: list[dict] = Field(default_factory=list)
+    trades: list[dict] = Field(default_factory=list)
+    shipments: list[dict] = Field(default_factory=list)
+    pending_action: dict | None = None
+    requires_confirmation: bool = False
+    context: AppAssistantContext = Field(default_factory=AppAssistantContext)
+
+
 class PresignImageUploadItem(BaseModel):
     filename: str | None = None
     content_type: str = "image/jpeg"
@@ -345,6 +375,10 @@ class SubscriptionActivateRequest(BaseModel):
     plan: Literal["free", "starter_15", "pro_25"]
     billing_cycle: Literal["monthly", "annual"] = "monthly"
     payment_method_id: str | None = None
+    consent_confirmed: bool = False
+    terms_version: str | None = Field(default=None, max_length=80)
+    authorization_text: str | None = Field(default=None, max_length=2000)
+    platform: Literal["web", "ios", "android"] | None = None
 
 
 class SubscriptionActivateResponse(BaseModel):
@@ -355,6 +389,28 @@ class SubscriptionActivateResponse(BaseModel):
     renewal_date: str | None = None
     stripe_subscription_id: str | None = None
     message: str | None = None
+
+
+class SubscriptionCancelRequest(BaseModel):
+    cancel_at_period_end: bool = True
+
+
+class TermsAcceptanceRequest(BaseModel):
+    terms_version: str = Field(min_length=1, max_length=80)
+    context: Literal["account", "subscription", "trade", "penalty"]
+    acceptance_text: str = Field(min_length=1, max_length=2000)
+    platform: Literal["web", "ios", "android"] | None = None
+
+
+class ComplianceRequestCreate(BaseModel):
+    request_type: Literal["access", "deletion", "correction"]
+    details: str = Field(default="", max_length=4000)
+
+
+class TradeCaseCreate(BaseModel):
+    case_type: Literal["not_received", "not_as_described", "counterfeit", "damaged", "return", "shipping", "other"]
+    description: str = Field(min_length=10, max_length=5000)
+    evidence: list[str] = Field(default_factory=list, max_length=10)
 
 
 class StripeSetupIntentResponse(BaseModel):

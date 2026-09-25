@@ -592,52 +592,6 @@ function sizeOptionsForCategory(category) {
   return []
 }
 
-function photoGuidanceForCategory(category) {
-  const fallback = [
-    ['Full item', 'Complete item in frame'],
-    ['Brand label', 'Tag, stamp, or logo'],
-    ['Condition', 'Close detail view'],
-    ['Back side', 'Reverse angle'],
-    ['Material', 'Texture or hardware'],
-    ['Wear', 'Any flaws or scuffs'],
-  ]
-  const guides = {
-    clothes: [
-      ['Front', 'Full garment front'],
-      ['Back', 'Full garment back'],
-      ['Label', 'Brand and size tag'],
-      ['Fabric', 'Material close-up'],
-      ['Details', 'Buttons, seams, trim'],
-      ['Wear', 'Flaws, stains, pulls'],
-    ],
-    shoes: [
-      ['Pair', 'Both shoes side view'],
-      ['Bottom', 'Sole wear and tread'],
-      ['Size', 'Inside size label'],
-      ['Toe', 'Toe box condition'],
-      ['Heel', 'Heel and back view'],
-      ['Wear', 'Scuffs or creasing'],
-    ],
-    handbag: [
-      ['Front', 'Full bag front'],
-      ['Back/base', 'Back and bottom'],
-      ['Interior', 'Lining and pockets'],
-      ['Brand', 'Stamp, logo, serial'],
-      ['Hardware', 'Zipper, clasp, chain'],
-      ['Corners', 'Strap and edge wear'],
-    ],
-    accessories: [
-      ['Full item', 'Complete item view'],
-      ['Brand', 'Logo or maker mark'],
-      ['Material', 'Texture close-up'],
-      ['Closure', 'Clasp or fastening'],
-      ['Scale', 'Size reference'],
-      ['Wear', 'Scratches or flaws'],
-    ],
-  }
-  return guides[category] || fallback
-}
-
 const IMAGE_ROLE_LABELS = {
   full_front: 'Full front', full_back: 'Full back', side_or_profile: 'Side/profile',
   brand_label: 'Brand label', size_or_material_label: 'Size/material label',
@@ -1378,7 +1332,7 @@ async function createStripeSetupIntentRemote({ apiBaseUrl, apiKey, bearerToken }
   return client.post('/v1/me/payment-methods/stripe/setup-intent', {}, authContext(bearerToken))
 }
 
-async function activateSubscriptionRemote({ apiBaseUrl, apiKey, bearerToken, plan, billingCycle, paymentMethodId = '' }) {
+async function activateSubscriptionRemote({ apiBaseUrl, apiKey, bearerToken, plan, billingCycle, paymentMethodId = '', authorizationText = '' }) {
   const { client, authContext } = createWebApiClient({ apiBaseUrl, apiKey })
   return client.post(
     '/v1/me/subscription/activate',
@@ -1386,7 +1340,35 @@ async function activateSubscriptionRemote({ apiBaseUrl, apiKey, bearerToken, pla
       plan: subscriptionPlanIdForApi(plan),
       billing_cycle: normalizeBillingCycle(billingCycle),
       payment_method_id: paymentMethodId || null,
+      consent_confirmed: true,
+      terms_version: '2026-09-22',
+      authorization_text: authorizationText,
+      platform: 'web',
     },
+    authContext(bearerToken),
+  )
+}
+
+async function cancelSubscriptionRemote({ apiBaseUrl, apiKey, bearerToken }) {
+  const { client, authContext } = createWebApiClient({ apiBaseUrl, apiKey })
+  return client.post('/v1/me/subscription/cancel', { cancel_at_period_end: true }, authContext(bearerToken))
+}
+
+async function createComplianceRequestRemote({ apiBaseUrl, apiKey, bearerToken, requestType, details = '' }) {
+  const { client, authContext } = createWebApiClient({ apiBaseUrl, apiKey })
+  return client.post('/v1/me/compliance-requests', { request_type: requestType, details }, authContext(bearerToken))
+}
+
+async function fetchSubscriptionAcknowledgmentsRemote({ apiBaseUrl, apiKey, bearerToken }) {
+  const { client, authContext } = createWebApiClient({ apiBaseUrl, apiKey })
+  return client.get('/v1/me/subscription/acknowledgments', authContext(bearerToken))
+}
+
+async function createTradeCaseRemote({ apiBaseUrl, apiKey, bearerToken, offerId, caseType, description }) {
+  const { client, authContext } = createWebApiClient({ apiBaseUrl, apiKey })
+  return client.post(
+    `/v1/offers/${encodeURIComponent(offerId)}/cases`,
+    { case_type: caseType, description, evidence: [] },
     authContext(bearerToken),
   )
 }
@@ -1505,6 +1487,7 @@ const TERMS_SECTIONS = [
     title: '7. Authorization of Charges',
     body: [
       'By using JOUFT and confirming a trade, you authorize JOUFT to charge your payment method for:',
+      'Paid memberships renew at the displayed monthly or annual interval until canceled. The amount, billing interval, payment method, applicable terms version, and confirmation time are recorded when you authorize payment.',
       'Failure to maintain a valid payment method may result in account suspension.',
     ],
     items: [
@@ -1641,12 +1624,13 @@ const PRIVACY_POLICY_SECTIONS = [
       'Account information (name, email, preferences)',
       'Transaction data (listings, trades, shipping)',
       'Device and usage data',
+      'Payment authorization evidence, including the amount and terms accepted, confirmation time, IP address, device or browser information, and processor transaction identifiers',
     ],
   },
   {
     title: '2. How We Use Information',
     body: [
-      'We use information to operate the platform, process trades and payments, improve user experience, and prevent fraud.',
+      'We use information to operate the platform, process trades and payments, improve user experience, prevent fraud, and respond to payment disputes.',
       'We may also use aggregated and anonymized data to generate insights and analytics, including for brand and advertising partnerships.',
     ],
   },
@@ -2635,10 +2619,13 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   const [listingAssistantBusy, setListingAssistantBusy] = useState(false)
   const [listingAssistantError, setListingAssistantError] = useState('')
   const listingAssistantMessagesRef = useRef(null)
-
-  useEffect(() => {
-    if (!hasAdminRole && createListingMode === 'chat') setCreateListingMode('standard')
-  }, [createListingMode, hasAdminRole])
+  const [appAssistantOpen, setAppAssistantOpen] = useState(false)
+  const [appAssistantListingFlow, setAppAssistantListingFlow] = useState(false)
+  const [appAssistantMessages, setAppAssistantMessages] = useState([])
+  const [appAssistantInput, setAppAssistantInput] = useState('')
+  const [appAssistantContext, setAppAssistantContext] = useState({ result_listing_ids: [], pending_action: null, active_screen: 'marketplace' })
+  const [appAssistantBusy, setAppAssistantBusy] = useState(false)
+  const [appAssistantError, setAppAssistantError] = useState('')
   const [listingModalMode, setListingModalMode] = useState('create')
   const [modalEditingListing, setModalEditingListing] = useState(null)
   const [savedListingNotice, setSavedListingNotice] = useState('')
@@ -2681,6 +2668,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   const [subscriptionSelectionDirty, setSubscriptionSelectionDirty] = useState(false)
   const [showStripePaymentModal, setShowStripePaymentModal] = useState(false)
   const [subscriptionConfirmRequest, setSubscriptionConfirmRequest] = useState(null)
+  const [subscriptionConsentChecked, setSubscriptionConsentChecked] = useState(false)
   const [stripeUiBusy, setStripeUiBusy] = useState(false)
   const [stripeUiError, setStripeUiError] = useState('')
   const [stripeUiReady, setStripeUiReady] = useState(false)
@@ -3877,6 +3865,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
 
   function requestSubscriptionConfirmation(details) {
     return new Promise((resolve) => {
+      setSubscriptionConsentChecked(false)
       subscriptionConfirmResolverRef.current = resolve
       setSubscriptionConfirmRequest(details)
     })
@@ -3911,6 +3900,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
       || [selectedPaymentMethod?.brand, selectedPaymentMethod?.last4 ? `•••• ${selectedPaymentMethod.last4}` : ''].filter(Boolean).join(' ')
       || 'Selected payment method'
     const amountLabel = `$${amount}${billingCycle === 'annual' ? ' / year' : ' / month'}`
+    const authorizationText = `I authorize JOUFT to charge ${amountLabel} for the ${selectedPlan.name} subscription until canceled.`
     if (amount > 0) {
       const confirmed = await requestSubscriptionConfirmation({
         planName: selectedPlan.name,
@@ -3932,6 +3922,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
       plan: selectedSubscriptionPlanId,
       billingCycle,
       paymentMethodId: amount > 0 ? selectedPaymentMethod?.payment_method_id || '' : '',
+      authorizationText,
     })
     const activatedStatus = String(activated?.status || '').trim().toLowerCase()
     if (amount > 0 && !['active', 'trialing'].includes(activatedStatus)) {
@@ -5418,7 +5409,6 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   }
 
   async function sendListingAssistantMessage(contentOverride = null, interactionType = 'typed') {
-    if (!hasAdminRole) return
     const content = String(contentOverride ?? listingAssistantInput).trim()
     if (!content || listingAssistantBusy) return
     const userMessage = { role: 'user', content, interaction_type: interactionType, message_id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `web-${Date.now()}-${Math.random()}` }
@@ -5429,69 +5419,31 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     setListingAssistantError('')
     try {
       if (listingChatStage === 'published') {
-        const normalizedContent = content.toLowerCase()
-        if (listingChatTradeTarget && /\b(no|not now|cancel|maybe later)\b/.test(normalizedContent)) {
+        const { client, authContext } = createWebApiClient({ apiBaseUrl, apiKey })
+        const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : ''
+        const result = await client.chatWithAppAssistant({
+          messages: nextMessages.map(({ role, content: messageContent }) => ({ role, content: messageContent })),
+          context: {
+            ...appAssistantContext,
+            result_listing_ids: listingChatMatches.map((match) => String(match.id || match.listing_id || '')).filter(Boolean),
+            active_screen: 'closet',
+          },
+        }, authContext(bearerToken))
+        setAppAssistantContext(result?.context || appAssistantContext)
+        setListingAssistantMessages((current) => [...current, {
+          role: 'assistant',
+          content: result?.reply || 'What would you like to do next?',
+          listings: result?.listings || [],
+          trades: result?.trades || [],
+          shipments: result?.shipments || [],
+        }].slice(-12))
+        if (result?.intent === 'confirm_action') {
+          await Promise.allSettled([
+            loadIncomingOffers({ status: 'all' }),
+            loadListings({ showLoading: false }),
+          ])
           setListingChatTradeTarget(null)
-          setListingAssistantMessages((current) => [...current, { role: 'assistant', content: 'No problem. The item will stay in your liked listings, and you can start a trade later.' }].slice(-12))
-          return
         }
-        if (listingChatTradeTarget && /\b(yes|send|start|make|submit|go ahead|trade offer)\b/.test(normalizedContent)) {
-          if (completeProfileShippingAddresses.length === 0) {
-            setListingAssistantMessages((current) => [...current, { role: 'assistant', content: 'Before I can send the trade offer, please add a complete shipping address in Profile. Your selected match is still saved in your liked listings.' }].slice(-12))
-            return
-          }
-          const targetId = String(listingChatTradeTarget.id || listingChatTradeTarget.listing_id || '')
-          const offeredId = String(listingChatListing?.id || listingChatListing?.listing_id || '')
-          if (!targetId || !offeredId) throw new Error('The selected trade items are no longer available.')
-          const targetValue = Number(listingChatTradeTarget.estimatedValue || listingChatTradeTarget.estimated_value || 0)
-          const offeredValue = Number(listingChatListing?.estimatedValue || listingChatListing?.estimated_value || 0)
-          if (!targetValue || !offeredValue || Math.abs(offeredValue - targetValue) / targetValue > 0.3) {
-            setListingAssistantMessages((current) => [...current, { role: 'assistant', content: 'I can’t send this offer because the two listings are outside the eligible trade-value range. The item is still saved in your liked listings.' }].slice(-12))
-            setListingChatTradeTarget(null)
-            return
-          }
-          const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
-          await createOfferRemote({
-            apiBaseUrl,
-            apiKey: clerkEnabled ? '' : apiKey.trim(),
-            bearerToken,
-            payload: { target_listing_id: targetId, offered_listing_ids: [offeredId], message: '' },
-          })
-          removeSentOfferMatches(targetId, [offeredId])
-          setListingChatMatches((current) => current.filter((match) => String(match.id || match.listing_id || '') !== targetId))
-          setListingAssistantMessages((current) => [...current, { role: 'assistant', content: `Your trade offer for “${listingChatTradeTarget.title || 'the selected item'}” has been sent. The owner has been notified, and you can follow its status in Trade Inbox.` }].slice(-12))
-          setListingChatTradeTarget(null)
-          return
-        }
-        if (/\b(no|none|not interested|nothing)\b/.test(normalizedContent)) {
-          setListingAssistantMessages((current) => [...current, { role: 'assistant', content: 'No problem. Your listing is live, and I’ll keep watching for new matches.' }].slice(-12))
-          return
-        }
-        const ordinalWords = { first: 0, '1': 0, second: 1, '2': 1, third: 2, '3': 2 }
-        const ordinal = Object.entries(ordinalWords).find(([word]) => new RegExp(`\\b${word}(?:st|nd|rd)?\\b`).test(normalizedContent))
-        let selectedMatch = ordinal ? listingChatMatches[ordinal[1]] : null
-        if (!selectedMatch) {
-          const mentioned = listingChatMatches.filter((match) => {
-            const title = String(match?.title || '').toLowerCase()
-            const brand = String(match?.brand || '').toLowerCase()
-            return (title.length > 3 && normalizedContent.includes(title)) || (brand.length > 3 && normalizedContent.includes(brand))
-          })
-          if (mentioned.length === 1) selectedMatch = mentioned[0]
-        }
-        if (!selectedMatch && listingChatMatches.length === 1 && /\b(yes|it|this one|that one|like it)\b/.test(normalizedContent)) selectedMatch = listingChatMatches[0]
-        if (!selectedMatch) {
-          setListingAssistantMessages((current) => [...current, { role: 'assistant', content: 'Which matched item do you like? You can say “the first one,” “the second one,” or type the item title.' }].slice(-12))
-          return
-        }
-        const selectedId = String(selectedMatch.id || selectedMatch.listing_id || '')
-        if (!likedListingIds.includes(selectedId)) {
-          const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
-          await likeListingRemote({ apiBaseUrl, apiKey: clerkEnabled ? '' : apiKey.trim(), bearerToken, listingId: selectedId })
-          setLikedListingIds((current) => current.includes(selectedId) ? current : [...current, selectedId])
-        }
-        setListingChatTradeTarget(selectedMatch)
-        const shippingCharge = estimatedSenderShippingChargeForListings([listingChatListing])?.display || 'the carrier-calculated shipping fee'
-        setListingAssistantMessages((current) => [...current, { role: 'assistant', content: `I’ve saved “${selectedMatch.title || 'that item'}” to your liked listings. Would you like to offer “${listingChatListing?.title || 'your new listing'}” in trade? If the trade is accepted, you will be charged ${shippingCharge} to ship your item. Say “send the trade offer” to continue.` }].slice(-12))
         return
       }
       const { client, authContext } = createWebApiClient({ apiBaseUrl, apiKey })
@@ -5558,6 +5510,47 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
       setListingAssistantError(err?.message ? `I understood your request, but could not save it: ${err.message}` : 'I could not respond right now. Please try again in a moment.')
     } finally {
       setListingAssistantBusy(false)
+    }
+  }
+
+  async function sendAppAssistantMessage() {
+    const content = appAssistantInput.trim()
+    if (!content || appAssistantBusy) return
+    const userMessage = { role: 'user', content, message_id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `app-${Date.now()}` }
+    const nextMessages = [...appAssistantMessages, userMessage].slice(-20)
+    setAppAssistantMessages(nextMessages)
+    setAppAssistantInput('')
+    setAppAssistantBusy(true)
+    setAppAssistantError('')
+    try {
+      const { client, authContext } = createWebApiClient({ apiBaseUrl, apiKey })
+      const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : ''
+      const result = await client.chatWithAppAssistant({ messages: nextMessages, context: appAssistantContext }, authContext(bearerToken))
+      setAppAssistantContext(result.context || appAssistantContext)
+      setAppAssistantMessages((current) => [...current, {
+        role: 'assistant',
+        content: result.reply,
+        listings: result.listings || [],
+        trades: result.trades || [],
+        shipments: result.shipments || [],
+      }].slice(-20))
+      const tabMap = { marketplace: 'market', closet: 'portfolio', inbox: 'inbox', profile: 'profile' }
+      if (result.navigation === 'create') {
+        resetDraft()
+        setAppAssistantListingFlow(true)
+      } else if (tabMap[result.navigation]) {
+        setActiveTab(tabMap[result.navigation])
+      }
+      if (result.intent === 'confirm_action') {
+        await Promise.allSettled([
+          loadIncomingOffers({ status: 'all' }),
+          loadListings({ showLoading: false }),
+        ])
+      }
+    } catch (err) {
+      setAppAssistantError(err?.message || 'I could not complete that request. Please try again.')
+    } finally {
+      setAppAssistantBusy(false)
     }
   }
 
@@ -6886,6 +6879,59 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                         })}
                       </div>
                       <span className="tiny-note">Current status: {profileQuiz.subscription_status ? titleCase(profileQuiz.subscription_status) : 'Not active'}</span>
+                      <div className="button-row" style={{ marginTop: 10 }}>
+                        <a className="ghost small" href="/terms" target="_blank" rel="noreferrer">View Terms</a>
+                        <button
+                          className="ghost small"
+                          type="button"
+                          onClick={async () => {
+                            try {
+                              const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
+                              const records = await fetchSubscriptionAcknowledgmentsRemote({ apiBaseUrl, apiKey: clerkEnabled ? '' : apiKey.trim(), bearerToken })
+                              const latest = records?.items?.[0]
+                              setAppAlert({
+                                title: 'Subscription Authorization',
+                                message: latest
+                                  ? `${latest.acceptance_text}\n\nTerms version: ${latest.terms_version}\nAccepted: ${new Date(latest.created_at).toLocaleString()}`
+                                  : 'No paid subscription authorization is on file yet.',
+                                primaryLabel: 'Close',
+                              })
+                            } catch (err) {
+                              setProfileSaveMsg(err.message || 'Authorization record could not be loaded.')
+                            }
+                          }}
+                        >
+                          View Authorization Record
+                        </button>
+                      </div>
+                      {['active', 'trialing'].includes(String(profileQuiz.subscription_status || '').toLowerCase()) && (
+                        <div className="button-row" style={{ marginTop: 10 }}>
+                          <button
+                            className="ghost small"
+                            type="button"
+                            onClick={async () => {
+                              if (!window.confirm('Cancel your subscription at the end of the current billing period?')) return
+                              setProfileSaveMsg('')
+                              try {
+                                const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
+                                const canceled = await cancelSubscriptionRemote({ apiBaseUrl, apiKey: clerkEnabled ? '' : apiKey.trim(), bearerToken })
+                                setProfileQuiz((previous) => ({
+                                  ...previous,
+                                  subscription_plan: canceled?.plan || previous.subscription_plan,
+                                  subscription_billing_cycle: canceled?.billing_cycle || previous.subscription_billing_cycle,
+                                  subscription_status: canceled?.status || 'canceling',
+                                  subscription_renewal_date: canceled?.renewal_date || null,
+                                }))
+                                setProfileSaveMsg(canceled?.message || 'Subscription canceled.')
+                              } catch (err) {
+                                setProfileSaveMsg(err.message || 'Subscription cancellation failed.')
+                              }
+                            }}
+                          >
+                            Cancel Subscription
+                          </button>
+                        </div>
+                      )}
                       {selectedSubscriptionPlanIsPaid ? (
                         <div className="field-grid two" style={{ marginTop: 12 }}>
                           <label>
@@ -7013,6 +7059,35 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                             </div>
                             )
                           })}
+                        </div>
+                      </div>
+                      <div style={{ marginTop: 18, borderTop: '1px solid var(--line)', paddingTop: 14 }}>
+                        <p className="eyebrow" style={{ marginBottom: 8 }}>Privacy Requests</p>
+                        <p className="tiny-note">Request access to, correction of, or deletion of your account data. Records required for transactions, fraud prevention, or legal obligations may be retained.</p>
+                        <div className="button-row" style={{ marginTop: 10 }}>
+                          {[
+                            ['access', 'Request My Data'],
+                            ['correction', 'Request Correction'],
+                            ['deletion', 'Request Deletion'],
+                          ].map(([requestType, label]) => (
+                            <button
+                              key={requestType}
+                              className="ghost small"
+                              type="button"
+                              onClick={async () => {
+                                setProfileSaveMsg('')
+                                try {
+                                  const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
+                                  await createComplianceRequestRemote({ apiBaseUrl, apiKey: clerkEnabled ? '' : apiKey.trim(), bearerToken, requestType })
+                                  setProfileSaveMsg(`${label} submitted.`)
+                                } catch (err) {
+                                  setProfileSaveMsg(err.message || 'Privacy request could not be submitted.')
+                                }
+                              }}
+                            >
+                              {label}
+                            </button>
+                          ))}
                         </div>
                       </div>
                     </div>
@@ -7826,6 +7901,46 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                               </div>
                             </div>
                           )}
+                          <div className="button-row inbox-editorial-actions">
+                            <button
+                              className="ghost small"
+                              type="button"
+                              onClick={async () => {
+                                const issue = window.prompt('Describe the trade or shipping issue. Include what happened and when.')
+                                if (!issue || issue.trim().length < 10) return
+                                const normalized = issue.toLowerCase()
+                                const caseType = normalized.includes('counterfeit') || normalized.includes('fake')
+                                  ? 'counterfeit'
+                                  : normalized.includes('damage')
+                                    ? 'damaged'
+                                    : normalized.includes('not received') || normalized.includes('missing')
+                                      ? 'not_received'
+                                      : normalized.includes('description')
+                                        ? 'not_as_described'
+                                        : normalized.includes('return')
+                                          ? 'return'
+                                          : normalized.includes('ship') || normalized.includes('tracking')
+                                            ? 'shipping'
+                                            : 'other'
+                                try {
+                                  const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
+                                  const created = await createTradeCaseRemote({
+                                    apiBaseUrl,
+                                    apiKey: clerkEnabled ? '' : apiKey.trim(),
+                                    bearerToken,
+                                    offerId: offer.offer_id,
+                                    caseType,
+                                    description: issue.trim(),
+                                  })
+                                  setAppAlert({ title: 'Issue Reported', message: `Case ${created.case_id} was submitted for review.`, primaryLabel: 'Close' })
+                                } catch (err) {
+                                  setSavedListingNotice(err.message || 'The issue could not be submitted.')
+                                }
+                              }}
+                            >
+                              Report Trade Issue
+                            </button>
+                          </div>
                         </div>
                       </div>
                     </article>
@@ -8034,6 +8149,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                             myTradeCandidates={myTradeCandidates}
                             onOpenMatches={openMarketMatches}
                             matchPreviewImages={matchPreviewListings.map((entry) => entry.thumb)}
+                            matchCount={similarMatches.length}
                             onOpenDetails={openMarketplaceListingDetails}
                             isOwnListing={isOwnListing}
                             liked={likedListingIds.includes(String(item.id))}
@@ -8284,6 +8400,36 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
         </main>
       )}
 
+      <button className="app-assistant-launcher" type="button" aria-label={appAssistantOpen ? 'Close Jouft assistant' : 'Open Jouft assistant'} title="Jouft assistant" onClick={() => setAppAssistantOpen((open) => !open)}>J</button>
+      {appAssistantOpen && (
+        <aside className="app-assistant-panel" aria-label="Jouft assistant">
+          <header><div><small>JOUFT ASSISTANT</small><strong>What would you like to do?</strong></div><button type="button" aria-label="Close assistant" onClick={() => setAppAssistantOpen(false)}>×</button></header>
+          <div className="app-assistant-transcript" aria-live="polite">
+            {appAssistantMessages.length === 0 && <div className="app-assistant-turn assistant"><span>J</span><p>I can help create a listing, find matches, start a trade, or check shipping. Just tell me what you need.</p></div>}
+            {appAssistantMessages.map((message, index) => <div className={`app-assistant-turn ${message.role}`} key={message.message_id || `${message.role}-${index}`}>
+              {message.role === 'assistant' && <span>J</span>}
+              <div><p>{message.content}</p>
+                {message.listings?.length > 0 && <div className="app-assistant-results">{message.listings.map((listing, listingIndex) => <article key={listing.listing_id}>{listing.image && <img src={listing.image} alt={listing.title || 'Listing'} />}<div><small>{listingIndex + 1} · {listing.brand || 'Unknown brand'}</small><strong>{listing.title}</strong><span>{listing.size || 'Size not provided'} · {displayConditionLabel(listing.condition)}</span></div></article>)}</div>}
+                {message.trades?.length > 0 && <div className="app-assistant-status-list">{message.trades.map((trade) => <article key={trade.offer_id}><strong>{trade.target_listing?.title || 'Trade offer'}</strong><span>Status: {trade.status}</span></article>)}</div>}
+                {message.shipments?.length > 0 && <div className="app-assistant-status-list">{message.shipments.map((shipment) => <article key={shipment.shipment_id}><strong>{shipment.carrier || 'Shipment'} · {shipment.tracking_number || 'Tracking pending'}</strong><span>{shipment.tracking_status_details || shipment.tracking_status || shipment.status}</span></article>)}</div>}
+              </div>
+            </div>)}
+            {appAssistantListingFlow && <div className="app-assistant-listing-flow">
+              <div className="app-assistant-turn assistant"><span>J</span><div><p>{createImageSlots.filter(Boolean).length ? `${createImageSlots.filter(Boolean).length}/6 photos added.` : 'Add clear photos of the item to begin.'}</p><label className="ghost small listing-chat-upload"><span>{createImageSlots.filter(Boolean).length ? 'Add more photos' : 'Choose photos'}</span><input type="file" accept="image/*" multiple onChange={(event) => { handleCreatePhotoFiles(event.target.files); event.target.value = '' }} /></label></div></div>
+              {createSlotPreviewUrls.filter(Boolean).length > 0 && <div className="app-assistant-photo-row">{createSlotPreviewUrls.filter(Boolean).map((url, index) => <img key={`${url}-${index}`} src={url} alt={`Item photo ${index + 1}`} />)}</div>}
+              {createImageRoleCheck?.missing_required?.length > 0 && <div className="app-assistant-turn assistant"><span>J</span><div><p>Please add {createImageRoleCheck.missing_required.map((role) => IMAGE_ROLE_LABELS[role] || role).join(', ')} before we continue.</p></div></div>}
+              {listingChatPhotoGateOpen && listingAssistantMessages.length === 0 && !createImageRoleBusy && createImageRoleCheck?.missing_required?.length === 0 && <div className="app-assistant-turn assistant"><span>J</span><div><p>How would you describe the item’s condition?</p><div className="listing-chat-quick-replies"><button type="button" onClick={() => chooseListingAssistantCondition('NewWithTags')}>New with tags</button><button type="button" onClick={() => chooseListingAssistantCondition('New')}>New</button><button type="button" onClick={() => chooseListingAssistantCondition('LikeNew')}>Like new</button></div></div></div>}
+              {listingAssistantMessages.map((message, index) => <div className={`app-assistant-turn ${message.role}`} key={`listing-${message.role}-${index}`}>{message.role === 'assistant' && <span>J</span>}<div><p>{message.content}</p></div></div>)}
+              {listingAssistantBusy && <div className="app-assistant-turn assistant"><span>J</span><p>Thinking…</p></div>}
+              {listingAssistantError && <p className="app-assistant-error">{listingAssistantError}</p>}
+            </div>}
+            {appAssistantBusy && <div className="app-assistant-turn assistant"><span>J</span><p>Thinking…</p></div>}
+            {appAssistantError && <p className="app-assistant-error">{appAssistantError}</p>}
+          </div>
+          <form className="app-assistant-compose" onSubmit={(event) => { event.preventDefault(); if (appAssistantListingFlow) { const value = appAssistantInput; setAppAssistantInput(''); void sendListingAssistantMessage(value) } else { void sendAppAssistantMessage() } }}><textarea value={appAssistantInput} onChange={(event) => setAppAssistantInput(event.target.value)} placeholder={appAssistantListingFlow ? 'Reply about your listing' : 'Ask Jouft anything'} rows={2} disabled={appAssistantBusy || listingAssistantBusy} /><button className="primary small" type="submit" disabled={!appAssistantInput.trim() || appAssistantBusy || listingAssistantBusy}>Send</button></form>
+        </aside>
+      )}
+
       {tradeDetailListing && (
         <div className="trade-detail-backdrop">
           <div className="trade-detail-shell">
@@ -8513,14 +8659,8 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
               <h3>Create Listing</h3>
               <button className="ghost small" type="button" onClick={() => setShowCreateListingModal(false)} disabled={analysisLoading || createListingBusy || createImageRoleBusy}>Close</button>
             </div>
-            {hasAdminRole && <div className="listing-create-mode" role="group" aria-label="Listing creation method">
-              <button className={createListingMode === 'standard' ? 'is-active' : ''} type="button" onClick={() => { setCreateListingMode('standard'); setCreateListingStep(1) }}>Standard</button>
-              <button className={createListingMode === 'chat' ? 'is-active' : ''} type="button" onClick={() => { setCreateListingMode('chat'); setCreateListingStep(1) }}>Chat</button>
-            </div>}
             <p className="tiny-note listing-modal-note">
-              {createListingMode === 'chat'
-                ? 'Upload photos, then describe the item naturally. The conversation will capture the listing details.'
-                : createListingStep === 1
+              {createListingStep === 1
                 ? 'Step 1 of 2: Upload photos. Gemini will identify the category and photo types.'
                 : 'Step 2 of 2: Confirm the category, condition, and size.'}
             </p>
@@ -8650,27 +8790,9 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                 )}
               </div>
 
-              <p className="listing-modal-label"><strong>Photo guidance</strong></p>
-              <div className="listing-photo-guidance-grid">
-                {photoGuidanceForCategory(category).map(([title, detail], idx) => {
-                  return (
-                    <div key={`${category || 'generic'}-photo-guide-${idx}`} className="listing-modal-photo-placeholder is-guidance">
-                      <span className={idx < 3 ? 'photo-placeholder-priority must' : 'photo-placeholder-priority optional'}>
-                        {idx < 3 ? 'Priority' : 'Helpful'}
-                      </span>
-                      <span className="photo-placeholder-frame" aria-hidden="true">
-                        <span className="photo-placeholder-frame-title">The {title}</span>
-                        <PhotoGuideIllustration category={category} title={title} />
-                      </span>
-                      <strong>{title}</strong>
-                      <small>{detail}</small>
-                    </div>
-                  )
-                })}
-              </div>
             </div>}
 
-            {hasAdminRole && createListingMode === 'chat' && <section className="listing-assistant is-open listing-chat-create">
+            {createListingMode === 'chat' && <section className="listing-assistant is-open listing-chat-create">
                 <div className="listing-chat-header">
                   <span className="listing-chat-avatar" aria-hidden="true">J</span>
                   <div><strong>Jouft Listing Assistant</strong><small>Ready to create your listing</small></div>
@@ -8909,11 +9031,12 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                 <dd>{subscriptionConfirmRequest.paymentLabel}</dd>
               </div>
             </dl>
+            <label className="subscription-consent"><input type="checkbox" checked={subscriptionConsentChecked} onChange={(event) => setSubscriptionConsentChecked(event.target.checked)} /><span>I authorize this recurring charge and agree to the <a href="/terms" target="_blank" rel="noreferrer">Terms</a>, including renewal and cancellation terms.</span></label>
             <div className="button-row app-alert-actions">
               <button className="ghost" type="button" onClick={() => resolveSubscriptionConfirmation(false)}>
                 Cancel
               </button>
-              <button className="primary" type="button" onClick={() => resolveSubscriptionConfirmation(true)}>
+              <button className="primary" type="button" disabled={!subscriptionConsentChecked} onClick={() => resolveSubscriptionConfirmation(true)}>
                 Process Payment
               </button>
             </div>
@@ -9199,11 +9322,12 @@ function ListingCard({ item, own = false, onEditDraft = null, onReviewListing = 
                     }}
                     title="View matched items from your closet"
                   >
-                    <span>MATCHES</span>
+                    <span>{Number(matchCount) > 0 ? `${matchCount} MATCH${matchCount === 1 ? '' : 'ES'}` : 'MATCHES'}</span>
                     <span className="match-thumb-strip" aria-hidden="true">
                       {matchPreviewImages.slice(0, 3).map((src, idx) => (
                         <img key={`${item.id}-match-${idx}`} src={src} alt="" className="match-thumb" />
                       ))}
+                      {Number(matchCount) > 3 && <span className="match-thumb-more">+{matchCount - 3}</span>}
                     </span>
                   </button>
                 )}
@@ -9307,11 +9431,12 @@ function ListingCard({ item, own = false, onEditDraft = null, onReviewListing = 
                       }}
                       title="View matched items from your closet"
                     >
-                      <span>Matches</span>
+                      <span>{Number(matchCount) > 0 ? `${matchCount} ${matchCount === 1 ? 'match' : 'matches'}` : 'Matches'}</span>
                       <span className="match-thumb-strip" aria-hidden="true">
                         {matchPreviewImages.slice(0, 3).map((src, idx) => (
                           <img key={`${item.id}-match-${idx}`} src={src} alt="" className="match-thumb" />
                         ))}
+                        {Number(matchCount) > 3 && <span className="match-thumb-more">+{matchCount - 3}</span>}
                       </span>
                     </button>
                   )}

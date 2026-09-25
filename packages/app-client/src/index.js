@@ -325,6 +325,7 @@ export function createApiClient(options) {
     confirmImageUploads,
     queueListingAnalysis,
     chatWithListingAssistant,
+    chatWithAppAssistant: (payload, auth = {}) => post("/v1/app-assistant/chat", payload, auth),
     getActiveListingAssistantConversation: (auth = {}) => get("/v1/listing-assistant/conversations/active", auth),
     updateListingAssistantConversation: (conversationId, payload, auth = {}) => patch(`/v1/listing-assistant/conversations/${encodeURIComponent(conversationId)}`, payload, auth),
     listListings: (params = {}, auth = {}) => {

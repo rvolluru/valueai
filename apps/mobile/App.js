@@ -116,12 +116,6 @@ const IMAGE_ROLE_GUIDANCE = {
 function imageRoleGuidance(role) {
   return IMAGE_ROLE_GUIDANCE[role] || `For a more complete analysis, add a clear ${String(IMAGE_ROLE_LABELS[role] || role).toLowerCase()} photo.`;
 }
-const IMAGE_ROLE_REQUIREMENTS = {
-  clothes: { required: ['full_front', 'brand_label'], recommended: ['full_back', 'size_or_material_label', 'condition_or_wear'] },
-  shoes: { required: ['side_or_profile', 'brand_label', 'shoe_sole'], recommended: ['size_or_material_label', 'condition_or_wear'] },
-  handbag: { required: ['full_front', 'brand_label', 'bag_interior'], recommended: ['full_back', 'hardware_or_detail', 'condition_or_wear', 'serial_or_authentication_mark'] },
-  accessories: { required: ['full_front', 'brand_label'], recommended: ['size_or_material_label', 'hardware_or_detail', 'condition_or_wear'] },
-};
 const SUPPORT_REASONS = [
   ['incorrect_brand_or_title', 'Brand or title'],
   ['incorrect_valuation', 'Valuation'],
@@ -918,7 +912,8 @@ function ListingCard({
     setImageFailed(false);
   }, [rawImageUrl, apiBaseUrl]);
   const matchPreviewImages = showMatches ? getMatchPreviewImages(item, apiBaseUrl, currentOwnerSubject) : [];
-  const hasMatches = getCrossOwnerMatches(item, currentOwnerSubject).length > 0;
+  const marketplaceMatchCount = getCrossOwnerMatches(item, currentOwnerSubject).length;
+  const hasMatches = marketplaceMatchCount > 0;
   const statusLabel = String(item?.status || '').trim();
   const analysisFailed = statusLabel.toLowerCase() === 'analysisfailed';
   const analyzing = statusLabel.toLowerCase() === 'analyzing';
@@ -1011,7 +1006,7 @@ function ListingCard({
         ) : null}
         {showMatches ? (
           <View style={styles.matchesRow}>
-            <Text style={styles.matchesLabel}>Matches</Text>
+            <Text style={styles.matchesLabel}>{marketplaceMatchCount} {marketplaceMatchCount === 1 ? 'match' : 'matches'}</Text>
             {matchPreviewImages.length > 0 ? (
               <View style={styles.matchThumbStrip}>
                 {matchPreviewImages.map((src, idx) => (
@@ -1021,6 +1016,7 @@ function ListingCard({
                     style={styles.matchThumb}
                   />
                 ))}
+                {marketplaceMatchCount > 3 ? <Text style={styles.matchThumbMore}>+{marketplaceMatchCount - 3}</Text> : null}
               </View>
             ) : (
               <Text style={styles.matchThumbEmpty}>No matches</Text>
@@ -1286,14 +1282,17 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
   const [listingAssistantBusy, setListingAssistantBusy] = useState(false);
   const [listingAssistantError, setListingAssistantError] = useState('');
   const [listingAnalysisProgress, setListingAnalysisProgress] = useState('');
+  const [appAssistantOpen, setAppAssistantOpen] = useState(false);
+  const [appAssistantListingFlow, setAppAssistantListingFlow] = useState(false);
+  const [appAssistantMessages, setAppAssistantMessages] = useState([]);
+  const [appAssistantInput, setAppAssistantInput] = useState('');
+  const [appAssistantContext, setAppAssistantContext] = useState({ result_listing_ids: [], pending_action: null, active_screen: 'marketplace' });
+  const [appAssistantBusy, setAppAssistantBusy] = useState(false);
+  const [appAssistantError, setAppAssistantError] = useState('');
   const listingChatPhotoGateOpen = images.length > 0
     && !createImageRoleBusy
     && Boolean(createImageRoleCheck)
     && (createImageRoleCheck?.missing_required || []).length === 0;
-
-  useEffect(() => {
-    if (!hasAdminRole && createListingMode === 'chat') setCreateListingMode('standard');
-  }, [createListingMode, hasAdminRole]);
 
   const [loading, setLoading] = useState(false);
   const [marketplaceLoading, setMarketplaceLoading] = useState(false);
@@ -1336,7 +1335,6 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
   }
 
   async function sendListingAssistantMessage(contentOverride = null, interactionType = 'typed') {
-    if (!hasAdminRole) return;
     const content = String(contentOverride ?? listingAssistantInput).trim();
     if (!content || listingAssistantBusy) return;
     const userMessage = { role: 'user', content, interaction_type: interactionType, message_id: `mobile-${Date.now()}-${Math.random().toString(36).slice(2, 10)}` };
@@ -1347,63 +1345,26 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     setListingAssistantError('');
     try {
       if (listingChatStage === 'published') {
-        const normalizedContent = content.toLowerCase();
-        if (listingChatTradeTarget && /\b(no|not now|cancel|maybe later)\b/.test(normalizedContent)) {
+        const result = await apiClient.chatWithAppAssistant({
+          messages: nextMessages.map(({ role, content: messageContent }) => ({ role, content: messageContent })),
+          context: {
+            ...appAssistantContext,
+            result_listing_ids: listingChatMatches.map((match) => listingIdOf(match)).filter(Boolean),
+            active_screen: 'closet',
+          },
+        }, await authContext());
+        setAppAssistantContext(result?.context || appAssistantContext);
+        setListingAssistantMessages((current) => [...current, {
+          role: 'assistant',
+          content: result?.reply || 'What would you like to do next?',
+          listings: result?.listings || [],
+          trades: result?.trades || [],
+          shipments: result?.shipments || [],
+        }].slice(-12));
+        if (result?.intent === 'confirm_action') {
+          await Promise.allSettled([loadInbox(), loadCloset(), loadMarketplace()]);
           setListingChatTradeTarget(null);
-          setListingAssistantMessages((current) => [...current, { role: 'assistant', content: 'No problem. The item will stay in your liked listings, and you can start a trade later.' }].slice(-12));
-          return;
         }
-        if (listingChatTradeTarget && /\b(yes|send|start|make|submit|go ahead|trade offer)\b/.test(normalizedContent)) {
-          const currentAddresses = completeShippingAddresses(shippingAddresses.length > 0 ? shippingAddresses : await loadProfileAddresses());
-          if (currentAddresses.length === 0) {
-            setListingAssistantMessages((current) => [...current, { role: 'assistant', content: 'Before I can send the trade offer, please add a complete shipping address in Profile. Your selected match is still saved in your liked listings.' }].slice(-12));
-            return;
-          }
-          const targetId = listingIdOf(listingChatTradeTarget);
-          const offeredId = listingIdOf(listingChatListing);
-          if (!targetId || !offeredId) throw new Error('The selected trade items are no longer available.');
-          const targetValue = Number(listingChatTradeTarget?.estimated_value || listingChatTradeTarget?.estimatedValue || 0);
-          const offeredValue = Number(listingChatListing?.estimated_value || listingChatListing?.estimatedValue || 0);
-          if (!targetValue || !offeredValue || Math.abs(offeredValue - targetValue) / targetValue > 0.3) {
-            setListingAssistantMessages((current) => [...current, { role: 'assistant', content: 'I can’t send this offer because the two listings are outside the eligible trade-value range. The item is still saved in your liked listings.' }].slice(-12));
-            setListingChatTradeTarget(null);
-            return;
-          }
-          await apiClient.createOffer({ target_listing_id: targetId, offered_listing_ids: [offeredId], message: '' }, await authContext());
-          setMarketplaceListings((current) => removeSentOfferMatchesFromListings(current, targetId, [offeredId]));
-          setListingChatMatches((current) => current.filter((match) => listingIdOf(match) !== targetId));
-          setListingAssistantMessages((current) => [...current, { role: 'assistant', content: `Your trade offer for “${listingChatTradeTarget?.title || 'the selected item'}” has been sent. The owner has been notified, and you can follow its status in Trade Inbox.` }].slice(-12));
-          setListingChatTradeTarget(null);
-          return;
-        }
-        if (/\b(no|none|not interested|nothing)\b/.test(normalizedContent)) {
-          setListingAssistantMessages((current) => [...current, { role: 'assistant', content: 'No problem. Your listing is live, and I’ll keep watching for new matches.' }].slice(-12));
-          return;
-        }
-        const ordinalWords = { first: 0, '1': 0, second: 1, '2': 1, third: 2, '3': 2 };
-        const ordinal = Object.entries(ordinalWords).find(([word]) => new RegExp(`\\b${word}(?:st|nd|rd)?\\b`).test(normalizedContent));
-        let selectedMatch = ordinal ? listingChatMatches[ordinal[1]] : null;
-        if (!selectedMatch) {
-          const mentioned = listingChatMatches.filter((match) => {
-            const title = String(match?.title || '').toLowerCase();
-            const brand = String(match?.brand || '').toLowerCase();
-            return (title.length > 3 && normalizedContent.includes(title)) || (brand.length > 3 && normalizedContent.includes(brand));
-          });
-          if (mentioned.length === 1) selectedMatch = mentioned[0];
-        }
-        if (!selectedMatch && listingChatMatches.length === 1 && /\b(yes|it|this one|that one|like it)\b/.test(normalizedContent)) selectedMatch = listingChatMatches[0];
-        if (!selectedMatch) {
-          setListingAssistantMessages((current) => [...current, { role: 'assistant', content: 'Which matched item do you like? You can say “the first one,” “the second one,” or type the item title.' }].slice(-12));
-          return;
-        }
-        const selectedId = String(selectedMatch?.listing_id || selectedMatch?.id || '');
-        if (!likedListingIds.includes(selectedId)) {
-          await apiClient.likeListing(selectedId, await authContext());
-          setLikedListingIds((current) => current.includes(selectedId) ? current : [...current, selectedId]);
-        }
-        setListingChatTradeTarget(selectedMatch);
-        const shippingCharge = estimatedSenderShippingChargeForListings([listingChatListing])?.display || 'the carrier-calculated shipping fee';
-        setListingAssistantMessages((current) => [...current, { role: 'assistant', content: `I’ve saved “${selectedMatch?.title || 'that item'}” to your liked listings. Would you like to offer “${listingChatListing?.title || 'your new listing'}” in trade? If the trade is accepted, you will be charged ${shippingCharge} to ship your item. Say “send the trade offer” to continue.` }].slice(-12));
         return;
       }
       const result = await apiClient.chatWithListingAssistant({
@@ -1462,6 +1423,39 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
       setListingAssistantError(err?.message ? `I understood your request, but could not save it: ${err.message}` : 'I could not respond right now. Please try again in a moment.');
     } finally {
       setListingAssistantBusy(false);
+    }
+  }
+
+  async function sendAppAssistantMessage() {
+    const content = appAssistantInput.trim();
+    if (!content || appAssistantBusy) return;
+    const userMessage = { role: 'user', content, message_id: `app-${Date.now()}-${Math.random().toString(36).slice(2, 10)}` };
+    const nextMessages = [...appAssistantMessages, userMessage].slice(-20);
+    setAppAssistantMessages(nextMessages);
+    setAppAssistantInput('');
+    setAppAssistantBusy(true);
+    setAppAssistantError('');
+    try {
+      const result = await apiClient.chatWithAppAssistant({ messages: nextMessages, context: appAssistantContext }, await authContext());
+      setAppAssistantContext(result?.context || appAssistantContext);
+      setAppAssistantMessages((current) => [...current, {
+        role: 'assistant',
+        content: result?.reply || 'What would you like to do next?',
+        listings: result?.listings || [],
+        trades: result?.trades || [],
+        shipments: result?.shipments || [],
+      }].slice(-20));
+      if (result?.navigation === 'create') {
+        resetListingForm();
+        setAppAssistantListingFlow(true);
+      } else if (['marketplace', 'closet', 'inbox', 'profile'].includes(result?.navigation)) {
+        setActiveTab(result.navigation);
+      }
+      if (result?.intent === 'confirm_action') await Promise.allSettled([loadInbox(), loadCloset(), loadMarketplace()]);
+    } catch (err) {
+      setAppAssistantError(err?.message || 'I could not complete that request. Please try again.');
+    } finally {
+      setAppAssistantBusy(false);
     }
   }
 
@@ -2512,6 +2506,10 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
         plan,
         billing_cycle: cycle,
         payment_method_id: amount > 0 ? selectedPaymentMethod?.payment_method_id : null,
+        consent_confirmed: amount > 0,
+        terms_version: amount > 0 ? '2026-09-22' : null,
+        authorization_text: amount > 0 ? `I authorize JOUFT to charge $${amount}${cycle === 'annual' ? ' annually' : ' monthly'} for the ${selectedPlan?.label || titleCase(plan)} subscription until canceled.` : null,
+        platform: Platform.OS === 'ios' ? 'ios' : 'android',
       }, await authContext());
       setProfileQuiz((prev) => normalizeProfileQuiz({
         ...(prev || {}),
@@ -2537,6 +2535,67 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     }
   }
 
+  async function cancelCurrentSubscription() {
+    Alert.alert(
+      'Cancel subscription?',
+      'Your paid access will continue through the current billing period. You will not be charged again.',
+      [
+        { text: 'Keep Subscription', style: 'cancel' },
+        {
+          text: 'Cancel Subscription',
+          style: 'destructive',
+          onPress: async () => {
+            setProfileSaveBusy(true);
+            setProfileSaveMsg('');
+            try {
+              const canceled = await apiClient.cancelSubscription(await authContext());
+              setProfileQuiz((prev) => normalizeProfileQuiz({
+                ...(prev || {}),
+                subscription_plan: canceled?.plan || prev?.subscription_plan,
+                subscription_billing_cycle: canceled?.billing_cycle || prev?.subscription_billing_cycle,
+                subscription_status: canceled?.status || 'canceling',
+                subscription_renewal_date: canceled?.renewal_date || null,
+              }));
+              setProfileSaveMsg(canceled?.message || 'Subscription canceled.');
+            } catch (e) {
+              setError(e.message || 'Subscription cancellation failed.');
+            } finally {
+              setProfileSaveBusy(false);
+            }
+          },
+        },
+      ],
+    );
+  }
+
+  async function submitPrivacyRequest(requestType) {
+    setProfileSaveBusy(true);
+    setProfileSaveMsg('');
+    try {
+      await apiClient.createComplianceRequest({ request_type: requestType, details: '' }, await authContext());
+      setProfileSaveMsg(`${titleCase(requestType)} request submitted.`);
+    } catch (e) {
+      setError(e.message || 'Privacy request could not be submitted.');
+    } finally {
+      setProfileSaveBusy(false);
+    }
+  }
+
+  async function showSubscriptionAuthorization() {
+    try {
+      const records = await apiClient.subscriptionAcknowledgments(await authContext());
+      const latest = records?.items?.[0];
+      Alert.alert(
+        'Subscription Authorization',
+        latest
+          ? `${latest.acceptance_text}\n\nTerms version: ${latest.terms_version}\nAccepted: ${new Date(latest.created_at).toLocaleString()}`
+          : 'No paid subscription authorization is on file yet.',
+      );
+    } catch (e) {
+      setError(e.message || 'Authorization record could not be loaded.');
+    }
+  }
+
   function saveActiveProfileSection() {
     if (profileSection === 'shipping') {
       saveProfileShippingAddresses();
@@ -2557,10 +2616,10 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     return new Promise((resolve) => {
       Alert.alert(
         'Confirm subscription',
-        `Plan: ${planLabel}\nAmount: ${amountLabel}\nPayment: ${paymentLabel}`,
+        `Plan: ${planLabel}\nAmount: ${amountLabel}\nPayment: ${paymentLabel}\n\nBy tapping Authorize, you authorize this recurring charge and agree to the JOUFT Terms, including renewal and cancellation terms.`,
         [
           { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
-          { text: 'Activate', style: 'default', onPress: () => resolve(true) },
+          { text: 'Authorize', style: 'default', onPress: () => resolve(true) },
         ],
       );
     });
@@ -4317,15 +4376,6 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
               rightText={editingListingId ? 'Cancel Edit' : createListingMode === 'standard' && wizardStep === 2 ? 'Back' : null}
               onRightPress={editingListingId ? cancelEditListing : createListingMode === 'standard' && wizardStep === 2 ? () => setWizardStep(1) : null}
             />
-            {!editingListingId && hasAdminRole ? (
-              <View style={styles.createModeRow} accessibilityRole="tablist">
-                {['standard', 'chat'].map((mode) => (
-                  <TouchableOpacity key={mode} style={[styles.createModeButton, createListingMode === mode && styles.modeBtnActive]} onPress={() => { setCreateListingMode(mode); setWizardStep(1); }} accessibilityRole="tab" accessibilityState={{ selected: createListingMode === mode }}>
-                    <Text style={[styles.modeBtnText, createListingMode === mode && styles.modeBtnTextActive]}>{titleCase(mode)}</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            ) : null}
             {(editingListingId || createListingMode === 'standard') ? <View style={styles.stepRow}>
               {(editingListingId ? [1, 2, 3] : [1, 2]).map((step) => (
                 <View key={step} style={[styles.stepPill, wizardStep === step && styles.stepPillActive]}>
@@ -4434,18 +4484,6 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                       <Text style={styles.createPhotoCheckCategory}>
                         {createImageRoleCheck.category.charAt(0).toUpperCase() + createImageRoleCheck.category.slice(1)}
                       </Text>
-                    ) : null}
-                    {category ? (
-                      <View style={styles.createGuidanceBlock}>
-                        <Text style={styles.createGuidanceRequired}>Required views</Text>
-                        <Text style={styles.createGuidanceText}>
-                          {(IMAGE_ROLE_REQUIREMENTS[category]?.required || []).map((role) => IMAGE_ROLE_LABELS[role] || role).join(' • ')}
-                        </Text>
-                        <Text style={styles.createGuidanceRecommended}>Helpful views</Text>
-                        <Text style={styles.createGuidanceText}>
-                          {(IMAGE_ROLE_REQUIREMENTS[category]?.recommended || []).map((role) => IMAGE_ROLE_LABELS[role] || role).join(' • ')}
-                        </Text>
-                      </View>
                     ) : null}
                     {category && images.length === 0 ? <Text style={styles.helperText}>Add photos and Gemini will assign each image to a view.</Text> : null}
                     {createImageRoleBusy ? <Text style={styles.helperText}>Checking photo types with Gemini...</Text> : null}
@@ -4557,7 +4595,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                 </View>
             )}
 
-            {!editingListingId && hasAdminRole && createListingMode === 'chat' ? (
+            {!editingListingId && createListingMode === 'chat' ? (
               <View style={styles.listingAssistantPanel}>
                 <View style={styles.listingChatHeader}>
                   <View style={styles.listingChatAvatar}><Text style={styles.listingChatAvatarText}>J</Text></View>
@@ -5424,6 +5462,33 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
               Current status: {titleCase(profileQuiz?.subscription_status || 'not active')}
               {profileQuiz?.subscription_renewal_date ? ` • Renews ${profileQuiz.subscription_renewal_date}` : ''}
             </Text>
+            <View style={styles.addressActionRow}>
+              <TouchableOpacity style={styles.secondaryBtnCompact} onPress={() => Linking.openURL(TERMS_URL)}>
+                <Text style={styles.secondaryBtnText}>View Terms</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.secondaryBtnCompact} onPress={showSubscriptionAuthorization}>
+                <Text style={styles.secondaryBtnText}>Authorization Record</Text>
+              </TouchableOpacity>
+            </View>
+            {['active', 'trialing'].includes(String(profileQuiz?.subscription_status || '').toLowerCase()) ? (
+              <TouchableOpacity style={styles.secondaryBtn} onPress={cancelCurrentSubscription} disabled={profileSaveBusy}>
+                <Text style={styles.secondaryBtnText}>Cancel Subscription</Text>
+              </TouchableOpacity>
+            ) : null}
+            <View style={styles.profileDivider} />
+            <Text style={styles.label}>Privacy Requests</Text>
+            <Text style={styles.helperText}>Request a copy of your data, a correction, or account-data deletion. Legal and transaction records may be retained where required.</Text>
+            <View style={styles.addressActionRow}>
+              <TouchableOpacity style={styles.secondaryBtnCompact} onPress={() => submitPrivacyRequest('access')} disabled={profileSaveBusy}>
+                <Text style={styles.secondaryBtnText}>Request Data</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.secondaryBtnCompact} onPress={() => submitPrivacyRequest('correction')} disabled={profileSaveBusy}>
+                <Text style={styles.secondaryBtnText}>Request Correction</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.secondaryBtnCompact} onPress={() => submitPrivacyRequest('deletion')} disabled={profileSaveBusy}>
+                <Text style={styles.secondaryBtnText}>Request Deletion</Text>
+              </TouchableOpacity>
+            </View>
             {!!profileSaveMsg && <Text style={styles.notice}>{profileSaveMsg}</Text>}
               </>
             ) : null}
@@ -6091,6 +6156,41 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
             </View>
           </View>
         </View>
+      </Modal>
+      <TouchableOpacity style={styles.appAssistantLauncher} onPress={() => setAppAssistantOpen(true)} accessibilityRole="button" accessibilityLabel="Open Jouft assistant">
+        <Text style={styles.appAssistantLauncherText}>J</Text>
+      </TouchableOpacity>
+      <Modal visible={appAssistantOpen} animationType="slide" onRequestClose={() => setAppAssistantOpen(false)}>
+        <SafeAreaView style={styles.appAssistantRoot}>
+          <View style={styles.appAssistantHeader}>
+            <View><Text style={styles.offerLaneLabel}>JOUFT ASSISTANT</Text><Text style={styles.appAssistantTitle}>What would you like to do?</Text></View>
+            <TouchableOpacity style={styles.secondaryBtnCompact} onPress={() => setAppAssistantOpen(false)} accessibilityLabel="Close assistant"><Ionicons name="close" size={22} color={theme.text} /></TouchableOpacity>
+          </View>
+          <ScrollView style={styles.appAssistantTranscript} contentContainerStyle={styles.appAssistantTranscriptContent} keyboardShouldPersistTaps="handled">
+            {appAssistantMessages.length === 0 ? <View style={styles.appAssistantTurn}><View style={styles.listingChatAvatar}><Text style={styles.listingChatAvatarText}>J</Text></View><View style={styles.appAssistantBubble}><Text style={styles.listingAssistantMessageText}>I can help create a listing, find matches, start a trade, or check shipping. Just tell me what you need.</Text></View></View> : null}
+            {appAssistantMessages.map((message, index) => <View key={message.message_id || `${message.role}-${index}`} style={[styles.appAssistantTurn, message.role === 'user' && styles.appAssistantUserTurn]}>
+              {message.role === 'assistant' ? <View style={styles.listingChatAvatar}><Text style={styles.listingChatAvatarText}>J</Text></View> : null}
+              <View style={[styles.appAssistantBubble, message.role === 'user' && styles.appAssistantUserBubble]}>
+                <Text style={[styles.listingAssistantMessageText, message.role === 'user' && styles.listingAssistantUserMessageText]}>{message.content}</Text>
+                {(message.listings || []).map((listing, listingIndex) => <View key={listing.listing_id} style={styles.appAssistantResultRow}>{listing.image ? <Image source={{ uri: listing.image }} style={styles.appAssistantResultImage} /> : null}<View style={styles.tradeTargetCopy}><Text style={styles.offerLaneLabel}>{listingIndex + 1} • {listing.brand || 'Unknown brand'}</Text><Text style={styles.listingAssistantTitle} numberOfLines={2}>{listing.title}</Text><Text style={styles.helperText}>{listing.size || 'Size not provided'} • {displayConditionLabel(listing.condition)}</Text></View></View>)}
+                {(message.trades || []).map((trade) => <View key={trade.offer_id} style={styles.appAssistantStatusRow}><Text style={styles.listingAssistantTitle}>{trade.target_listing?.title || 'Trade offer'}</Text><Text style={styles.helperText}>Status: {trade.status}</Text></View>)}
+                {(message.shipments || []).map((shipment) => <View key={shipment.shipment_id} style={styles.appAssistantStatusRow}><Text style={styles.listingAssistantTitle}>{shipment.carrier || 'Shipment'} • {shipment.tracking_number || 'Tracking pending'}</Text><Text style={styles.helperText}>{shipment.tracking_status_details || shipment.tracking_status || shipment.status}</Text></View>)}
+              </View>
+            </View>)}
+            {appAssistantListingFlow ? <View style={styles.appAssistantListingFlow}>
+              <View style={styles.appAssistantTurn}><View style={styles.listingChatAvatar}><Text style={styles.listingChatAvatarText}>J</Text></View><View style={styles.appAssistantBubble}><Text style={styles.listingAssistantMessageText}>{images.length ? `${images.length}/6 photos added.` : 'Add clear photos of the item to begin.'}</Text><TouchableOpacity style={styles.secondaryBtnCompact} onPress={pickImages} disabled={images.length >= 6 || createImageRoleBusy}><Text style={styles.secondaryBtnText}>{images.length ? 'Add More Photos' : 'Choose Photos'}</Text></TouchableOpacity></View></View>
+              {images.length > 0 ? <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.listingChatPhotoRow}>{images.map((asset, index) => <Image key={`${asset?.uri}-${index}`} source={{ uri: asset.uri }} style={styles.listingChatPhoto} />)}</ScrollView> : null}
+              {createImageRoleCheck?.missing_required?.length > 0 ? <View style={styles.appAssistantTurn}><View style={styles.listingChatAvatar}><Text style={styles.listingChatAvatarText}>J</Text></View><View style={styles.appAssistantBubble}><Text style={styles.listingAssistantMessageText}>Please add {createImageRoleCheck.missing_required.map((role) => IMAGE_ROLE_LABELS[role] || role).join(', ')} before we continue.</Text></View></View> : null}
+              {listingChatPhotoGateOpen && listingAssistantMessages.length === 0 && !createImageRoleBusy && createImageRoleCheck?.missing_required?.length === 0 ? <View style={styles.appAssistantTurn}><View style={styles.listingChatAvatar}><Text style={styles.listingChatAvatarText}>J</Text></View><View style={styles.appAssistantBubble}><Text style={styles.listingAssistantMessageText}>How would you describe the item’s condition?</Text><View style={styles.listingChatQuickReplies}>{[['NewWithTags', 'New with tags'], ['New', 'New'], ['LikeNew', 'Like new']].map(([value, label]) => <TouchableOpacity key={value} style={styles.listingChatQuickReply} onPress={() => chooseListingAssistantCondition(value)}><Text style={styles.listingChatQuickReplyText}>{label}</Text></TouchableOpacity>)}</View></View></View> : null}
+              {listingAssistantMessages.map((message, index) => <View key={`listing-${message.role}-${index}`} style={[styles.appAssistantTurn, message.role === 'user' && styles.appAssistantUserTurn]}>{message.role === 'assistant' ? <View style={styles.listingChatAvatar}><Text style={styles.listingChatAvatarText}>J</Text></View> : null}<View style={[styles.appAssistantBubble, message.role === 'user' && styles.appAssistantUserBubble]}><Text style={[styles.listingAssistantMessageText, message.role === 'user' && styles.listingAssistantUserMessageText]}>{message.content}</Text></View></View>)}
+              {listingAssistantBusy ? <ActivityIndicator color={theme.brand} /> : null}
+              {listingAssistantError ? <Text style={styles.error}>{listingAssistantError}</Text> : null}
+            </View> : null}
+            {appAssistantBusy ? <ActivityIndicator color={theme.brand} /> : null}
+            {appAssistantError ? <Text style={styles.error}>{appAssistantError}</Text> : null}
+          </ScrollView>
+          <View style={styles.appAssistantComposer}><TextInput style={[styles.input, styles.appAssistantInput]} value={appAssistantInput} onChangeText={setAppAssistantInput} placeholder={appAssistantListingFlow ? 'Reply about your listing' : 'Ask Jouft anything'} multiline editable={!appAssistantBusy && !listingAssistantBusy} /><TouchableOpacity style={[styles.primaryBtnCompact, (!appAssistantInput.trim() || appAssistantBusy || listingAssistantBusy) && styles.primaryBtnDisabled]} onPress={() => { if (appAssistantListingFlow) { const value = appAssistantInput; setAppAssistantInput(''); sendListingAssistantMessage(value); } else sendAppAssistantMessage(); }} disabled={!appAssistantInput.trim() || appAssistantBusy || listingAssistantBusy}><Ionicons name="arrow-up" size={20} color="#fff" /></TouchableOpacity></View>
+        </SafeAreaView>
       </Modal>
       <Modal
         visible={Boolean(selectedGalleryImage)}
@@ -7762,6 +7862,11 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(18,26,36,0.18)',
     backgroundColor: '#efe8df',
   },
+  matchThumbMore: {
+    color: '#7a7167',
+    fontSize: 11,
+    fontFamily: fonts.bold,
+  },
   matchThumbEmpty: {
     color: '#7a7167',
     fontSize: 11,
@@ -9301,6 +9406,39 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   emptyText: { color: '#7a7167', textAlign: 'center', paddingVertical: 10 },
+  appAssistantLauncher: {
+    position: 'absolute',
+    right: 18,
+    bottom: 84,
+    zIndex: 40,
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: theme.brand,
+    shadowColor: '#000',
+    shadowOpacity: 0.2,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 5 },
+    elevation: 6,
+  },
+  appAssistantLauncherText: { color: '#fff', fontFamily: fonts.display, fontSize: 22 },
+  appAssistantRoot: { flex: 1, backgroundColor: theme.surface },
+  appAssistantHeader: { minHeight: 68, paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: theme.line, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  appAssistantTitle: { color: theme.text, fontFamily: fonts.bodyBold, fontSize: 17, marginTop: 3 },
+  appAssistantTranscript: { flex: 1 },
+  appAssistantTranscriptContent: { padding: 16, gap: 14 },
+  appAssistantListingFlow: { gap: 14 },
+  appAssistantTurn: { flexDirection: 'row', alignItems: 'flex-start', gap: 9 },
+  appAssistantUserTurn: { justifyContent: 'flex-end' },
+  appAssistantBubble: { maxWidth: '88%', padding: 12, borderWidth: 1, borderColor: theme.line, backgroundColor: '#fff' },
+  appAssistantUserBubble: { backgroundColor: theme.brand, borderColor: theme.brand },
+  appAssistantResultRow: { flexDirection: 'row', gap: 10, paddingTop: 10, marginTop: 10, borderTopWidth: 1, borderTopColor: theme.line },
+  appAssistantResultImage: { width: 62, height: 62, resizeMode: 'cover', backgroundColor: theme.panel },
+  appAssistantStatusRow: { gap: 3, paddingTop: 10, marginTop: 10, borderTopWidth: 1, borderTopColor: theme.line },
+  appAssistantComposer: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, padding: 12, borderTopWidth: 1, borderTopColor: theme.line, backgroundColor: '#fff' },
+  appAssistantInput: { flex: 1, minHeight: 48, maxHeight: 110, textAlignVertical: 'top' },
   error: { color: theme.error, fontWeight: '700', marginHorizontal: 16, marginBottom: 6 },
   notice: { color: theme.success, fontWeight: '700', marginHorizontal: 16, marginBottom: 6 },
 });

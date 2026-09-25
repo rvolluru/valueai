@@ -65,6 +65,8 @@ from .schemas import (
     ListingCreateRequest,
     ListingAssistantRequest,
     ListingAssistantResponse,
+    AppAssistantRequest,
+    AppAssistantResponse,
     ListingConversationUpdateRequest,
     ListingResponse,
     ListingSupportRequest,
@@ -87,6 +89,10 @@ from .schemas import (
     StripeSetupIntentResponse,
     SubscriptionActivateRequest,
     SubscriptionActivateResponse,
+    SubscriptionCancelRequest,
+    TermsAcceptanceRequest,
+    ComplianceRequestCreate,
+    TradeCaseCreate,
     PushTokenRegisterRequest,
     TradeMatchListResponse,
     TradeMatchResponse,
@@ -150,6 +156,7 @@ SUBSCRIPTION_PLANS = {
         "annual_cents": 27000,
     },
 }
+PAYMENT_TERMS_VERSION = "2026-09-22"
 
 
 @app.middleware("http")
@@ -3218,6 +3225,18 @@ def _send_subscription_billing_email_if_configured(
         summary = f"Your payment for {plan_label} was processed successfully."
         action = "Your JOUFT subscription access is active again."
         cta_label = "View Subscription"
+    elif kind == "renewal_upcoming":
+        subject = "Upcoming JOUFT subscription renewal"
+        heading = "Your subscription will renew soon"
+        summary = f"Your {plan_label} subscription is scheduled to renew using your saved payment method."
+        action = "Review your plan or cancel online from Profile before the renewal is processed."
+        cta_label = "Manage Subscription"
+    elif kind == "authorization_confirmation":
+        subject = "Your JOUFT subscription authorization"
+        heading = "Subscription confirmed"
+        summary = f"You authorized recurring billing for {plan_label}."
+        action = "Your authorization and the applicable Terms version are retained in Profile. You can cancel online at any time."
+        cta_label = "View Authorization"
     else:
         return "skipped_unknown_kind"
 
@@ -3453,8 +3472,37 @@ async def stripe_webhook(
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid Stripe webhook payload")
     event_type = str(event.get("type") or "").strip()
+    event_id = str(event.get("id") or "").strip()
+    if event_id and not db.record_stripe_webhook_event(event_id, event_type, event):
+        return {"received": True, "type": event_type, "duplicate": True}
     data = event.get("data") if isinstance(event.get("data"), dict) else {}
     obj = data.get("object") if isinstance(data.get("object"), dict) else {}
+    if event_type in {"invoice.payment_failed", "invoice.payment_succeeded", "invoice.upcoming"}:
+        existing_billing = _billing_profile_for_stripe_object(db, obj)
+        invoice_id = str(obj.get("id") or "").strip()
+        payment_intent_id = str(obj.get("payment_intent") or "").strip()
+        charge_id = str(obj.get("charge") or "").strip()
+        existing_transaction = db.get_payment_transaction_by_stripe_reference(invoice_id, payment_intent_id, charge_id)
+        subscription_id = str(obj.get("subscription") or (existing_billing or {}).get("stripe_subscription_id") or "").strip()
+        subscription_authorization = db.get_payment_transaction_by_stripe_reference(subscription_id)
+        if existing_billing and invoice_id:
+            db.upsert_payment_transaction(
+                transaction_id=str((existing_transaction or {}).get("transaction_id") or f"stripe:{invoice_id}"),
+                owner_subject=str(existing_billing.get("owner_subject") or ""),
+                purpose="subscription",
+                amount=int(obj.get("amount_paid") or obj.get("amount_due") or 0),
+                currency=str(obj.get("currency") or "usd"),
+                status=("succeeded" if event_type == "invoice.payment_succeeded" else "upcoming" if event_type == "invoice.upcoming" else "failed"),
+                authorization_id=(existing_transaction or {}).get("authorization_id") or (subscription_authorization or {}).get("authorization_id"),
+                stripe_customer_id=str(obj.get("customer") or "") or None,
+                stripe_subscription_id=subscription_id or None,
+                stripe_invoice_id=invoice_id,
+                stripe_payment_intent_id=payment_intent_id or None,
+                stripe_charge_id=charge_id or None,
+                receipt_url=str(obj.get("hosted_invoice_url") or obj.get("invoice_pdf") or "") or None,
+                description=str(obj.get("description") or "JOUFT subscription"),
+                metadata={"billing_reason": obj.get("billing_reason"), "event_id": event_id},
+            )
     result: dict
     if event_type in {"customer.subscription.created", "customer.subscription.updated"}:
         result = _handle_stripe_subscription_webhook(db, obj)
@@ -3464,8 +3512,55 @@ async def stripe_webhook(
         result = _handle_stripe_billing_status_webhook(db, settings, obj, status="past_due")
     elif event_type == "invoice.payment_succeeded":
         result = _handle_stripe_billing_status_webhook(db, settings, obj, status="active")
-    elif event_type == "charge.dispute.created":
+    elif event_type == "invoice.upcoming":
+        existing = _billing_profile_for_stripe_object(db, obj)
+        if existing:
+            owner_subject = str(existing.get("owner_subject") or "")
+            email_status = _send_subscription_billing_email_if_configured(
+                settings=settings,
+                db=db,
+                owner_subject=owner_subject,
+                kind="renewal_upcoming",
+                plan=str(existing.get("subscription_plan") or ""),
+                invoice_url=str(obj.get("hosted_invoice_url") or "") or None,
+            )
+            notification = _create_user_notification_and_push(
+                db=db, settings=settings, notification_id=str(uuid.uuid4()), owner_subject=owner_subject,
+                actor_subject=None, type="subscription-renewal", title="Subscription renewal upcoming",
+                body="Your subscription will renew soon. Review or cancel it in Profile.",
+                entity_id=str(existing.get("stripe_subscription_id") or ""), action_tab="profile",
+            )
+            result = {"reconciled": True, "owner_subject": owner_subject, "email_status": email_status, "notification_id": notification.get("notification_id")}
+        else:
+            result = {"reconciled": False, "reason": "billing_profile_not_found"}
+    elif event_type in {"charge.dispute.created", "charge.dispute.updated", "charge.dispute.closed"}:
+        charge_id = str(obj.get("charge") or "").strip()
+        payment_intent_id = str(obj.get("payment_intent") or "").strip()
+        transaction = db.get_payment_transaction_by_stripe_reference(charge_id, payment_intent_id)
+        evidence_details = obj.get("evidence_details") if isinstance(obj.get("evidence_details"), dict) else {}
+        evidence_packet = {
+            "customer_authorization": transaction.get("authorization_id") if transaction else None,
+            "transaction_description": transaction.get("description") if transaction else None,
+            "receipt_url": transaction.get("receipt_url") if transaction else None,
+            "stripe_charge_id": charge_id or None,
+            "stripe_payment_intent_id": payment_intent_id or None,
+        }
+        db.upsert_payment_dispute(
+            dispute_id=str(obj.get("id") or ""),
+            transaction_id=transaction.get("transaction_id") if transaction else None,
+            owner_subject=transaction.get("owner_subject") if transaction else None,
+            stripe_charge_id=charge_id or None,
+            stripe_payment_intent_id=payment_intent_id or None,
+            amount=obj.get("amount"),
+            currency=obj.get("currency"),
+            reason=obj.get("reason"),
+            status=obj.get("status"),
+            evidence_due_by=_date_from_stripe_epoch(evidence_details.get("due_by")),
+            evidence=evidence_packet,
+            raw=obj,
+        )
         result = _handle_stripe_billing_status_webhook(db, settings, obj, status="disputed")
+        result["dispute_recorded"] = True
     elif event_type == "charge.refunded":
         result = _handle_stripe_billing_status_webhook(db, settings, obj, status="refunded")
     else:
@@ -3473,9 +3568,194 @@ async def stripe_webhook(
     return {"received": True, "type": event_type, **result}
 
 
+@app.get("/v1/admin/payment-disputes/{dispute_id}/evidence")
+def payment_dispute_evidence(
+    dispute_id: str,
+    _: AuthPrincipal = Depends(require_admin_or_api_key),
+    db: Database = Depends(get_db),
+):
+    dispute = db.get_payment_dispute(dispute_id)
+    if not dispute:
+        raise HTTPException(status_code=404, detail="Payment dispute not found")
+    transaction = db.get_payment_transaction(str(dispute.get("transaction_id") or "")) if dispute.get("transaction_id") else None
+    authorization = db.get_payment_authorization(str((transaction or {}).get("authorization_id") or "")) if transaction else None
+    profile = db.get_user_profile_quiz(str(dispute.get("owner_subject") or "")) if dispute.get("owner_subject") else None
+    return {
+        "dispute": dispute,
+        "transaction": transaction,
+        "authorization": authorization,
+        "customer": {
+            "owner_subject": dispute.get("owner_subject"),
+            "name": " ".join(filter(None, [(profile or {}).get("first_name"), (profile or {}).get("last_name")])),
+            "email": (profile or {}).get("email"),
+        },
+        "summary": (
+            f"The authenticated customer expressly authorized {(transaction or {}).get('description') or 'the transaction'} "
+            f"for {((transaction or {}).get('amount') or 0) / 100:.2f} {str((transaction or {}).get('currency') or 'usd').upper()} "
+            f"under terms version {(authorization or {}).get('terms_version') or 'unknown'}."
+        ),
+    }
+
+
+@app.get("/v1/terms/current")
+def current_terms():
+    return {
+        "version": PAYMENT_TERMS_VERSION,
+        "url": "/terms",
+        "effective_date": "2026-09-22",
+    }
+
+
+@app.post("/v1/me/terms-acceptances")
+def accept_terms(
+    payload: TermsAcceptanceRequest,
+    request: Request,
+    principal: AuthPrincipal = Depends(get_request_principal),
+    db: Database = Depends(get_db),
+):
+    if payload.terms_version != PAYMENT_TERMS_VERSION:
+        raise HTTPException(status_code=409, detail="The Terms changed. Review the current version before continuing.")
+    return db.create_terms_acceptance(
+        acceptance_id=str(uuid.uuid4()),
+        owner_subject=principal.subject,
+        terms_version=payload.terms_version,
+        context=payload.context,
+        acceptance_text=payload.acceptance_text.strip(),
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+        platform=payload.platform,
+    )
+
+
+@app.get("/v1/me/terms-acceptances")
+def my_terms_acceptances(
+    principal: AuthPrincipal = Depends(get_request_principal),
+    db: Database = Depends(get_db),
+):
+    return {"items": db.list_terms_acceptances(principal.subject)}
+
+
+@app.get("/v1/me/subscription/acknowledgments")
+def subscription_acknowledgments(
+    principal: AuthPrincipal = Depends(get_request_principal),
+    db: Database = Depends(get_db),
+):
+    acceptances = [item for item in db.list_terms_acceptances(principal.subject) if item.get("context") == "subscription"]
+    return {"terms_version": PAYMENT_TERMS_VERSION, "items": acceptances}
+
+
+@app.post("/v1/me/subscription/cancel", response_model=SubscriptionActivateResponse)
+def cancel_subscription(
+    payload: SubscriptionCancelRequest,
+    principal: AuthPrincipal = Depends(get_request_principal),
+    db: Database = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+):
+    billing = db.get_billing_profile(principal.subject) or {}
+    subscription_id = str(billing.get("stripe_subscription_id") or "").strip()
+    if not subscription_id:
+        raise HTTPException(status_code=409, detail="There is no paid subscription to cancel")
+    secret_key = str(settings.stripe_secret_key or "").strip()
+    if not secret_key:
+        raise HTTPException(status_code=503, detail="Subscription cancellation is temporarily unavailable")
+    try:
+        with httpx.Client(timeout=15.0) as client:
+            if payload.cancel_at_period_end:
+                response = client.post(
+                    f"https://api.stripe.com/v1/subscriptions/{subscription_id}",
+                    data={"cancel_at_period_end": "true"},
+                    auth=(secret_key, ""),
+                )
+            else:
+                response = client.delete(
+                    f"https://api.stripe.com/v1/subscriptions/{subscription_id}",
+                    auth=(secret_key, ""),
+                )
+        if response.status_code >= 400:
+            raise HTTPException(status_code=502, detail=_stripe_error_detail(response, "Stripe cancellation failed"))
+        subscription = response.json()
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=502, detail="Stripe cancellation is unavailable")
+    status = "canceling" if payload.cancel_at_period_end else "canceled"
+    renewal_date = _date_from_stripe_epoch(subscription.get("current_period_end")) if payload.cancel_at_period_end else None
+    plan = str(billing.get("subscription_plan") or "free")
+    cycle = str(billing.get("subscription_billing_cycle") or "monthly")
+    _reconcile_subscription_state(
+        db,
+        owner_subject=principal.subject,
+        stripe_subscription_id=subscription_id if payload.cancel_at_period_end else None,
+        subscription_plan=plan if payload.cancel_at_period_end else "free",
+        subscription_billing_cycle=cycle,
+        subscription_status=status,
+        subscription_renewal_date=renewal_date,
+    )
+    return SubscriptionActivateResponse(
+        owner_subject=principal.subject,
+        plan=plan if payload.cancel_at_period_end else "free",
+        billing_cycle=cycle,
+        status=status,
+        renewal_date=renewal_date,
+        stripe_subscription_id=subscription_id if payload.cancel_at_period_end else None,
+        message=(f"Subscription canceled. Access continues through {renewal_date}." if renewal_date else "Subscription canceled."),
+    )
+
+
+@app.post("/v1/me/compliance-requests")
+def create_compliance_request(
+    payload: ComplianceRequestCreate,
+    principal: AuthPrincipal = Depends(get_request_principal),
+    db: Database = Depends(get_db),
+):
+    return db.create_compliance_request(
+        request_id=str(uuid.uuid4()), owner_subject=principal.subject,
+        request_type=payload.request_type, status="submitted",
+        details=payload.details.strip(), resolution="",
+    )
+
+
+@app.get("/v1/me/compliance-requests")
+def list_compliance_requests(
+    principal: AuthPrincipal = Depends(get_request_principal),
+    db: Database = Depends(get_db),
+):
+    return {"items": db.list_compliance_requests(principal.subject)}
+
+
+@app.post("/v1/offers/{offer_id}/cases")
+def create_trade_case(
+    offer_id: str,
+    payload: TradeCaseCreate,
+    principal: AuthPrincipal = Depends(get_request_principal),
+    db: Database = Depends(get_db),
+):
+    offer = db.get_trade_offer_by_id(offer_id)
+    if not offer or principal.subject not in {str(offer.get("from_subject") or ""), str(offer.get("to_subject") or "")}:
+        raise HTTPException(status_code=404, detail="Trade not found")
+    return db.create_trade_case(
+        case_id=str(uuid.uuid4()), offer_id=offer_id, owner_subject=principal.subject,
+        case_type=payload.case_type, status="submitted", description=payload.description.strip(),
+        evidence=payload.evidence, resolution="",
+    )
+
+
+@app.get("/v1/offers/{offer_id}/cases")
+def list_trade_cases(
+    offer_id: str,
+    principal: AuthPrincipal = Depends(get_request_principal),
+    db: Database = Depends(get_db),
+):
+    offer = db.get_trade_offer_by_id(offer_id)
+    if not offer or principal.subject not in {str(offer.get("from_subject") or ""), str(offer.get("to_subject") or "")}:
+        raise HTTPException(status_code=404, detail="Trade not found")
+    return {"items": db.list_trade_cases(principal.subject, offer_id=offer_id)}
+
+
 @app.post("/v1/me/subscription/activate", response_model=SubscriptionActivateResponse)
 def activate_subscription(
     payload: SubscriptionActivateRequest,
+    request: Request,
     principal: AuthPrincipal = Depends(get_request_principal),
     db: Database = Depends(get_db),
     settings: Settings = Depends(get_settings),
@@ -3569,6 +3849,42 @@ def activate_subscription(
 
     interval = "year" if cycle == "annual" else "month"
     amount_cents = int(plan["annual_cents"] if cycle == "annual" else plan["monthly_cents"])
+    if not payload.consent_confirmed:
+        raise HTTPException(status_code=400, detail="Confirm the subscription charge and terms before payment")
+    terms_version = str(payload.terms_version or "").strip()
+    if terms_version != PAYMENT_TERMS_VERSION:
+        raise HTTPException(status_code=400, detail="Review and accept the current payment terms")
+    authorization_id = str(uuid.uuid4())
+    transaction_id = str(uuid.uuid4())
+    authorization_text = str(payload.authorization_text or "").strip() or (
+        f"I authorize JOUFT to charge ${amount_cents / 100:.2f} USD "
+        f"{'annually' if cycle == 'annual' else 'monthly'} for the {plan['label']} subscription until canceled."
+    )
+    db.create_payment_authorization(
+        authorization_id=authorization_id,
+        owner_subject=principal.subject,
+        purpose="subscription",
+        amount=amount_cents,
+        currency="usd",
+        description=f"{plan['label']} subscription ({cycle})",
+        terms_version=terms_version,
+        authorization_text=authorization_text,
+        consent_confirmed=1,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+        platform=payload.platform,
+        payment_method_id=selected_method_id or None,
+    )
+    db.create_terms_acceptance(
+        acceptance_id=str(uuid.uuid4()),
+        owner_subject=principal.subject,
+        terms_version=terms_version,
+        context="subscription",
+        acceptance_text=authorization_text,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+        platform=payload.platform,
+    )
     subscription_data: dict = {}
     try:
         with httpx.Client(timeout=15.0) as client:
@@ -3665,6 +3981,9 @@ def activate_subscription(
                     "metadata[owner_subject]": principal.subject,
                     "metadata[plan]": plan_key,
                     "metadata[billing_cycle]": cycle,
+                    "metadata[transaction_id]": transaction_id,
+                    "metadata[authorization_id]": authorization_id,
+                    "metadata[terms_version]": terms_version,
                     "payment_behavior": "error_if_incomplete",
                     "expand[]": "latest_invoice.payment_intent",
                 },
@@ -3681,6 +4000,26 @@ def activate_subscription(
     subscription_id = str(subscription_data.get("id") or "").strip() or None
     status = str(subscription_data.get("status") or "active").strip() or "active"
     renewal_date = _date_from_stripe_epoch(subscription_data.get("current_period_end"))
+    latest_invoice = subscription_data.get("latest_invoice") if isinstance(subscription_data.get("latest_invoice"), dict) else {}
+    payment_intent = latest_invoice.get("payment_intent") if isinstance(latest_invoice.get("payment_intent"), dict) else {}
+    charge = payment_intent.get("latest_charge") if isinstance(payment_intent.get("latest_charge"), dict) else {}
+    db.upsert_payment_transaction(
+        transaction_id=transaction_id,
+        owner_subject=principal.subject,
+        purpose="subscription",
+        amount=amount_cents,
+        currency="usd",
+        status=status,
+        authorization_id=authorization_id,
+        stripe_customer_id=customer_id,
+        stripe_subscription_id=subscription_id,
+        stripe_invoice_id=str(latest_invoice.get("id") or "") or None,
+        stripe_payment_intent_id=str(payment_intent.get("id") or "") or None,
+        stripe_charge_id=str(charge.get("id") or payment_intent.get("latest_charge") or "") or None,
+        receipt_url=str(charge.get("receipt_url") or latest_invoice.get("hosted_invoice_url") or "") or None,
+        description=f"{plan['label']} subscription ({cycle})",
+        metadata={"plan": plan_key, "billing_cycle": cycle, "terms_version": terms_version},
+    )
     db.set_billing_subscription(
         principal.subject,
         stripe_subscription_id=subscription_id,
@@ -3695,6 +4034,14 @@ def activate_subscription(
         subscription_billing_cycle=cycle,
         subscription_status=status,
         subscription_renewal_date=renewal_date,
+    )
+    _send_subscription_billing_email_if_configured(
+        settings=settings,
+        db=db,
+        owner_subject=principal.subject,
+        kind="authorization_confirmation",
+        plan=plan_key,
+        invoice_url=str(latest_invoice.get("hosted_invoice_url") or "") or None,
     )
     return SubscriptionActivateResponse(
         owner_subject=principal.subject,
@@ -7541,30 +7888,428 @@ LISTING_CHAT_SIZE_OPTIONS = {
 }
 
 
-def _listing_chat_direct_changes(message: str, context: dict) -> dict:
-    text = re.sub(r"[-_]", " ", str(message or "").strip().lower())
-    changes: dict[str, str] = {}
-    if re.search(r"(?:^|\b(?:change|update|set)\s+(?:the\s+)?condition\s+(?:to|as)|\b(?:condition|item)\s+is)\s+(?:new with tags|nwt)\b", text) or text in {"new with tags", "nwt"}:
-        changes["condition"] = "NewWithTags"
-    elif re.search(r"(?:^|\b(?:change|update|set)\s+(?:the\s+)?condition\s+(?:to|as)|\b(?:condition|item)\s+is)\s+like new\b", text) or text == "like new":
-        changes["condition"] = "LikeNew"
-    elif re.search(r"(?:condition\s+(?:to|is)|item\s+is)\s+new\b", text):
-        changes["condition"] = "New"
-    for category in ("clothes", "shoes", "handbag", "accessories"):
-        if text == category or re.search(rf"(?:\bcategory\s+(?:to|is)\s+|\bthis\s+is\s+(?:a|an)\s+){category}\b", text):
-            changes["category"] = category
-            break
-    category = changes.get("category") or context.get("category")
-    for option in LISTING_CHAT_SIZE_OPTIONS.get(str(category), []):
-        if text == option.lower() or re.search(rf"\bsize\s+(?:(?:is|to)\s+)?{re.escape(option.lower())}\b", text):
-            changes["size"] = option
-            break
-    if str(context.get("workflow_stage") or "") == "review":
-        for field in ("title", "brand", "description"):
-            match = re.search(rf"(?:change|update|set)\s+(?:the\s+)?{field}\s+(?:to|as)\s+(.+)", str(message or "").strip(), re.IGNORECASE)
-            if match:
-                changes[field] = match.group(1).strip().rstrip(".")
-    return changes
+def _app_assistant_listing_card(listing: dict, settings: Settings) -> dict:
+    def public_image(value: object) -> str | None:
+        normalized = _normalize_public_image_url(value)
+        if normalized:
+            return normalized
+        if isinstance(value, str) and value.startswith("s3://"):
+            try:
+                return _presign_s3_uri(value, settings)
+            except Exception:
+                return None
+        return None
+
+    gallery: list[str] = []
+    for value in [listing.get("image"), *(listing.get("images") or [])]:
+        image_url = public_image(value)
+        if image_url and image_url not in gallery:
+            gallery.append(image_url)
+    return {
+        "listing_id": str(listing.get("listing_id") or listing.get("id") or ""),
+        "title": listing.get("title") or "Listing",
+        "brand": listing.get("brand") or "Unknown brand",
+        "category": listing.get("category"),
+        "condition": listing.get("condition"),
+        "size": listing.get("size"),
+        "status": listing.get("status"),
+        "owner_name": listing.get("owner_name"),
+        "image": gallery[0] if gallery else None,
+        "images": gallery[:6],
+    }
+
+
+APP_ASSISTANT_REFERENCE_STOP_WORDS = {
+    "the", "a", "an", "my", "listing", "item", "publish", "post", "make", "put", "live", "marketplace", "please",
+}
+
+
+def _app_assistant_reference_terms(reference: object) -> list[str]:
+    return [
+        term for term in re.findall(r"[a-z0-9]+", str(reference or "").strip().casefold())
+        if term not in APP_ASSISTANT_REFERENCE_STOP_WORDS
+    ]
+
+
+def _app_assistant_resolve_listing(reference: object, listings: list[dict], prior_ids: list[str]) -> dict | None:
+    ref = str(reference or "").strip()
+    if not ref:
+        return None
+    by_id = {str(item.get("listing_id") or item.get("id") or ""): item for item in listings}
+    if ref in by_id:
+        return by_id[ref]
+    terms = _app_assistant_reference_terms(ref)
+    candidates = [
+        item for item in listings
+        if all(term in " ".join(str(item.get(key) or "") for key in ("brand", "title", "category", "size")).casefold() for term in terms)
+    ]
+    return candidates[0] if len(candidates) == 1 else None
+
+
+def _app_assistant_listing_candidates(reference: object, listings: list[dict]) -> list[dict]:
+    terms = _app_assistant_reference_terms(reference)
+    if not terms:
+        return []
+    return [
+        item for item in listings
+        if all(term in " ".join(str(item.get(key) or "") for key in ("brand", "title", "category", "size")).casefold() for term in terms)
+    ]
+
+
+def _app_assistant_action_signature(action: dict, subject: str, settings: Settings) -> str:
+    payload = json.dumps({
+        "type": action.get("type"),
+        "target_listing_id": action.get("target_listing_id"),
+        "offered_listing_id": action.get("offered_listing_id"),
+        "listing_id": action.get("listing_id"),
+        "subject": subject,
+    }, sort_keys=True, separators=(",", ":"))
+    secret = str(settings.api_key or settings.openai_api_key or "jouft-app-assistant").encode("utf-8")
+    return hmac.new(secret, payload.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def _app_assistant_indexed_reference(index: object, listing_ids: list[str]) -> str | None:
+    try:
+        position = int(index) - 1
+    except (TypeError, ValueError):
+        return None
+    return listing_ids[position] if 0 <= position < len(listing_ids) else None
+
+
+@app.post("/v1/app-assistant/chat", response_model=AppAssistantResponse)
+async def app_assistant_chat(
+    request: AppAssistantRequest,
+    settings: Settings = Depends(get_settings),
+    db: Database = Depends(get_db),
+    principal: AuthPrincipal = Depends(get_request_principal),
+) -> AppAssistantResponse:
+    if not str(settings.openai_api_key or "").strip():
+        raise HTTPException(status_code=503, detail="Application assistant is temporarily unavailable")
+
+    own_listings = db.list_owner_listings(principal.subject, limit=100)
+    marketplace_payload = list_recent_listings(
+        limit=100,
+        offset=0,
+        mine=False,
+        include_matches=True,
+        principal=principal,
+        db=db,
+        settings=settings,
+    )
+    marketplace = [
+        item for item in marketplace_payload.get("items") or []
+        if str(item.get("owner_subject") or "") != principal.subject and bool(item.get("matches"))
+    ]
+    offers = db.list_trade_offers_for_subject(principal.subject, limit=50)
+    inventory_summary = {
+        "closet": [
+            {key: item.get(key) for key in ("listing_id", "title", "brand", "category", "condition", "size", "status")}
+            for item in own_listings
+        ],
+        "marketplace": [
+            {key: item.get(key) for key in ("listing_id", "title", "brand", "category", "condition", "size", "status")}
+            for item in marketplace[:50]
+        ],
+        "trades": [
+            {key: offer.get(key) for key in ("offer_id", "target_listing_id", "offered_listing_id", "status", "created_at")}
+            for offer in offers
+        ],
+    }
+    transcript = "\n".join(
+        f"{message.role.upper()}: {message.content.strip()}" for message in request.messages[-12:]
+    )
+    latest_user_text = next((message.content.strip() for message in reversed(request.messages) if message.role == "user"), "")
+    instructions = (
+        "You are Jouft's application assistant. Interpret the member's natural language rather than requiring fixed commands. "
+        "Choose exactly one intent. Resolve references such as 'my Prada bag', 'the second one', 'the last result', or 'that trade' using APP STATE. "
+        "Ordered marketplace_result_ids and closet_result_ids correspond to the numbered cards most recently shown in each domain. "
+        "When the member refers to a displayed result by position or description, return its exact listing ID in listing_reference, target_reference, or offered_reference. "
+        "Also return the one-based card position in listing_reference_index and its domain in listing_reference_scope. "
+        "For trade targets use target_reference_index into marketplace_result_ids; for offered items use offered_reference_index into closet_result_ids. "
+        "Interpret expressions such as first, second, last, the jacket, or the Saint Laurent item semantically; never place those phrases in an ID field. "
+        "Use create_listing to begin creating an item; publish_listing when the member asks to publish an existing closet listing; "
+        "show_closet only when the member asks to browse or see their closet; search_marketplace for browsing or filtering; "
+        "use show_tradeable_items when they ask broadly what marketplace items they can trade for using any active closet listing; "
+        "show_matches whenever the member asks for matched listings or matches for one of their listings, including requests mentioning images or photos; "
+        "prepare_trade when they want to trade for a marketplace item; "
+        "show_trades for offer status; track_shipping for shipment status; navigate for a named screen; help when unclear. "
+        "A trade must never be sent on the prepare_trade turn. prepare_trade only creates a confirmation summary. "
+        "Use confirm_action only when a pending action exists and the member clearly confirms it in their own words. "
+        "Use cancel_action when they decline or cancel a pending action. Do not expose internal listing or offer IDs in reply, and do not enumerate inventory in prose. "
+        "The server renders listing cards. Do not invent IDs or facts. Keep reply concise and natural."
+    )
+    own_listing_ids = [str(item.get("listing_id") or "") for item in own_listings if item.get("listing_id")]
+    marketplace_listing_ids = [str(item.get("listing_id") or "") for item in marketplace if item.get("listing_id")]
+    all_listing_ids = list(dict.fromkeys([*own_listing_ids, *marketplace_listing_ids]))
+    schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "intent": {"type": "string", "enum": ["create_listing", "publish_listing", "show_closet", "search_marketplace", "show_tradeable_items", "show_matches", "prepare_trade", "confirm_action", "cancel_action", "show_trades", "track_shipping", "navigate", "help"]},
+            "reply": {"type": "string"},
+            "listing_reference": {"type": ["string", "null"], "enum": [*all_listing_ids, None]},
+            "listing_reference_scope": {"type": ["string", "null"], "enum": ["marketplace", "closet", None]},
+            "listing_reference_index": {"type": ["integer", "null"], "minimum": 1, "maximum": 20},
+            "target_reference": {"type": ["string", "null"], "enum": [*marketplace_listing_ids, None]},
+            "target_reference_index": {"type": ["integer", "null"], "minimum": 1, "maximum": 20},
+            "offered_reference": {"type": ["string", "null"], "enum": [*own_listing_ids, None]},
+            "offered_reference_index": {"type": ["integer", "null"], "minimum": 1, "maximum": 20},
+            "search_terms": {"type": "array", "items": {"type": "string"}, "maxItems": 8},
+            "navigation": {"type": ["string", "null"], "enum": ["create", "closet", "marketplace", "inbox", "profile", None]},
+        },
+        "required": ["intent", "reply", "listing_reference", "listing_reference_scope", "listing_reference_index", "target_reference", "target_reference_index", "offered_reference", "offered_reference_index", "search_terms", "navigation"],
+    }
+    try:
+        async with httpx.AsyncClient(timeout=settings.listing_assistant_timeout_s) as client:
+            response = await client.post(
+                "https://api.openai.com/v1/responses",
+                headers={"Authorization": f"Bearer {settings.openai_api_key}", "Content-Type": "application/json"},
+                json={
+                    "model": settings.listing_assistant_model,
+                    "instructions": instructions,
+                    "input": f"APP STATE:\n{json.dumps({'inventory': inventory_summary, 'assistant_context': request.context.model_dump()})}\n\nCONVERSATION:\n{transcript}",
+                    "text": {"format": {"type": "json_schema", "name": "app_assistant_response", "strict": True, "schema": schema}},
+                },
+            )
+        if response.status_code >= 400:
+            log_json("app_assistant_openai_error", status_code=response.status_code, actor=principal.subject)
+            raise HTTPException(status_code=502, detail="Application assistant could not respond. Please try again.")
+        parsed = json.loads(_openai_response_text(response.json()))
+    except HTTPException:
+        raise
+    except (httpx.HTTPError, json.JSONDecodeError, ValueError) as exc:
+        log_json("app_assistant_error", error=str(exc), actor=principal.subject)
+        raise HTTPException(status_code=502, detail="Application assistant could not respond. Please try again.") from exc
+
+    intent = str(parsed.get("intent") or "help")
+    reply = str(parsed.get("reply") or "How can I help with your closet or trades?").strip()
+    navigation = parsed.get("navigation")
+    result_listings: list[dict] = []
+    result_trades: list[dict] = []
+    result_shipments: list[dict] = []
+    pending_action = request.context.pending_action
+    requires_confirmation = False
+    prior_ids = list(request.context.result_listing_ids)
+    marketplace_result_ids = list(request.context.marketplace_result_ids)
+    closet_result_ids = list(request.context.closet_result_ids)
+    all_listings = [*own_listings, *marketplace]
+    selected_context_id = request.context.selected_listing_id
+
+    if intent == "create_listing":
+        navigation = "create"
+        reply = reply or "Let’s create a listing. Add clear photos first, and I’ll guide you through the details."
+    elif intent == "publish_listing":
+        reference = (
+            parsed.get("listing_reference")
+            or _app_assistant_indexed_reference(parsed.get("listing_reference_index"), closet_result_ids)
+            or latest_user_text
+        )
+        listing = _app_assistant_resolve_listing(reference, own_listings, prior_ids)
+        if not listing:
+            candidates = _app_assistant_listing_candidates(reference, own_listings)
+            result_listings = candidates[:12]
+            if candidates:
+                reply = f"I found {len(candidates)} listings that could match. Which one would you like to publish?"
+            else:
+                reply = "Which closet listing would you like to publish? You can describe it by brand or title."
+        elif str(listing.get("status") or "").casefold() == "active":
+            result_listings = [listing]
+            reply = f"{listing.get('title') or 'That listing'} is already published."
+        else:
+            pending_action = {"type": "publish_listing", "listing_id": str(listing.get("listing_id") or "")}
+            pending_action["signature"] = _app_assistant_action_signature(pending_action, principal.subject, settings)
+            requires_confirmation = True
+            result_listings = [listing]
+            reply = f"Should I publish {listing.get('title') or 'this listing'} to Marketplace?"
+    elif intent == "show_closet":
+        navigation = "closet"
+        result_listings = own_listings[:12]
+        reply = f"You have {len(own_listings)} listings in your closet." if own_listings else "Your closet is empty."
+    elif intent == "search_marketplace":
+        navigation = "marketplace"
+        terms = [str(term).strip().casefold() for term in parsed.get("search_terms") or [] if str(term).strip()]
+        filtered = marketplace
+        if terms:
+            filtered = [
+                item for item in marketplace
+                if all(term in " ".join(str(item.get(key) or "") for key in ("brand", "title", "category", "condition", "size")).casefold() for term in terms)
+            ]
+        result_listings = filtered[:12]
+        reply = f"I found {len(filtered)} marketplace listings that match." if filtered else "I couldn’t find marketplace listings matching that description."
+    elif intent == "show_tradeable_items":
+        navigation = "marketplace"
+        active_own = [
+            item for item in own_listings
+            if str(item.get("status") or "").casefold() == "active" and float(item.get("estimated_value") or 0) > 0
+        ]
+        result_listings = marketplace[:12]
+        if not active_own:
+            reply = "Publish a valued closet listing first, and I’ll show you marketplace items you can trade for."
+        elif result_listings:
+            reply = f"I found {len(result_listings)} marketplace items compatible with your active closet listings."
+        else:
+            reply = "There aren’t any compatible marketplace items right now. I’ll keep matching as inventory changes."
+    elif intent == "show_matches":
+        reference_scope = parsed.get("listing_reference_scope")
+        scoped_result_ids = marketplace_result_ids if reference_scope == "marketplace" else closet_result_ids
+        reference = (
+            parsed.get("listing_reference")
+            or _app_assistant_indexed_reference(parsed.get("listing_reference_index"), scoped_result_ids)
+            or selected_context_id
+        )
+        source = _app_assistant_resolve_listing(reference, all_listings, prior_ids)
+        if not source and selected_context_id:
+            source = _app_assistant_resolve_listing(selected_context_id, all_listings, prior_ids)
+        if not source:
+            reply = "Which one of your listings should I find matches for? You can describe it by brand or title."
+            result_listings = own_listings[:12]
+        elif str(source.get("owner_subject") or "") != principal.subject:
+            selected_context_id = str(source.get("listing_id") or "")
+            result_listings = list(source.get("matches") or [])[:12]
+            reply = (
+                f"I found {len(result_listings)} closet listings you can offer for {source.get('title') or 'that marketplace item'}."
+                if result_listings
+                else f"You don’t have an eligible closet listing to offer for {source.get('title') or 'that marketplace item'} right now."
+            )
+        else:
+            selected_context_id = str(source.get("listing_id") or "")
+            source_value = float(source.get("estimated_value") or 0)
+            tolerance, _ = _trade_match_tolerance(source_value)
+            result_listings = [
+                item for item in marketplace
+                if source_value > 0 and float(item.get("estimated_value") or 0) > 0
+                and abs(float(item.get("estimated_value") or 0) - source_value) <= tolerance
+            ][:12]
+            reply = (
+                f"I found {len(result_listings)} matches for {source.get('title') or 'your listing'}."
+                if result_listings
+                else f"There are no close matches for {source.get('title') or 'that listing'} yet."
+            )
+    elif intent == "prepare_trade":
+        target_reference = (
+            parsed.get("target_reference")
+            or _app_assistant_indexed_reference(parsed.get("target_reference_index"), marketplace_result_ids)
+            or parsed.get("listing_reference")
+        )
+        offered_reference = (
+            parsed.get("offered_reference")
+            or _app_assistant_indexed_reference(parsed.get("offered_reference_index"), closet_result_ids)
+        )
+        target = _app_assistant_resolve_listing(target_reference, marketplace, prior_ids)
+        if not target and request.context.selected_listing_id:
+            target = _app_assistant_resolve_listing(request.context.selected_listing_id, marketplace, prior_ids)
+        offered = _app_assistant_resolve_listing(offered_reference, own_listings, prior_ids)
+        if not target:
+            reply = "Which marketplace item would you like to trade for?"
+            result_listings = marketplace[:12]
+        elif not offered:
+            reply = f"What would you like to offer for {target.get('title') or 'that item'}?"
+            result_listings = [item for item in own_listings if str(item.get("status") or "").lower() == "active"][:12]
+        else:
+            pending_action = {
+                "type": "send_trade_offer",
+                "target_listing_id": str(target.get("listing_id") or ""),
+                "offered_listing_id": str(offered.get("listing_id") or ""),
+            }
+            pending_action["signature"] = _app_assistant_action_signature(pending_action, principal.subject, settings)
+            requires_confirmation = True
+            result_listings = [target, offered]
+            reply = f"You’re offering {offered.get('title') or 'your item'} for {target.get('title') or 'the selected item'}. Should I send this trade offer?"
+    elif intent == "confirm_action":
+        expected_signature = _app_assistant_action_signature(pending_action or {}, principal.subject, settings)
+        provided_signature = str((pending_action or {}).get("signature") or "")
+        if not pending_action or pending_action.get("type") not in {"send_trade_offer", "publish_listing"} or not hmac.compare_digest(provided_signature, expected_signature):
+            reply = "There isn’t an action waiting for confirmation. Tell me what you’d like to do."
+            pending_action = None
+        elif pending_action.get("type") == "publish_listing":
+            listing_id = str(pending_action.get("listing_id") or "")
+            listing = next((item for item in own_listings if str(item.get("listing_id") or "") == listing_id), None)
+            if not listing:
+                raise HTTPException(status_code=404, detail="Listing not found")
+            tasks = BackgroundTasks()
+            published = update_listing(
+                listing_id,
+                ListingCreateRequest.model_validate({**listing, "status": "Active"}),
+                tasks,
+                principal,
+                db,
+                settings,
+                None,
+                None,
+            )
+            await tasks()
+            result_listings = [published.model_dump()]
+            pending_action = None
+            navigation = "closet"
+            reply = f"{published.title} is now published to Marketplace."
+        else:
+            offer = create_offer(
+                OfferCreateRequest(
+                    target_listing_id=str(pending_action.get("target_listing_id") or ""),
+                    offered_listing_ids=[str(pending_action.get("offered_listing_id") or "")],
+                    message="",
+                ),
+                principal=principal,
+                db=db,
+                settings=settings,
+            )
+            result_trades = [offer.model_dump()]
+            pending_action = None
+            navigation = "inbox"
+            reply = "Your trade offer has been sent. You can track its status in Trade Inbox."
+    elif intent == "cancel_action":
+        pending_action = None
+        reply = "Okay, I won’t send it."
+    elif intent in {"show_trades", "track_shipping"}:
+        navigation = "inbox"
+        listing_map = db.get_listings_by_ids([
+            str(value) for offer in offers for value in [offer.get("target_listing_id"), offer.get("offered_listing_id")] if value
+        ])
+        for offer in offers[:20]:
+            trade = dict(offer)
+            trade["target_listing"] = _app_assistant_listing_card(listing_map.get(str(offer.get("target_listing_id"))) or {}, settings)
+            trade["offered_listing"] = _app_assistant_listing_card(listing_map.get(str(offer.get("offered_listing_id"))) or {}, settings)
+            result_trades.append(trade)
+            for shipment in db.list_shipments_for_offer(str(offer.get("offer_id") or "")):
+                if principal.subject in {shipment.get("from_subject"), shipment.get("to_subject")}:
+                    result_shipments.append(shipment)
+        if intent == "track_shipping":
+            reply = f"I found {len(result_shipments)} shipments for your trades." if result_shipments else "None of your trades has an active shipment yet."
+        else:
+            reply = f"You have {len(offers)} trade offers." if offers else "You don’t have any trade offers yet."
+
+    cards = [_app_assistant_listing_card(item, settings) for item in result_listings]
+    result_ids = [card["listing_id"] for card in cards if card.get("listing_id")]
+    if intent in {"search_marketplace", "show_tradeable_items"}:
+        marketplace_result_ids = result_ids
+    elif intent == "show_closet" or (intent == "publish_listing" and not requires_confirmation):
+        closet_result_ids = result_ids
+    response_context = {
+        "result_listing_ids": result_ids,
+        "marketplace_result_ids": marketplace_result_ids,
+        "closet_result_ids": closet_result_ids,
+        "selected_listing_id": (
+            str(target.get("listing_id") or "")
+            if intent == "prepare_trade" and "target" in locals() and target
+            else selected_context_id
+            if selected_context_id
+            else result_ids[0] if len(result_ids) == 1
+            else None
+        ),
+        "pending_action": pending_action,
+        "active_screen": navigation or request.context.active_screen,
+    }
+    return AppAssistantResponse.model_validate({
+        "reply": reply,
+        "intent": intent,
+        "navigation": navigation,
+        "listings": cards,
+        "trades": result_trades,
+        "shipments": result_shipments,
+        "pending_action": pending_action,
+        "requires_confirmation": requires_confirmation,
+        "context": response_context,
+    })
 
 
 def _listing_chat_orchestrate(context: dict, suggestions: dict, action: str = "none", natural_reply: str = "") -> dict:
@@ -7640,7 +8385,7 @@ async def listing_assistant_chat(
     request: ListingAssistantRequest,
     settings: Settings = Depends(get_settings),
     db: Database = Depends(get_db),
-    principal: AuthPrincipal = Depends(require_admin_or_api_key),
+    principal: AuthPrincipal = Depends(get_request_principal),
 ) -> ListingAssistantResponse:
     if not str(settings.openai_api_key or "").strip():
         raise HTTPException(status_code=503, detail="Listing assistant is temporarily unavailable")
@@ -7720,17 +8465,8 @@ async def listing_assistant_chat(
         "required": ["reply", "suggestions", "missing_fields", "ready_to_create", "action"],
     }
     try:
-        latest_user_message = next((str(message.get("content") or "") for message in reversed(new_incoming or incoming) if message.get("role") == "user"), "")
-        direct_changes = _listing_chat_direct_changes(latest_user_message, context)
-        direct_publish = str(context.get("workflow_stage") or "") == "review" and bool(re.search(r"\b(publish|post|make (?:it|the listing) live|go live)\b", latest_user_message, re.IGNORECASE))
-        direct_create = str(context.get("workflow_stage") or "") != "review" and bool(re.search(r"\b(go ahead|proceed|reviewed|create (?:it|the listing|the draft)|start (?:the )?analysis|analyze (?:it|the listing)|looks good)\b", latest_user_message, re.IGNORECASE))
-        if direct_changes or direct_publish or direct_create:
-            direct_action = "publish" if direct_publish else "create_analyze" if direct_create else "update"
-            parsed = {"reply": "", "suggestions": {"category": None, "condition": None, "size": None, "brand": None, "title": None, "description": None}, "missing_fields": [], "ready_to_create": False, "action": direct_action}
-            parsed["suggestions"].update(direct_changes)
-        else:
-            async with httpx.AsyncClient(timeout=settings.listing_assistant_timeout_s) as client:
-                response = await client.post(
+        async with httpx.AsyncClient(timeout=settings.listing_assistant_timeout_s) as client:
+            response = await client.post(
                 "https://api.openai.com/v1/responses",
                 headers={
                     "Authorization": f"Bearer {settings.openai_api_key}",
@@ -7749,12 +8485,12 @@ async def listing_assistant_chat(
                         }
                     },
                 },
-                )
-            if response.status_code >= 400:
-                log_json("listing_assistant_openai_error", status_code=response.status_code)
-                raise HTTPException(status_code=502, detail="Listing assistant could not respond. Please try again.")
-            raw_text = _openai_response_text(response.json())
-            parsed = json.loads(raw_text)
+            )
+        if response.status_code >= 400:
+            log_json("listing_assistant_openai_error", status_code=response.status_code)
+            raise HTTPException(status_code=502, detail="Listing assistant could not respond. Please try again.")
+        raw_text = _openai_response_text(response.json())
+        parsed = json.loads(raw_text)
         suggestions = {
             key: value
             for key, value in (parsed.get("suggestions") or {}).items()
@@ -7792,7 +8528,7 @@ async def listing_assistant_chat(
 @app.get("/v1/listing-assistant/conversations/active")
 def get_active_listing_assistant_conversation(
     db: Database = Depends(get_db),
-    principal: AuthPrincipal = Depends(require_admin_or_api_key),
+    principal: AuthPrincipal = Depends(get_request_principal),
 ) -> dict:
     return {"conversation": db.get_active_listing_conversation(principal.subject)}
 
@@ -7801,7 +8537,7 @@ def get_active_listing_assistant_conversation(
 def get_listing_assistant_conversation(
     conversation_id: str,
     db: Database = Depends(get_db),
-    principal: AuthPrincipal = Depends(require_admin_or_api_key),
+    principal: AuthPrincipal = Depends(get_request_principal),
 ) -> dict:
     conversation = db.get_listing_conversation(conversation_id, principal.subject)
     if not conversation:
@@ -7814,7 +8550,7 @@ def update_listing_assistant_conversation(
     conversation_id: str,
     request: ListingConversationUpdateRequest,
     db: Database = Depends(get_db),
-    principal: AuthPrincipal = Depends(require_admin_or_api_key),
+    principal: AuthPrincipal = Depends(get_request_principal),
 ) -> dict:
     conversation = db.get_listing_conversation(conversation_id, principal.subject)
     if not conversation:
