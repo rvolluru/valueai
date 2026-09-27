@@ -333,7 +333,7 @@ def _listing_matches_viewer_size_preferences(
 
 def _sent_offer_match_pairs(db: Database, subject: str) -> set[tuple[str, str]]:
     """Return active marketplace target/offered-listing pairs already sent by this viewer."""
-    active_statuses = {"pending", "accepted", "countered"}
+    active_statuses = {"requested", "proposed", "pending", "accepted", "countered"}
     pairs: set[tuple[str, str]] = set()
     for offer in db.list_trade_offers_for_subject(subject, limit=200, status=None):
         if str(offer.get("from_subject") or "") != subject:
@@ -755,6 +755,8 @@ def _uploaded_images_for_item(db: Database, item_id: str | None) -> list[dict]:
         return []
     uploaded: list[dict] = []
     for idx, record in enumerate(db.list_image_records_for_item(item_id, limit=20)):
+        if str(record.get("role_hint") or "").strip() == "ai_mannequin":
+            continue
         image_id = str(record.get("image_id") or "").strip()
         if not image_id:
             continue
@@ -869,7 +871,12 @@ def _reuse_recent_analysis_for_listing(
     source_item_id = str(current.get("source_item_id") or "").strip()
     if not source_item_id:
         return None
-    image_hashes = db.list_image_content_hashes_for_item(source_item_id, limit=20)
+    image_hashes = [
+        str(record.get("content_hash") or "").strip()
+        for record in db.list_image_records_for_item(source_item_id, limit=20)
+        if str(record.get("role_hint") or "").strip() != "ai_mannequin"
+        and str(record.get("content_hash") or "").strip()
+    ]
     if not image_hashes:
         return None
     cached = db.find_recent_analysis_by_image_hashes(
@@ -1193,6 +1200,13 @@ def _collect_listing_analysis_files(
         image = listing.get("image")
         if isinstance(image, str) and image.strip() and image.strip() not in raw_urls:
             raw_urls.insert(0, image.strip())
+    analysis = listing.get("analysis") if isinstance(listing.get("analysis"), dict) else {}
+    generated_urls = {
+        str(asset.get("image_url") or "").strip()
+        for asset in (analysis.get("generated_assets") or [])
+        if isinstance(asset, dict) and asset.get("synthetic") and str(asset.get("image_url") or "").strip()
+    }
+    raw_urls = [url for url in raw_urls if url not in generated_urls]
     source_item_id = str(listing.get("source_item_id") or "").strip() or None
     files: list[dict[str, object]] = []
     for idx, image_url in enumerate(raw_urls):
@@ -5130,10 +5144,12 @@ def list_recent_listings(
         for record in records:
             if not _listing_matches_viewer_size_preferences(record, viewer_size_prefs):
                 record["matches"] = []
+                record["match_count"] = 0
                 continue
             base_value = float(record.get("estimated_value") or 0)
             if base_value <= 0:
                 record["matches"] = []
+                record["match_count"] = 0
                 continue
             # Keep marketplace "matches" aligned with offer-candidate rules so
             # clicking Start Trade does not lead to zero eligible listings.
@@ -5141,6 +5157,7 @@ def list_recent_listings(
             owner_subject = str(record.get("owner_subject") or "")
             owner_name = str(record.get("owner_name") or "").strip().lower()
             matches: list[dict] = []
+            match_count = 0
             for candidate in my_active:
                 if str(candidate.get("listing_id") or "") == str(record.get("listing_id") or ""):
                     continue
@@ -5164,10 +5181,11 @@ def list_recent_listings(
                     continue
                 if abs(candidate_value - base_value) > tolerance:
                     continue
-                matches.append(candidate)
-                if len(matches) >= 12:
-                    break
+                match_count += 1
+                if len(matches) < 12:
+                    matches.append(candidate)
             record["matches"] = matches
+            record["match_count"] = match_count
     return {
         "count": len(records),
         "limit": safe_limit,
@@ -5832,8 +5850,6 @@ def create_offer(
     if payload.offered_listing_id and payload.offered_listing_id.strip():
         offered_ids.append(payload.offered_listing_id.strip())
     offered_ids = list(dict.fromkeys(offered_ids))
-    if not offered_ids:
-        raise HTTPException(status_code=400, detail="At least one offered listing is required")
     if payload.target_listing_id in offered_ids:
         raise HTTPException(status_code=400, detail="Target listing cannot be included in offered listings")
     target = db.get_listing_by_id(payload.target_listing_id)
@@ -5841,8 +5857,14 @@ def create_offer(
         raise HTTPException(status_code=404, detail="Target listing not found")
     if target["owner_subject"] == principal.subject:
         raise HTTPException(status_code=400, detail="Cannot create a trade offer on your own listing")
-    if not _subject_has_complete_shipping_address(db, principal.subject, settings):
-        raise HTTPException(status_code=400, detail="Add a complete shipping address in Profile before sending a trade offer")
+    existing_requests = db.list_trade_offers_for_subject(principal.subject, limit=200, status=None)
+    if any(
+        str(existing.get("from_subject") or "") == principal.subject
+        and str(existing.get("target_listing_id") or "") == payload.target_listing_id
+        and str(existing.get("status") or "").lower() in {"requested", "proposed", "pending"}
+        for existing in existing_requests
+    ):
+        raise HTTPException(status_code=409, detail="You already have an active trade request for this listing")
     if str(target.get("status", "")).lower() != "active":
         raise HTTPException(status_code=400, detail="Target listing is not active")
     target_value = float(target.get("estimated_value") or 0)
@@ -5866,16 +5888,16 @@ def create_offer(
     offer = db.create_trade_offer(
         offer_id=str(uuid.uuid4()),
         target_listing_id=payload.target_listing_id,
-        offered_listing_id=offered_ids[0],
+        offered_listing_id=offered_ids[0] if offered_ids else "",
         offered_listing_ids=offered_ids,
         from_subject=principal.subject,
         to_subject=target["owner_subject"],
         from_receive_address=_profile_primary_shipping_address_for_offer(db, principal.subject, settings),
         message=(payload.message or "").strip(),
+        status="pending" if offered_ids else "requested",
     )
     offer["from_name"] = _profile_subject_first_name(db, offer.get("from_subject"))
     offer["to_name"] = _profile_subject_first_name(db, offer.get("to_subject"))
-    offered_title = str((db.get_listing_by_id(offered_ids[0]) or {}).get("title") or "an item").strip() or "an item"
     target_title = str(target.get("title") or "your listing").strip() or "your listing"
     actor_name = _profile_subject_first_name(db, principal.subject) or "Someone"
     _create_user_notification_and_push(
@@ -5885,8 +5907,9 @@ def create_offer(
         owner_subject=str(target["owner_subject"]),
         actor_subject=principal.subject,
         type="trade-offer-received",
-        title="Trade offer received",
-        body=f"{actor_name} offered {offered_title} for {target_title}.",
+        title="Trade requested" if not offered_ids else "Trade offer received",
+        body=(f"{actor_name} wants to trade for {target_title}. Choose an item from their closet."
+              if not offered_ids else f"{actor_name} sent an offer for {target_title}."),
         entity_id=str(offer["offer_id"]),
         action_tab="inbox",
     )
@@ -5900,12 +5923,14 @@ def list_incoming_offers(
     principal: AuthPrincipal = Depends(get_request_principal),
     db: Database = Depends(get_db),
 ):
-    allowed_status = {"pending", "accepted", "declined", "countered", "cancelled", "all"}
+    allowed_status = {"requested", "proposed", "pending", "accepted", "declined", "countered", "cancelled", "all"}
     status_norm = (status or "pending").strip().lower()
     if status_norm not in allowed_status:
         raise HTTPException(status_code=400, detail="Invalid status filter")
-    filter_status = None if status_norm == "all" else status_norm
+    filter_status = None if status_norm in {"all", "pending"} else status_norm
     offers = db.list_trade_offers_for_subject(principal.subject, limit=limit, status=filter_status)
+    if status_norm == "pending":
+        offers = [offer for offer in offers if str(offer.get("status") or "").lower() in {"requested", "proposed", "pending"}]
     listing_ids: list[str] = []
     for offer in offers:
         target_id = str(offer.get("target_listing_id") or "").strip()
@@ -5928,14 +5953,14 @@ def list_incoming_offers(
         selected_offered_id = str(offer.get("selected_offered_listing_id") or "").strip()
         offered = listing_map.get(selected_offered_id) if selected_offered_id else None
         offered = offered or (offered_listings[0] if offered_listings else listing_map.get(str(offer["offered_listing_id"])))
-        if not target or not offered:
+        if not target or (offered_ids and not offered):
             continue
         items.append(
             OfferWithListingsResponse(
                 offer_id=offer["offer_id"],
                 target_listing_id=offer["target_listing_id"],
                 offered_listing_id=offer["offered_listing_id"],
-                offered_listing_ids=offered_ids or [offer["offered_listing_id"]],
+                offered_listing_ids=offered_ids,
                 selected_offered_listing_id=offer.get("selected_offered_listing_id"),
                 from_subject=offer["from_subject"],
                 to_subject=offer["to_subject"],
@@ -5946,8 +5971,8 @@ def list_incoming_offers(
                 created_at=offer["created_at"],
                 updated_at=offer["updated_at"],
                 target_listing=ListingResponse(**target),
-                offered_listing=ListingResponse(**offered),
-                offered_listings=[ListingResponse(**x) for x in offered_listings] if offered_listings else [ListingResponse(**offered)],
+                offered_listing=ListingResponse(**offered) if offered else None,
+                offered_listings=[ListingResponse(**x) for x in offered_listings],
             )
         )
     return {
@@ -5970,7 +5995,48 @@ def action_offer(
         raise HTTPException(status_code=404, detail="Offer not found")
     if principal.subject not in {offer.get("from_subject"), offer.get("to_subject")}:
         raise HTTPException(status_code=403, detail="Forbidden")
-    if payload.status == "accepted" and principal.subject == str(offer.get("from_subject") or ""):
+    if payload.status == "proposed":
+        if principal.subject != str(offer.get("to_subject") or "") or str(offer.get("status") or "") not in {"requested", "pending"}:
+            raise HTTPException(status_code=400, detail="Only the listing owner can propose an exchange for a requested trade")
+        proposed_ids = list(dict.fromkeys(str(x).strip() for x in payload.proposed_listing_ids if str(x).strip()))
+        if len(proposed_ids) != 1:
+            raise HTTPException(status_code=400, detail="Select exactly one item for the trade proposal")
+        target = db.get_listing_by_id(str(offer.get("target_listing_id") or "")) or {}
+        candidate = db.get_listing_by_id(proposed_ids[0])
+        if not candidate or str(candidate.get("owner_subject") or "") != str(offer.get("from_subject") or ""):
+            raise HTTPException(status_code=400, detail="Select an active listing owned by the requester")
+        if str(candidate.get("status") or "").lower() != "active":
+            raise HTTPException(status_code=400, detail="The selected listing is not active")
+        target_value = float(target.get("estimated_value") or 0)
+        tolerance, _ = _trade_match_tolerance(target_value)
+        if target_value <= 0 or abs(float(candidate.get("estimated_value") or 0) - target_value) > tolerance:
+            raise HTTPException(status_code=400, detail="The selected listing is outside the trade value band")
+        updated = db.set_trade_offer_proposal(
+            offer_id=offer_id,
+            actor_subject=principal.subject,
+            offered_listing_ids=proposed_ids,
+            receive_address=_profile_primary_shipping_address_for_offer(db, principal.subject, settings),
+        )
+        if not updated:
+            raise HTTPException(status_code=404, detail="Offer not found")
+        updated["from_name"] = _profile_subject_first_name(db, updated.get("from_subject"))
+        updated["to_name"] = _profile_subject_first_name(db, updated.get("to_subject"))
+        target_title = str(target.get("title") or "the requested item").strip() or "the requested item"
+        actor_name = _profile_subject_first_name(db, principal.subject) or "The listing owner"
+        _create_user_notification_and_push(
+            db=db,
+            settings=settings,
+            notification_id=str(uuid.uuid4()),
+            owner_subject=str(offer.get("from_subject") or ""),
+            actor_subject=principal.subject,
+            type="trade-proposal-received",
+            title="Trade proposal received",
+            body=f"{actor_name} selected an item for your trade request for {target_title}.",
+            entity_id=offer_id,
+            action_tab="inbox",
+        )
+        return OfferResponse(**updated)
+    if payload.status == "accepted" and principal.subject == str(offer.get("to_subject") or ""):
         raise HTTPException(status_code=400, detail="Sender is already marked ready. Only the receiver needs to accept.")
     if payload.status == "accepted" and not _subject_has_complete_shipping_address(db, principal.subject, settings):
         raise HTTPException(status_code=400, detail="Add a complete shipping address in Profile before accepting trade")
@@ -5978,7 +6044,7 @@ def action_offer(
         _require_subscription_entitlement(db, principal)
     if payload.status == "accepted" and payload.receive_address is None:
         raise HTTPException(status_code=400, detail="Select receive shipping address while accepting trade")
-    if payload.status == "accepted" and principal.subject == str(offer.get("to_subject") or ""):
+    if payload.status == "accepted" and principal.subject == str(offer.get("from_subject") or ""):
         offered_ids = [x for x in (offer.get("offered_listing_ids") or []) if isinstance(x, str) and x.strip()]
         if not offered_ids and isinstance(offer.get("offered_listing_id"), str) and offer["offered_listing_id"].strip():
             offered_ids = [offer["offered_listing_id"].strip()]
@@ -6025,6 +6091,30 @@ def action_offer(
     updated["from_name"] = _profile_subject_first_name(db, updated.get("from_subject"))
     updated["to_name"] = _profile_subject_first_name(db, updated.get("to_subject"))
     return OfferResponse(**updated)
+
+
+@app.get("/v1/offers/{offer_id}/proposal-candidates")
+def list_offer_proposal_candidates(
+    offer_id: str,
+    limit: int = 100,
+    principal: AuthPrincipal = Depends(get_request_principal),
+    db: Database = Depends(get_db),
+):
+    offer = db.get_trade_offer_by_id(offer_id)
+    if not offer:
+        raise HTTPException(status_code=404, detail="Offer not found")
+    if principal.subject != str(offer.get("to_subject") or ""):
+        raise HTTPException(status_code=403, detail="Only the listing owner can choose a requested item")
+    target = db.get_listing_by_id(str(offer.get("target_listing_id") or "")) or {}
+    target_value = float(target.get("estimated_value") or 0)
+    tolerance, _ = _trade_match_tolerance(target_value)
+    records = [
+        item for item in db.list_owner_listings(str(offer.get("from_subject") or ""), limit=min(max(limit, 1), 100))
+        if str(item.get("status") or "").lower() == "active"
+        and float(item.get("estimated_value") or 0) > 0
+        and abs(float(item.get("estimated_value") or 0) - target_value) <= tolerance
+    ]
+    return {"count": len(records), "items": [ListingResponse(**item).model_dump() for item in records]}
 
 
 def _subject_shipping_snapshot(db: Database, subject: str, settings: Settings | None = None) -> dict[str, str | None]:
@@ -7976,6 +8066,46 @@ def _app_assistant_indexed_reference(index: object, listing_ids: list[str]) -> s
     return listing_ids[position] if 0 <= position < len(listing_ids) else None
 
 
+LISTING_CREATION_WORKFLOW = {
+    "policy": "photo_first",
+    "stages": [
+        {
+            "stage": "photos",
+            "goal": "Collect photos and validate category-specific required views.",
+            "rules": [
+                "Do not request listing fields while photo validation is running.",
+                "Do not advance while required photo roles are missing.",
+            ],
+        },
+        {
+            "stage": "collecting",
+            "goal": "Ask one question at a time only for required information not established by photo analysis or the member.",
+            "required_member_fields": ["condition", "size when applicable"],
+            "allowed_conditions": ["NewWithTags", "New", "LikeNew"],
+        },
+        {
+            "stage": "ready_for_review",
+            "goal": "Show the captured pre-analysis summary and wait for the member to approve or correct it.",
+        },
+        {
+            "stage": "analyzing",
+            "goal": "Create a private draft and analyze the photos. Tell the member this can take up to two minutes.",
+            "rules": ["Do not ask questions or publish while analysis is running."],
+        },
+        {
+            "stage": "review",
+            "goal": "Show analyzed listing details, accept natural-language corrections, and ask whether to publish.",
+            "rules": ["Publish only after the member explicitly confirms publication."],
+        },
+        {
+            "stage": "published",
+            "goal": "Confirm the listing is live, show server-provided matches, and support continuing into a trade.",
+        },
+    ],
+    "model_role": "Interpret natural language and propose the next response or field updates. The application owns validation, persistence, and stage transitions.",
+}
+
+
 @app.post("/v1/app-assistant/chat", response_model=AppAssistantResponse)
 async def app_assistant_chat(
     request: AppAssistantRequest,
@@ -8028,6 +8158,9 @@ async def app_assistant_chat(
         "For trade targets use target_reference_index into marketplace_result_ids; for offered items use offered_reference_index into closet_result_ids. "
         "Interpret expressions such as first, second, last, the jacket, or the Saint Laurent item semantically; never place those phrases in an ID field. "
         "Use create_listing to begin creating an item; publish_listing when the member asks to publish an existing closet listing; "
+        "Creating a listing is always photo-first. For create_listing, ask the member to add clear photos and explain that you will identify the item and guide them through any remaining details. "
+        "Never offer manual listing entry and never ask for title, brand, category, price, description, condition, or size on the create_listing turn. "
+        "Follow LISTING CREATION WORKFLOW exactly. The application, not you, controls workflow transitions and validates required photos and field values. "
         "show_closet only when the member asks to browse or see their closet; search_marketplace for browsing or filtering; "
         "use show_tradeable_items when they ask broadly what marketplace items they can trade for using any active closet listing; "
         "show_matches whenever the member asks for matched listings or matches for one of their listings, including requests mentioning images or photos; "
@@ -8067,7 +8200,7 @@ async def app_assistant_chat(
                 json={
                     "model": settings.listing_assistant_model,
                     "instructions": instructions,
-                    "input": f"APP STATE:\n{json.dumps({'inventory': inventory_summary, 'assistant_context': request.context.model_dump()})}\n\nCONVERSATION:\n{transcript}",
+                    "input": f"APP STATE:\n{json.dumps({'inventory': inventory_summary, 'assistant_context': request.context.model_dump()})}\n\nLISTING CREATION WORKFLOW:\n{json.dumps(LISTING_CREATION_WORKFLOW)}\n\nCONVERSATION:\n{transcript}",
                     "text": {"format": {"type": "json_schema", "name": "app_assistant_response", "strict": True, "schema": schema}},
                 },
             )
@@ -8097,7 +8230,9 @@ async def app_assistant_chat(
 
     if intent == "create_listing":
         navigation = "create"
-        reply = reply or "Let’s create a listing. Add clear photos first, and I’ll guide you through the details."
+        # The client opens a photo-first workflow for this intent. Keep this
+        # transition deterministic so model prose cannot contradict the UI.
+        reply = "Let’s create your listing. Add a few clear photos, and I’ll identify the item and guide you through anything else I need."
     elif intent == "publish_listing":
         reference = (
             parsed.get("listing_reference")
@@ -8423,6 +8558,8 @@ async def listing_assistant_chat(
     conversation = "\n".join(f"{message['role'].upper()}: {str(message['content']).strip()}" for message in combined_messages)
     instructions = (
         "You are Jouft's warm, polished listing concierge. Sound friendly, encouraging, and natural without being chatty. "
+        "Follow LISTING CREATION WORKFLOW exactly and use CURRENT LISTING CONTEXT.workflow_stage as the authoritative current stage. "
+        "Never jump ahead, repeat a completed stage, or offer a separate manual-entry path. The application owns validation, persistence, and stage transitions. "
         "Guide the member to complete a fashion listing by asking one clear question at a time. Acknowledge answers briefly "
         "and explain why a requested detail helps when useful. The listing needs 1-6 photos, category, user-observed condition, and a size selection. "
         "Size is required for every supported category, including handbags and accessories; use options such as Mini, Small, Medium, Large, One Size, or Adjustable when appropriate. "
@@ -8475,7 +8612,7 @@ async def listing_assistant_chat(
                 json={
                     "model": settings.listing_assistant_model,
                     "instructions": instructions,
-                    "input": f"CURRENT LISTING CONTEXT:\n{json.dumps(context)}\n\nCONVERSATION:\n{conversation}",
+                    "input": f"CURRENT LISTING CONTEXT:\n{json.dumps(context)}\n\nLISTING CREATION WORKFLOW:\n{json.dumps(LISTING_CREATION_WORKFLOW)}\n\nCONVERSATION:\n{conversation}",
                     "text": {
                         "format": {
                             "type": "json_schema",
@@ -8922,6 +9059,118 @@ async def upload_images(
     return UploadImagesResponse(item_id=item_id, uploaded_images=uploaded_images_out)
 
 
+def _mannequin_generation_prompt(*, category: str, title: str, description: str) -> tuple[str, str] | None:
+    normalized_category = normalize_category(category)
+    item_text = f"{title} {description}".lower()
+    fidelity_rules = (
+        "Use all provided reference images as evidence for the same item. "
+        "Do not add text, labels, accessories, props, or product details that are not visible in the references. "
+        "Use a clean white ecommerce studio background with realistic lighting and shadows. "
+        "Generate one image only."
+    )
+    if normalized_category == "handbag":
+        return "mannequin_handbag", (
+            "Place the exact handbag from the reference images on a neutral full-body female mannequin's shoulder. "
+            "Preserve its exact shape, dimensions, material, color, hardware, straps, stitching, pattern, and visible logo. "
+            "Do not redesign, simplify, or add details to the bag. "
+            f"{fidelity_rules}"
+        )
+    if normalized_category == "clothes" and "dress" in item_text:
+        return "mannequin_dress", (
+            "Create a photorealistic ecommerce image of a full-body female mannequin wearing the exact dress from the reference images. "
+            "Preserve the exact dress design, color, pattern, neckline, sleeves, length, fabric texture, stitching, and proportions. "
+            "Do not redesign or add details to the dress. Use realistic fabric draping. "
+            f"{fidelity_rules}"
+        )
+    return None
+
+
+async def _generate_mannequin_listing_asset(
+    *,
+    files: list[dict[str, object]],
+    category: str,
+    title: str,
+    description: str,
+    item_id: str,
+    settings: Settings,
+    db: Database,
+    storage: Storage,
+) -> dict[str, object] | None:
+    prompt_spec = _mannequin_generation_prompt(category=category, title=title, description=description)
+    if not prompt_spec or not settings.mannequin_image_generation_enabled or not settings.gemini_api_key:
+        return None
+    asset_kind, prompt = prompt_spec
+    reference_files = [entry for entry in files if isinstance(entry.get("data"), bytes)][:3]
+    if not reference_files:
+        return None
+
+    parts: list[dict[str, object]] = []
+    for entry in reference_files:
+        raw = entry.get("data")
+        if not isinstance(raw, bytes):
+            continue
+        parts.append({
+            "inline_data": {
+                "mime_type": str(entry.get("content_type") or "image/jpeg"),
+                "data": base64.b64encode(raw).decode("ascii"),
+            }
+        })
+    parts.append({"text": prompt})
+    model = settings.mannequin_image_generation_model.strip() or "gemini-2.5-flash-image"
+    endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+    try:
+        async with httpx.AsyncClient(timeout=settings.mannequin_image_generation_timeout_s) as client:
+            response = await client.post(
+                endpoint,
+                params={"key": settings.gemini_api_key},
+                json={
+                    "contents": [{"role": "user", "parts": parts}],
+                    "generationConfig": {"responseModalities": ["IMAGE"]},
+                },
+            )
+            response.raise_for_status()
+        payload = response.json()
+        output_parts = (((payload.get("candidates") or [{}])[0].get("content") or {}).get("parts") or [])
+        image_part = next((part for part in reversed(output_parts) if isinstance(part, dict) and isinstance(part.get("inlineData") or part.get("inline_data"), dict)), None)
+        inline_data = (image_part or {}).get("inlineData") or (image_part or {}).get("inline_data") or {}
+        encoded = inline_data.get("data")
+        if not isinstance(encoded, str) or not encoded:
+            log_json("mannequin_image_generation_empty", item_id=item_id, category=category, model=model)
+            return None
+        generated_raw = base64.b64decode(encoded)
+        generated_content_type = str(inline_data.get("mimeType") or inline_data.get("mime_type") or "image/png")
+        with Image.open(BytesIO(generated_raw)) as generated_image:
+            generated_image.verify()
+        image_uuid = str(uuid.uuid4())
+        ext = _upload_extension(None, generated_content_type)
+        filename = f"{image_uuid}{ext}"
+        storage_uri = storage.save_upload(item_id=item_id, filename=filename, content_type=generated_content_type, data=generated_raw)
+        db.insert_image(PersistedImage(
+            image_id=image_uuid,
+            item_id=item_id,
+            storage_uri=storage_uri,
+            filename=filename,
+            role_hint="ai_mannequin",
+            content_hash=_image_content_hash(generated_raw),
+        ))
+        metadata = {
+            "kind": asset_kind,
+            "image_url": f"/v1/images/{image_uuid}",
+            "image_id": image_uuid,
+            "synthetic": True,
+            "provider": "gemini",
+            "model": model,
+            "reference_image_count": len(reference_files),
+            "prompt": prompt,
+        }
+        storage.save_debug_artifact(item_id=item_id, filename=f"{image_uuid}_generation.json", data=json.dumps(metadata, indent=2).encode("utf-8"))
+        log_json("mannequin_image_generation_completed", item_id=item_id, category=category, model=model, image_id=image_uuid)
+        return metadata
+    except Exception as exc:
+        log_json("mannequin_image_generation_error", item_id=item_id, category=category, model=model, error=str(exc)[:500])
+        return None
+
+
 async def _run_listing_image_staging_job(
     *,
     listing_id: str,
@@ -9005,6 +9254,15 @@ async def _run_listing_image_staging_job(
             return
 
         current = next((r for r in job_db.list_owner_listings(owner_subject, limit=500) if r["listing_id"] == listing_id), current)
+        current_analysis = current.get("analysis") if isinstance(current.get("analysis"), dict) else {}
+        for asset in current_analysis.get("generated_assets") or []:
+            if not isinstance(asset, dict) or not asset.get("synthetic"):
+                continue
+            generated_url = str(asset.get("image_url") or "").strip()
+            if not generated_url or generated_url in staged_urls:
+                continue
+            staged_urls.append(generated_url)
+            listed_images.append({"p_img": generated_url, "d_img": generated_url, "is_hero": False})
         job_db.update_listing(
             listing_id=listing_id,
             owner_subject=owner_subject,
@@ -9144,6 +9402,28 @@ async def _run_listing_analysis_job(
             category=resolved_category,
         )
         description = str(current.get("description") or "").strip() or profile_description
+        previous_analysis = current.get("analysis") if isinstance(current.get("analysis"), dict) else {}
+        previous_generated_urls = {
+            str(asset.get("image_url") or "").strip()
+            for asset in (previous_analysis.get("generated_assets") or [])
+            if isinstance(asset, dict) and asset.get("synthetic") and str(asset.get("image_url") or "").strip()
+        }
+        image_urls = [url for url in image_urls if url not in previous_generated_urls]
+        source_item_id = str(response_payload.get("item_id") or current.get("source_item_id") or "").strip() or f"item-{listing_id}"
+        job_db.insert_item(source_item_id)
+        generated_asset = await _generate_mannequin_listing_asset(
+            files=files,
+            category=resolved_category,
+            title=title or model_name,
+            description=description,
+            item_id=source_item_id,
+            settings=settings,
+            db=job_db,
+            storage=job_storage,
+        )
+        if generated_asset:
+            image_urls.append(str(generated_asset["image_url"]))
+            response_payload["generated_assets"] = [generated_asset]
         job_db.update_listing(
             listing_id=listing_id,
             owner_subject=owner_subject,
@@ -9160,7 +9440,7 @@ async def _run_listing_analysis_job(
             description=description,
             wants=str(current.get("wants") or "Open to similar-value offers"),
             tags=[condition, brand, "trade"],
-            source_item_id=str(response_payload.get("item_id") or current.get("source_item_id") or ""),
+            source_item_id=source_item_id,
             analysis=response_payload,
             status="Review",
         )
@@ -9415,6 +9695,13 @@ async def queue_listing_analysis(
                 image_urls = [str(url).strip() for url in parsed_urls if str(url).strip()]
         except Exception:
             raise HTTPException(status_code=400, detail="image_urls_json must be a JSON array")
+    current_analysis = current.get("analysis") if isinstance(current.get("analysis"), dict) else {}
+    synthetic_urls = {
+        str(asset.get("image_url") or "").strip()
+        for asset in (current_analysis.get("generated_assets") or [])
+        if isinstance(asset, dict) and asset.get("synthetic") and str(asset.get("image_url") or "").strip()
+    }
+    image_urls = [url for url in image_urls if url not in synthetic_urls]
     source_item_id = str(current.get("source_item_id") or "").strip() or None
     for idx, image_url in enumerate(image_urls):
         try:

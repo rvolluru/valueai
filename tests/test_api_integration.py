@@ -144,6 +144,63 @@ def test_trade_cases_are_structured_and_limited_to_trade_participants():
     assert cases.json()["items"][0]["evidence"] == ["https://example.com/evidence.jpg"]
 
 
+def test_requested_trade_moves_to_exact_proposal_then_acceptance():
+    _build_client()
+    from app import deps
+
+    db = deps.get_db()
+    requested = db.create_trade_offer(
+        offer_id="requested-trade",
+        target_listing_id="seller-item",
+        offered_listing_id="",
+        offered_listing_ids=[],
+        from_subject="requester",
+        to_subject="seller",
+        message="",
+        status="requested",
+    )
+    assert requested["status"] == "requested"
+    assert requested["offered_listing_ids"] == []
+    assert requested["accepted_by_from"] is False
+    assert requested["accepted_by_to"] is False
+
+    proposed = db.set_trade_offer_proposal(
+        offer_id="requested-trade",
+        actor_subject="seller",
+        offered_listing_ids=["requester-item"],
+        receive_address={
+            "full_name": "Seller",
+            "address_line1": "1 Seller St",
+            "city": "New York",
+            "state": "NY",
+            "postal_code": "10001",
+            "country": "US",
+        },
+    )
+    assert proposed["status"] == "proposed"
+    assert proposed["selected_offered_listing_id"] == "requester-item"
+    assert proposed["accepted_by_from"] is False
+    assert proposed["accepted_by_to"] is True
+
+    accepted = db.set_trade_offer_participant_action(
+        offer_id="requested-trade",
+        actor_subject="requester",
+        status="accepted",
+        receive_address={
+            "full_name": "Requester",
+            "address_line1": "2 Requester Ave",
+            "city": "Brooklyn",
+            "state": "NY",
+            "postal_code": "11201",
+            "country": "US",
+        },
+        selected_offered_listing_id="requester-item",
+    )
+    assert accepted["status"] == "accepted"
+    assert accepted["accepted_by_from"] is True
+    assert accepted["accepted_by_to"] is True
+
+
 def test_database_normalizes_legacy_listing_conditions():
     _build_client()
     from app import deps
@@ -450,6 +507,55 @@ def test_listing_analysis_job_lifecycle_helpers():
     assert failed["status"] == "failed"
     assert failed["stage"] == "failed"
     assert failed["completed_at"]
+
+
+def test_mannequin_generation_prompt_is_limited_to_handbags_and_dresses() -> None:
+    from app.main import _mannequin_generation_prompt
+
+    bag = _mannequin_generation_prompt(category="handbag", title="Prada tote", description="Black leather bag")
+    assert bag is not None
+    assert bag[0] == "mannequin_handbag"
+    assert "exact handbag" in bag[1]
+    assert "Do not redesign" in bag[1]
+
+    dress = _mannequin_generation_prompt(category="clothes", title="Floral midi dress", description="Long sleeves")
+    assert dress is not None
+    assert dress[0] == "mannequin_dress"
+    assert "full-body female mannequin" in dress[1]
+    assert "fabric texture" in dress[1]
+
+    assert _mannequin_generation_prompt(category="clothes", title="Wool blazer", description="Gray jacket") is None
+    assert _mannequin_generation_prompt(category="shoes", title="Leather pumps", description="Black") is None
+
+
+def test_mannequin_images_are_excluded_from_analysis_inputs_and_reuse_hashes() -> None:
+    from app.main import _reuse_recent_analysis_for_listing, _uploaded_images_for_item
+
+    class FakeDb:
+        captured_hashes = None
+
+        def list_image_records_for_item(self, item_id, limit=20):
+            assert item_id == "item-test"
+            return [
+                {"image_id": "original", "role_hint": "full_item", "storage_uri": "original.jpg", "content_hash": "original-hash"},
+                {"image_id": "synthetic", "role_hint": "ai_mannequin", "storage_uri": "synthetic.png", "content_hash": "synthetic-hash"},
+            ]
+
+        def find_recent_analysis_by_image_hashes(self, hashes, limit=50):
+            self.captured_hashes = hashes
+            return None
+
+    db = FakeDb()
+    uploaded = _uploaded_images_for_item(db, "item-test")
+    assert [entry["image_id"] for entry in uploaded] == ["original"]
+
+    assert _reuse_recent_analysis_for_listing(
+        db=db,
+        listing_id="listing-test",
+        owner_subject="owner-test",
+        current={"source_item_id": "item-test"},
+    ) is None
+    assert db.captured_hashes == ["original-hash"]
 
 
 def test_dependency_health_reports_core_services_and_redacts_secrets():

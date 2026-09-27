@@ -352,6 +352,8 @@ export function createApiClient(options) {
     listOfferCandidates: (listingId, limit = 100, auth = {}) =>
       get(`/v1/listings/${encodeURIComponent(listingId)}/offer-candidates?limit=${limit}`, auth),
     createOffer: (payload, auth = {}) => post("/v1/offers", payload, auth),
+    proposalCandidates: (offerId, limit = 100, auth = {}) =>
+      get(`/v1/offers/${encodeURIComponent(offerId)}/proposal-candidates?limit=${limit}`, auth),
     incomingOffers: (status = "pending", limit = 50, auth = {}) =>
       get(`/v1/offers/incoming?status=${encodeURIComponent(status)}&limit=${limit}`, auth),
     offerAction: (offerId, status, receiveAddress = null, selectedOfferedListingId = null, auth = {}) => {
@@ -370,6 +372,11 @@ export function createApiClient(options) {
         resolvedAuth,
       );
     },
+    proposeOffer: (offerId, proposedListingIds, auth = {}) => post(
+      `/v1/offers/${encodeURIComponent(offerId)}/action`,
+      { status: "proposed", proposed_listing_ids: proposedListingIds },
+      auth,
+    ),
     profileQuiz: (auth = {}) => get("/v1/me/profile-quiz", auth),
     saveProfileQuiz: (payload, auth = {}) => put("/v1/me/profile-quiz", payload, auth),
     clientState: (auth = {}) => get("/v1/me/client-state", auth),

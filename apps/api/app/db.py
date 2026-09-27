@@ -94,6 +94,18 @@ def _remove_analysis_uploads_when_display_gallery_exists(images: list[str], anal
 
     if not analysis_keys:
         return images
+    generated_keys = {
+        listing_image_dedupe_key(asset.get("image_url"))
+        for asset in (analysis.get("generated_assets") or [])
+        if isinstance(asset, dict) and asset.get("synthetic") and asset.get("image_url")
+    }
+    has_processed_gallery = any(
+        listing_image_dedupe_key(url) not in analysis_keys
+        and listing_image_dedupe_key(url) not in generated_keys
+        for url in images
+    )
+    if not has_processed_gallery:
+        return images
     display_images = [url for url in images if listing_image_dedupe_key(url) not in analysis_keys]
     return display_images or images
 
@@ -940,6 +952,7 @@ class Database:
         to_subject: str,
         from_receive_address: dict | None = None,
         message: str,
+        status: str = "pending",
     ) -> dict:
         now = utc_now_iso()
         from_receive = self._normalize_offer_address(from_receive_address or {})
@@ -955,8 +968,8 @@ class Database:
                 None,
                 from_subject,
                 to_subject,
-                "pending",
-                1,
+                status,
+                1 if status != "requested" else 0,
                 0,
                 json.dumps(from_receive) if from_receive else None,
                 None,
@@ -974,8 +987,8 @@ class Database:
             "selected_offered_listing_id": None,
             "from_subject": from_subject,
             "to_subject": to_subject,
-            "status": "pending",
-            "accepted_by_from": True,
+            "status": status,
+            "accepted_by_from": status != "requested",
             "accepted_by_to": False,
             "from_receive_address": from_receive,
             "to_receive_address": None,
@@ -983,6 +996,24 @@ class Database:
             "created_at": now,
             "updated_at": now,
         }
+
+    def set_trade_offer_proposal(self, *, offer_id: str, actor_subject: str, offered_listing_ids: list[str], receive_address: dict | None = None) -> dict | None:
+        offer = self.get_trade_offer_by_id(offer_id)
+        if not offer or str(offer.get("to_subject") or "") != actor_subject:
+            return None
+        offered_ids = list(dict.fromkeys(str(x).strip() for x in offered_listing_ids if str(x).strip()))
+        if not offered_ids:
+            return None
+        now = utc_now_iso()
+        to_receive = self._normalize_offer_address(receive_address or {})
+        self.execute(
+            f"UPDATE trade_offers SET offered_listing_id = {self.param}, offered_listing_ids_json = {self.param}, "
+            f"selected_offered_listing_id = {self.param}, status = {self.param}, accepted_by_from = {self.param}, "
+            f"accepted_by_to = {self.param}, to_receive_address_json = {self.param}, updated_at = {self.param} WHERE offer_id = {self.param}",
+            (offered_ids[0], json.dumps(offered_ids), offered_ids[0], "proposed", 0, 1, json.dumps(to_receive) if to_receive else None, now, offer_id),
+        )
+        self.commit()
+        return self.get_trade_offer_by_id(offer_id)
 
     @staticmethod
     def _normalize_offer_address(raw: object) -> dict | None:
@@ -1020,7 +1051,7 @@ class Database:
         except Exception:
             offered_ids = []
         offered_ids = [x for x in offered_ids if isinstance(x, str) and x.strip()]
-        if not offered_ids and isinstance(data.get("offered_listing_id"), str):
+        if not offered_ids and isinstance(data.get("offered_listing_id"), str) and data["offered_listing_id"].strip():
             offered_ids = [data["offered_listing_id"]]
         try:
             from_receive = self._normalize_offer_address(json.loads(data.get("from_receive_address_json") or "null"))
@@ -1196,7 +1227,11 @@ class Database:
                 accepted_by_from = True
                 if normalized_addr:
                     from_receive = normalized_addr
-                next_status = "pending"
+                if str(offer.get("status") or "").lower() == "proposed" and selected_offered_id:
+                    accepted_by_to = True
+                    next_status = "accepted"
+                else:
+                    next_status = "pending"
             else:
                 accepted_by_to = True
                 if normalized_addr:
@@ -2822,6 +2857,18 @@ class Database:
             safe_images = self._image_urls_from_analysis_uploads(analysis)
         else:
             safe_images = _remove_analysis_uploads_when_display_gallery_exists(safe_images, analysis)
+        generated_asset_urls = [
+            normalize_public_listing_image_url(asset.get("image_url"))
+            for asset in ((analysis or {}).get("generated_assets") or [])
+            if isinstance(asset, dict) and asset.get("synthetic")
+        ] if isinstance(analysis, dict) else []
+        for generated_url in generated_asset_urls:
+            key = listing_image_dedupe_key(generated_url)
+            if not generated_url or key in seen_image_keys:
+                continue
+            safe_images.append(generated_url)
+            safe_listed_images.append({"p_img": generated_url, "d_img": generated_url, "is_hero": False})
+            seen_image_keys.add(key)
         if not safe_images and isinstance(source_item_id, str) and source_item_id.strip():
             safe_images = [f"/v1/images/{image_id}" for image_id in self.list_image_ids_for_item(source_item_id, limit=20)]
             safe_listed_images = [{"p_img": url, "d_img": url, "is_hero": False} for url in safe_images]

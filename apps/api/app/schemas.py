@@ -511,14 +511,14 @@ class OfferCreateRequest(BaseModel):
 class OfferResponse(BaseModel):
     offer_id: str
     target_listing_id: str
-    offered_listing_id: str
+    offered_listing_id: str = ""
     offered_listing_ids: list[str] = Field(default_factory=list)
     selected_offered_listing_id: str | None = None
     from_subject: str
     to_subject: str
     from_name: str | None = None
     to_name: str | None = None
-    status: Literal["pending", "accepted", "declined", "countered", "cancelled"] = "pending"
+    status: Literal["requested", "proposed", "pending", "accepted", "declined", "countered", "cancelled"] = "requested"
     accepted_by_from: bool = False
     accepted_by_to: bool = False
     from_receive_address: ShippingAddress | None = None
@@ -530,7 +530,7 @@ class OfferResponse(BaseModel):
 
 class OfferWithListingsResponse(OfferResponse):
     target_listing: ListingResponse
-    offered_listing: ListingResponse
+    offered_listing: ListingResponse | None = None
     offered_listings: list[ListingResponse] = Field(default_factory=list)
 
 
@@ -568,9 +568,10 @@ class TradeMatchStatusUpdateRequest(BaseModel):
 
 
 class OfferActionRequest(BaseModel):
-    status: Literal["accepted", "declined", "countered", "cancelled"]
+    status: Literal["accepted", "declined", "countered", "cancelled", "proposed"]
     receive_address: ShippingAddress | None = None
     selected_offered_listing_id: str | None = None
+    proposed_listing_ids: list[str] = Field(default_factory=list)
 
 
 class ShippingQuoteResponse(BaseModel):

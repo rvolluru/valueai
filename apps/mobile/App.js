@@ -888,6 +888,7 @@ function ListingCard({
   apiBaseUrl,
   showMatches = false,
   onStartTrade = null,
+  onMatchPreviewSelect = null,
   startTradeDisabled = false,
   onOpenDetails = null,
   onEditDraft = null,
@@ -911,8 +912,19 @@ function ListingCard({
   useEffect(() => {
     setImageFailed(false);
   }, [rawImageUrl, apiBaseUrl]);
-  const matchPreviewImages = showMatches ? getMatchPreviewImages(item, apiBaseUrl, currentOwnerSubject) : [];
-  const marketplaceMatchCount = getCrossOwnerMatches(item, currentOwnerSubject).length;
+  const matchPreviewEntries = showMatches
+    ? getCrossOwnerMatches(item, currentOwnerSubject)
+      .map((candidate) => ({
+        candidate,
+        src: normalizeImageUrl(Array.isArray(candidate?.images) && candidate.images.length > 0 ? candidate.images[0] : candidate?.image, apiBaseUrl),
+      }))
+      .filter((entry) => Boolean(entry.src))
+      .slice(0, 3)
+    : [];
+  const matchPreviewImages = matchPreviewEntries.map((entry) => entry.src);
+  const marketplaceMatchCount = Number.isFinite(Number(item?.match_count))
+    ? Number(item.match_count)
+    : getCrossOwnerMatches(item, currentOwnerSubject).length;
   const hasMatches = marketplaceMatchCount > 0;
   const statusLabel = String(item?.status || '').trim();
   const analysisFailed = statusLabel.toLowerCase() === 'analysisfailed';
@@ -1006,15 +1018,18 @@ function ListingCard({
         ) : null}
         {showMatches ? (
           <View style={styles.matchesRow}>
-            <Text style={styles.matchesLabel}>{marketplaceMatchCount} {marketplaceMatchCount === 1 ? 'match' : 'matches'}</Text>
+            <Text style={styles.matchesLabel}>{marketplaceMatchCount} {marketplaceMatchCount === 1 ? 'eligible closet item' : 'eligible closet items'}</Text>
             {matchPreviewImages.length > 0 ? (
               <View style={styles.matchThumbStrip}>
                 {matchPreviewImages.map((src, idx) => (
-                  <Image
+                  <TouchableOpacity
                     key={`${item?.listing_id || item?.id || 'item'}-match-${idx}`}
-                    source={{ uri: src }}
-                    style={styles.matchThumb}
-                  />
+                    onPress={() => onMatchPreviewSelect?.(matchPreviewEntries[idx]?.candidate)}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Preview ${matchPreviewEntries[idx]?.candidate?.title || `offer item ${idx + 1}`}`}
+                  >
+                    <Image source={{ uri: src }} style={styles.matchThumb} />
+                  </TouchableOpacity>
                 ))}
                 {marketplaceMatchCount > 3 ? <Text style={styles.matchThumbMore}>+{marketplaceMatchCount - 3}</Text> : null}
               </View>
@@ -1022,15 +1037,6 @@ function ListingCard({
               <Text style={styles.matchThumbEmpty}>No matches</Text>
             )}
           </View>
-        ) : null}
-        {showMatches && hasMatches && onStartTrade ? (
-          <TouchableOpacity
-            style={[styles.primaryBtnCompact, startTradeDisabled && styles.primaryBtnDisabled]}
-            onPress={() => onStartTrade(item)}
-            disabled={startTradeDisabled}
-          >
-            <Text style={styles.primaryBtnText}>{startTradeDisabled ? 'Unavailable' : 'Start Trade'}</Text>
-          </TouchableOpacity>
         ) : null}
         {showStatus && statusLabel || onEditDraft || onRemoveListing || onShareListing || onShareToPinterest || onShareToFacebook ? (
           <View style={styles.listingActionRow}>
@@ -1208,6 +1214,8 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
   const [selectedGalleryIndex, setSelectedGalleryIndex] = useState(0);
   const [failedDetailImages, setFailedDetailImages] = useState({});
   const [tradeComposerTarget, setTradeComposerTarget] = useState(null);
+  const [activeTradeRequestListingIds, setActiveTradeRequestListingIds] = useState([]);
+  const [suggestedTradeListingId, setSuggestedTradeListingId] = useState(null);
   const [tradeComposerReturnTab, setTradeComposerReturnTab] = useState('marketplace');
   const [tradeOfferCandidates, setTradeOfferCandidates] = useState([]);
   const [tradeOfferListingIds, setTradeOfferListingIds] = useState([]);
@@ -1222,6 +1230,8 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
   const [supportBusy, setSupportBusy] = useState(false);
   const [supportError, setSupportError] = useState('');
   const [offerActionBusyById, setOfferActionBusyById] = useState({});
+  const [proposalCandidatesByOffer, setProposalCandidatesByOffer] = useState({});
+  const [proposalSelectionByOffer, setProposalSelectionByOffer] = useState({});
   const [offerAcceptedListingById, setOfferAcceptedListingById] = useState({});
   const [offerImageIndexByListingId, setOfferImageIndexByListingId] = useState({});
   const [createImageRoleCheck, setCreateImageRoleCheck] = useState(null);
@@ -1644,7 +1654,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     setSelectedOfferId(offerId);
     setActiveTab('offerDetail');
     const offer = incomingOffers.find((entry) => entry?.offer_id === offerId);
-    if (String(offer?.status || '').toLowerCase() === 'pending' && !shippingQuoteByOffer[offerId]) {
+    if (['pending', 'proposed'].includes(String(offer?.status || '').toLowerCase()) && !shippingQuoteByOffer[offerId]) {
       loadShippingQuoteForOffer(offerId).catch(() => {});
     }
     requestAnimationFrame(() => mainScrollRef.current?.scrollTo?.({ y: 0, animated: false }));
@@ -1749,6 +1759,17 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
       setMarketplaceActorSubject(String(payload?.actor?.subject || ''));
       setMarketplaceHasMore(Boolean(payload?.has_more));
       setMarketplaceNextOffset(Number.isFinite(Number(payload?.next_offset)) ? Number(payload.next_offset) : 0);
+      try {
+        const activeRequests = await apiClient.incomingOffers('pending', 100, await authContext());
+        const actorSubject = String(activeRequests?.actor?.subject || payload?.actor?.subject || '');
+        setActiveTradeRequestListingIds((Array.isArray(activeRequests?.items) ? activeRequests.items : [])
+          .filter((offer) => String(offer?.from_subject || '') === actorSubject)
+          .filter((offer) => ['requested', 'proposed', 'pending'].includes(String(offer?.status || '').toLowerCase()))
+          .map((offer) => String(offer?.target_listing_id || ''))
+          .filter(Boolean));
+      } catch {
+        // Marketplace listings should remain available if request-state hydration fails.
+      }
     } catch (e) {
       setError(e.message || String(e));
     } finally {
@@ -2755,7 +2776,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     }
   }
 
-  async function openTradeComposer(targetListing) {
+  async function openTradeComposer(targetListing, preferredOfferedListingId = null) {
     if (!targetListing?.listing_id) return;
     if (!authReady()) {
       setError(clerkEnabled ? 'Sign in is required.' : (authMode === 'bearer' ? 'Bearer token required.' : 'API key required.'));
@@ -2782,11 +2803,57 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
       const payload = await apiClient.listOfferCandidates(targetListing.listing_id, 100, await authContext());
       const candidates = Array.isArray(payload?.items) ? payload.items : [];
       setTradeOfferCandidates(candidates);
-      setTradeOfferListingIds(candidates[0]?.listing_id ? [candidates[0].listing_id] : []);
+      const preferredId = preferredOfferedListingId || suggestedTradeListingId;
+      const preferred = preferredId
+        ? candidates.find((candidate) => String(candidate?.listing_id || candidate?.id || '') === String(preferredId))
+        : null;
+      setTradeOfferListingIds(preferred?.listing_id ? [preferred.listing_id] : []);
     } catch (e) {
       setTradeOfferError(e.message || 'Unable to load eligible listings.');
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function requestTrade(targetListing) {
+    if (!targetListing?.listing_id || tradeOfferBusy) return;
+    setTradeOfferBusy(true);
+    setTradeOfferError('');
+    try {
+      await apiClient.createOffer({
+        target_listing_id: targetListing.listing_id,
+        offered_listing_ids: [],
+        message: '',
+      }, await authContext());
+      setNotice('Trade request sent. The listing owner will choose an item from your eligible closet listings.');
+      setActiveTradeRequestListingIds((prev) => Array.from(new Set([...prev, String(targetListing.listing_id)])));
+      await loadInbox('pending');
+      setAppAlert({
+        title: 'Trade Request Sent',
+        message: `The owner of ${targetListing?.title || 'this listing'} can now review your eligible closet items and send you a proposal.`,
+        primaryLabel: 'Close',
+      });
+    } catch (e) {
+      if (String(e.message || '').toLowerCase().includes('already have an active trade request')) {
+        await loadInbox('pending');
+        setTradeOfferError('');
+        setNotice('Trade request already sent.');
+        setActiveTradeRequestListingIds((prev) => Array.from(new Set([...prev, String(targetListing.listing_id)])));
+        setAppAlert({
+          title: 'Trade Request Sent',
+          message: `Your request for ${targetListing?.title || 'this listing'} is already active. The listing owner can review it in their Trade Inbox.`,
+          primaryLabel: 'Close',
+        });
+        return;
+      }
+      setTradeOfferError(e.message || 'Unable to send trade request.');
+      setAppAlert({
+        title: 'Request Not Sent',
+        message: e.message || 'The trade request could not be sent. Please try again.',
+        primaryLabel: 'Close',
+      });
+    } finally {
+      setTradeOfferBusy(false);
     }
   }
 
@@ -2994,6 +3061,34 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
         delete next[offerId];
         return next;
       });
+    }
+  }
+
+  async function loadProposalCandidates(offerId) {
+    setOfferActionBusyById((prev) => ({ ...prev, [offerId]: 'loading-options' }));
+    try {
+      const payload = await apiClient.proposalCandidates(offerId, 100, await authContext());
+      setProposalCandidatesByOffer((prev) => ({ ...prev, [offerId]: Array.isArray(payload?.items) ? payload.items : [] }));
+    } catch (e) {
+      setError(e.message || 'Unable to load eligible listings.');
+    } finally {
+      setOfferActionBusyById((prev) => ({ ...prev, [offerId]: '' }));
+    }
+  }
+
+  async function proposeTrade(offerId) {
+    const listingId = proposalSelectionByOffer[offerId];
+    if (!listingId) return;
+    setOfferActionBusyById((prev) => ({ ...prev, [offerId]: 'proposed' }));
+    try {
+      await apiClient.proposeOffer(offerId, [listingId], await authContext());
+      setNotice('Trade proposal sent. Waiting for the requester to accept.');
+      await loadInbox('pending');
+      closeOfferDetails();
+    } catch (e) {
+      setError(e.message || 'Unable to send trade proposal.');
+    } finally {
+      setOfferActionBusyById((prev) => ({ ...prev, [offerId]: '' }));
     }
   }
 
@@ -3950,6 +4045,10 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     if (!selectedListing) return null;
     const gallery = listingGallery(selectedListing, apiBaseUrl);
     const hasMatches = getCrossOwnerMatches(selectedListing, marketplaceActorSubject).length > 0;
+    const selectedListingMatchCount = Number.isFinite(Number(selectedListing?.match_count))
+      ? Number(selectedListing.match_count)
+      : getCrossOwnerMatches(selectedListing, marketplaceActorSubject).length;
+    const activeTradeRequest = activeTradeRequestListingIds.includes(String(selectedListing?.listing_id || selectedListing?.id || ''));
     const matchPreviewImages = hasMatches ? getMatchPreviewImages(selectedListing, apiBaseUrl, marketplaceActorSubject) : [];
     const isOwnListing = selectedListingSource === 'marketplace' && isOwnMarketplaceListing(selectedListing);
     const canStartTrade = selectedListingSource !== 'marketplace' || !isOwnListing;
@@ -4062,16 +4161,31 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
         {hasMatches ? (
           <View style={styles.offerDetailPanel}>
             <View style={styles.listingDetailMatchRow}>
-              <Text style={styles.offerLaneLabel}>Matched Items</Text>
+              <Text style={styles.offerLaneLabel}>
+                {selectedListingMatchCount}{' '}
+                {selectedListingMatchCount === 1 ? 'eligible closet item' : 'eligible closet items'}
+              </Text>
               {matchPreviewImages.length > 0 ? (
                 <View style={styles.matchThumbStrip}>
-                  {matchPreviewImages.map((src, idx) => (
-                    <Image
+                  {getCrossOwnerMatches(selectedListing, marketplaceActorSubject)
+                    .map((candidate) => ({ candidate, src: listingGallery(candidate, apiBaseUrl)[0] }))
+                    .filter((entry) => Boolean(entry.src))
+                    .slice(0, 3)
+                    .map(({ candidate, src }, idx) => {
+                    return (
+                    <TouchableOpacity
                       key={`${selectedListing?.listing_id || 'listing'}-matched-${idx}`}
-                      source={{ uri: src }}
-                      style={styles.matchThumb}
-                    />
-                  ))}
+                      onPress={() => {
+                        setSuggestedTradeListingId(candidate?.listing_id || candidate?.id || null);
+                        const candidateGallery = listingGallery(candidate, apiBaseUrl);
+                        if (candidateGallery.length > 0) openExpandedGallery(candidateGallery, 0);
+                      }}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Preview ${candidate?.title || `offer item ${idx + 1}`}`}
+                    >
+                      <Image source={{ uri: src }} style={styles.matchThumb} />
+                    </TouchableOpacity>
+                  )})}
                 </View>
               ) : (
                 <Text style={styles.matchThumbEmpty}>No match images</Text>
@@ -4085,11 +4199,11 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
             <TouchableOpacity
               style={styles.primaryBtn}
               onPress={() => {
-                closeListingDetails();
-                openTradeComposer(selectedListing);
+                requestTrade(selectedListing);
               }}
+              disabled={tradeOfferBusy || Boolean(activeTradeRequest)}
             >
-              <Text style={styles.primaryBtnText}>Start Trade</Text>
+              <Text style={styles.primaryBtnText}>{tradeOfferBusy ? 'Sending...' : (activeTradeRequest ? 'Request Sent' : 'Request Trade')}</Text>
             </TouchableOpacity>
           </View>
         ) : null}
@@ -4171,6 +4285,8 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     ));
   const tradeComposerShippingCharge = estimatedSenderShippingChargeForListings(tradeComposerSelectedListings);
   const selectedOfferStatus = String(selectedOffer?.status || '').toLowerCase();
+  const selectedOfferActorSubject = selectedOffer ? offerActorSubject(selectedOffer, marketplaceActorSubject || clerkUserProfile?.id) : '';
+  const selectedOfferIsSender = Boolean(selectedOffer && selectedOfferActorSubject === selectedOffer?.from_subject);
   const selectedOfferChoices = selectedOffer ? offerOfferedListings(selectedOffer) : [];
   const selectedOfferChoiceId = selectedOffer
     ? (offerAcceptedListingById[selectedOffer.offer_id]
@@ -4187,7 +4303,8 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
   const selectedOfferActionBusy = selectedOffer ? offerActionBusyById[selectedOffer.offer_id] || '' : '';
   const selectedOfferCanAccept = Boolean(
     selectedOffer
-    && selectedOfferStatus === 'pending'
+    && selectedOfferStatus === 'proposed'
+    && selectedOfferIsSender
     && selectedOfferChoiceId
     && selectedOfferAddressId
     && selectedOfferQuote?.status === 'quoted'
@@ -4290,9 +4407,14 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                         showStatus={false}
                         currentOwnerSubject={marketplaceActorSubject}
                         currentUserDisplayName={clerkUserLabel}
-                        onStartTrade={openTradeComposer}
                         startTradeDisabled={isOwnListing}
                         onOpenDetails={(listing) => openListingDetails(listing, 'marketplace')}
+                        onMatchPreviewSelect={(candidate) => {
+                          setSuggestedTradeListingId(candidate?.listing_id || candidate?.id || null);
+                          openListingDetails(item, 'marketplace');
+                          const candidateGallery = listingGallery(candidate, apiBaseUrl);
+                          if (candidateGallery.length > 0) openExpandedGallery(candidateGallery, 0);
+                        }}
                         liked={likedListingIds.includes(String(item?.listing_id || item?.id || ''))}
                         onToggleLike={isOwnListing ? null : toggleLikedListing}
                       />
@@ -5588,6 +5710,13 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
           const offerId = selectedOffer.offer_id;
           const targetListing = selectedOffer?.target_listing || null;
           const offeredListings = offerOfferedListings(selectedOffer);
+          const actorSubject = offerActorSubject(selectedOffer, marketplaceActorSubject || clerkUserProfile?.id);
+          const isSender = actorSubject === selectedOffer?.from_subject;
+          const offerStatus = String(selectedOffer?.status || '').toLowerCase();
+          const isRequested = offerStatus === 'requested';
+          const isProposed = offerStatus === 'proposed';
+          const ownerSelectionFlow = !isSender && ['requested', 'pending'].includes(offerStatus);
+          const proposalCandidates = proposalCandidatesByOffer[offerId] || [];
           const targetGallery = listingGallery(targetListing, apiBaseUrl);
           const selectableAddresses = completeShippingAddresses(shippingAddresses);
           const selectedAddressId = selectedAddressByOffer[offerId] || (selectableAddresses.length === 1 ? selectableAddresses[0].id : '');
@@ -5630,13 +5759,41 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                   <View style={styles.offerDetailPanel}>
                     <View style={styles.offerChoiceHeading}>
                       <View>
-                        <Text style={styles.offerLaneLabel}>Offered Items</Text>
-                        {isPending && offeredListings.length > 1 ? <Text style={styles.helperText}>Select the item you want to receive</Text> : null}
+                        <Text style={styles.offerLaneLabel}>{ownerSelectionFlow ? 'Requester’s Eligible Items' : 'Proposed Item'}</Text>
+                        {ownerSelectionFlow ? <Text style={styles.helperText}>Choose the exact item you want in return</Text> : null}
                       </View>
-                      <Text style={styles.offerChoiceCount}>{offeredListings.length}</Text>
+                      <Text style={styles.offerChoiceCount}>{ownerSelectionFlow ? proposalCandidates.length : offeredListings.length}</Text>
                     </View>
-                    {offeredListings.length === 0 ? (
-                      <Text style={styles.emptyText}>No offered listings found.</Text>
+                    {ownerSelectionFlow ? (
+                        proposalCandidates.length === 0 ? (
+                          <TouchableOpacity style={styles.primaryBtn} onPress={() => loadProposalCandidates(offerId)} disabled={Boolean(offerActionBusyById[offerId])}>
+                            <Text style={styles.primaryBtnText}>{offerActionBusyById[offerId] === 'loading-options' ? 'Loading...' : 'Browse Requester’s Items'}</Text>
+                          </TouchableOpacity>
+                        ) : (
+                          <View style={styles.offerChoiceList}>
+                            {proposalCandidates.map((listing) => {
+                              const listingId = listingIdOf(listing);
+                              const selected = proposalSelectionByOffer[offerId] === listingId;
+                              const image = listingGallery(listing, apiBaseUrl)[0];
+                              return (
+                                <TouchableOpacity key={listingId} style={[styles.tradeCandidateRow, selected && styles.tradeCandidateRowActive]} onPress={() => setProposalSelectionByOffer((prev) => ({ ...prev, [offerId]: listingId }))}>
+                                  {image ? <Image source={{ uri: image }} style={styles.tradeCandidateThumb} /> : null}
+                                  <View style={styles.tradeCandidateCopy}>
+                                    <Text style={styles.tradeCandidateBrand}>{listing?.brand || 'Unknown brand'}</Text>
+                                    <Text style={styles.tradeCandidateTitle}>{listing?.title || 'Listing'}</Text>
+                                    <Text style={styles.tradeCandidateMeta}>SIZE {listing?.size || 'N/A'} • {displayConditionLabel(listing?.condition)}</Text>
+                                  </View>
+                                  <View style={[styles.tradeCheck, selected && styles.tradeCheckActive]}><Text style={styles.tradeCheckText}>{selected ? '✓' : ''}</Text></View>
+                                </TouchableOpacity>
+                              );
+                            })}
+                            <TouchableOpacity style={[styles.primaryBtn, !proposalSelectionByOffer[offerId] && styles.primaryBtnDisabled]} onPress={() => proposeTrade(offerId)} disabled={!proposalSelectionByOffer[offerId] || Boolean(offerActionBusyById[offerId])}>
+                              <Text style={styles.primaryBtnText}>{offerActionBusyById[offerId] === 'proposed' ? 'Sending...' : 'Send Proposal'}</Text>
+                            </TouchableOpacity>
+                          </View>
+                        )
+                    ) : offeredListings.length === 0 ? (
+                      <Text style={styles.emptyText}>Waiting for the listing owner to choose an item.</Text>
                     ) : (
                       <View style={styles.offerChoiceList}>
                         {offeredListings.map((listing, idx) => {
@@ -5723,7 +5880,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                     </View>
                   ) : null}
 
-                  {isPending ? (
+                  {isProposed && isSender ? (
                     <View style={styles.offerDetailPanel}>
                       <Text style={styles.offerLaneLabel}>Delivery & Decision</Text>
                       <View style={styles.offerShippingSummary}>
@@ -6031,7 +6188,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
           </TouchableOpacity>
         </View>
       ) : null}
-      {selectedOffer && selectedOfferStatus === 'pending' ? (
+      {selectedOffer && selectedOfferStatus === 'proposed' && selectedOfferIsSender ? (
         <View style={styles.offerPersistentFooter}>
           <View style={styles.offerPersistentSummary}>
             <Text style={styles.offerLaneLabel}>Shipping if accepted</Text>
@@ -6059,7 +6216,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
               onPress={() => respondToOffer(selectedOffer.offer_id, 'accepted')}
               disabled={!selectedOfferCanAccept}
             >
-              <Text style={styles.primaryBtnText}>{selectedOfferActionBusy === 'accepted' ? 'Accepting...' : 'Accept Trade'}</Text>
+              <Text style={styles.primaryBtnText}>{selectedOfferActionBusy === 'accepted' ? 'Accepting...' : (selectedOfferStatus === 'proposed' ? 'Accept Proposal' : 'Accept Trade')}</Text>
             </TouchableOpacity>
           </View>
         </View>
