@@ -524,7 +524,20 @@ def test_mannequin_generation_prompt_is_limited_to_handbags_and_dresses() -> Non
     assert "full-body female mannequin" in dress[1]
     assert "fabric texture" in dress[1]
 
-    assert _mannequin_generation_prompt(category="clothes", title="Wool blazer", description="Gray jacket") is None
+    blazer = _mannequin_generation_prompt(category="clothes", title="Wool blazer", description="Gray jacket")
+    assert blazer is not None
+    assert blazer[0] == "mannequin_garment"
+    assert "lapels" in blazer[1]
+    accessory_clutch = _mannequin_generation_prompt(
+        category="accessories",
+        title="Sequined evening clutch",
+        description="Chain strap bag",
+    )
+    assert accessory_clutch is not None
+    assert accessory_clutch[0] == "mannequin_handbag"
+    legacy_bag = _mannequin_generation_prompt(category="bags", title="Leather tote", description="")
+    assert legacy_bag is not None
+    assert legacy_bag[0] == "mannequin_handbag"
     assert _mannequin_generation_prompt(category="shoes", title="Leather pumps", description="Black") is None
 
 

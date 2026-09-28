@@ -9060,26 +9060,45 @@ async def upload_images(
 
 
 def _mannequin_generation_prompt(*, category: str, title: str, description: str) -> tuple[str, str] | None:
-    normalized_category = normalize_category(category)
+    raw_category = str(category or "").strip().lower()
+    normalized_category = "handbag" if raw_category in {"bag", "bags", "handbags"} else normalize_category(category)
     item_text = f"{title} {description}".lower()
+    bag_terms = (
+        "bag",
+        "backpack",
+        "clutch",
+        "crossbody",
+        "handbag",
+        "hobo",
+        "purse",
+        "satchel",
+        "shoulder bag",
+        "tote",
+    )
+    is_bag = normalized_category == "handbag" or (
+        normalized_category == "accessories" and any(term in item_text for term in bag_terms)
+    )
     fidelity_rules = (
         "Use all provided reference images as evidence for the same item. "
         "Do not add text, labels, accessories, props, or product details that are not visible in the references. "
         "Use a clean white ecommerce studio background with realistic lighting and shadows. "
         "Generate one image only."
     )
-    if normalized_category == "handbag":
+    if is_bag:
         return "mannequin_handbag", (
             "Place the exact handbag from the reference images on a neutral full-body female mannequin's shoulder. "
             "Preserve its exact shape, dimensions, material, color, hardware, straps, stitching, pattern, and visible logo. "
             "Do not redesign, simplify, or add details to the bag. "
             f"{fidelity_rules}"
         )
-    if normalized_category == "clothes" and "dress" in item_text:
-        return "mannequin_dress", (
-            "Create a photorealistic ecommerce image of a full-body female mannequin wearing the exact dress from the reference images. "
-            "Preserve the exact dress design, color, pattern, neckline, sleeves, length, fabric texture, stitching, and proportions. "
-            "Do not redesign or add details to the dress. Use realistic fabric draping. "
+    if normalized_category == "clothes":
+        garment = "dress" if "dress" in item_text else "garment"
+        mannequin = "female mannequin" if garment == "dress" else "neutral mannequin"
+        return f"mannequin_{garment}", (
+            f"Create a photorealistic ecommerce image of a full-body {mannequin} wearing the exact {garment} from the reference images. "
+            f"Preserve the exact {garment} design, color, pattern, neckline, collar, lapels, sleeves, length, closures, embellishments, "
+            "fabric texture, stitching, and proportions. Do not redesign, restyle, layer, or add details to the item. "
+            "Use realistic fabric draping and ensure the complete garment is visible. "
             f"{fidelity_rules}"
         )
     return None
