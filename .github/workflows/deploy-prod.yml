@@ -216,7 +216,8 @@ jobs:
              --arg SHIPPO_DEFAULT_CONTACT_EMAIL "${SHIPPO_DEFAULT_CONTACT_EMAIL:-}" \
              --arg SHIPPO_DEFAULT_CONTACT_PHONE "${SHIPPO_DEFAULT_CONTACT_PHONE:-}" '
             def upsert_env($n; $v):
-              if ($v|length) == 0 then .
+              if ((.secrets // []) | map(.name) | index($n)) != null then .
+              elif ($v|length) == 0 then .
               elif ((.environment // []) | map(.name) | index($n)) != null
               then .environment = ((.environment // []) | map(if .name == $n then .value = $v else . end))
               else .environment = ((.environment // []) + [{name: $n, value: $v}])
