@@ -36,6 +36,7 @@ from valuation import ValuationConfig, ValuationService
 from valuation.types import ValuationRequest
 
 from .auth import AuthPrincipal, get_request_principal, require_admin_or_api_key, require_admin_user, require_clerk_user
+from .analysis_queue import enqueue_listing_analysis
 from .db import Database, PersistedImage, utc_now_iso
 from .deps import (
     get_db,
@@ -1149,6 +1150,44 @@ def _create_listing_analysis_job(db: Database, *, listing_id: str, owner_subject
         listing_id=listing_id,
         owner_subject=owner_subject,
         max_attempts=ANALYSIS_JOB_MAX_ATTEMPTS,
+    )
+
+
+def _enqueue_existing_listing_analysis(
+    *,
+    background_tasks: BackgroundTasks,
+    settings: Settings,
+    valuation_service: ValuationService,
+    gpt_item_profiler,
+    listing_id: str,
+    owner_subject: str,
+    category: str | None,
+    item_size: str | None,
+    user_condition: str | None,
+    item_description: str | None,
+    debug: bool,
+    stage_images_after_analysis: bool,
+    job_id: str,
+) -> None:
+    payload = {
+        "listing_id": listing_id,
+        "owner_subject": owner_subject,
+        "category": category,
+        "item_size": item_size,
+        "user_condition": user_condition,
+        "item_description": item_description,
+        "debug": debug,
+        "stage_images_after_analysis": stage_images_after_analysis,
+        "job_id": job_id,
+    }
+    if enqueue_listing_analysis(settings, payload):
+        return
+    background_tasks.add_task(
+        _run_listing_analysis_for_existing_listing_job,
+        **payload,
+        settings=settings,
+        valuation_service=valuation_service,
+        gpt_item_profiler=gpt_item_profiler,
     )
 
 
@@ -4927,8 +4966,11 @@ def admin_rerun_listing_analysis(
     if not owner_subject:
         raise HTTPException(status_code=409, detail="listing owner missing")
     analysis_job = _create_listing_analysis_job(db, listing_id=listing_id, owner_subject=owner_subject)
-    background_tasks.add_task(
-        _run_listing_analysis_for_existing_listing_job,
+    _enqueue_existing_listing_analysis(
+        background_tasks=background_tasks,
+        settings=settings,
+        valuation_service=valuation_service,
+        gpt_item_profiler=gpt_item_profiler,
         listing_id=listing_id,
         owner_subject=owner_subject,
         category=str(listing.get("category") or "clothes"),
@@ -4936,9 +4978,6 @@ def admin_rerun_listing_analysis(
         user_condition=str(listing.get("condition") or "LikeNew"),
         item_description=str(listing.get("description") or ""),
         debug=True,
-        settings=settings,
-        valuation_service=valuation_service,
-        gpt_item_profiler=gpt_item_profiler,
         stage_images_after_analysis=False,
         job_id=str(analysis_job.get("job_id") or ""),
     )
@@ -5030,8 +5069,11 @@ def create_listing(
     ]
     if str(payload.status or "").lower() == "analyzing":
         analysis_job = _create_listing_analysis_job(db, listing_id=listing_id, owner_subject=principal.subject)
-        background_tasks.add_task(
-            _run_listing_analysis_for_existing_listing_job,
+        _enqueue_existing_listing_analysis(
+            background_tasks=background_tasks,
+            settings=settings,
+            valuation_service=valuation_service,
+            gpt_item_profiler=gpt_item_profiler,
             listing_id=listing_id,
             owner_subject=principal.subject,
             category=payload.category,
@@ -5039,9 +5081,6 @@ def create_listing(
             user_condition=payload.condition,
             item_description=payload.description,
             debug=True,
-            settings=settings,
-            valuation_service=valuation_service,
-            gpt_item_profiler=gpt_item_profiler,
             stage_images_after_analysis=True,
             job_id=str(analysis_job.get("job_id") or ""),
         )
@@ -5449,8 +5488,11 @@ def update_listing(
             previous_images = [str(previous_record["image"])]
         stage_images_after_analysis = not _same_listing_image_urls(previous_images, _display_image_urls_from_storage_images(normalized_images))
         analysis_job = _create_listing_analysis_job(db, listing_id=listing_id, owner_subject=principal.subject)
-        background_tasks.add_task(
-            _run_listing_analysis_for_existing_listing_job,
+        _enqueue_existing_listing_analysis(
+            background_tasks=background_tasks,
+            settings=settings,
+            valuation_service=valuation_service,
+            gpt_item_profiler=gpt_item_profiler,
             listing_id=listing_id,
             owner_subject=principal.subject,
             category=payload.category,
@@ -5458,9 +5500,6 @@ def update_listing(
             user_condition=payload.condition,
             item_description=payload.description,
             debug=True,
-            settings=settings,
-            valuation_service=valuation_service,
-            gpt_item_profiler=gpt_item_profiler,
             stage_images_after_analysis=stage_images_after_analysis,
             job_id=str(analysis_job.get("job_id") or ""),
         )

@@ -122,6 +122,9 @@ class Settings(BaseSettings):
     openai_api_key: str | None = None
     listing_assistant_model: str = "gpt-5-mini"
     listing_assistant_timeout_s: float = Field(default=30.0, ge=5.0, le=120.0)
+    sqs_analysis_queue_url: str | None = None
+    sqs_analysis_wait_time_seconds: int = Field(default=20, ge=1, le=20)
+    sqs_analysis_visibility_timeout_seconds: int = Field(default=600, ge=60, le=43200)
 
     clerk_enabled: bool = False
     clerk_issuer: str | None = None
