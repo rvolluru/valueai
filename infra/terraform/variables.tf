@@ -95,6 +95,82 @@ variable "db_password" {
   sensitive = true
 }
 
+variable "db_instance_class" {
+  type    = string
+  default = "db.t4g.micro"
+}
+
+variable "db_allocated_storage" {
+  type    = number
+  default = 20
+}
+
+variable "db_max_allocated_storage" {
+  type    = number
+  default = 0
+}
+
+variable "db_multi_az" {
+  type    = bool
+  default = false
+}
+
+variable "db_backup_retention_days" {
+  type    = number
+  default = 0
+}
+
+variable "db_deletion_protection" {
+  type    = bool
+  default = false
+}
+
+variable "db_skip_final_snapshot" {
+  type    = bool
+  default = true
+}
+
+variable "ecs_api_desired_count" {
+  type    = number
+  default = 1
+}
+
+variable "ecs_api_autoscaling_enabled" {
+  type    = bool
+  default = false
+}
+
+variable "ecs_api_min_count" {
+  type    = number
+  default = 1
+}
+
+variable "ecs_api_max_count" {
+  type    = number
+  default = 1
+}
+
+variable "ecs_api_cpu_target" {
+  type    = number
+  default = 60
+}
+
+variable "ecs_api_memory_target" {
+  type    = number
+  default = 70
+}
+
+variable "analysis_queue_enabled" {
+  type    = bool
+  default = false
+}
+
+variable "runtime_secret_arn" {
+  type        = string
+  default     = ""
+  description = "Secrets Manager JSON secret containing production runtime credentials."
+}
+
 variable "openai_api_key" {
   type      = string
   default   = ""

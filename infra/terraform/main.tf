@@ -65,6 +65,28 @@ resource "aws_s3_bucket_public_access_block" "uploads" {
   restrict_public_buckets = true
 }
 
+resource "aws_s3_bucket_versioning" "uploads" {
+  bucket = aws_s3_bucket.uploads.id
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "uploads" {
+  bucket = aws_s3_bucket.uploads.id
+
+  rule {
+    id     = "expire-noncurrent-uploads"
+    status = "Enabled"
+
+    filter {}
+
+    noncurrent_version_expiration {
+      noncurrent_days = 30
+    }
+  }
+}
+
 resource "aws_s3_bucket_cors_configuration" "uploads" {
   bucket = aws_s3_bucket.uploads.id
 
@@ -160,18 +182,24 @@ resource "aws_db_subnet_group" "this" {
 }
 
 resource "aws_db_instance" "postgres" {
-  identifier             = "${var.project_name}-postgres"
-  engine                 = "postgres"
-  engine_version         = "16"
-  instance_class         = "db.t4g.micro"
-  allocated_storage      = 20
-  db_name                = var.db_name
-  username               = var.db_username
-  password               = var.db_password
-  db_subnet_group_name   = aws_db_subnet_group.this.name
-  vpc_security_group_ids = [aws_security_group.rds.id]
-  skip_final_snapshot    = true
-  publicly_accessible    = false
+  identifier                = "${var.project_name}-postgres"
+  engine                    = "postgres"
+  engine_version            = "16"
+  instance_class            = var.db_instance_class
+  allocated_storage         = var.db_allocated_storage
+  max_allocated_storage     = var.db_max_allocated_storage
+  multi_az                  = var.db_multi_az
+  backup_retention_period   = var.db_backup_retention_days
+  deletion_protection       = var.db_deletion_protection
+  copy_tags_to_snapshot     = true
+  db_name                   = var.db_name
+  username                  = var.db_username
+  password                  = var.db_password
+  db_subnet_group_name      = aws_db_subnet_group.this.name
+  vpc_security_group_ids    = [aws_security_group.rds.id]
+  skip_final_snapshot       = var.db_skip_final_snapshot
+  final_snapshot_identifier = var.db_skip_final_snapshot ? null : "${var.project_name}-postgres-final"
+  publicly_accessible       = false
 }
 
 resource "aws_iam_role" "ecs_task_execution" {
@@ -218,6 +246,58 @@ resource "aws_iam_role_policy" "ecs_task_s3" {
         ]
       }
     ]
+  })
+}
+
+resource "aws_sqs_queue" "analysis_dlq" {
+  count                     = var.analysis_queue_enabled ? 1 : 0
+  name                      = "${var.app_env == "prod" ? "valueai-prod" : var.project_name}-analysis-dlq"
+  message_retention_seconds = 1209600
+}
+
+resource "aws_sqs_queue" "analysis" {
+  count                      = var.analysis_queue_enabled ? 1 : 0
+  name                       = "${var.app_env == "prod" ? "valueai-prod" : var.project_name}-analysis"
+  visibility_timeout_seconds = 600
+  receive_wait_time_seconds  = 20
+  message_retention_seconds  = 345600
+  redrive_policy = jsonencode({
+    deadLetterTargetArn = aws_sqs_queue.analysis_dlq[0].arn
+    maxReceiveCount     = 3
+  })
+}
+
+resource "aws_iam_role_policy" "ecs_task_analysis_queue" {
+  count = var.analysis_queue_enabled ? 1 : 0
+  name  = "${var.project_name}-analysis-sqs"
+  role  = aws_iam_role.ecs_task.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "sqs:SendMessage",
+        "sqs:ReceiveMessage",
+        "sqs:DeleteMessage",
+        "sqs:ChangeMessageVisibility",
+        "sqs:GetQueueAttributes"
+      ]
+      Resource = [aws_sqs_queue.analysis[0].arn, aws_sqs_queue.analysis_dlq[0].arn]
+    }]
+  })
+}
+
+resource "aws_iam_role_policy" "ecs_execution_runtime_secret" {
+  count = var.runtime_secret_arn == "" ? 0 : 1
+  name  = "${var.project_name}-runtime-secret"
+  role  = aws_iam_role.ecs_task_execution.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["secretsmanager:GetSecretValue"]
+      Resource = var.runtime_secret_arn
+    }]
   })
 }
 
@@ -344,29 +424,19 @@ resource "aws_ecs_task_definition" "api" {
       image        = var.container_image
       essential    = true
       portMappings = [{ containerPort = 8000, hostPort = 8000, protocol = "tcp" }]
-      environment = [
+      environment = concat([
         { name = "APP_ENV", value = var.app_env },
-        { name = "API_KEY", value = var.api_key },
         { name = "VERSION", value = "0.1.0" },
         { name = "STORAGE_BACKEND", value = "s3" },
         { name = "S3_BUCKET", value = aws_s3_bucket.uploads.bucket },
         { name = "S3_REGION", value = var.aws_region },
-        { name = "DATABASE_URL", value = "postgresql://${var.db_username}:${var.db_password}@${aws_db_instance.postgres.address}:5432/${var.db_name}" },
-        { name = "OPENAI_API_KEY", value = var.openai_api_key },
-        { name = "GEMINI_API_KEY", value = var.gemini_api_key },
-        { name = "PHOTOROOM_API_KEY", value = var.photoroom_api_key },
-        { name = "PLAIN_API_KEY", value = var.plain_api_key },
-        { name = "PLAIN_WEBHOOK_SECRET", value = var.plain_webhook_secret },
+        { name = "SQS_ANALYSIS_QUEUE_URL", value = var.analysis_queue_enabled ? aws_sqs_queue.analysis[0].url : "" },
+        { name = "SHIPPING_REMINDER_ENABLED", value = tostring(!var.analysis_queue_enabled) },
         { name = "IMAGE_STAGING_PHOTOROOM_ENABLED", value = tostring(var.image_staging_photoroom_enabled) },
         { name = "PHOTOROOM_BACKGROUND_COLOR", value = var.photoroom_background_color },
         { name = "PHOTOROOM_OUTPUT_FORMAT", value = var.photoroom_output_format },
         { name = "PHOTOROOM_OUTPUT_SIZE", value = var.photoroom_output_size },
-        { name = "STRIPE_SECRET_KEY", value = var.stripe_secret_key },
         { name = "STRIPE_PUBLISHABLE_KEY", value = var.stripe_publishable_key },
-        { name = "STRIPE_WEBHOOK_SECRET", value = var.stripe_webhook_secret },
-        { name = "EXPO_PUSH_HEALTH_TOKEN", value = var.expo_push_health_token },
-        { name = "GOOGLE_PLACES_API_KEY", value = var.google_places_api_key },
-        { name = "SHIPPO_API_KEY", value = var.shippo_api_key },
         { name = "SHIPPO_API_BASE_URL", value = var.shippo_api_base_url },
         { name = "SHIPPO_PARCEL_WEIGHT_OZ", value = tostring(var.shippo_parcel_weight_oz) },
         { name = "SHIPPO_FLAT_RATE_ENABLED", value = tostring(var.shippo_flat_rate_enabled) },
@@ -401,9 +471,7 @@ resource "aws_ecs_task_definition" "api" {
         { name = "GPT_ITEM_PROFILE_VERTEX_SEARCH_LOCATION", value = var.gpt_item_profile_vertex_search_location },
         { name = "GPT_ITEM_PROFILE_VERTEX_SEARCH_MODEL", value = var.gpt_item_profile_vertex_search_model },
         { name = "GPT_ITEM_PROFILE_VERTEX_SEARCH_DATASTORE", value = var.gpt_item_profile_vertex_search_datastore },
-        { name = "GPT_ITEM_PROFILE_VERTEX_SEARCH_ACCESS_TOKEN", value = var.gpt_item_profile_vertex_search_access_token },
         { name = "GPT_ITEM_PROFILE_VERTEX_SEARCH_MAX_RESULTS", value = tostring(var.gpt_item_profile_vertex_search_max_results) },
-        { name = "FIRECRAWL_API_KEY", value = var.firecrawl_api_key },
         { name = "VALUATION_USE_FIRECRAWL", value = tostring(var.valuation_use_firecrawl) },
         { name = "VALUATION_ENABLED", value = tostring(var.valuation_enabled) },
         { name = "VALUATION_COMPS_ENABLED", value = tostring(var.valuation_comps_enabled) },
@@ -417,6 +485,39 @@ resource "aws_ecs_task_definition" "api" {
         { name = "BRAND_ACCEPT_SCORE", value = tostring(var.brand_accept_score) },
         { name = "BRAND_ACCEPT_SCORE_LOW", value = tostring(var.brand_accept_score_low) },
         { name = "BRAND_GAP_MIN", value = tostring(var.brand_gap_min) }
+      ], var.runtime_secret_arn == "" ? [
+        { name = "API_KEY", value = var.api_key },
+        { name = "DATABASE_URL", value = "postgresql://${var.db_username}:${var.db_password}@${aws_db_instance.postgres.address}:5432/${var.db_name}" },
+        { name = "OPENAI_API_KEY", value = var.openai_api_key },
+        { name = "GEMINI_API_KEY", value = var.gemini_api_key },
+        { name = "PHOTOROOM_API_KEY", value = var.photoroom_api_key },
+        { name = "PLAIN_API_KEY", value = var.plain_api_key },
+        { name = "PLAIN_WEBHOOK_SECRET", value = var.plain_webhook_secret },
+        { name = "STRIPE_SECRET_KEY", value = var.stripe_secret_key },
+        { name = "STRIPE_WEBHOOK_SECRET", value = var.stripe_webhook_secret },
+        { name = "EXPO_PUSH_HEALTH_TOKEN", value = var.expo_push_health_token },
+        { name = "GOOGLE_PLACES_API_KEY", value = var.google_places_api_key },
+        { name = "SHIPPO_API_KEY", value = var.shippo_api_key },
+        { name = "GPT_ITEM_PROFILE_VERTEX_SEARCH_ACCESS_TOKEN", value = var.gpt_item_profile_vertex_search_access_token },
+        { name = "FIRECRAWL_API_KEY", value = var.firecrawl_api_key }
+      ] : [])
+      secrets = var.runtime_secret_arn == "" ? [] : [
+        for name in [
+          "API_KEY",
+          "DATABASE_URL",
+          "OPENAI_API_KEY",
+          "GEMINI_API_KEY",
+          "PHOTOROOM_API_KEY",
+          "PLAIN_API_KEY",
+          "PLAIN_WEBHOOK_SECRET",
+          "STRIPE_SECRET_KEY",
+          "STRIPE_WEBHOOK_SECRET",
+          "EXPO_PUSH_HEALTH_TOKEN",
+          "GOOGLE_PLACES_API_KEY",
+          "SHIPPO_API_KEY",
+          "GPT_ITEM_PROFILE_VERTEX_SEARCH_ACCESS_TOKEN",
+          "FIRECRAWL_API_KEY"
+        ] : { name = name, valueFrom = "${var.runtime_secret_arn}:${name}::" }
       ]
       logConfiguration = {
         logDriver = "awslogs"
@@ -434,8 +535,14 @@ resource "aws_ecs_service" "api" {
   name            = "${var.project_name}-api"
   cluster         = aws_ecs_cluster.this.id
   task_definition = aws_ecs_task_definition.api.arn
-  desired_count   = 1
+  desired_count   = var.ecs_api_desired_count
   launch_type     = "FARGATE"
+  health_check_grace_period_seconds = 180
+
+  deployment_circuit_breaker {
+    enable   = true
+    rollback = true
+  }
 
   network_configuration {
     # Cheaper MVP option: run Fargate tasks in public subnets (ALB still fronts traffic).
@@ -452,4 +559,97 @@ resource "aws_ecs_service" "api" {
   }
 
   depends_on = [aws_lb_listener.http]
+}
+
+resource "aws_ecs_task_definition" "analysis_worker" {
+  count                    = var.analysis_queue_enabled ? 1 : 0
+  family                   = "${var.project_name}-analysis-worker"
+  requires_compatibilities = ["FARGATE"]
+  network_mode             = "awsvpc"
+  cpu                      = 1024
+  memory                   = 2048
+  execution_role_arn       = aws_iam_role.ecs_task_execution.arn
+  task_role_arn            = aws_iam_role.ecs_task.arn
+
+  runtime_platform {
+    cpu_architecture        = "ARM64"
+    operating_system_family = "LINUX"
+  }
+
+  container_definitions = jsonencode([
+    merge(jsondecode(aws_ecs_task_definition.api.container_definitions)[0], {
+      name         = "analysis-worker"
+      command      = ["python", "-m", "app.analysis_worker"]
+      portMappings = []
+      environment = [
+        for entry in jsondecode(aws_ecs_task_definition.api.container_definitions)[0].environment :
+        entry.name == "SHIPPING_REMINDER_ENABLED" ? merge(entry, { value = "true" }) : entry
+      ]
+    })
+  ])
+}
+
+resource "aws_ecs_service" "analysis_worker" {
+  count           = var.analysis_queue_enabled ? 1 : 0
+  name            = "${var.project_name}-analysis-worker"
+  cluster         = aws_ecs_cluster.this.id
+  task_definition = aws_ecs_task_definition.analysis_worker[0].arn
+  desired_count   = 1
+  launch_type     = "FARGATE"
+
+  deployment_circuit_breaker {
+    enable   = true
+    rollback = true
+  }
+
+  network_configuration {
+    subnets          = aws_subnet.public[*].id
+    security_groups  = [aws_security_group.ecs.id]
+    assign_public_ip = true
+  }
+}
+
+resource "aws_appautoscaling_target" "api" {
+  count              = var.ecs_api_autoscaling_enabled ? 1 : 0
+  max_capacity       = var.ecs_api_max_count
+  min_capacity       = var.ecs_api_min_count
+  resource_id        = "service/${aws_ecs_cluster.this.name}/${aws_ecs_service.api.name}"
+  scalable_dimension = "ecs:service:DesiredCount"
+  service_namespace  = "ecs"
+}
+
+resource "aws_appautoscaling_policy" "api_cpu" {
+  count              = var.ecs_api_autoscaling_enabled ? 1 : 0
+  name               = "${var.project_name}-api-cpu-${var.ecs_api_cpu_target}"
+  policy_type        = "TargetTrackingScaling"
+  resource_id        = aws_appautoscaling_target.api[0].resource_id
+  scalable_dimension = aws_appautoscaling_target.api[0].scalable_dimension
+  service_namespace  = aws_appautoscaling_target.api[0].service_namespace
+
+  target_tracking_scaling_policy_configuration {
+    target_value       = var.ecs_api_cpu_target
+    scale_out_cooldown = 60
+    scale_in_cooldown  = 300
+    predefined_metric_specification {
+      predefined_metric_type = "ECSServiceAverageCPUUtilization"
+    }
+  }
+}
+
+resource "aws_appautoscaling_policy" "api_memory" {
+  count              = var.ecs_api_autoscaling_enabled ? 1 : 0
+  name               = "${var.project_name}-api-memory-${var.ecs_api_memory_target}"
+  policy_type        = "TargetTrackingScaling"
+  resource_id        = aws_appautoscaling_target.api[0].resource_id
+  scalable_dimension = aws_appautoscaling_target.api[0].scalable_dimension
+  service_namespace  = aws_appautoscaling_target.api[0].service_namespace
+
+  target_tracking_scaling_policy_configuration {
+    target_value       = var.ecs_api_memory_target
+    scale_out_cooldown = 60
+    scale_in_cooldown  = 300
+    predefined_metric_specification {
+      predefined_metric_type = "ECSServiceAverageMemoryUtilization"
+    }
+  }
 }
