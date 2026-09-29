@@ -541,6 +541,51 @@ def test_mannequin_generation_prompt_is_limited_to_handbags_and_dresses() -> Non
     assert _mannequin_generation_prompt(category="shoes", title="Leather pumps", description="Black") is None
 
 
+def test_profile_description_uses_product_focused_model_copy_and_condition_aware_fallback() -> None:
+    from app.main import _description_from_analysis_or_user, _profile_description_from_analysis
+
+    model_copy = {
+        "user_condition": "New",
+        "brand": {"name": "Veronica Beard"},
+        "item_profile": {
+            "listing_description": "Veronica Beard jacket with a croc-embossed finish. It's new.",
+            "model_identification": {"name": "Miller Dickey Jacket", "attributes": []},
+        },
+    }
+    assert _profile_description_from_analysis(model_copy)[1] == model_copy["item_profile"]["listing_description"]
+
+    contradictory_copy = {
+        **model_copy,
+        "item_profile": {
+            "listing_description": "Pre-owned Miller Dickey Jacket.",
+            "candidate_brand": "Veronica Beard",
+            "model_identification": {
+                "name": "Miller Dickey Jacket",
+                "attributes": ["croc-embossed finish", "gold-tone buttons"],
+            },
+        },
+    }
+    description = _profile_description_from_analysis(contradictory_copy)[1]
+    assert description.startswith("Veronica Beard Miller Dickey Jacket.")
+    assert "It's new." in description
+    assert "pre-owned" not in description.casefold()
+
+    replaced = _description_from_analysis_or_user(
+        "Pre-owned Miller Dickey Jacket.",
+        response_payload=contradictory_copy,
+        model_name="Miller Dickey Jacket",
+        profile_description=description,
+    )
+    assert replaced == description
+    preserved = _description_from_analysis_or_user(
+        "I bought this jacket for a special event and never wore it.",
+        response_payload=contradictory_copy,
+        model_name="Miller Dickey Jacket",
+        profile_description=description,
+    )
+    assert preserved == "I bought this jacket for a special event and never wore it."
+
+
 def test_mannequin_images_are_excluded_from_analysis_inputs_and_reuse_hashes() -> None:
     from app.main import _reuse_recent_analysis_for_listing, _uploaded_images_for_item
 

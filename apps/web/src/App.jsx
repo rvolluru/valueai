@@ -321,15 +321,46 @@ function serializeMultiSizeValue(values) {
   return normalized.join(', ')
 }
 
-function buildSuggestedDescriptionFromProfile(profile) {
+function buildSuggestedDescriptionFromProfile(profile, condition = '', brand = '') {
+  const modelName = profile?.model_identification?.name?.trim?.() || ''
+  const generated = profile?.listing_description?.trim?.() || ''
+  const normalizedCondition = String(condition || '').trim()
+  const generatedContradictsCondition = ['New', 'NewWithTags'].includes(normalizedCondition)
+    && /pre-owned/i.test(generated)
+  const generatedMentionsListingAction = /\b(i\s*(?:am|['’]m)\s+(?:listing|selling)|listing my)\b/i.test(generated)
+  if (generated && !generatedMentionsListingAction && !generatedContradictsCondition) return generated
+
+  const attrs = Array.isArray(profile?.model_identification?.attributes)
+    ? profile.model_identification.attributes.filter((a) => typeof a === 'string' && a.trim())
+    : []
+  const signatures = Array.isArray(profile?.visual_signatures)
+    ? profile.visual_signatures.filter((a) => typeof a === 'string' && a.trim())
+    : []
+  const details = (attrs.length ? attrs : signatures).slice(0, 4)
+  const normalizedBrand = String(brand || profile?.candidate_brand || '').trim()
+  const itemName = normalizedBrand && modelName && !modelName.toLowerCase().includes(normalizedBrand.toLowerCase())
+    ? `${normalizedBrand} ${modelName}`
+    : (modelName || normalizedBrand || 'item')
+  if (itemName === 'item' && details.length === 0) return ''
+
+  const sentences = [`${itemName}.`]
+  if (normalizedCondition === 'NewWithTags') sentences.push("It's new with tags.")
+  else if (normalizedCondition === 'New') sentences.push("It's new.")
+  else if (normalizedCondition === 'LikeNew') sentences.push("It's in like-new condition.")
+  if (details.length) sentences.push(`It features ${details.join(', ')}.`)
+  return sentences.join(' ')
+}
+
+function isLegacyGeneratedDescription(value, profile) {
+  const description = String(value || '').trim()
   const modelName = profile?.model_identification?.name?.trim?.() || ''
   const attrs = Array.isArray(profile?.model_identification?.attributes)
-    ? profile.model_identification.attributes.filter((a) => typeof a === 'string' && a.trim()).slice(0, 6)
+    ? profile.model_identification.attributes.filter((entry) => typeof entry === 'string' && entry.trim()).slice(0, 6)
     : []
-  if (!modelName && attrs.length === 0) return ''
-  if (modelName && attrs.length === 0) return `Pre-owned ${modelName}.`
-  if (!modelName && attrs.length > 0) return `Key details: ${attrs.join(', ')}.`
-  return `${modelName}. Key details: ${attrs.join(', ')}.`
+  if (!description) return false
+  if (modelName && description === `Pre-owned ${modelName}.`) return true
+  if (modelName && attrs.length && description === `${modelName}. Key details: ${attrs.join(', ')}.`) return true
+  return !modelName && attrs.length > 0 && description === `Key details: ${attrs.join(', ')}.`
 }
 
 function isGenericTradeNote(value) {
@@ -423,10 +454,10 @@ function organizeDescriptionParagraphs(value) {
 function getListingDescription(item) {
   if (!item) return ''
   const profile = item.analysis?.item_profile
-  const suggested = buildSuggestedDescriptionFromProfile(profile)
-  if (suggested) return suggested
   const description = meaningfulDescription(item.description)
-  if (description) return description
+  if (description && !isLegacyGeneratedDescription(description, profile)) return description
+  const suggested = buildSuggestedDescriptionFromProfile(profile, item.condition, item.brand)
+  if (suggested) return suggested
   const wants = meaningfulDescription(item.wants)
   if (wants) return wants
   return ''
@@ -5482,7 +5513,11 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
       setReceiptPromptPending(needsReceiptPrompt)
       if (!category && payload?.category) setCategory(payload.category)
       const gptTitle = payload?.item_profile?.model_identification?.name?.trim?.() || ''
-      const suggestedDesc = buildSuggestedDescriptionFromProfile(payload?.item_profile)
+      const suggestedDesc = buildSuggestedDescriptionFromProfile(
+        payload?.item_profile,
+        payload?.user_condition || userCondition,
+        payload?.brand?.name,
+      )
       if (!itemTitle.trim() && gptTitle) setItemTitle(gptTitle)
       if (!itemDescription.trim() && suggestedDesc) setItemDescription(suggestedDesc)
       return { ok: true, needsReceiptPrompt, payload }
@@ -6088,7 +6123,11 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     setItemSize(typeof listing.size === 'string' ? listing.size : '')
     setTradeNotes(listing.wants || '')
     setItemDescription(organizeDescriptionParagraphs(
-      meaningfulDescription(listing.description) || buildSuggestedDescriptionFromProfile(listing.analysis?.item_profile) || '',
+      (meaningfulDescription(listing.description) && !isLegacyGeneratedDescription(listing.description, listing.analysis?.item_profile)
+        ? meaningfulDescription(listing.description)
+        : '')
+        || buildSuggestedDescriptionFromProfile(listing.analysis?.item_profile, listing.condition, listing.brand)
+        || '',
     ))
     setAnalysisResult(listing.analysis || null)
     setImages([])
@@ -8321,7 +8360,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
 
                             <div className="button-row">
                               {!own ? (
-                                <button type="button" disabled={tradeOfferBusy || Boolean(activeTradeRequest)} onClick={() => requestTrade(item)}>
+                                <button className="primary" type="button" disabled={tradeOfferBusy || Boolean(activeTradeRequest)} onClick={() => requestTrade(item)}>
                                   {tradeOfferBusy ? 'Sending...' : (activeTradeRequest ? 'Request Sent' : 'Request Trade')}
                                 </button>
                               ) : null}

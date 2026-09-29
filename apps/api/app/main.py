@@ -776,16 +776,61 @@ def _profile_description_from_analysis(response_payload: dict) -> tuple[str, str
     profile = response_payload.get("item_profile") if isinstance(response_payload.get("item_profile"), dict) else {}
     model_identification = profile.get("model_identification") if isinstance(profile.get("model_identification"), dict) else {}
     model_name = str(model_identification.get("name") or "").strip()
+    generated_description = str(profile.get("listing_description") or "").strip()
+    condition = str(response_payload.get("user_condition") or "").strip()
+    contradictory_condition = condition in {"New", "NewWithTags"} and "pre-owned" in generated_description.casefold()
+    mentions_listing_action = any(
+        phrase in generated_description.casefold()
+        for phrase in ("i'm listing", "i’m listing", "i am listing", "listing my", "i'm selling", "i’m selling")
+    )
+    if generated_description and not mentions_listing_action and not contradictory_condition:
+        return model_name, generated_description
+
     attributes = model_identification.get("attributes")
-    attribute_values = [str(a).strip() for a in attributes if isinstance(a, str) and a.strip()] if isinstance(attributes, list) else []
-    profile_description = ""
-    if model_name and attribute_values:
-        profile_description = f"{model_name}. Key details: {', '.join(attribute_values[:6])}."
-    elif model_name:
-        profile_description = f"Pre-owned {model_name}."
-    elif attribute_values:
-        profile_description = f"Key details: {', '.join(attribute_values[:6])}."
-    return model_name, profile_description
+    details = [str(a).strip() for a in attributes if isinstance(a, str) and a.strip()] if isinstance(attributes, list) else []
+    if not details:
+        signatures = profile.get("visual_signatures")
+        details = [str(a).strip() for a in signatures if isinstance(a, str) and a.strip()] if isinstance(signatures, list) else []
+
+    brand = str((response_payload.get("brand") or {}).get("name") or profile.get("candidate_brand") or "").strip()
+    item_name = model_name
+    if brand and model_name and brand.casefold() not in model_name.casefold():
+        item_name = f"{brand} {model_name}"
+    elif not item_name:
+        item_name = brand or "item"
+
+    sentences = [f"{item_name}."]
+    if condition == "NewWithTags":
+        sentences.append("It's new with tags.")
+    elif condition == "New":
+        sentences.append("It's new.")
+    elif condition == "LikeNew":
+        sentences.append("It's in like-new condition.")
+    if details:
+        sentences.append(f"It features {', '.join(details[:4])}.")
+    return model_name, " ".join(sentences)
+
+
+def _description_from_analysis_or_user(
+    current_description: object,
+    *,
+    response_payload: dict,
+    model_name: str,
+    profile_description: str,
+) -> str:
+    current = str(current_description or "").strip()
+    profile = response_payload.get("item_profile") if isinstance(response_payload.get("item_profile"), dict) else {}
+    model = profile.get("model_identification") if isinstance(profile.get("model_identification"), dict) else {}
+    attributes = model.get("attributes")
+    details = [str(value).strip() for value in attributes if isinstance(value, str) and value.strip()] if isinstance(attributes, list) else []
+    legacy_descriptions = {f"Pre-owned {model_name}."} if model_name else set()
+    if model_name and details:
+        legacy_descriptions.add(f"{model_name}. Key details: {', '.join(details[:6])}.")
+    elif details:
+        legacy_descriptions.add(f"Key details: {', '.join(details[:6])}.")
+    if current and current not in legacy_descriptions:
+        return current
+    return profile_description
 
 
 _DEFAULT_LISTING_TITLES = {
@@ -948,7 +993,12 @@ def _reuse_recent_analysis_for_listing(
         brand=brand,
         category=resolved_category,
     )
-    description = str(current.get("description") or "").strip() or profile_description
+    description = _description_from_analysis_or_user(
+        current.get("description"),
+        response_payload=response_payload,
+        model_name=model_name,
+        profile_description=profile_description,
+    )
     db.update_listing(
         listing_id=listing_id,
         owner_subject=owner_subject,
@@ -9432,17 +9482,7 @@ async def _run_listing_analysis_job(
         )
         response_payload = payload.model_dump()
         profile = response_payload.get("item_profile") if isinstance(response_payload.get("item_profile"), dict) else {}
-        model_identification = profile.get("model_identification") if isinstance(profile.get("model_identification"), dict) else {}
-        model_name = str(model_identification.get("name") or "").strip()
-        attributes = model_identification.get("attributes")
-        attribute_values = [str(a).strip() for a in attributes if isinstance(a, str) and a.strip()] if isinstance(attributes, list) else []
-        profile_description = ""
-        if model_name and attribute_values:
-            profile_description = f"{model_name}. Key details: {', '.join(attribute_values[:6])}."
-        elif model_name:
-            profile_description = f"Pre-owned {model_name}."
-        elif attribute_values:
-            profile_description = f"Key details: {', '.join(attribute_values[:6])}."
+        model_name, profile_description = _profile_description_from_analysis(response_payload)
         brand = str(response_payload.get("brand", {}).get("name") or current.get("brand") or "unknown")
         condition = str(response_payload.get("user_condition") or user_condition or current.get("condition") or "LikeNew")
         resolved_category = str(response_payload.get("category") or current.get("category") or "handbag")
@@ -9459,7 +9499,12 @@ async def _run_listing_analysis_job(
             brand=brand,
             category=resolved_category,
         )
-        description = str(current.get("description") or "").strip() or profile_description
+        description = _description_from_analysis_or_user(
+            current.get("description"),
+            response_payload=response_payload,
+            model_name=model_name,
+            profile_description=profile_description,
+        )
         previous_analysis = current.get("analysis") if isinstance(current.get("analysis"), dict) else {}
         previous_generated_urls = {
             str(asset.get("image_url") or "").strip()

@@ -94,6 +94,10 @@ def test_gemini_content_requests_condition_and_accessory_assessment() -> None:
     assert "original tags attached" in prompt_text
     assert "box, dust bag, authenticity card" in prompt_text
     assert "Do not return unclear for wear_level" in prompt_text
+    assert "Write listing_description" in prompt_text
+    assert "natural voice of the owner describing the item" in prompt_text
+    assert "do not mention the act of listing" in prompt_text
+    assert "Never call a New or NewWithTags item pre-owned" in prompt_text
 
 
 def test_gemini_content_prioritizes_visible_label_ocr() -> None:

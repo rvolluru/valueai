@@ -407,6 +407,17 @@ class GptItemProfiler:
             {
                 "type": "input_text",
                 "text": (
+                    "Write listing_description as two or three concise, product-focused sentences in the natural "
+                    "voice of the owner describing the item. Begin with the item itself; do not mention the act of "
+                    "listing, selling, or posting it. Describe only details supported by the photos and structured "
+                    "analysis. Keep the condition consistent with the provided user "
+                    "condition. Never call a New or NewWithTags item pre-owned, and do not invent materials, "
+                    "features, history, authenticity, or wear."
+                ),
+            },
+            {
+                "type": "input_text",
+                "text": (
                     "Inspect every image for visible condition and accessory signals. Populate visual_condition_assessment "
                     "from visible evidence plus the provided user condition, and keep those two concepts separate in the rationale. "
                     "Look specifically for original tags attached, box, dust bag, authenticity card, receipt, branded packaging, "
@@ -753,6 +764,7 @@ class GptItemProfiler:
                     },
                     "required": ["name", "confidence", "attributes"],
                 },
+                "listing_description": {"type": ["string", "null"]},
                 "category": {
                     "type": "string",
                     "enum": ["clothes", "shoes", "handbag", "accessories"],
@@ -935,6 +947,7 @@ class GptItemProfiler:
             },
             "required": [
                 "model_identification",
+                "listing_description",
                 "category",
                 "candidate_brand",
                 "candidate_model",
@@ -1136,7 +1149,7 @@ class GptItemProfiler:
                     "5) Estimate packaged shipping weight from the item type and visible bulk.\n"
                     "6) Return ONLY JSON. No prose.\n\n"
                     "JSON keys required:\n"
-                    "category, candidate_brand, candidate_model, confidence, visual_signatures, grounding_sources, "
+                    "category, candidate_brand, candidate_model, listing_description, confidence, visual_signatures, grounding_sources, "
                     "dupe_risk_assessment, why_not_fast_fashion, model_identification, authenticity_screen, visual_condition_assessment, "
                     "retail_price_estimate, resale_price_estimate, resale_price_breakdown, receipt_present, expected_auth_docs, shipping_profile.\n"
                     "For resale_price_breakdown include rows close to: Good/Pre-owned Condition, "
@@ -1199,7 +1212,7 @@ class GptItemProfiler:
                     "Use the grounded evidence below to produce final structured output.\n\n"
                     f"Grounded evidence:\n{grounded_text}\n\n"
                     "Return ONLY a JSON object with keys exactly:\n"
-                    "category, candidate_brand, candidate_model, confidence, visual_signatures, grounding_sources, "
+                    "category, candidate_brand, candidate_model, listing_description, confidence, visual_signatures, grounding_sources, "
                     "dupe_risk_assessment, why_not_fast_fashion, model_identification, authenticity_screen, visual_condition_assessment, "
                     "retail_price_estimate, resale_price_estimate, resale_price_breakdown, receipt_present, expected_auth_docs, shipping_profile.\n"
                     "For visual_condition_assessment, copy condition and accessory evidence from the grounded evidence into "
@@ -1538,7 +1551,7 @@ class GptItemProfiler:
                     "Conflict resolution context:\n"
                     f"{conflict_text}\n\n"
                     "Now return ONLY a strict JSON object with keys exactly: "
-                    "category, candidate_brand, candidate_model, confidence, visual_signatures, grounding_sources, "
+                    "category, candidate_brand, candidate_model, listing_description, confidence, visual_signatures, grounding_sources, "
                     "dupe_risk_assessment, why_not_fast_fashion, model_identification, authenticity_screen, visual_condition_assessment, "
                     "retail_price_estimate, resale_price_estimate, resale_price_breakdown, receipt_present, expected_auth_docs, shipping_profile. "
                     "For shipping_profile, estimate packaged shipping weight in ounces from item_type and visible bulk. "
@@ -1892,6 +1905,7 @@ class GptItemProfiler:
         normalized["category"] = self._normalize_category(normalized.get("category"))
         normalized["candidate_brand"] = self._as_nullable_str(normalized.get("candidate_brand"))
         normalized["candidate_model"] = self._as_nullable_str(normalized.get("candidate_model"))
+        normalized["listing_description"] = self._as_nullable_str(normalized.get("listing_description"))
         normalized["confidence"] = self._normalize_confidence(normalized.get("confidence"))
         normalized["visual_signatures"] = self._as_str_list(normalized.get("visual_signatures"))
         normalized["grounding_sources"] = self._normalize_grounding_sources(normalized.get("grounding_sources"))
