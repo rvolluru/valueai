@@ -37,7 +37,7 @@
  * @typedef {Object} ApiClientOptions
  * @property {string} apiBaseUrl
  * @property {typeof fetch} [fetchImpl]
- * @property {() => Promise<string>} [getBearerToken]
+ * @property {(options?: {skipCache?: boolean}) => Promise<string | null>} [getBearerToken]
  */
 
 export {};

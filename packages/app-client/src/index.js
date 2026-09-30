@@ -45,14 +45,34 @@ export async function requestJson({
   body,
   headers = {},
   fetchImpl = fetch,
+  refreshBearerToken = null,
 }) {
-  const requestHeaders = {
+  let requestHeaders = {
     ...buildAuthHeaders(auth),
     ...headers,
   };
   const url = resolveApiUrl(apiBaseUrl, path);
-  const resp = await fetchImpl(url, { method, headers: requestHeaders, body });
-  const payload = await parseJsonOrNull(resp);
+  let resp = await fetchImpl(url, { method, headers: requestHeaders, body });
+  let payload = await parseJsonOrNull(resp);
+  let refreshAttempted = false;
+
+  if (resp.status === 401 && !auth.apiKey && typeof refreshBearerToken === "function") {
+    refreshAttempted = true;
+    try {
+      const refreshedToken = await refreshBearerToken({ skipCache: true });
+      if (refreshedToken && refreshedToken.trim()) {
+        requestHeaders = {
+          ...requestHeaders,
+          Authorization: `Bearer ${refreshedToken.trim()}`,
+        };
+        resp = await fetchImpl(url, { method, headers: requestHeaders, body });
+        payload = await parseJsonOrNull(resp);
+      }
+    } catch {
+      // The final 401 below confirms whether the Clerk session is no longer usable.
+    }
+  }
+
   if (!resp.ok) {
     const detail = detailFromPayload(payload);
     const error = new Error(detail || `API error (${resp.status})`);
@@ -62,7 +82,7 @@ export async function requestJson({
     if (resp.status === 401 && typeof window !== "undefined" && typeof window.dispatchEvent === "function") {
       window.dispatchEvent(
         new CustomEvent("valueai:unauthorized", {
-          detail: { status: resp.status, path },
+          detail: { status: resp.status, path, refreshAttempted },
         }),
       );
     }
@@ -78,6 +98,7 @@ export async function requestFormData({
   formData,
   headers = {},
   fetchImpl = fetch,
+  refreshBearerToken = null,
 }) {
   return requestJson({
     apiBaseUrl,
@@ -87,6 +108,7 @@ export async function requestFormData({
     body: formData,
     headers,
     fetchImpl,
+    refreshBearerToken,
   });
 }
 
@@ -97,6 +119,7 @@ export function createApiClient(options) {
   const apiBaseUrl = normalizeBaseUrl(options.apiBaseUrl);
   const fetchImpl = options.fetchImpl || fetch;
   const getBearerToken = options.getBearerToken;
+  const requestOptions = { fetchImpl, refreshBearerToken: getBearerToken };
 
   async function resolveAuth(auth = {}) {
     if (auth.bearerToken || auth.apiKey) return auth;
@@ -108,7 +131,7 @@ export function createApiClient(options) {
 
   async function get(path, auth = {}) {
     const resolvedAuth = await resolveAuth(auth);
-    return requestJson({ apiBaseUrl, path, auth: resolvedAuth, fetchImpl });
+    return requestJson({ apiBaseUrl, path, auth: resolvedAuth, ...requestOptions });
   }
 
   async function post(path, body, auth = {}, headers = {}) {
@@ -118,7 +141,7 @@ export function createApiClient(options) {
       path,
       method: "POST",
       auth: resolvedAuth,
-      fetchImpl,
+      ...requestOptions,
       headers: {
         "Content-Type": "application/json",
         ...headers,
@@ -134,7 +157,7 @@ export function createApiClient(options) {
       path,
       method: "PATCH",
       auth: resolvedAuth,
-      fetchImpl,
+      ...requestOptions,
       headers: { "Content-Type": "application/json" },
       body: body == null ? undefined : JSON.stringify(body),
     });
@@ -147,7 +170,7 @@ export function createApiClient(options) {
       path,
       method: "PUT",
       auth: resolvedAuth,
-      fetchImpl,
+      ...requestOptions,
       headers: { "Content-Type": "application/json" },
       body: body == null ? undefined : JSON.stringify(body),
     });
@@ -160,7 +183,7 @@ export function createApiClient(options) {
       path,
       method: "DELETE",
       auth: resolvedAuth,
-      fetchImpl,
+      ...requestOptions,
     });
   }
 
@@ -188,7 +211,7 @@ export function createApiClient(options) {
       path: "/v1/analyze",
       auth: resolvedAuth,
       formData: fd,
-      fetchImpl,
+      ...requestOptions,
     });
   }
 
@@ -212,7 +235,7 @@ export function createApiClient(options) {
       path: "/v1/images/classify-roles",
       auth: resolvedAuth,
       formData: fd,
-      fetchImpl,
+      ...requestOptions,
     });
   }
 
@@ -237,7 +260,7 @@ export function createApiClient(options) {
       path: "/v1/uploads/images",
       auth: resolvedAuth,
       formData: fd,
-      fetchImpl,
+      ...requestOptions,
     });
   }
 
@@ -303,7 +326,7 @@ export function createApiClient(options) {
       path: `/v1/listings/${encodeURIComponent(listingId)}/analysis-jobs`,
       auth: resolvedAuth,
       formData: fd,
-      fetchImpl,
+      ...requestOptions,
     });
   }
 

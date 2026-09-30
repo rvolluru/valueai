@@ -1,9 +1,16 @@
 import { createApiClient } from "../../../../packages/app-client/src/index.js";
 
+let defaultBearerTokenProvider = null;
+
+export function setWebBearerTokenProvider(provider) {
+  defaultBearerTokenProvider = typeof provider === "function" ? provider : null;
+}
+
 export function createWebApiClient({ apiBaseUrl, apiKey = "", getBearerToken = null }) {
+  const bearerTokenProvider = getBearerToken || defaultBearerTokenProvider;
   const client = createApiClient({
     apiBaseUrl,
-    getBearerToken: getBearerToken || undefined,
+    getBearerToken: bearerTokenProvider || undefined,
   });
 
   function authContext(bearerToken = "") {

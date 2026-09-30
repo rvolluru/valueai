@@ -9,7 +9,7 @@ import {
 } from '@clerk/clerk-react'
 import { FaFacebookF, FaPinterestP } from 'react-icons/fa'
 import { FiBell, FiTrash2 } from 'react-icons/fi'
-import { createWebApiClient } from './lib/apiClient'
+import { createWebApiClient, setWebBearerTokenProvider } from './lib/apiClient'
 import jouftLogo from './assets/jouft-logo.png'
 
 const API_DEFAULT =
@@ -2245,8 +2245,12 @@ function ClerkMarketplaceApp() {
   const [authEntryPoint, setAuthEntryPoint] = useState('login')
   const [authPanelOpen, setAuthPanelOpen] = useState(false)
   const [authPanelKey, setAuthPanelKey] = useState(0)
-  const getBearerToken = useCallback(() => getToken(), [getToken])
+  const getBearerToken = useCallback((options) => getToken(options), [getToken])
   const handleLogout = useCallback(() => signOut({ redirectUrl: '/' }), [signOut])
+  useEffect(() => {
+    setWebBearerTokenProvider(getBearerToken)
+    return () => setWebBearerTokenProvider(null)
+  }, [getBearerToken])
   const openFreshAuthPanel = useCallback((nextMode) => {
     setAuthMode(nextMode)
     setAuthEntryPoint(nextMode === 'signup' ? 'request_access' : 'login')
