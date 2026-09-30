@@ -957,6 +957,10 @@ function ListingCard({
   const conditionLabel = displayConditionLabel(item?.condition || 'unknown');
   const sizeLabel = item?.size || 'N/A';
   const CardContainer = onOpenDetails ? TouchableOpacity : View;
+  const runCardAction = (event, action) => {
+    event?.stopPropagation?.();
+    action?.();
+  };
   const cardContainerProps = onOpenDetails ? {
     onPress: () => onOpenDetails(item),
     disabled: closetCardDisabled,
@@ -994,7 +998,7 @@ function ListingCard({
           {onToggleLike ? (
             <TouchableOpacity
               style={[styles.likeButton, liked && styles.likeButtonActive]}
-              onPress={() => onToggleLike(item)}
+              onPress={(event) => runCardAction(event, () => onToggleLike(item))}
               accessibilityRole="button"
               accessibilityLabel={liked ? 'Unlike listing' : 'Like listing'}
             >
@@ -1024,7 +1028,7 @@ function ListingCard({
                 {matchPreviewImages.map((src, idx) => (
                   <TouchableOpacity
                     key={`${item?.listing_id || item?.id || 'item'}-match-${idx}`}
-                    onPress={() => onMatchPreviewSelect?.(matchPreviewEntries[idx]?.candidate)}
+                    onPress={(event) => runCardAction(event, () => onMatchPreviewSelect?.(matchPreviewEntries[idx]?.candidate))}
                     accessibilityRole="button"
                     accessibilityLabel={`Preview ${matchPreviewEntries[idx]?.candidate?.title || `offer item ${idx + 1}`}`}
                   >
@@ -1050,7 +1054,7 @@ function ListingCard({
             {onEditDraft ? (
               <TouchableOpacity
                 style={[styles.secondaryBtnCompact, styles.listingIconButton, analyzing && styles.primaryBtnDisabled]}
-                onPress={() => onEditDraft(item)}
+                onPress={(event) => runCardAction(event, () => onEditDraft(item))}
                 disabled={analyzing}
                 accessibilityRole="button"
                 accessibilityLabel="Edit listing"
@@ -1061,7 +1065,7 @@ function ListingCard({
             {onRemoveListing ? (
               <TouchableOpacity
                 style={[styles.secondaryBtnCompact, styles.listingIconButton, styles.dangerBtnCompact, closetCardDisabled && styles.primaryBtnDisabled]}
-                onPress={() => onRemoveListing(item)}
+                onPress={(event) => runCardAction(event, () => onRemoveListing(item))}
                 disabled={closetCardDisabled}
                 accessibilityRole="button"
                 accessibilityLabel="Delete listing"
@@ -1072,7 +1076,7 @@ function ListingCard({
             {onShareListing ? (
               <TouchableOpacity
                 style={[styles.secondaryBtnCompact, styles.listingTextButton, closetCardDisabled && styles.primaryBtnDisabled]}
-                onPress={() => onShareListing(item)}
+                onPress={(event) => runCardAction(event, () => onShareListing(item))}
                 disabled={closetCardDisabled}
               >
                 <Text style={styles.secondaryBtnText}>Share</Text>
@@ -1081,7 +1085,7 @@ function ListingCard({
             {onShareToPinterest ? (
               <TouchableOpacity
                 style={[styles.secondaryBtnCompact, styles.shareIconButton, closetCardDisabled && styles.primaryBtnDisabled]}
-                onPress={() => onShareToPinterest(item)}
+                onPress={(event) => runCardAction(event, () => onShareToPinterest(item))}
                 disabled={closetCardDisabled}
                 accessibilityRole="button"
                 accessibilityLabel="Share on Pinterest"
@@ -1092,7 +1096,7 @@ function ListingCard({
             {onShareToFacebook ? (
               <TouchableOpacity
                 style={[styles.secondaryBtnCompact, styles.shareIconButton, closetCardDisabled && styles.primaryBtnDisabled]}
-                onPress={() => onShareToFacebook(item)}
+                onPress={(event) => runCardAction(event, () => onShareToFacebook(item))}
                 disabled={closetCardDisabled}
                 accessibilityRole="button"
                 accessibilityLabel="Share on Facebook"
@@ -1111,7 +1115,7 @@ function ListingCard({
       {canReviewAndPublish ? (
         <TouchableOpacity
           style={styles.pendingReviewOverlay}
-          onPress={() => onReviewListing(item)}
+          onPress={(event) => runCardAction(event, () => onReviewListing(item))}
           accessibilityRole="button"
           accessibilityLabel="Review and publish listing"
         >
