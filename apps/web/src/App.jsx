@@ -2627,6 +2627,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   const [activeTab, setActiveTab] = useState(() => (shouldAutoOpenProfileSetupRef.current ? 'profile_setup' : tabFromLocation()))
   const [marketSearch, setMarketSearch] = useState('')
   const [itemTitle, setItemTitle] = useState('')
+  const [itemBrand, setItemBrand] = useState('')
   const [category, setCategory] = useState('')
   const [userCondition, setUserCondition] = useState('')
   const [itemDescription, setItemDescription] = useState('')
@@ -4652,7 +4653,9 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     const imagesChanged = images.length > 0 || !sameStringList(keptImages, originalImages)
     const originalCondition = String(listing.condition || 'n/a').trim()
     const nextCondition = String(userCondition || listing.condition || 'n/a').trim()
-    return imagesChanged || nextCondition !== originalCondition
+    const originalBrand = String(listing.brand || '').trim().toLocaleLowerCase()
+    const nextBrand = String(itemBrand || listing.brand || '').trim().toLocaleLowerCase()
+    return imagesChanged || nextCondition !== originalCondition || nextBrand !== originalBrand
   }
 
   function buildEditedListingPayload(listing, overrides = {}) {
@@ -4661,7 +4664,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
       overrides.images || (editPreviewUrls.length > 0 || images.length > 0 ? orderedEditExistingImageUrlsForSave() : originalListingImageUrls(listing)),
     )
     const nextCondition = userCondition || listing.condition || 'n/a'
-    const nextBrand = overrides.brand || listing.brand || 'unknown'
+    const nextBrand = String(overrides.brand || itemBrand || listing.brand || 'unknown').trim()
     const nextMode = 'trade'
     return {
       ...listing,
@@ -5537,6 +5540,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     setListingChatMatches([])
     setListingChatTradeTarget(null)
     setItemTitle('')
+    setItemBrand('')
     setCategory('')
     setUserCondition('')
     setItemDescription('')
@@ -6118,6 +6122,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     setModalEditingListing(listing)
     setEditingListingId(listing.id)
     setItemTitle(listing.title || '')
+    setItemBrand(listing.brand && listing.brand !== 'unknown' ? listing.brand : '')
     setCategory(listing.category && listing.category !== 'unknown' ? listing.category : '')
     setUserCondition(listing.condition && listing.condition !== 'n/a' ? listing.condition : '')
     setItemSize(typeof listing.size === 'string' ? listing.size : '')
@@ -7550,6 +7555,15 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
 
                     <div className="field-grid">
                       <label>
+                        <span>Brand</span>
+                        <input
+                          value={itemBrand}
+                          onChange={(e) => setItemBrand(e.target.value)}
+                          placeholder="e.g. Prada"
+                          required
+                        />
+                      </label>
+                      <label>
                         <span>Category</span>
                         <select value={category} onChange={(e) => setCategory(e.target.value)}>
                           <option value="">Select category</option>
@@ -7644,6 +7658,10 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                           }
                           if (!userCondition) {
                             setAnalysisError('Select item condition before continuing.')
+                            return
+                          }
+                          if (!itemBrand.trim()) {
+                            setAnalysisError('Enter the item brand before continuing.')
                             return
                           }
                           saveListingEdits(modalEditingListing)

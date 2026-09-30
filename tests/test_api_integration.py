@@ -1847,6 +1847,59 @@ def test_publish_listing_transition_queues_published_email(monkeypatch) -> None:
     assert len(sent) == 1
 
 
+def test_update_listing_brand_change_forces_reanalysis(monkeypatch) -> None:
+    client = _build_client()
+    queued: list[dict] = []
+
+    monkeypatch.setattr(
+        "app.main._enqueue_existing_listing_analysis",
+        lambda **kwargs: queued.append(kwargs),
+    )
+
+    create = client.post(
+        "/v1/listings",
+        json={
+            "title": "Leather tote",
+            "mode": "trade",
+            "category": "handbag",
+            "brand": "Unknown",
+            "condition": "LikeNew",
+            "size": "Medium",
+            "estimated_value": 500,
+            "city": "Your area",
+            "image": "https://example.test/tote.jpg",
+            "images": ["https://example.test/tote.jpg"],
+            "description": "Black leather tote.",
+            "wants": "Open to similar-value offers",
+            "tags": [],
+            "source_item_id": None,
+            "analysis": None,
+            "status": "Review",
+        },
+        headers={"x-api-key": "test-key"},
+    )
+    assert create.status_code == 200, create.text
+    payload = create.json()
+    listing_id = payload.pop("listing_id")
+    for response_only_key in ("owner_subject", "owner_name", "created_at"):
+        payload.pop(response_only_key, None)
+    payload["brand"] = "Prada"
+    payload["status"] = "Review"
+
+    update = client.put(
+        f"/v1/listings/{listing_id}",
+        json=payload,
+        headers={"x-api-key": "test-key"},
+    )
+
+    assert update.status_code == 200, update.text
+    assert update.json()["brand"] == "Prada"
+    assert update.json()["status"] == "Analyzing"
+    assert len(queued) == 1
+    assert queued[0]["listing_id"] == listing_id
+    assert queued[0]["brand_override"] == "Prada"
+
+
 def test_accessory_listing_can_be_created_without_size() -> None:
     client = _build_client()
     response = client.post(

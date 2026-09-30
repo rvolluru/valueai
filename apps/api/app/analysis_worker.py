@@ -38,6 +38,7 @@ def process_message(payload: dict[str, Any]) -> None:
         item_size=payload.get("item_size"),
         user_condition=payload.get("user_condition"),
         item_description=payload.get("item_description"),
+        brand_override=payload.get("brand_override"),
         debug=bool(payload.get("debug", True)),
         settings=settings,
         valuation_service=get_valuation_service(),

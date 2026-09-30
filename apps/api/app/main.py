@@ -1218,6 +1218,7 @@ def _enqueue_existing_listing_analysis(
     debug: bool,
     stage_images_after_analysis: bool,
     job_id: str,
+    brand_override: str | None = None,
 ) -> None:
     payload = {
         "listing_id": listing_id,
@@ -1226,6 +1227,7 @@ def _enqueue_existing_listing_analysis(
         "item_size": item_size,
         "user_condition": user_condition,
         "item_description": item_description,
+        "brand_override": brand_override,
         "debug": debug,
         "stage_images_after_analysis": stage_images_after_analysis,
         "job_id": job_id,
@@ -5489,7 +5491,11 @@ def update_listing(
     gpt_item_profiler=Depends(get_gpt_item_profiler),
 ):
     previous_record = next((r for r in db.list_owner_listings(principal.subject, limit=500) if r["listing_id"] == listing_id), None)
-    if str(payload.status or "").strip().lower() in {"active", "analyzing"}:
+    previous_brand = str(previous_record.get("brand") or "").strip().casefold() if isinstance(previous_record, dict) else ""
+    next_brand = str(payload.brand or "").strip().casefold()
+    brand_changed = previous_record is not None and previous_brand != next_brand
+    effective_status = "Analyzing" if brand_changed else payload.status
+    if str(effective_status or "").strip().lower() in {"active", "analyzing"}:
         _require_subscription_entitlement(db, principal)
     normalized_image, normalized_images = _normalize_listing_media_for_storage(
         db=db,
@@ -5515,7 +5521,7 @@ def update_listing(
         tags=payload.tags,
         source_item_id=payload.source_item_id,
         analysis=payload.analysis,
-        status=payload.status,
+        status=effective_status,
     )
     if not updated:
         raise HTTPException(status_code=404, detail="listing not found")
@@ -5523,7 +5529,7 @@ def update_listing(
     if record is None:
         raise HTTPException(status_code=404, detail="listing not found")
     previous_status = str(previous_record.get("status") or "").strip().lower() if isinstance(previous_record, dict) else ""
-    next_status = str(record.get("status") or payload.status or "").strip().lower()
+    next_status = str(record.get("status") or effective_status or "").strip().lower()
     if previous_status != "active" and next_status == "active":
         background_tasks.add_task(
             _send_listing_published_email_if_configured,
@@ -5532,7 +5538,7 @@ def update_listing(
             listing_id=listing_id,
             title=str(record.get("title") or payload.title or ""),
         )
-    if str(payload.status or "").lower() == "analyzing":
+    if str(effective_status or "").lower() == "analyzing":
         previous_images = previous_record.get("images") if isinstance(previous_record, dict) and isinstance(previous_record.get("images"), list) else []
         if not previous_images and isinstance(previous_record, dict) and isinstance(previous_record.get("image"), str) and previous_record.get("image"):
             previous_images = [str(previous_record["image"])]
@@ -5549,6 +5555,7 @@ def update_listing(
             item_size=payload.size,
             user_condition=payload.condition,
             item_description=payload.description,
+            brand_override=(str(payload.brand).strip() if brand_changed else None),
             debug=True,
             stage_images_after_analysis=stage_images_after_analysis,
             job_id=str(analysis_job.get("job_id") or ""),
@@ -5560,6 +5567,7 @@ def update_listing(
             actor=principal.subject,
             job_id=analysis_job.get("job_id"),
             source="update_listing",
+            brand_changed=brand_changed,
             stage_images_after_analysis=stage_images_after_analysis,
         )
     return ListingResponse(**record)
@@ -9405,6 +9413,7 @@ async def _run_listing_analysis_job(
     item_size: str | None,
     user_condition: str | None,
     item_description: str | None,
+    brand_override: str | None,
     debug: bool,
     settings: Settings,
     valuation_service: ValuationService,
@@ -9463,6 +9472,12 @@ async def _run_listing_analysis_job(
                 started=True,
             )
         log_json("listing_analysis_job_started", listing_id=listing_id, actor=owner_subject, image_count=len(upload_files), job_id=job_id, attempt=attempt)
+        analysis_description = item_description
+        if brand_override:
+            analysis_description = (
+                f"{str(item_description or '').strip()}\n\n"
+                f"User-confirmed brand: {brand_override}. Treat this brand as authoritative."
+            ).strip()
         payload = await analyze(
             background_tasks=BackgroundTasks(),
             images=upload_files,
@@ -9470,7 +9485,7 @@ async def _run_listing_analysis_job(
             category=category,
             item_size=item_size,
             user_condition=user_condition,
-            item_description=item_description,
+            item_description=analysis_description,
             purchase_year=None,
             debug=debug,
             settings=settings,
@@ -9483,7 +9498,11 @@ async def _run_listing_analysis_job(
         response_payload = payload.model_dump()
         profile = response_payload.get("item_profile") if isinstance(response_payload.get("item_profile"), dict) else {}
         model_name, profile_description = _profile_description_from_analysis(response_payload)
-        brand = str(response_payload.get("brand", {}).get("name") or current.get("brand") or "unknown")
+        brand = str(brand_override or response_payload.get("brand", {}).get("name") or current.get("brand") or "unknown")
+        if brand_override:
+            user_corrections = response_payload.get("user_corrections") if isinstance(response_payload.get("user_corrections"), dict) else {}
+            user_corrections["brand"] = brand_override
+            response_payload["user_corrections"] = user_corrections
         condition = str(response_payload.get("user_condition") or user_condition or current.get("condition") or "LikeNew")
         resolved_category = str(response_payload.get("category") or current.get("category") or "handbag")
         valuation = response_payload.get("valuation") if isinstance(response_payload.get("valuation"), dict) else {}
@@ -9611,6 +9630,7 @@ def _run_listing_analysis_job_threaded(
     gpt_item_profiler,
     stage_images_after_analysis: bool = False,
     job_id: str | None = None,
+    brand_override: str | None = None,
     max_attempts: int = ANALYSIS_JOB_MAX_ATTEMPTS,
     attempt_timeout_s: int = ANALYSIS_JOB_ATTEMPT_TIMEOUT_S,
 ) -> None:
@@ -9628,6 +9648,7 @@ def _run_listing_analysis_job_threaded(
                         item_size=item_size,
                         user_condition=user_condition,
                         item_description=item_description,
+                        brand_override=brand_override,
                         debug=debug,
                         settings=settings,
                         valuation_service=valuation_service,
@@ -9690,6 +9711,7 @@ def _run_listing_analysis_for_existing_listing_job(
     gpt_item_profiler,
     stage_images_after_analysis: bool = False,
     job_id: str | None = None,
+    brand_override: str | None = None,
 ) -> None:
     job_db = Database(settings.database_url)
     job_db.initialize()
@@ -9698,7 +9720,7 @@ def _run_listing_analysis_for_existing_listing_job(
         log_json("listing_analysis_job_missing_listing", listing_id=listing_id, actor=owner_subject)
         return
 
-    reused_payload = _reuse_recent_analysis_for_listing(
+    reused_payload = None if brand_override else _reuse_recent_analysis_for_listing(
         db=job_db,
         listing_id=listing_id,
         owner_subject=owner_subject,
@@ -9749,6 +9771,7 @@ def _run_listing_analysis_for_existing_listing_job(
         item_size=item_size,
         user_condition=user_condition,
         item_description=item_description,
+        brand_override=brand_override,
         debug=debug,
         settings=settings,
         valuation_service=valuation_service,
