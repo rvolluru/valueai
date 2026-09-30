@@ -352,7 +352,7 @@ variable "gpt_item_profile_model" {
 
 variable "gpt_item_profile_gemini_model" {
   type    = string
-  default = "gemini-2.5-flash"
+  default = "gemini-3.8-flash"
 }
 
 variable "gpt_item_profile_timeout_s" {

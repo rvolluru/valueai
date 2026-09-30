@@ -2305,7 +2305,7 @@ def _check_gemini_health(settings: Settings) -> DependencyHealthCheck:
             "gemini", "not_configured", message="GEMINI_API_KEY missing"
         )
     started = time.perf_counter()
-    model = str(settings.gpt_item_profile_gemini_model or "gemini-2.5-flash").strip()
+    model = str(settings.gpt_item_profile_gemini_model or "gemini-3.8-flash").strip()
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
     try:
         with httpx.Client(timeout=15.0) as client:
@@ -8890,7 +8890,7 @@ async def classify_image_roles(
         },
         "required": ["category", "category_confidence", "images"],
     }
-    model = settings.gpt_item_profile_gemini_model or "gemini-2.5-flash"
+    model = settings.gpt_item_profile_gemini_model or "gemini-3.8-flash"
     endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
     started = time.perf_counter()
     try:
