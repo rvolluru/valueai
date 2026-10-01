@@ -2628,8 +2628,13 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   const [marketListingsNextOffset, setMarketListingsNextOffset] = useState(0)
   const [myListingsPageLoading, setMyListingsPageLoading] = useState(false)
   const [marketListingsPageLoading, setMarketListingsPageLoading] = useState(false)
+  const myListingsPageRequestRef = useRef(false)
+  const marketListingsPageRequestRef = useRef(false)
+  const closetLoadMoreRef = useRef(null)
+  const marketplaceLoadMoreRef = useRef(null)
   const [activeTab, setActiveTab] = useState(() => (shouldAutoOpenProfileSetupRef.current ? 'profile_setup' : tabFromLocation()))
   const [marketSearch, setMarketSearch] = useState('')
+  const [marketFilter, setMarketFilter] = useState('all')
   const [itemTitle, setItemTitle] = useState('')
   const [itemBrand, setItemBrand] = useState('')
   const [category, setCategory] = useState('')
@@ -2762,7 +2767,6 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   const [selectedEditHeroImageIndex, setSelectedEditHeroImageIndex] = useState(null)
   const [tradeOfferCandidates, setTradeOfferCandidates] = useState([])
   const [tradeOfferListingIds, setTradeOfferListingIds] = useState([])
-  const [tradeOfferMessage, setTradeOfferMessage] = useState('')
   const [tradeOfferError, setTradeOfferError] = useState('')
   const [tradeOfferBusy, setTradeOfferBusy] = useState(false)
   const [tradeDetailListing, setTradeDetailListing] = useState(null)
@@ -3142,21 +3146,6 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     }
 
     return Array.from(matchesById.values())
-  }
-
-  function removeSentOfferMatches(targetListingId, offeredListingIds) {
-    const targetId = String(targetListingId || '').trim()
-    const offeredIds = new Set((Array.isArray(offeredListingIds) ? offeredListingIds : [])
-      .map((id) => String(id || '').trim())
-      .filter(Boolean))
-    if (!targetId || offeredIds.size === 0) return
-    setMarketListings((prev) => prev.map((listing) => {
-      if (String(listing?.id || '') !== targetId || !Array.isArray(listing?.matches)) return listing
-      return {
-        ...listing,
-        matches: listing.matches.filter((match) => !offeredIds.has(String(match?.id || ''))),
-      }
-    }))
   }
 
   useEffect(() => {
@@ -4261,7 +4250,8 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   }, [apiBaseUrl, apiKey, clerkEnabled, getBearerToken])
 
   const loadMoreMyListings = useCallback(async () => {
-    if (myListingsPageLoading || myListingsLoading || !myListingsHasMore) return
+    if (myListingsPageLoading || myListingsLoading || myListingsPageRequestRef.current || !myListingsHasMore) return
+    myListingsPageRequestRef.current = true
     setMyListingsPageLoading(true)
     try {
       const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
@@ -4287,12 +4277,14 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     } catch {
       // Keep existing listings visible when lazy loading fails.
     } finally {
+      myListingsPageRequestRef.current = false
       setMyListingsPageLoading(false)
     }
   }, [apiBaseUrl, apiKey, clerkEnabled, getBearerToken, myListingsHasMore, myListingsLoading, myListingsNextOffset, myListingsPageLoading])
 
   const loadMoreMarketListings = useCallback(async () => {
-    if (marketListingsPageLoading || marketListingsLoading || !marketListingsHasMore) return
+    if (marketListingsPageLoading || marketListingsLoading || marketListingsPageRequestRef.current || !marketListingsHasMore) return
+    marketListingsPageRequestRef.current = true
     setMarketListingsPageLoading(true)
     try {
       const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
@@ -4318,6 +4310,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     } catch {
       // Keep existing listings visible when lazy loading fails.
     } finally {
+      marketListingsPageRequestRef.current = false
       setMarketListingsPageLoading(false)
     }
   }, [apiBaseUrl, apiKey, clerkEnabled, getBearerToken, marketListingsHasMore, marketListingsLoading, marketListingsNextOffset, marketListingsPageLoading])
@@ -4709,10 +4702,11 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
       const status = typeof item.status === 'string' ? item.status.toLowerCase() : ''
       if (status !== 'active') return false
       if (getCrossOwnerMatches(item).length === 0) return false
+      if (marketFilter === 'liked' && !likedListingIds.includes(String(item.id))) return false
       if (!q) return true
       return `${item.title} ${item.brand} ${item.category} ${item.city} ${item.wants}`.toLowerCase().includes(q)
     })
-  }, [allListings, deferredMarketSearch])
+  }, [allListings, deferredMarketSearch, likedListingIds, marketFilter])
   useEffect(() => {
     if (activeTab !== 'market' || deferredMarketSearch.trim()) return
     if (marketListingsLoading || marketListingsPageLoading || !marketListingsHasMore) return
@@ -4897,6 +4891,34 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     return myListings
   }, [myListings, incomingOffers, closetFilter])
 
+  useEffect(() => {
+    if (activeTab !== 'portfolio' || closetFilter !== 'all') return
+    if (myListingsLoading || myListingsPageLoading || !myListingsHasMore || myListings.length >= 6) return
+    void loadMoreMyListings()
+  }, [activeTab, closetFilter, loadMoreMyListings, myListings.length, myListingsHasMore, myListingsLoading, myListingsPageLoading])
+
+  useEffect(() => {
+    if (typeof IntersectionObserver === 'undefined') return undefined
+    const target = closetLoadMoreRef.current
+    if (!target || activeTab !== 'portfolio' || closetFilter !== 'all' || !myListingsHasMore) return undefined
+    const observer = new IntersectionObserver(([entry]) => {
+      if (entry?.isIntersecting) void loadMoreMyListings()
+    }, { rootMargin: '600px 0px', threshold: 0.01 })
+    observer.observe(target)
+    return () => observer.disconnect()
+  }, [activeTab, closetFilter, loadMoreMyListings, myListingsHasMore])
+
+  useEffect(() => {
+    if (typeof IntersectionObserver === 'undefined') return undefined
+    const target = marketplaceLoadMoreRef.current
+    if (!target || activeTab !== 'market' || deferredMarketSearch.trim() || !marketListingsHasMore) return undefined
+    const observer = new IntersectionObserver(([entry]) => {
+      if (entry?.isIntersecting) void loadMoreMarketListings()
+    }, { rootMargin: '600px 0px', threshold: 0.01 })
+    observer.observe(target)
+    return () => observer.disconnect()
+  }, [activeTab, deferredMarketSearch, loadMoreMarketListings, marketListingsHasMore])
+
   const reviewListing = useMemo(() => {
     const requestedId = reviewListingId || (activeTab === 'review_listing' ? listingIdFromLocation() : '')
     if (!requestedId) return null
@@ -5022,7 +5044,6 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   async function openTradeComposer(targetListing, preferredOfferedListingId = null) {
     if (!targetListing?.id) return
     setTradeComposerTarget(targetListing)
-    setTradeOfferMessage('')
     setTradeOfferError('')
     setMarketMatchesTargetId(null)
     setActiveTab('trade')
@@ -5119,15 +5140,13 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
         payload: {
           target_listing_id: tradeComposerTarget.id,
           offered_listing_ids: tradeOfferListingIds,
-          message: tradeOfferMessage.trim(),
+          message: '',
         },
       })
       trackExperience('trade_offer_submitted', { screen: 'trade', entityType: 'listing', entityId: tradeComposerTarget.id, properties: { offered_item_count: tradeOfferListingIds.length } })
-      removeSentOfferMatches(tradeComposerTarget.id, tradeOfferListingIds)
       setTradeComposerTarget(null)
       setTradeOfferCandidates([])
       setTradeOfferListingIds([])
-      setTradeOfferMessage('')
       setSavedListingNotice('Trade offer sent. The listing owner has been notified.')
       setActiveTab('market')
     } catch (err) {
@@ -7818,10 +7837,8 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                     return <ListingCard key={item.id} item={item} own onEditDraft={openEditListingModal} onReviewListing={openReviewListing} onPublishListing={publishListingToMarketplace} onRemoveListing={removeListingFromCloset} onReportIssue={openListingSupport} onOpenDetails={isPublished ? openClosetListingMatches : null} matchCount={isPublished ? getMarketplaceMatchesForClosetListing(item).length : null} editorialStyle />
                   })}</div>
                   {closetFilter === 'all' && myListingsHasMore ? (
-                    <div className="load-more-row">
-                      <button className="ghost" type="button" onClick={loadMoreMyListings} disabled={myListingsPageLoading}>
-                        {myListingsPageLoading ? 'Loading...' : 'Load More Listings'}
-                      </button>
+                    <div ref={closetLoadMoreRef} className="load-more-row lazy-load-sentinel" role="status" aria-label="Loading more closet listings">
+                      {myListingsPageLoading ? <><span className="loading-dot" aria-hidden="true" /><span>Loading listings...</span></> : null}
                     </div>
                   ) : null}
                 </>
@@ -7967,7 +7984,6 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                               : `${offerParticipantName(offer, 'from')} proposed ${offer.offered_listing?.title || 'an item'}`}
                           </h3>
                           <p className="inbox-editorial-subtitle">For your {offer.target_listing?.title || 'listing'}</p>
-                          {offer.message ? <p className="inbox-offer-message">Message: {offer.message}</p> : null}
                           {['requested', 'pending'].includes(String(offer.status || '').toLowerCase()) && !isSender ? (
                             <div className="button-row inbox-editorial-actions">
                               {proposalCandidates.length === 0 ? (
@@ -8227,9 +8243,13 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
 
           {activeTab === 'market' && (
             <section className="panel">
-              <div className="panel-header">
+              <div className="panel-header marketplace-panel-header">
 	                <div><p className="eyebrow">Marketplace</p></div>
 	                <div className="market-controls">
+	                  <div className="market-filter" role="group" aria-label="Marketplace listing filter">
+	                    <button className={marketFilter === 'all' ? 'primary small' : 'ghost small'} type="button" aria-pressed={marketFilter === 'all'} onClick={() => { setMarketFilter('all'); setSelectedMarketListingIndex(null) }}>All</button>
+	                    <button className={marketFilter === 'liked' ? 'primary small' : 'ghost small'} type="button" aria-pressed={marketFilter === 'liked'} onClick={() => { setMarketFilter('liked'); setSelectedMarketListingIndex(null) }}>Liked</button>
+	                  </div>
 	                  <input value={marketSearch} onChange={(e) => setMarketSearch(e.target.value)} placeholder="Search brand, category, city, style..." />
 	                </div>
               </div>
@@ -8398,9 +8418,15 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                       <>
                         <h3>Looking for matched listings...</h3>
                         <p>More marketplace listings are available to check.</p>
-                        <button className="ghost" type="button" onClick={loadMoreMarketListings} disabled={marketListingsPageLoading}>
-                          {marketListingsPageLoading ? 'Loading...' : 'Load More Listings'}
-                        </button>
+                        <div ref={marketplaceLoadMoreRef} className="load-more-row lazy-load-sentinel" role="status" aria-label="Loading more marketplace listings">
+                          {marketListingsPageLoading ? <><span className="loading-dot" aria-hidden="true" /><span>Loading listings...</span></> : null}
+                        </div>
+                      </>
+                    ) : marketFilter === 'liked' ? (
+                      <>
+                        <h3>No liked marketplace listings</h3>
+                        <p>Use the heart on a marketplace listing to save it here.</p>
+                        <button className="ghost" type="button" onClick={() => setMarketFilter('all')}>Show All Listings</button>
                       </>
                     ) : (
                       <>
@@ -8448,10 +8474,8 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                       })}
                     </div>
                     {marketListingsHasMore && !marketSearch.trim() ? (
-                      <div className="load-more-row">
-                        <button className="ghost" type="button" onClick={loadMoreMarketListings} disabled={marketListingsPageLoading}>
-                          {marketListingsPageLoading ? 'Loading...' : 'Load More Listings'}
-                        </button>
+                      <div ref={marketplaceLoadMoreRef} className="load-more-row lazy-load-sentinel" role="status" aria-label="Loading more marketplace listings">
+                        {marketListingsPageLoading ? <><span className="loading-dot" aria-hidden="true" /><span>Loading listings...</span></> : null}
                       </div>
                     ) : null}
                   </>
@@ -8540,10 +8564,6 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                       {composerWithinBand ? 'Each selected item is within the 30% trade band' : 'Select at least one item within the 30% trade band'}
                     </p>
                     </div>
-                    <label className="trade-message-field">
-                      <span>Message (optional)</span>
-                      <textarea value={tradeOfferMessage} onChange={(e) => setTradeOfferMessage(e.target.value)} rows={4} placeholder="I’d like to trade with this item. Let me know what you think." />
-                    </label>
                     {tradeOfferError ? <p className="error-text">{tradeOfferError}</p> : null}
                     <div className="button-row trade-offer-actions">
                       <button className="ghost" type="button" onClick={() => setActiveTab('market')}>Cancel</button>
@@ -10284,7 +10304,6 @@ function AdminTradeCard({ offer, onNote }) {
           <AdminShipmentCard key={shipment.shipment_id || `${shipment.from_listing_id}-${shipment.to_listing_id}`} shipment={shipment} listingById={listingById} />
         )) : <p className="tiny-note">No shipment labels have been created for this trade yet.</p>}
       </div>
-      {offer.message ? <p className="tiny-note">Message: {offer.message}</p> : null}
       <div className="button-row">
         <button className="ghost small" type="button" onClick={() => onNote('trade_support')}>Trade Note</button>
         <button className="ghost small" type="button" onClick={() => onNote('refund')}>Refund Note</button>

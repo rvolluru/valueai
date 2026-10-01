@@ -37,7 +37,7 @@ from valuation.types import ValuationRequest
 
 from .auth import AuthPrincipal, get_request_principal, require_admin_or_api_key, require_admin_user, require_clerk_user
 from .analysis_queue import enqueue_listing_analysis
-from .db import Database, PersistedImage, utc_now_iso
+from .db import Database, PersistedImage, TradeListingUnavailableError, utc_now_iso
 from .deps import (
     get_db,
     get_gpt_item_profiler,
@@ -6135,6 +6135,8 @@ def action_offer(
         return OfferResponse(**updated)
     if payload.status == "accepted" and principal.subject == str(offer.get("to_subject") or ""):
         raise HTTPException(status_code=400, detail="Sender is already marked ready. Only the receiver needs to accept.")
+    if payload.status == "accepted" and str(offer.get("status") or "").lower() in {"accepted", "cancelled", "declined"}:
+        raise HTTPException(status_code=409, detail="This trade is no longer available")
     if payload.status == "accepted" and not _subject_has_complete_shipping_address(db, principal.subject, settings):
         raise HTTPException(status_code=400, detail="Add a complete shipping address in Profile before accepting trade")
     if payload.status == "accepted":
@@ -6151,18 +6153,32 @@ def action_offer(
         if selected_offered_id not in offered_ids:
             raise HTTPException(status_code=400, detail="Select one offered item to accept for this trade")
     receive_address_payload = payload.receive_address.model_dump() if payload.receive_address else None
-    updated = db.set_trade_offer_participant_action(
-        offer_id=offer_id,
-        actor_subject=principal.subject,
-        status=payload.status,
-        receive_address=receive_address_payload,
-        selected_offered_listing_id=payload.selected_offered_listing_id,
+    final_acceptance = (
+        payload.status == "accepted"
+        and principal.subject == str(offer.get("from_subject") or "")
+        and str(offer.get("status") or "").lower() == "proposed"
     )
+    try:
+        if final_acceptance:
+            updated = db.finalize_trade_offer_acceptance(
+                offer_id=offer_id,
+                actor_subject=principal.subject,
+                receive_address=receive_address_payload,
+                selected_offered_listing_id=str(payload.selected_offered_listing_id or offer.get("selected_offered_listing_id") or ""),
+            )
+        else:
+            updated = db.set_trade_offer_participant_action(
+                offer_id=offer_id,
+                actor_subject=principal.subject,
+                status=payload.status,
+                receive_address=receive_address_payload,
+                selected_offered_listing_id=payload.selected_offered_listing_id,
+            )
+    except TradeListingUnavailableError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     if not updated:
         raise HTTPException(status_code=404, detail="Offer not found")
     if str(updated.get("status") or "").lower() == "accepted":
-        accepted_offered_id = str(updated.get("selected_offered_listing_id") or updated.get("offered_listing_id") or "").strip()
-        db.mark_listings_traded([updated["target_listing_id"], accepted_offered_id])
         try:
             _auto_create_labels_for_accepted_offer_and_notify(db=db, offer=updated, settings=settings)
         except Exception:

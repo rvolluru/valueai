@@ -13,6 +13,10 @@ from urllib.parse import urlparse
 VALID_LISTING_CONDITIONS = frozenset({"NewWithTags", "New", "LikeNew"})
 
 
+class TradeListingUnavailableError(RuntimeError):
+    """Raised when either side of a trade was committed to another trade."""
+
+
 def validate_listing_condition(value: object) -> str:
     condition = str(value or "").strip()
     if condition not in VALID_LISTING_CONDITIONS:
@@ -1287,6 +1291,153 @@ class Database:
         self.execute(sql, params)
         self.commit()
 
+    def finalize_trade_offer_acceptance(
+        self,
+        *,
+        offer_id: str,
+        actor_subject: str,
+        receive_address: dict | None,
+        selected_offered_listing_id: str,
+    ) -> dict | None:
+        """Atomically accept one trade and retire competing offers for either item."""
+        initial_offer = self.get_trade_offer_by_id(offer_id)
+        if not initial_offer:
+            return None
+        target_id = str(initial_offer.get("target_listing_id") or "").strip()
+        selected_id = str(selected_offered_listing_id or initial_offer.get("selected_offered_listing_id") or "").strip()
+        listing_ids = sorted({target_id, selected_id} - {""})
+        if len(listing_ids) != 2:
+            return None
+
+        now = utc_now_iso()
+        normalized_address = self._normalize_offer_address(receive_address or {})
+        offer_columns = (
+            "offer_id, target_listing_id, offered_listing_id, selected_offered_listing_id, from_subject, to_subject, status, "
+            "accepted_by_from, accepted_by_to, from_receive_address_json, to_receive_address_json, message, created_at, updated_at, offered_listing_ids_json"
+        )
+        unresolved_statuses = ("requested", "proposed", "pending", "countered")
+
+        def competing_offer_ids(rows: list) -> list[str]:
+            ids: list[str] = []
+            for row in rows:
+                candidate = self._trade_offer_row_to_dict(row)
+                candidate_id = str(candidate.get("offer_id") or "")
+                if not candidate_id or candidate_id == offer_id:
+                    continue
+                candidate_listing_ids = {
+                    str(candidate.get("target_listing_id") or "").strip(),
+                    str(candidate.get("offered_listing_id") or "").strip(),
+                    str(candidate.get("selected_offered_listing_id") or "").strip(),
+                    *[str(value).strip() for value in candidate.get("offered_listing_ids") or []],
+                }
+                if set(listing_ids) & (candidate_listing_ids - {""}):
+                    ids.append(candidate_id)
+            return ids
+
+        def validate_locked_offer(offer: dict) -> None:
+            if str(offer.get("from_subject") or "") != actor_subject:
+                raise ValueError("Only the requester can accept the final proposal")
+            if str(offer.get("status") or "").lower() != "proposed":
+                raise TradeListingUnavailableError("This trade is no longer available")
+            offered_ids = [str(value).strip() for value in offer.get("offered_listing_ids") or [] if str(value).strip()]
+            if selected_id not in offered_ids:
+                raise ValueError("Select one offered item to accept for this trade")
+
+        if self._sqlite_conn is not None:
+            with self._sqlite_lock:
+                conn = self._sqlite_conn
+                try:
+                    conn.execute("BEGIN IMMEDIATE")
+                    placeholders = ", ".join([self.param] * len(listing_ids))
+                    listing_rows = conn.execute(
+                        f"SELECT listing_id, status FROM listings WHERE listing_id IN ({placeholders})",
+                        tuple(listing_ids),
+                    ).fetchall()
+                    statuses = {str(row["listing_id"]): str(row["status"] or "").lower() for row in listing_rows}
+                    if any(statuses.get(listing_id) != "active" for listing_id in listing_ids):
+                        raise TradeListingUnavailableError("One of these items is no longer available for trade")
+                    offer_row = conn.execute(
+                        f"SELECT {offer_columns} FROM trade_offers WHERE offer_id = {self.param} LIMIT 1",
+                        (offer_id,),
+                    ).fetchone()
+                    if not offer_row:
+                        conn.rollback()
+                        return None
+                    locked_offer = self._trade_offer_row_to_dict(offer_row)
+                    validate_locked_offer(locked_offer)
+                    conn.execute(
+                        f"UPDATE trade_offers SET status = {self.param}, accepted_by_from = {self.param}, accepted_by_to = {self.param}, "
+                        f"from_receive_address_json = {self.param}, selected_offered_listing_id = {self.param}, updated_at = {self.param} WHERE offer_id = {self.param}",
+                        ("accepted", 1, 1, json.dumps(normalized_address) if normalized_address else None, selected_id, now, offer_id),
+                    )
+                    conn.execute(
+                        f"UPDATE listings SET status = {self.param} WHERE listing_id IN ({placeholders})",
+                        tuple(["Traded", *listing_ids]),
+                    )
+                    status_placeholders = ", ".join([self.param] * len(unresolved_statuses))
+                    unresolved_rows = conn.execute(
+                        f"SELECT {offer_columns} FROM trade_offers WHERE status IN ({status_placeholders})",
+                        unresolved_statuses,
+                    ).fetchall()
+                    for competing_id in competing_offer_ids(unresolved_rows):
+                        conn.execute(
+                            f"UPDATE trade_offers SET status = {self.param}, accepted_by_from = 0, accepted_by_to = 0, updated_at = {self.param} WHERE offer_id = {self.param}",
+                            ("cancelled", now, competing_id),
+                        )
+                    conn.commit()
+                except Exception:
+                    conn.rollback()
+                    raise
+        else:
+            cur = self._pg_cursor()
+            try:
+                placeholders = ", ".join([self.param] * len(listing_ids))
+                cur.execute(
+                    f"SELECT listing_id, status FROM listings WHERE listing_id IN ({placeholders}) ORDER BY listing_id FOR UPDATE",
+                    tuple(listing_ids),
+                )
+                listing_rows = cur.fetchall()
+                statuses = {str(row[0]): str(row[1] or "").lower() for row in listing_rows}
+                if any(statuses.get(listing_id) != "active" for listing_id in listing_ids):
+                    raise TradeListingUnavailableError("One of these items is no longer available for trade")
+                cur.execute(
+                    f"SELECT {offer_columns} FROM trade_offers WHERE offer_id = {self.param} LIMIT 1 FOR UPDATE",
+                    (offer_id,),
+                )
+                offer_row = cur.fetchone()
+                if not offer_row:
+                    self._pg.rollback()
+                    return None
+                locked_offer = self._trade_offer_row_to_dict(offer_row)
+                validate_locked_offer(locked_offer)
+                cur.execute(
+                    f"UPDATE trade_offers SET status = {self.param}, accepted_by_from = {self.param}, accepted_by_to = {self.param}, "
+                    f"from_receive_address_json = {self.param}, selected_offered_listing_id = {self.param}, updated_at = {self.param} WHERE offer_id = {self.param}",
+                    ("accepted", 1, 1, json.dumps(normalized_address) if normalized_address else None, selected_id, now, offer_id),
+                )
+                cur.execute(
+                    f"UPDATE listings SET status = {self.param} WHERE listing_id IN ({placeholders})",
+                    tuple(["Traded", *listing_ids]),
+                )
+                status_placeholders = ", ".join([self.param] * len(unresolved_statuses))
+                cur.execute(
+                    f"SELECT {offer_columns} FROM trade_offers WHERE status IN ({status_placeholders})",
+                    unresolved_statuses,
+                )
+                unresolved_rows = cur.fetchall()
+                for competing_id in competing_offer_ids(unresolved_rows):
+                    cur.execute(
+                        f"UPDATE trade_offers SET status = {self.param}, accepted_by_from = 0, accepted_by_to = 0, updated_at = {self.param} WHERE offer_id = {self.param}",
+                        ("cancelled", now, competing_id),
+                    )
+                self._pg.commit()
+            except Exception:
+                self._pg.rollback()
+                raise
+            finally:
+                cur.close()
+        return self.get_trade_offer_by_id(offer_id)
+
     def get_trade_offer_by_id(self, offer_id: str) -> dict | None:
         query = (
             f"SELECT offer_id, target_listing_id, offered_listing_id, selected_offered_listing_id, from_subject, to_subject, status, accepted_by_from, accepted_by_to, from_receive_address_json, to_receive_address_json, message, created_at, updated_at, offered_listing_ids_json "
@@ -2530,7 +2681,7 @@ class Database:
         listing_id = str(listing_id or "").strip()
         if not listing_id:
             return []
-        statuses = ("pending", "accepted", "countered") if active_only else None
+        statuses = ("requested", "proposed", "pending", "accepted", "countered") if active_only else None
         like_value = f"%{listing_id}%"
         base_query = (
             f"SELECT offer_id, target_listing_id, offered_listing_id, selected_offered_listing_id, from_subject, to_subject, status, accepted_by_from, accepted_by_to, from_receive_address_json, to_receive_address_json, message, created_at, updated_at, offered_listing_ids_json "

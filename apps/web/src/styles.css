@@ -2471,6 +2471,32 @@ textarea:focus-visible,
   align-items: center;
   flex-wrap: wrap;
 }
+.marketplace-panel-header {
+  align-items: center;
+}
+.market-controls {
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+}
+.market-controls > input {
+  flex: 0 1 420px;
+  width: clamp(280px, 32vw, 420px);
+  height: 32px;
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+.market-filter {
+  display: inline-flex;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+.market-filter .primary,
+.market-filter .ghost {
+  min-width: 74px;
+  height: 32px;
+  padding: 0 14px;
+  font-size: .72rem;
+}
 .toggle {
   display: inline-flex;
   align-items: center;
@@ -2492,8 +2518,16 @@ textarea:focus-visible,
 
 .load-more-row {
   display: flex;
+  align-items: center;
   justify-content: center;
+  gap: 10px;
   margin-top: 28px;
+}
+
+.lazy-load-sentinel {
+  min-height: 48px;
+  color: var(--muted);
+  font-size: .86rem;
 }
 
 .result-card {
@@ -3205,14 +3239,6 @@ textarea:focus-visible,
 }
 .trade-band-line {
   margin: 0;
-}
-.trade-message-field {
-  margin-top: 10px;
-  display: grid;
-  gap: 6px;
-}
-.trade-message-field textarea {
-  min-height: 112px;
 }
 .trade-offer-actions {
   margin-top: 12px;
@@ -4380,13 +4406,6 @@ textarea:focus-visible,
   display: block;
 }
 
-.inbox-offer-message {
-  margin: 0;
-  color: var(--muted);
-  font-size: .84rem;
-  line-height: 1.42;
-}
-
 .inbox-editorial-actions {
   margin-top: 2px;
   display: grid;
@@ -4783,6 +4802,18 @@ textarea:focus-visible,
   }
 }
 @media (max-width: 760px) {
+  .marketplace-panel-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .market-controls {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    width: 100%;
+  }
+  .market-controls > input {
+    width: 100%;
+  }
   .similar-rail {
     grid-auto-columns: minmax(190px, 70vw);
   }

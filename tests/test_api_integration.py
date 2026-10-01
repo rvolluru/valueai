@@ -201,6 +201,86 @@ def test_requested_trade_moves_to_exact_proposal_then_acceptance():
     assert accepted["accepted_by_to"] is True
 
 
+def test_first_accepted_trade_retires_listings_and_competing_offers():
+    _build_client()
+    from app import deps
+    from app.db import TradeListingUnavailableError
+
+    db = deps.get_db()
+
+    def add_listing(listing_id: str, owner_subject: str, title: str):
+        db.insert_listing(
+            listing_id=listing_id,
+            owner_subject=owner_subject,
+            owner_name=owner_subject,
+            title=title,
+            mode="trade",
+            category="handbag",
+            brand="Example",
+            condition="LikeNew",
+            size="Medium",
+            estimated_value=500,
+            city="New York",
+            image=None,
+            images=[],
+            description="",
+            wants="",
+            tags=[],
+            source_item_id=None,
+            analysis=None,
+            status="Active",
+        )
+
+    add_listing("target-one", "seller-one", "First target")
+    add_listing("target-two", "seller-two", "Second target")
+    add_listing("requester-item", "requester", "Requester item")
+
+    for offer_id, target_id, seller in (
+        ("offer-one", "target-one", "seller-one"),
+        ("offer-two", "target-two", "seller-two"),
+    ):
+        db.create_trade_offer(
+            offer_id=offer_id,
+            target_listing_id=target_id,
+            offered_listing_id="",
+            offered_listing_ids=[],
+            from_subject="requester",
+            to_subject=seller,
+            message="",
+            status="requested",
+        )
+        db.set_trade_offer_proposal(
+            offer_id=offer_id,
+            actor_subject=seller,
+            offered_listing_ids=["requester-item"],
+        )
+
+    accepted = db.finalize_trade_offer_acceptance(
+        offer_id="offer-one",
+        actor_subject="requester",
+        receive_address=None,
+        selected_offered_listing_id="requester-item",
+    )
+
+    assert accepted["status"] == "accepted"
+    assert db.get_listing_by_id("target-one")["status"] == "Traded"
+    assert db.get_listing_by_id("requester-item")["status"] == "Traded"
+    assert db.get_listing_by_id("target-two")["status"] == "Active"
+    assert db.get_trade_offer_by_id("offer-two")["status"] == "cancelled"
+
+    try:
+        db.finalize_trade_offer_acceptance(
+            offer_id="offer-two",
+            actor_subject="requester",
+            receive_address=None,
+            selected_offered_listing_id="requester-item",
+        )
+    except TradeListingUnavailableError as exc:
+        assert "no longer available" in str(exc).lower()
+    else:
+        raise AssertionError("A listing was accepted into two trades")
+
+
 def test_database_normalizes_legacy_listing_conditions():
     _build_client()
     from app import deps

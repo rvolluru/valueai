@@ -433,21 +433,6 @@ function getCrossOwnerMatches(item, currentSubject = '') {
   });
 }
 
-function removeSentOfferMatchesFromListings(listings, targetListingId, offeredListingIds) {
-  const targetId = String(targetListingId || '').trim();
-  const offeredIds = new Set((Array.isArray(offeredListingIds) ? offeredListingIds : [])
-    .map((id) => String(id || '').trim())
-    .filter(Boolean));
-  if (!targetId || offeredIds.size === 0) return listings;
-  return (Array.isArray(listings) ? listings : []).map((listing) => {
-    if (String(listing?.listing_id || listing?.id || '') !== targetId || !Array.isArray(listing?.matches)) return listing;
-    return {
-      ...listing,
-      matches: listing.matches.filter((match) => !offeredIds.has(String(match?.listing_id || match?.id || ''))),
-    };
-  });
-}
-
 function getMatchPreviewImages(item, apiBaseUrl, currentSubject = '') {
   const matches = getCrossOwnerMatches(item, currentSubject);
   return matches
@@ -1223,7 +1208,6 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
   const [tradeComposerReturnTab, setTradeComposerReturnTab] = useState('marketplace');
   const [tradeOfferCandidates, setTradeOfferCandidates] = useState([]);
   const [tradeOfferListingIds, setTradeOfferListingIds] = useState([]);
-  const [tradeOfferMessage, setTradeOfferMessage] = useState('');
   const [tradeComposerStep, setTradeComposerStep] = useState('select');
   const [tradeOfferBusy, setTradeOfferBusy] = useState(false);
   const [tradeOfferError, setTradeOfferError] = useState('');
@@ -1269,6 +1253,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
   const [notificationPermission, setNotificationPermission] = useState('unknown');
   const [pushToken, setPushToken] = useState('');
   const [likedListingIds, setLikedListingIds] = useState([]);
+  const [marketplaceFilter, setMarketplaceFilter] = useState('all');
 
   const [wizardStep, setWizardStep] = useState(1);
   const [editingListingId, setEditingListingId] = useState('');
@@ -1317,6 +1302,8 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
   const [closetNextOffset, setClosetNextOffset] = useState(0);
   const [marketplacePageLoading, setMarketplacePageLoading] = useState(false);
   const [closetPageLoading, setClosetPageLoading] = useState(false);
+  const marketplacePageRequestRef = useRef(false);
+  const closetPageRequestRef = useRef(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
 
@@ -1870,7 +1857,8 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
   }, [apiClient, listingAssistantConversationId, listingChatListing?.listing_id, listingChatStage]);
 
   async function loadMoreMarketplace() {
-    if (marketplaceLoading || marketplacePageLoading || !marketplaceHasMore) return;
+    if (marketplaceLoading || marketplacePageLoading || marketplacePageRequestRef.current || !marketplaceHasMore) return;
+    marketplacePageRequestRef.current = true;
     setMarketplacePageLoading(true);
     try {
       const payload = await apiClient.listMarketplace(LISTINGS_PAGE_SIZE, await authContext(), { offset: marketplaceNextOffset });
@@ -1889,12 +1877,14 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     } catch (e) {
       setError(e.message || String(e));
     } finally {
+      marketplacePageRequestRef.current = false;
       setMarketplacePageLoading(false);
     }
   }
 
   async function loadMoreCloset() {
-    if (closetLoading || closetPageLoading || !closetHasMore) return;
+    if (closetLoading || closetPageLoading || closetPageRequestRef.current || !closetHasMore) return;
+    closetPageRequestRef.current = true;
     setClosetPageLoading(true);
     try {
       const payload = await apiClient.listMyListings(LISTINGS_PAGE_SIZE, await authContext(), { offset: closetNextOffset });
@@ -1913,6 +1903,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     } catch (e) {
       setError(e.message || String(e));
     } finally {
+      closetPageRequestRef.current = false;
       setClosetPageLoading(false);
     }
   }
@@ -2801,7 +2792,6 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     });
     setTradeOfferCandidates([]);
     setTradeOfferListingIds([]);
-    setTradeOfferMessage('');
     setTradeComposerStep('select');
     try {
       const payload = await apiClient.listOfferCandidates(targetListing.listing_id, 100, await authContext());
@@ -2865,7 +2855,6 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     setTradeComposerTarget(null);
     setTradeOfferCandidates([]);
     setTradeOfferListingIds([]);
-    setTradeOfferMessage('');
     setTradeComposerStep('select');
     setTradeOfferError('');
     setActiveTab(tradeComposerReturnTab || 'marketplace');
@@ -2920,12 +2909,11 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
         {
           target_listing_id: tradeComposerTarget.listing_id,
           offered_listing_ids: tradeOfferListingIds,
-          message: tradeOfferMessage.trim(),
+          message: '',
         },
         await authContext(),
       );
       trackExperience('trade_offer_submitted', { screen: 'tradeComposer', entityType: 'listing', entityId: tradeComposerTarget.listing_id, properties: { offered_item_count: tradeOfferListingIds.length } });
-      setMarketplaceListings((prev) => removeSentOfferMatchesFromListings(prev, tradeComposerTarget.listing_id, tradeOfferListingIds));
       closeTradeComposer();
       setNotice('Trade offer sent.');
       setActiveTab('inbox');
@@ -4274,12 +4262,18 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
   const matchedMarketplaceListings = marketplaceListings.filter((item) => (
     String(item?.status || '').trim().toLowerCase() === 'active'
     && getCrossOwnerMatches(item, marketplaceActorSubject).length > 0
+    && (marketplaceFilter !== 'liked' || likedListingIds.includes(String(item?.listing_id || item?.id || '')))
   ));
   useEffect(() => {
     if (activeTab !== 'marketplace' || marketplaceLoading || marketplacePageLoading || !marketplaceHasMore) return;
     if (matchedMarketplaceListings.length >= 6) return;
     void loadMoreMarketplace();
-  }, [activeTab, marketplaceHasMore, marketplaceLoading, marketplacePageLoading, matchedMarketplaceListings.length]);
+  }, [activeTab, marketplaceFilter, marketplaceHasMore, marketplaceLoading, marketplacePageLoading, matchedMarketplaceListings.length]);
+  useEffect(() => {
+    if (activeTab !== 'closet' || closetLoading || closetPageLoading || !closetHasMore) return;
+    if (myListings.length >= 6) return;
+    void loadMoreCloset();
+  }, [activeTab, closetHasMore, closetLoading, closetPageLoading, myListings.length]);
   const tradeComposerSelectedListings = tradeOfferCandidates
     .filter((listing) => tradeOfferListingIds.includes(listing?.listing_id));
   const tradeComposerTargetValue = Number(tradeComposerTarget?.estimated_value || 0);
@@ -4334,12 +4328,12 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
             activeTab === 'profile' && styles.profileContentWithFooter,
           ]}
 	        keyboardShouldPersistTaps="handled"
-	        scrollEventThrottle={250}
-	        onScroll={({ nativeEvent }) => {
-	          if (activeTab !== 'marketplace' && activeTab !== 'closet') return;
-	          const { layoutMeasurement, contentOffset, contentSize } = nativeEvent;
-	          const distanceFromBottom = contentSize.height - (layoutMeasurement.height + contentOffset.y);
-	          if (distanceFromBottom > 900) return;
+		        scrollEventThrottle={250}
+		        onScroll={({ nativeEvent }) => {
+		          if (isListingDetailOpen || (activeTab !== 'marketplace' && activeTab !== 'closet')) return;
+		          const { layoutMeasurement, contentOffset, contentSize } = nativeEvent;
+		          const distanceFromBottom = contentSize.height - (layoutMeasurement.height + contentOffset.y);
+		          if (distanceFromBottom > 600) return;
 	          if (activeTab === 'marketplace') {
 	            loadMoreMarketplace();
 	          } else if (activeTab === 'closet') {
@@ -4368,6 +4362,24 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
             ) : (
               <>
                 <SectionHeader title="Marketplace" subtitle="CURATED MATCHES" rightText="Refresh" onRightPress={refreshActiveTab} />
+	                <View style={styles.marketplaceFilterRow} accessibilityRole="tablist">
+	                  <TouchableOpacity
+	                    accessibilityRole="tab"
+	                    accessibilityState={{ selected: marketplaceFilter === 'all' }}
+	                    style={[styles.filterButton, marketplaceFilter === 'all' && styles.filterButtonActive]}
+	                    onPress={() => setMarketplaceFilter('all')}
+	                  >
+	                    <Text style={[styles.filterButtonText, marketplaceFilter === 'all' && styles.filterButtonTextActive]}>All</Text>
+	                  </TouchableOpacity>
+	                  <TouchableOpacity
+	                    accessibilityRole="tab"
+	                    accessibilityState={{ selected: marketplaceFilter === 'liked' }}
+	                    style={[styles.filterButton, marketplaceFilter === 'liked' && styles.filterButtonActive]}
+	                    onPress={() => setMarketplaceFilter('liked')}
+	                  >
+	                    <Text style={[styles.filterButtonText, marketplaceFilter === 'liked' && styles.filterButtonTextActive]}>Liked</Text>
+	                  </TouchableOpacity>
+	                </View>
 	                {marketplaceLoading && matchedMarketplaceListings.length === 0 ? (
                   <View style={styles.loadingState}>
                     <ActivityIndicator color={theme.brand} />
@@ -4375,34 +4387,33 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                   </View>
                 ) : matchedMarketplaceListings.length === 0 && !marketplaceHasMore ? (
                   <View style={styles.emptyState}>
-                    <Text style={styles.emptyTitle}>No matched marketplace listings yet</Text>
-                    <Text style={styles.emptyText}>Create or publish a closet listing to see marketplace items that match your closet.</Text>
+                    <Text style={styles.emptyTitle}>{marketplaceFilter === 'liked' ? 'No liked marketplace listings' : 'No matched marketplace listings yet'}</Text>
+                    <Text style={styles.emptyText}>{marketplaceFilter === 'liked' ? 'Use the heart on a marketplace listing to save it here.' : 'Create or publish a closet listing to see marketplace items that match your closet.'}</Text>
                     <TouchableOpacity
                       style={styles.primaryBtn}
                       onPress={() => {
-                        resetListingForm();
-                        setActiveTab('create');
+                        if (marketplaceFilter === 'liked') {
+                          setMarketplaceFilter('all');
+                        } else {
+                          resetListingForm();
+                          setActiveTab('create');
+                        }
                       }}
                     >
-                      <Text style={styles.primaryBtnText}>Create Listing</Text>
+                      <Text style={styles.primaryBtnText}>{marketplaceFilter === 'liked' ? 'Show All Listings' : 'Create Listing'}</Text>
                     </TouchableOpacity>
                   </View>
-                ) : matchedMarketplaceListings.length === 0 ? (
-                  <View style={styles.emptyState}>
-                    <Text style={styles.emptyTitle}>Looking for matched listings...</Text>
-                    <Text style={styles.emptyText}>More marketplace listings are available to check.</Text>
-                    <TouchableOpacity
-                      style={[styles.secondaryBtnCompact, styles.loadMoreButton, marketplacePageLoading && styles.primaryBtnDisabled]}
-                      onPress={loadMoreMarketplace}
-                      disabled={marketplacePageLoading}
-                    >
-                      {marketplacePageLoading ? <ActivityIndicator color={theme.brand} /> : <Text style={styles.secondaryBtnText}>Load More Listings</Text>}
-                    </TouchableOpacity>
-                  </View>
-                ) : (
-                  matchedMarketplaceListings.map((item) => {
-                    const isOwnListing = isOwnMarketplaceListing(item);
-                    return (
+	                ) : matchedMarketplaceListings.length === 0 ? (
+	                  <View style={styles.emptyState}>
+	                    <Text style={styles.emptyTitle}>Looking for matched listings...</Text>
+	                    <Text style={styles.emptyText}>More marketplace listings are available to check.</Text>
+	                    <ActivityIndicator style={styles.paginationLoader} color={theme.brand} />
+	                  </View>
+	                ) : (
+	                  <>
+	                  {matchedMarketplaceListings.map((item) => {
+	                    const isOwnListing = isOwnMarketplaceListing(item);
+	                    return (
                       <ListingCard
                         key={item.listing_id}
                         item={item}
@@ -4421,19 +4432,12 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                         }}
                         liked={likedListingIds.includes(String(item?.listing_id || item?.id || ''))}
                         onToggleLike={isOwnListing ? null : toggleLikedListing}
-                      />
-                    );
-                  }).concat(marketplaceHasMore ? [
-                    <TouchableOpacity
-                      key="marketplace-load-more"
-                      style={[styles.secondaryBtnCompact, styles.loadMoreButton, marketplacePageLoading && styles.primaryBtnDisabled]}
-                      onPress={loadMoreMarketplace}
-                      disabled={marketplacePageLoading}
-                    >
-                      {marketplacePageLoading ? <ActivityIndicator color={theme.brand} /> : <Text style={styles.secondaryBtnText}>Load More Listings</Text>}
-                    </TouchableOpacity>,
-                  ] : [])
-                )}
+	                      />
+	                    );
+	                  })}
+	                  {marketplacePageLoading ? <ActivityIndicator style={styles.paginationLoader} color={theme.brand} /> : null}
+	                  </>
+	                )}
               </>
             )}
           </View>
@@ -4453,9 +4457,10 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                   </View>
                 ) : myListings.length === 0 ? (
                   <Text style={styles.emptyText}>No closet listings yet.</Text>
-                ) : (
-                  myListings.map((item) => {
-                    const isPublished = String(item?.status || '').trim().toLowerCase() === 'active';
+	                ) : (
+	                  <>
+	                  {myListings.map((item) => {
+	                    const isPublished = String(item?.status || '').trim().toLowerCase() === 'active';
                     const matchCount = isPublished
                       ? getMarketplaceMatchesForClosetListing(item, marketplaceListings, marketplaceActorSubject).length
                       : null;
@@ -4476,19 +4481,12 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                         onShareToFacebook={shareListingFacebook}
                         currentOwnerSubject={marketplaceActorSubject}
                         currentUserDisplayName={clerkUserLabel}
-                      />
-                    );
-                  }).concat(closetHasMore ? [
-                    <TouchableOpacity
-                      key="closet-load-more"
-                      style={[styles.secondaryBtnCompact, styles.loadMoreButton, closetPageLoading && styles.primaryBtnDisabled]}
-                      onPress={loadMoreCloset}
-                      disabled={closetPageLoading}
-                    >
-                      {closetPageLoading ? <ActivityIndicator color={theme.brand} /> : <Text style={styles.secondaryBtnText}>Load More Listings</Text>}
-                    </TouchableOpacity>,
-                  ] : [])
-                )}
+	                      />
+	                    );
+	                  })}
+	                  {closetPageLoading ? <ActivityIndicator style={styles.paginationLoader} color={theme.brand} /> : null}
+	                  </>
+	                )}
               </>
             )}
           </View>
@@ -5877,13 +5875,6 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                     )}
                   </View>
 
-                  {selectedOffer?.message ? (
-                    <View style={styles.offerDetailPanel}>
-                      <Text style={styles.offerLaneLabel}>Message</Text>
-                      <Text style={styles.offerDetailMessage}>{selectedOffer.message}</Text>
-                    </View>
-                  ) : null}
-
                   {isProposed && isSender ? (
                     <View style={styles.offerDetailPanel}>
                       <Text style={styles.offerLaneLabel}>Delivery & Decision</Text>
@@ -6085,14 +6076,6 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                     <Text style={styles.helperText}>
                       The recipient will select one of your offered items if this trade is accepted.
                     </Text>
-                    <Text style={styles.label}>Message (optional)</Text>
-                    <TextInput
-                      value={tradeOfferMessage}
-                      onChangeText={setTradeOfferMessage}
-                      style={[styles.input, styles.multiInput]}
-                      placeholder="I’d like to trade with this item. Let me know what you think."
-                      multiline
-                    />
                     <View style={styles.tradeShippingNotice}>
                       <Text style={styles.offerLaneLabel}>Shipping charge</Text>
                       <Text style={styles.tradeShippingAmount}>{tradeComposerShippingCharge?.display || 'Calculated when accepted'}</Text>
@@ -9395,13 +9378,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: '#fff',
   },
-  loadMoreButton: {
-    alignSelf: 'stretch',
-    justifyContent: 'center',
-    marginTop: 8,
-    marginBottom: 16,
-    minHeight: 44,
-  },
+	  paginationLoader: {
+	    marginVertical: 20,
+	  },
   dangerBtnCompact: {
     borderColor: '#b42318',
   },
@@ -9499,6 +9478,11 @@ const styles = StyleSheet.create({
   },
 
   filterRow: { gap: 8 },
+	marketplaceFilterRow: {
+	  flexDirection: 'row',
+	  gap: 8,
+	  marginBottom: 12,
+	},
 	  filterButton: {
 	    borderWidth: 1,
 	    borderColor: theme.line,
