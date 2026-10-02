@@ -2488,7 +2488,9 @@ def test_photoroom_staging_uses_segment_api(monkeypatch) -> None:
 
     captured: dict[str, object] = {}
     processed = io.BytesIO()
-    Image.new("RGB", (16, 16), color="white").save(processed, format="JPEG")
+    mask = Image.new("RGBA", (320, 320), color=(0, 0, 0, 0))
+    ImageDraw.Draw(mask).rectangle((40, 60, 280, 260), fill=(0, 0, 0, 255))
+    mask.save(processed, format="PNG")
 
     class StubResponse:
         status_code = 200
@@ -2529,59 +2531,30 @@ def test_photoroom_staging_uses_segment_api(monkeypatch) -> None:
         ),
     )
 
-    with Image.open(io.BytesIO(out)) as staged:
-        assert staged.size == (16, 16)
-    assert content_type == "image/jpeg"
-    assert debug["provider"] == "photoroom_remove_background"
+    with Image.open(io.BytesIO(raw)).convert("RGB") as source, Image.open(io.BytesIO(out)).convert("RGB") as staged:
+        assert staged.size == source.size
+        assert staged.getpixel((100, 100)) == source.getpixel((100, 100))
+        assert staged.getpixel((10, 10)) == (255, 255, 255)
+    assert content_type == "image/png"
+    assert debug["provider"] == "photoroom_mask_original_composite"
+    assert debug["product_pixels_preserved"] is True
     assert debug["synthetic_shadow"] is False
     assert captured["url"] == "https://sdk.photoroom.com/v1/segment"
     assert captured["headers"] == {"x-api-key": "photoroom-test-key"}
-    assert captured["data"]["format"] == "jpg"
-    assert captured["data"]["bg_color"] == "#FFFFFF"
+    assert captured["data"]["format"] == "png"
+    assert "bg_color" not in captured["data"]
     assert captured["data"]["crop"] == "false"
     assert captured["data"]["despill"] == "false"
     assert "image_file" in captured["files"]
 
 
-def test_gemini_staging_creates_separate_white_background_derivative(monkeypatch) -> None:
+def test_gemini_staging_does_not_accept_a_generated_product_image(monkeypatch) -> None:
     from app.main import _stage_item_image
     from app.settings import Settings
 
-    captured: dict[str, object] = {}
-    generated = io.BytesIO()
-    Image.new("RGB", (24, 24), color="white").save(generated, format="PNG")
-    encoded = base64.b64encode(generated.getvalue()).decode("ascii")
-
-    class StubResponse:
-        status_code = 200
-
-        def raise_for_status(self):
-            return None
-
-        def json(self):
-            return {
-                "candidates": [{
-                    "content": {
-                        "parts": [{"inlineData": {"mimeType": "image/png", "data": encoded}}],
-                    },
-                }],
-            }
-
     class StubClient:
-        def __init__(self, timeout):
-            captured["timeout"] = timeout
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-        def post(self, url, params, json):
-            captured["url"] = url
-            captured["params"] = params
-            captured["json"] = json
-            return StubResponse()
+        def __init__(self, *args, **kwargs):
+            raise AssertionError("Gemini image generation must not be called for background staging")
 
     monkeypatch.setattr("app.main.httpx.Client", StubClient)
     original = _make_image("ORIGINAL PRODUCT")
@@ -2598,16 +2571,10 @@ def test_gemini_staging_creates_separate_white_background_derivative(monkeypatch
         ),
     )
 
-    assert out != original
-    assert content_type == "image/png"
-    assert debug["provider"] == "gemini_background_edit"
-    assert debug["synthetic"] is True
-    assert captured["url"] == "https://generativelanguage.googleapis.com/v1beta/models/gemini-test-image-model:generateContent"
-    assert captured["params"] == {"key": "gemini-test-key"}
-    request_parts = captured["json"]["contents"][0]["parts"]
-    assert base64.b64decode(request_parts[0]["inline_data"]["data"]) == original
-    assert "Replace only the background" in request_parts[1]["text"]
-    assert "Preserve the photographed product exactly" in request_parts[1]["text"]
+    assert out == original
+    assert content_type == "image/jpeg"
+    assert debug["applied"] is False
+    assert debug["gemini_edit"]["reason"] == "disabled_for_product_fidelity"
 
 
 def test_gpt_profile_uses_retail_reference_as_low_confidence_resale_before_crawlers() -> None:

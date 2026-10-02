@@ -1340,7 +1340,13 @@ def _collect_listing_analysis_files(
     return _canonicalize_analysis_file_entries(deduped_files)[: settings.max_images_per_request]
 
 
-def _remove_background_with_photoroom(raw: bytes, content_type: str, settings: Settings) -> tuple[bytes, str, dict[str, object]]:
+def _remove_background_with_photoroom(
+    raw: bytes,
+    content_type: str,
+    settings: Settings,
+    *,
+    transparent_background: bool = False,
+) -> tuple[bytes, str, dict[str, object]]:
     api_key = (settings.photoroom_api_key or "").strip()
     debug: dict[str, object] = {
         "attempted": bool(settings.image_staging_photoroom_enabled and api_key),
@@ -1354,7 +1360,7 @@ def _remove_background_with_photoroom(raw: bytes, content_type: str, settings: S
     if not api_key:
         return raw, content_type, {**debug, "reason": "api_key_missing"}
 
-    output_format = (settings.photoroom_output_format or "jpg").strip().lower()
+    output_format = "png" if transparent_background else (settings.photoroom_output_format or "jpg").strip().lower()
     if output_format == "jpeg":
         output_format = "jpg"
     if output_format not in {"jpg", "png", "webp"}:
@@ -1371,7 +1377,7 @@ def _remove_background_with_photoroom(raw: bytes, content_type: str, settings: S
         "crop": "false",
         "despill": "false",
     }
-    bg_color = (settings.photoroom_background_color or "").strip()
+    bg_color = "" if transparent_background else (settings.photoroom_background_color or "").strip()
     if bg_color:
         data["bg_color"] = bg_color
 
@@ -1404,6 +1410,30 @@ def _remove_background_with_photoroom(raw: bytes, content_type: str, settings: S
         }
 
 
+def _composite_original_over_white(
+    original: Image.Image,
+    mask_image: Image.Image,
+) -> tuple[bytes | None, dict[str, object]]:
+    source = original.convert("RGBA")
+    mask_rgba = mask_image.convert("RGBA")
+    if mask_rgba.size != source.size:
+        mask_rgba = mask_rgba.resize(source.size, Image.Resampling.LANCZOS)
+    alpha = mask_rgba.getchannel("A")
+    pixels = list(alpha.getdata())
+    coverage = sum(1 for value in pixels if value > 20) / max(len(pixels), 1)
+    if coverage < 0.03 or coverage > 0.97 or alpha.getbbox() is None:
+        return None, {"reason": "invalid_mask_coverage", "coverage": round(coverage, 4)}
+
+    # Only the mask is taken from the segmentation provider. Product RGB pixels,
+    # canvas size, position, lighting, and texture all come from the original.
+    source.putalpha(alpha)
+    white = Image.new("RGBA", source.size, (255, 255, 255, 255))
+    white.alpha_composite(source)
+    output = BytesIO()
+    white.convert("RGB").save(output, format="PNG", optimize=True)
+    return output.getvalue(), {"reason": "success", "coverage": round(coverage, 4)}
+
+
 def _replace_background_with_gemini(raw: bytes, content_type: str, settings: Settings) -> tuple[bytes, str, dict[str, object]]:
     model = (settings.image_staging_gemini_model or "gemini-2.5-flash-image").strip()
     api_key = (settings.gemini_api_key or "").strip()
@@ -1420,11 +1450,17 @@ def _replace_background_with_gemini(raw: bytes, content_type: str, settings: Set
         return raw, content_type, {**debug, "reason": "api_key_missing"}
 
     prompt = (
-        "Replace only the background of this product photo with a seamless solid pure white (#FFFFFF) ecommerce studio background. "
-        "Preserve the photographed product exactly, including its shape, proportions, position, crop, colors, pattern, material, "
-        "texture, stitching, hardware, straps, labels, logos, wear, and imperfections. Do not redesign, retouch, repair, recolor, "
-        "resize, reposition, crop, or add or remove any part of the product. Preserve a subtle natural contact shadow only when it "
-        "already exists. Do not add props, text, people, mannequins, reflections, or decorative elements. Return one image only."
+        "BACKGROUND REPLACEMENT ONLY. Treat every pixel belonging to the product as a locked, read-only region. Replace only pixels "
+        "outside the product boundary with a seamless solid pure white (#FFFFFF) ecommerce background. Copy the product from the "
+        "source image without regenerating, redrawing, reconstructing, or interpreting it. The product must remain visually identical "
+        "to the source at pixel level. Preserve its exact shape, dimensions, proportions, position, orientation, framing, crop, edges, "
+        "colors, white balance, exposure, brightness, contrast, saturation, highlights, shadows, reflections, transparency, sharpness, "
+        "focus, noise, grain, resolution, image quality, pattern, material, texture, stitching, hardware, straps, labels, logos, text, "
+        "wear, damage, and imperfections. Do not relight, retouch, enhance, beautify, denoise, sharpen, upscale, smooth, repair, recolor, "
+        "resize, reposition, rotate, crop, distort, or add or remove any part of the product. Do not invent obscured edges or details. "
+        "Do not alter shadows or reflections that fall on the product. Retain an existing natural contact shadow only where necessary "
+        "to avoid changing the product boundary; do not generate a new shadow. Do not add props, text, people, hands, mannequins, "
+        "reflections, or decorative elements. Keep the original canvas dimensions and product placement. Return exactly one image."
     )
     endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
     try:
@@ -1515,30 +1551,36 @@ def _stage_item_image(raw: bytes, content_type: str, settings: Settings) -> tupl
     except Exception:
         return raw, content_type, {"applied": False, "reason": "open_failed", "exif_orientation_applied": orientation_applied}
 
-    gemini_raw, gemini_content_type, gemini_debug = _replace_background_with_gemini(oriented_raw, oriented_content_type, settings)
-    if gemini_debug.get("reason") == "success":
-        return gemini_raw, gemini_content_type, {
-            "applied": True,
-            "provider": "gemini_background_edit",
-            "synthetic": True,
-            "synthetic_shadow": False,
-            "exif_orientation_applied": orientation_applied,
-            "gemini_edit": gemini_debug,
-        }
-
-    photoroom_debug: dict[str, object] = {"attempted": False, "reason": "fallback_disabled"}
-    if settings.image_staging_photoroom_fallback_enabled:
-        photoroom_raw, photoroom_content_type, photoroom_debug = _remove_background_with_photoroom(oriented_raw, oriented_content_type, settings)
+    # Generative background replacement can alter the product itself. Use a
+    # segmentation provider only for its alpha mask and retain original pixels.
+    gemini_debug: dict[str, object] = {"attempted": False, "reason": "disabled_for_product_fidelity"}
+    photoroom_debug: dict[str, object] = {"attempted": False, "reason": "disabled"}
+    if settings.image_staging_photoroom_enabled:
+        photoroom_raw, _, photoroom_debug = _remove_background_with_photoroom(
+            oriented_raw,
+            oriented_content_type,
+            settings,
+            transparent_background=True,
+        )
         if photoroom_debug.get("reason") == "success":
-            return photoroom_raw, photoroom_content_type, {
-                "applied": True,
-                "provider": "photoroom_remove_background",
-                "synthetic": False,
-                "synthetic_shadow": False,
-                "exif_orientation_applied": orientation_applied,
-                "gemini_edit": gemini_debug,
-                "photoroom": photoroom_debug,
-            }
+            try:
+                with Image.open(BytesIO(photoroom_raw)) as mask_image:
+                    composited, composite_debug = _composite_original_over_white(src_rgba, mask_image)
+                if composited is not None:
+                    return composited, "image/png", {
+                        "applied": True,
+                        "provider": "photoroom_mask_original_composite",
+                        "synthetic": False,
+                        "synthetic_shadow": False,
+                        "product_pixels_preserved": True,
+                        "exif_orientation_applied": orientation_applied,
+                        "mask": composite_debug,
+                        "gemini_edit": gemini_debug,
+                        "photoroom": photoroom_debug,
+                    }
+                photoroom_debug["composite"] = composite_debug
+            except Exception as exc:
+                photoroom_debug["composite"] = {"reason": "exception", "error": str(exc)[:500]}
 
     if not settings.condition_rembg_enabled:
         return oriented_raw, oriented_content_type, {
@@ -1587,42 +1629,28 @@ def _stage_item_image(raw: bytes, content_type: str, settings: Settings) -> tupl
     except Exception:
         fg = src_rgba
 
-    w, h = fg.size
-    grad = Image.linear_gradient("L").resize((w, h))
-    top = Image.new("RGBA", (w, h), (252, 252, 253, 255))
-    bottom = Image.new("RGBA", (w, h), (225, 227, 230, 255))
-    bg = Image.composite(bottom, top, grad)
-
-    alpha = fg.split()[-1]
-    bbox = alpha.getbbox()
-    if bbox:
-        item = fg.crop(bbox)
-        iw, ih = item.size
-        original_fill_ratio = (iw * ih) / max(w * h, 1)
-        # If item already fills almost entire frame, force more padding so staging is visible.
-        target_fill = 0.62 if original_fill_ratio > 0.78 else 0.78
-        max_w = int(w * target_fill)
-        max_h = int(h * target_fill)
-        scale = min(max_w / max(iw, 1), max_h / max(ih, 1), 1.35)
-        nw = max(1, int(iw * scale))
-        nh = max(1, int(ih * scale))
-        item = item.resize((nw, nh), Image.Resampling.LANCZOS)
-
-        x = (w - nw) // 2
-        y = (h - nh) // 2
-        bg.alpha_composite(item, (x, y))
-    else:
-        bg.alpha_composite(fg, (0, 0))
-
-    out = BytesIO()
-    bg.convert("RGB").save(out, format="JPEG", quality=92, optimize=True)
-    return out.getvalue(), "image/jpeg", {
+    composited, composite_debug = _composite_original_over_white(src_rgba, fg)
+    if composited is None:
+        return oriented_raw, oriented_content_type, {
+            "applied": False,
+            "provider": None,
+            "reason": "invalid_local_segmentation_mask",
+            "mask": composite_debug,
+            "exif_orientation_applied": orientation_applied,
+            "photoroom": photoroom_debug,
+            "gemini_edit": gemini_debug,
+        }
+    return composited, "image/png", {
         "applied": True,
+        "provider": "rembg_mask_original_composite",
+        "synthetic": False,
+        "product_pixels_preserved": True,
         "used_rembg": used_rembg,
         "rembg_effective": rembg_effective,
-        "forced_padding": True,
+        "forced_padding": False,
         "synthetic_shadow": False,
         "exif_orientation_applied": orientation_applied,
+        "mask": composite_debug,
         "photoroom": photoroom_debug,
         "gemini_edit": gemini_debug,
     }
