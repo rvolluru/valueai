@@ -756,7 +756,7 @@ def _uploaded_images_for_item(db: Database, item_id: str | None) -> list[dict]:
         return []
     uploaded: list[dict] = []
     for idx, record in enumerate(db.list_image_records_for_item(item_id, limit=20)):
-        if str(record.get("role_hint") or "").strip() == "ai_mannequin":
+        if str(record.get("role_hint") or "").strip().startswith("ai_"):
             continue
         image_id = str(record.get("image_id") or "").strip()
         if not image_id:
@@ -920,7 +920,7 @@ def _reuse_recent_analysis_for_listing(
     image_hashes = [
         str(record.get("content_hash") or "").strip()
         for record in db.list_image_records_for_item(source_item_id, limit=20)
-        if str(record.get("role_hint") or "").strip() != "ai_mannequin"
+        if not str(record.get("role_hint") or "").strip().startswith("ai_")
         and str(record.get("content_hash") or "").strip()
     ]
     if not image_hashes:
@@ -1285,6 +1285,13 @@ def _collect_listing_analysis_files(
     image_urls: list[str] | None = None,
 ) -> list[dict[str, object]]:
     raw_urls = image_urls if image_urls is not None else []
+    if image_urls is None:
+        listed_images = listing.get("listed_images") if isinstance(listing.get("listed_images"), list) else []
+        raw_urls = [
+            str(entry.get("p_img") or "").strip()
+            for entry in listed_images
+            if isinstance(entry, dict) and str(entry.get("p_img") or "").strip()
+        ]
     if not raw_urls:
         images = listing.get("images") if isinstance(listing.get("images"), list) else []
         raw_urls = [str(url).strip() for url in images if isinstance(url, str) and url.strip()]
@@ -1397,6 +1404,75 @@ def _remove_background_with_photoroom(raw: bytes, content_type: str, settings: S
         }
 
 
+def _replace_background_with_gemini(raw: bytes, content_type: str, settings: Settings) -> tuple[bytes, str, dict[str, object]]:
+    model = (settings.image_staging_gemini_model or "gemini-2.5-flash-image").strip()
+    api_key = (settings.gemini_api_key or "").strip()
+    debug: dict[str, object] = {
+        "attempted": bool(settings.image_staging_gemini_enabled and api_key),
+        "status_code": None,
+        "reason": None,
+        "error": None,
+        "model": model,
+    }
+    if not settings.image_staging_gemini_enabled:
+        return raw, content_type, {**debug, "reason": "disabled"}
+    if not api_key:
+        return raw, content_type, {**debug, "reason": "api_key_missing"}
+
+    prompt = (
+        "Replace only the background of this product photo with a seamless solid pure white (#FFFFFF) ecommerce studio background. "
+        "Preserve the photographed product exactly, including its shape, proportions, position, crop, colors, pattern, material, "
+        "texture, stitching, hardware, straps, labels, logos, wear, and imperfections. Do not redesign, retouch, repair, recolor, "
+        "resize, reposition, crop, or add or remove any part of the product. Preserve a subtle natural contact shadow only when it "
+        "already exists. Do not add props, text, people, mannequins, reflections, or decorative elements. Return one image only."
+    )
+    endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+    try:
+        with httpx.Client(timeout=settings.image_staging_gemini_timeout_s) as client:
+            response = client.post(
+                endpoint,
+                params={"key": api_key},
+                json={
+                    "contents": [{
+                        "role": "user",
+                        "parts": [
+                            {"inline_data": {"mime_type": content_type or "image/jpeg", "data": base64.b64encode(raw).decode("ascii")}},
+                            {"text": prompt},
+                        ],
+                    }],
+                    "generationConfig": {"responseModalities": ["IMAGE"]},
+                },
+            )
+        debug["status_code"] = response.status_code
+        response.raise_for_status()
+        payload = response.json()
+        output_parts = (((payload.get("candidates") or [{}])[0].get("content") or {}).get("parts") or [])
+        image_part = next(
+            (part for part in reversed(output_parts) if isinstance(part, dict) and isinstance(part.get("inlineData") or part.get("inline_data"), dict)),
+            None,
+        )
+        inline_data = (image_part or {}).get("inlineData") or (image_part or {}).get("inline_data") or {}
+        encoded = inline_data.get("data")
+        if not isinstance(encoded, str) or not encoded:
+            return raw, content_type, {**debug, "reason": "no_generated_image"}
+        generated_raw = base64.b64decode(encoded)
+        generated_content_type = str(inline_data.get("mimeType") or inline_data.get("mime_type") or "image/png")
+        with Image.open(BytesIO(generated_raw)) as generated_image:
+            generated_image.verify()
+        return generated_raw, generated_content_type, {
+            **debug,
+            "reason": "success",
+            "prompt": prompt,
+            "synthetic": True,
+        }
+    except Exception as exc:
+        return raw, content_type, {
+            **debug,
+            "reason": "exception",
+            "error": str(exc)[:500],
+        }
+
+
 def _apply_exif_orientation(raw: bytes, content_type: str) -> tuple[bytes, str, bool]:
     try:
         with Image.open(BytesIO(raw)) as src:
@@ -1439,86 +1515,30 @@ def _stage_item_image(raw: bytes, content_type: str, settings: Settings) -> tupl
     except Exception:
         return raw, content_type, {"applied": False, "reason": "open_failed", "exif_orientation_applied": orientation_applied}
 
-    photoroom_raw, photoroom_content_type, photoroom_debug = _remove_background_with_photoroom(oriented_raw, oriented_content_type, settings)
-    if photoroom_debug.get("reason") == "success":
-        return photoroom_raw, photoroom_content_type, {
+    gemini_raw, gemini_content_type, gemini_debug = _replace_background_with_gemini(oriented_raw, oriented_content_type, settings)
+    if gemini_debug.get("reason") == "success":
+        return gemini_raw, gemini_content_type, {
             "applied": True,
-            "provider": "photoroom_remove_background",
+            "provider": "gemini_background_edit",
+            "synthetic": True,
             "synthetic_shadow": False,
             "exif_orientation_applied": orientation_applied,
-            "photoroom": photoroom_debug,
+            "gemini_edit": gemini_debug,
         }
 
-    # Try Gemini image-edit next (white background), fallback to local rembg pipeline.
-    gemini_stage_debug: dict[str, object] = {
-        "attempted": bool(settings.image_staging_gemini_enabled and settings.gemini_api_key),
-        "status_code": None,
-        "reason": None,
-        "error": None,
-        "model": settings.image_staging_imagen_model,
-    }
-    if settings.image_staging_gemini_enabled and settings.gemini_api_key:
-        try:
-            from google import genai  # type: ignore
-            from google.genai import types  # type: ignore
-
-            model = settings.image_staging_imagen_model.strip() or "imagen-3.0-capability-001"
-            if settings.image_staging_vertexai_enabled:
-                if not settings.gcp_project_id:
-                    raise RuntimeError("gcp_project_id_missing_for_vertexai")
-                client = genai.Client(
-                    vertexai=True,
-                    project=settings.gcp_project_id,
-                    location=settings.gcp_location or "us-central1",
-                )
-            else:
-                client = genai.Client(api_key=settings.gemini_api_key)
-            base_img = Image.open(BytesIO(oriented_raw)).convert("RGB")
-            raw_ref = types.RawReferenceImage(
-                reference_id=1,
-                reference_image=base_img,
-            )
-            mask_ref = types.MaskReferenceImage(
-                reference_id=2,
-                reference_image=None,
-                config=types.MaskReferenceConfig(mask_mode="MASK_MODE_BACKGROUND"),
-            )
-            result = client.models.generate_images(
-                model=model,
-                prompt=(
-                    "Place the product on a clean, solid, pure white background (#FFFFFF). "
-                    "Preserve the product pixels and details exactly. Do not add generated shadows, reflections, relighting, or styling."
-                ),
-                config=types.GenerateImagesConfig(
-                    number_of_images=1,
-                    output_mime_type="image/jpeg",
-                    reference_images=[raw_ref, mask_ref],
-                    edit_config=types.EditImageConfig(edit_mode="EDIT_MODE_BGSWAP"),
-                ),
-            )
-            generated = getattr(result, "generated_images", None)
-            if isinstance(generated, list) and generated:
-                first = generated[0]
-                img_obj = getattr(first, "image", None)
-                if img_obj is not None:
-                    out = BytesIO()
-                    img_obj.save(out, format="JPEG", quality=92, optimize=True)
-                    return out.getvalue(), "image/jpeg", {
-                        "applied": True,
-                        "provider": "imagen_background_edit",
-                        "used_rembg": False,
-                        "rembg_effective": False,
-                        "forced_padding": False,
-                        "synthetic_shadow": False,
-                        "exif_orientation_applied": orientation_applied,
-                        "photoroom": photoroom_debug,
-                        "gemini_edit": {**gemini_stage_debug, "reason": "success"},
-                    }
-            gemini_stage_debug["reason"] = "no_generated_images"
-            gemini_stage_debug["status_code"] = 200
-        except Exception as exc:
-            gemini_stage_debug["reason"] = "exception"
-            gemini_stage_debug["error"] = str(exc)[:500]
+    photoroom_debug: dict[str, object] = {"attempted": False, "reason": "fallback_disabled"}
+    if settings.image_staging_photoroom_fallback_enabled:
+        photoroom_raw, photoroom_content_type, photoroom_debug = _remove_background_with_photoroom(oriented_raw, oriented_content_type, settings)
+        if photoroom_debug.get("reason") == "success":
+            return photoroom_raw, photoroom_content_type, {
+                "applied": True,
+                "provider": "photoroom_remove_background",
+                "synthetic": False,
+                "synthetic_shadow": False,
+                "exif_orientation_applied": orientation_applied,
+                "gemini_edit": gemini_debug,
+                "photoroom": photoroom_debug,
+            }
 
     if not settings.condition_rembg_enabled:
         return oriented_raw, oriented_content_type, {
@@ -1528,7 +1548,7 @@ def _stage_item_image(raw: bytes, content_type: str, settings: Settings) -> tupl
             "synthetic_shadow": False,
             "exif_orientation_applied": orientation_applied,
             "photoroom": photoroom_debug,
-            "gemini_edit": gemini_stage_debug,
+            "gemini_edit": gemini_debug,
         }
 
     fg = src_rgba
@@ -1604,7 +1624,7 @@ def _stage_item_image(raw: bytes, content_type: str, settings: Settings) -> tupl
         "synthetic_shadow": False,
         "exif_orientation_applied": orientation_applied,
         "photoroom": photoroom_debug,
-        "gemini_edit": gemini_stage_debug,
+        "gemini_edit": gemini_debug,
     }
 
 
@@ -5224,12 +5244,47 @@ def list_recent_listings(
     records = records[:safe_limit]
     records = [_normalize_listing_media(record) for record in records]
 
+    if include_matches and mine:
+        viewer_size_prefs = _profile_size_preferences(db.get_user_profile_quiz(principal.subject))
+        sent_offer_pairs = _sent_offer_match_pairs(db, principal.subject)
+        marketplace = db.list_recent_listings(
+            limit=5000,
+            include_analysis=False,
+            include_media=False,
+            active_only=True,
+        )
+        for candidate in records:
+            if str(candidate.get("status") or "").lower() != "active":
+                candidate["match_count"] = 0
+                continue
+            candidate_id = str(candidate.get("listing_id") or "")
+            candidate_value = float(candidate.get("estimated_value") or 0)
+            match_count = 0
+            if candidate_value > 0:
+                for target in marketplace:
+                    target_id = str(target.get("listing_id") or "")
+                    if not target_id or target_id == candidate_id:
+                        continue
+                    if str(target.get("owner_subject") or "") == principal.subject:
+                        continue
+                    if (target_id, candidate_id) in sent_offer_pairs:
+                        continue
+                    if not _listing_matches_viewer_size_preferences(target, viewer_size_prefs):
+                        continue
+                    target_value = float(target.get("estimated_value") or 0)
+                    if target_value <= 0:
+                        continue
+                    tolerance, _ = _trade_match_tolerance(target_value)
+                    if abs(candidate_value - target_value) <= tolerance:
+                        match_count += 1
+            candidate["match_count"] = match_count
+
     if include_matches and not mine:
         viewer_size_prefs = _profile_size_preferences(db.get_user_profile_quiz(principal.subject))
         sent_offer_pairs = _sent_offer_match_pairs(db, principal.subject)
         my_active = [
             _normalize_listing_media(x)
-            for x in db.list_owner_listings(principal.subject, limit=200)
+            for x in db.list_owner_listings(principal.subject, limit=5000)
             if str(x.get("status", "")).lower() == "active"
         ]
         for record in records:
@@ -5285,6 +5340,72 @@ def list_recent_listings(
         "has_more": has_more,
         "items": records,
         "actor": {"auth_type": principal.auth_type, "subject": principal.subject},
+    }
+
+
+@app.get("/v1/listings/{listing_id}/marketplace-matches")
+def list_closet_listing_marketplace_matches(
+    listing_id: str,
+    limit: int = 50,
+    offset: int = 0,
+    principal: AuthPrincipal = Depends(get_request_principal),
+    db: Database = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+):
+    candidate = db.get_listing_by_id(listing_id)
+    if not candidate or str(candidate.get("owner_subject") or "") != principal.subject:
+        raise HTTPException(status_code=404, detail="Listing not found")
+
+    safe_limit = max(1, min(limit, 100))
+    safe_offset = max(0, offset)
+    viewer_size_prefs = _profile_size_preferences(db.get_user_profile_quiz(principal.subject))
+    sent_offer_pairs = _sent_offer_match_pairs(db, principal.subject)
+    candidate_value = float(candidate.get("estimated_value") or 0)
+    matches: list[dict] = []
+    if str(candidate.get("status") or "").lower() == "active" and candidate_value > 0:
+        marketplace = db.list_recent_listings(
+            limit=5000,
+            include_analysis=False,
+            include_media=True,
+            active_only=True,
+        )
+        for target in marketplace:
+            target_id = str(target.get("listing_id") or "")
+            if not target_id or target_id == listing_id:
+                continue
+            if str(target.get("owner_subject") or "") == principal.subject:
+                continue
+            if (target_id, listing_id) in sent_offer_pairs:
+                continue
+            if not _listing_matches_viewer_size_preferences(target, viewer_size_prefs):
+                continue
+            target_value = float(target.get("estimated_value") or 0)
+            if target_value <= 0:
+                continue
+            tolerance, _ = _trade_match_tolerance(target_value)
+            if abs(candidate_value - target_value) > tolerance:
+                continue
+            hydrated = _hydrate_listing_owner_name(db, target)
+            image = hydrated.get("image")
+            if isinstance(image, str) and image.startswith("s3://"):
+                hydrated["image"] = _presign_s3_uri(image, settings)
+            hydrated["images"] = [
+                _presign_s3_uri(value, settings) if isinstance(value, str) and value.startswith("s3://") else value
+                for value in (hydrated.get("images") or [])
+            ]
+            matches.append(hydrated)
+
+    total = len(matches)
+    page = matches[safe_offset:safe_offset + safe_limit]
+    next_offset = safe_offset + len(page)
+    has_more = next_offset < total
+    return {
+        "count": total,
+        "limit": safe_limit,
+        "offset": safe_offset,
+        "next_offset": next_offset if has_more else None,
+        "has_more": has_more,
+        "items": page,
     }
 
 
@@ -6198,6 +6319,26 @@ def action_offer(
                 type="trade-offer-accepted",
                 title="Trade accepted",
                 body=f"{actor_name} accepted your offer for {title}.",
+                entity_id=str(updated.get("offer_id") or offer_id),
+                action_tab="inbox",
+            )
+    if str(updated.get("status") or "").lower() == "declined" and str(offer.get("status") or "").lower() != "declined":
+        from_subject = str(updated.get("from_subject") or "").strip()
+        to_subject = str(updated.get("to_subject") or "").strip()
+        recipient_subject = to_subject if principal.subject == from_subject else from_subject
+        if recipient_subject and recipient_subject != principal.subject:
+            target = db.get_listing_by_id(str(updated.get("target_listing_id") or "")) or {}
+            actor_name = _profile_subject_first_name(db, principal.subject) or "The other member"
+            title = str(target.get("title") or "the requested item").strip() or "the requested item"
+            _create_user_notification_and_push(
+                db=db,
+                settings=settings,
+                notification_id=str(uuid.uuid4()),
+                owner_subject=recipient_subject,
+                actor_subject=principal.subject,
+                type="trade-offer-declined",
+                title="Trade offer declined",
+                body=f"{actor_name} declined the trade for {title}.",
                 entity_id=str(updated.get("offer_id") or offer_id),
                 action_tab="inbox",
             )
@@ -9343,6 +9484,7 @@ async def _run_listing_image_staging_job(
         )
         staged_urls: list[str] = []
         listed_images: list[dict[str, object]] = []
+        presentation_assets: list[dict[str, object]] = []
         for idx, (entry, staged) in enumerate(zip(stage_inputs, staged_entries)):
             staged_raw, staged_content_type, stage_debug = staged
             if not isinstance(stage_debug, dict) or not stage_debug.get("applied"):
@@ -9350,7 +9492,7 @@ async def _run_listing_image_staging_job(
             image_uuid = str(uuid.uuid4())
             ext = ".jpg" if staged_content_type == "image/jpeg" else ".png" if staged_content_type == "image/png" else ".webp" if staged_content_type == "image/webp" else ".jpg"
             filename = f"{image_uuid}{ext}"
-            role_hint = "full_item" if idx == 0 else "close_up"
+            role_hint = "ai_white_background"
             storage_uri = job_storage.save_upload(
                 item_id=source_item_id,
                 filename=filename,
@@ -9380,13 +9522,22 @@ async def _run_listing_image_staging_job(
                 "d_img": display_url,
                 "is_hero": idx == 0,
             })
+            presentation_assets.append({
+                "kind": "white_background",
+                "image_url": display_url,
+                "source_image_url": source_url if isinstance(source_url, str) and source_url.strip() else None,
+                "synthetic": bool(stage_debug.get("synthetic")),
+                "provider": stage_debug.get("provider"),
+                "model": (stage_debug.get("gemini_edit") or {}).get("model") if isinstance(stage_debug.get("gemini_edit"), dict) else None,
+            })
 
         if not staged_urls:
             log_json("listing_image_staging_no_processed_images", listing_id=listing_id, actor=owner_subject)
             return
 
         current = next((r for r in job_db.list_owner_listings(owner_subject, limit=500) if r["listing_id"] == listing_id), current)
-        current_analysis = current.get("analysis") if isinstance(current.get("analysis"), dict) else {}
+        current_analysis = dict(current.get("analysis")) if isinstance(current.get("analysis"), dict) else {}
+        current_analysis["presentation_assets"] = presentation_assets
         for asset in current_analysis.get("generated_assets") or []:
             if not isinstance(asset, dict) or not asset.get("synthetic"):
                 continue
@@ -9412,7 +9563,7 @@ async def _run_listing_image_staging_job(
             wants=str(current.get("wants") or "Open to similar-value offers"),
             tags=current.get("tags") if isinstance(current.get("tags"), list) else [],
             source_item_id=source_item_id,
-            analysis=current.get("analysis"),
+            analysis=current_analysis,
             status=str(current.get("status") or "Review"),
         )
         log_json("listing_image_staging_completed", listing_id=listing_id, actor=owner_subject, image_count=len(staged_urls))

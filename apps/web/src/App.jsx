@@ -1267,6 +1267,18 @@ async function fetchMarketplaceListings({ apiBaseUrl, apiKey, bearerToken, limit
   }
 }
 
+async function fetchClosetListingMatches({ apiBaseUrl, apiKey, bearerToken, listingId, limit = 100, offset = 0 }) {
+  const { client, authContext } = createWebApiClient({ apiBaseUrl, apiKey })
+  const items = []
+  let nextOffset = offset
+  do {
+    const page = await client.listClosetListingMatches(listingId, limit, authContext(bearerToken), { offset: nextOffset })
+    items.push(...(page?.items || []))
+    nextOffset = page?.has_more && Number.isFinite(Number(page?.next_offset)) ? Number(page.next_offset) : null
+  } while (nextOffset !== null)
+  return { count: items.length, items }
+}
+
 async function fetchOfferCandidates({ apiBaseUrl, apiKey, bearerToken, targetListingId, limit = 100 }) {
   const { client, authContext } = createWebApiClient({ apiBaseUrl, apiKey })
   const payload = await client.listOfferCandidates(targetListingId, limit, authContext(bearerToken))
@@ -2750,6 +2762,8 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   const [activeTradeRequestListingIds, setActiveTradeRequestListingIds] = useState([])
   const [suggestedTradeListingId, setSuggestedTradeListingId] = useState(null)
   const [marketMatchesTargetId, setMarketMatchesTargetId] = useState(null)
+  const [closetMarketplaceMatches, setClosetMarketplaceMatches] = useState([])
+  const [closetMarketplaceMatchesLoading, setClosetMarketplaceMatchesLoading] = useState(false)
   const [selectedMarketImageIndex, setSelectedMarketImageIndex] = useState(0)
   const [selectedCreateImageIndex, setSelectedCreateImageIndex] = useState(0)
   const [createImageSlots, setCreateImageSlots] = useState(() => Array(6).fill(null))
@@ -4730,9 +4744,34 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     if (!marketMatchesTarget) return []
     return getCrossOwnerMatches(marketMatchesTarget)
   }, [marketMatchesTarget])
-  const marketplaceMatchesForClosetTarget = useMemo(() => {
-    return getMarketplaceMatchesForClosetListing(marketMatchesTarget)
-  }, [marketMatchesTarget, marketListings])
+  const marketplaceMatchesForClosetTarget = closetMarketplaceMatches
+  useEffect(() => {
+    let cancelled = false
+    const listingId = String(marketMatchesTarget?.id || '').trim()
+    if (!listingId || activeTab !== 'closet_matches') {
+      setClosetMarketplaceMatches([])
+      return () => { cancelled = true }
+    }
+    setClosetMarketplaceMatchesLoading(true)
+    ;(async () => {
+      try {
+        const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
+        const payload = await fetchClosetListingMatches({
+          apiBaseUrl,
+          apiKey: clerkEnabled ? '' : apiKey.trim(),
+          bearerToken,
+          listingId,
+          limit: 100,
+        })
+        if (!cancelled) setClosetMarketplaceMatches((payload?.items || []).map(fromRemoteListing).filter(Boolean))
+      } catch {
+        if (!cancelled) setClosetMarketplaceMatches([])
+      } finally {
+        if (!cancelled) setClosetMarketplaceMatchesLoading(false)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [activeTab, apiBaseUrl, apiKey, clerkEnabled, getBearerToken, marketMatchesTarget?.id])
   useEffect(() => {
     if (!marketMatchesTarget) return
     function onKeyDown(e) {
@@ -7834,7 +7873,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                   {savedListingNotice && <p className="ok-text">{savedListingNotice}</p>}
                   <div className="listing-grid closet-listing-grid">{filteredClosetListings.map((item) => {
                     const isPublished = String(item.status || '').toLowerCase() === 'active'
-                    return <ListingCard key={item.id} item={item} own onEditDraft={openEditListingModal} onReviewListing={openReviewListing} onPublishListing={publishListingToMarketplace} onRemoveListing={removeListingFromCloset} onReportIssue={openListingSupport} onOpenDetails={isPublished ? openClosetListingMatches : null} matchCount={isPublished ? getMarketplaceMatchesForClosetListing(item).length : null} editorialStyle />
+                    return <ListingCard key={item.id} item={item} own onEditDraft={openEditListingModal} onReviewListing={openReviewListing} onPublishListing={publishListingToMarketplace} onRemoveListing={removeListingFromCloset} onReportIssue={openListingSupport} onOpenDetails={isPublished ? openClosetListingMatches : null} matchCount={isPublished ? Number(item.matchCount || 0) : null} editorialStyle />
                   })}</div>
                   {closetFilter === 'all' && myListingsHasMore ? (
                     <div ref={closetLoadMoreRef} className="load-more-row lazy-load-sentinel" role="status" aria-label="Loading more closet listings">
@@ -7875,6 +7914,8 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                   <h3>Listing unavailable</h3>
                   <p>This listing could not be found in your closet.</p>
                 </div>
+              ) : closetMarketplaceMatchesLoading ? (
+                <div className="empty-state"><p>Loading marketplace matches...</p></div>
               ) : marketplaceMatchesForClosetTarget.length === 0 ? (
                 <div className="empty-state">
                   <h3>No marketplace matches yet</h3>

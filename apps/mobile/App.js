@@ -1198,6 +1198,8 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
   const [isListingDetailOpen, setIsListingDetailOpen] = useState(false);
   const [selectedListingSource, setSelectedListingSource] = useState(null);
   const [selectedListingIndex, setSelectedListingIndex] = useState(-1);
+  const [closetMarketplaceMatches, setClosetMarketplaceMatches] = useState([]);
+  const [closetMarketplaceMatchesLoading, setClosetMarketplaceMatchesLoading] = useState(false);
   const [selectedGalleryImage, setSelectedGalleryImage] = useState(null);
   const [selectedGalleryImages, setSelectedGalleryImages] = useState([]);
   const [selectedGalleryIndex, setSelectedGalleryIndex] = useState(0);
@@ -1613,6 +1615,36 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
 	      mainScrollRef.current?.scrollTo?.({ y: 0, animated: false });
 	    });
 	  }
+
+  useEffect(() => {
+    let cancelled = false;
+    const listingId = listingIdOf(selectedListing);
+    if (!isListingDetailOpen || selectedListingSource !== 'closet' || !listingId) {
+      setClosetMarketplaceMatches([]);
+      return () => { cancelled = true; };
+    }
+    setClosetMarketplaceMatchesLoading(true);
+    (async () => {
+      try {
+        const auth = await authContext();
+        const items = [];
+        let offset = 0;
+        let hasMore = true;
+        while (hasMore) {
+          const payload = await apiClient.listClosetListingMatches(listingId, 100, auth, { offset });
+          items.push(...(Array.isArray(payload?.items) ? payload.items : []));
+          hasMore = Boolean(payload?.has_more) && Number.isFinite(Number(payload?.next_offset));
+          offset = hasMore ? Number(payload.next_offset) : 0;
+        }
+        if (!cancelled) setClosetMarketplaceMatches(items);
+      } catch {
+        if (!cancelled) setClosetMarketplaceMatches([]);
+      } finally {
+        if (!cancelled) setClosetMarketplaceMatchesLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [isListingDetailOpen, selectedListingSource, selectedListing?.listing_id]);
 
   function closeListingDetails() {
     setIsListingDetailOpen(false);
@@ -4050,7 +4082,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     const selectedListingStatus = String(selectedListing?.status || '').trim().toLowerCase();
     const canReviewClosetListing = selectedListingSource === 'closet' && !['active', 'analyzing', 'analysisfailed'].includes(selectedListingStatus);
     if (selectedListingSource === 'closet' && selectedListingStatus === 'active') {
-      const closetMatches = getMarketplaceMatchesForClosetListing(selectedListing, marketplaceListings, marketplaceActorSubject);
+      const closetMatches = closetMarketplaceMatches;
       return (
         <View style={asScreen ? styles.listingDetailScreen : styles.offerDetailShell}>
           <View style={styles.offerDetailHead}>
@@ -4066,7 +4098,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
             <TouchableOpacity style={styles.secondaryBtnCompact} onPress={() => openListingSupport(selectedListing)}>
               <Text style={styles.secondaryBtnText}>Report an Issue</Text>
             </TouchableOpacity>
-            {closetMatches.length > 0 ? closetMatches.map((item) => {
+            {closetMarketplaceMatchesLoading ? <ActivityIndicator color={theme.brand} /> : closetMatches.length > 0 ? closetMatches.map((item) => {
               const isOwnListing = isOwnMarketplaceListing(item);
               return (
                 <ListingCard
@@ -4461,9 +4493,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
 	                  <>
 	                  {myListings.map((item) => {
 	                    const isPublished = String(item?.status || '').trim().toLowerCase() === 'active';
-                    const matchCount = isPublished
-                      ? getMarketplaceMatchesForClosetListing(item, marketplaceListings, marketplaceActorSubject).length
-                      : null;
+                    const matchCount = isPublished ? Number(item?.match_count || 0) : null;
                     return (
                       <ListingCard
                         key={item.listing_id}

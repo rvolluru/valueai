@@ -94,6 +94,7 @@ class Settings(BaseSettings):
     condition_rembg_enabled: bool = False
     image_staging_enabled: bool = True
     image_staging_photoroom_enabled: bool = True
+    image_staging_photoroom_fallback_enabled: bool = False
     photoroom_api_key: str | None = None
     photoroom_segment_url: str = "https://sdk.photoroom.com/v1/segment"
     photoroom_account_url: str = "https://image-api.photoroom.com/v2/account"
@@ -103,7 +104,7 @@ class Settings(BaseSettings):
     photoroom_output_size: str = "full"
     health_photoroom_live_probe_enabled: bool = True
     image_staging_gemini_enabled: bool = True
-    image_staging_gemini_model: str = "gemini-2.5-flash-image-preview"
+    image_staging_gemini_model: str = "gemini-2.5-flash-image"
     image_staging_gemini_timeout_s: float = 30.0
     image_staging_imagen_model: str = "imagen-3.0-capability-001"
     image_staging_vertexai_enabled: bool = True

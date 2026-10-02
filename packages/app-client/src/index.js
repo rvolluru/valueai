@@ -366,7 +366,11 @@ export function createApiClient(options) {
       post(`/v1/listings/${encodeURIComponent(listingId)}/support-requests`, payload, auth),
     listMyListings: (limit = 100, auth = {}, options = {}) => {
       const offset = Math.max(0, Number(options.offset || 0));
-      return get(`/v1/listings?mine=true&limit=${limit}&offset=${offset}`, auth);
+      return get(`/v1/listings?mine=true&limit=${limit}&offset=${offset}&include_matches=true`, auth);
+    },
+    listClosetListingMatches: (listingId, limit = 50, auth = {}, options = {}) => {
+      const offset = Math.max(0, Number(options.offset || 0));
+      return get(`/v1/listings/${encodeURIComponent(listingId)}/marketplace-matches?limit=${limit}&offset=${offset}`, auth);
     },
     listMarketplace: (limit = 50, auth = {}, options = {}) => {
       const offset = Math.max(0, Number(options.offset || 0));

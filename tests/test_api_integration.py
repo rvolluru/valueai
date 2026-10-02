@@ -1,4 +1,5 @@
 import io
+import base64
 import hashlib
 import hmac
 import json
@@ -199,6 +200,68 @@ def test_requested_trade_moves_to_exact_proposal_then_acceptance():
     assert accepted["status"] == "accepted"
     assert accepted["accepted_by_from"] is True
     assert accepted["accepted_by_to"] is True
+
+
+def test_declined_trade_notifies_the_other_participant_once():
+    client = _build_client()
+    from app import deps
+    from app.auth import AuthPrincipal, get_request_principal
+    from app.main import app
+
+    db = deps.get_db()
+    db.insert_listing(
+        listing_id="decline-target",
+        owner_subject="seller",
+        owner_name="Seller",
+        title="Black leather tote",
+        mode="trade",
+        category="handbag",
+        brand="Example",
+        condition="LikeNew",
+        size="Medium",
+        estimated_value=500,
+        city="New York",
+        image=None,
+        images=[],
+        description="",
+        wants="",
+        tags=[],
+        source_item_id=None,
+        analysis=None,
+        status="Active",
+    )
+    db.create_trade_offer(
+        offer_id="declined-offer",
+        target_listing_id="decline-target",
+        offered_listing_id="requester-item",
+        offered_listing_ids=["requester-item"],
+        from_subject="requester",
+        to_subject="seller",
+        message="",
+        status="pending",
+    )
+    app.dependency_overrides[get_request_principal] = lambda: AuthPrincipal(
+        auth_type="clerk",
+        subject="seller",
+        claims={"sub": "seller", "first_name": "Sam"},
+    )
+    try:
+        response = client.post("/v1/offers/declined-offer/action", json={"status": "declined"})
+        assert response.status_code == 200, response.text
+        assert response.json()["status"] == "declined"
+        notifications = db.list_user_notifications("requester")
+        assert len(notifications) == 1
+        assert notifications[0]["type"] == "trade-offer-declined"
+        assert notifications[0]["title"] == "Trade offer declined"
+        assert notifications[0]["body"] == "Member declined the trade for Black leather tote."
+        assert notifications[0]["entity_id"] == "declined-offer"
+        assert notifications[0]["action_tab"] == "inbox"
+        assert db.list_user_notifications("seller") == []
+        repeated = client.post("/v1/offers/declined-offer/action", json={"status": "declined"})
+        assert repeated.status_code == 200, repeated.text
+        assert len(db.list_user_notifications("requester")) == 1
+    finally:
+        app.dependency_overrides.clear()
 
 
 def test_first_accepted_trade_retires_listings_and_competing_offers():
@@ -2459,6 +2522,7 @@ def test_photoroom_staging_uses_segment_api(monkeypatch) -> None:
         Settings(
             image_staging_enabled=True,
             image_staging_photoroom_enabled=True,
+            image_staging_photoroom_fallback_enabled=True,
             image_staging_gemini_enabled=False,
             condition_rembg_enabled=False,
             photoroom_api_key="photoroom-test-key",
@@ -2477,6 +2541,73 @@ def test_photoroom_staging_uses_segment_api(monkeypatch) -> None:
     assert captured["data"]["crop"] == "false"
     assert captured["data"]["despill"] == "false"
     assert "image_file" in captured["files"]
+
+
+def test_gemini_staging_creates_separate_white_background_derivative(monkeypatch) -> None:
+    from app.main import _stage_item_image
+    from app.settings import Settings
+
+    captured: dict[str, object] = {}
+    generated = io.BytesIO()
+    Image.new("RGB", (24, 24), color="white").save(generated, format="PNG")
+    encoded = base64.b64encode(generated.getvalue()).decode("ascii")
+
+    class StubResponse:
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "candidates": [{
+                    "content": {
+                        "parts": [{"inlineData": {"mimeType": "image/png", "data": encoded}}],
+                    },
+                }],
+            }
+
+    class StubClient:
+        def __init__(self, timeout):
+            captured["timeout"] = timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def post(self, url, params, json):
+            captured["url"] = url
+            captured["params"] = params
+            captured["json"] = json
+            return StubResponse()
+
+    monkeypatch.setattr("app.main.httpx.Client", StubClient)
+    original = _make_image("ORIGINAL PRODUCT")
+    out, content_type, debug = _stage_item_image(
+        original,
+        "image/jpeg",
+        Settings(
+            image_staging_enabled=True,
+            image_staging_gemini_enabled=True,
+            image_staging_photoroom_fallback_enabled=False,
+            condition_rembg_enabled=False,
+            gemini_api_key="gemini-test-key",
+            image_staging_gemini_model="gemini-test-image-model",
+        ),
+    )
+
+    assert out != original
+    assert content_type == "image/png"
+    assert debug["provider"] == "gemini_background_edit"
+    assert debug["synthetic"] is True
+    assert captured["url"] == "https://generativelanguage.googleapis.com/v1beta/models/gemini-test-image-model:generateContent"
+    assert captured["params"] == {"key": "gemini-test-key"}
+    request_parts = captured["json"]["contents"][0]["parts"]
+    assert base64.b64decode(request_parts[0]["inline_data"]["data"]) == original
+    assert "Replace only the background" in request_parts[1]["text"]
+    assert "Preserve the photographed product exactly" in request_parts[1]["text"]
 
 
 def test_gpt_profile_uses_retail_reference_as_low_confidence_resale_before_crawlers() -> None:
@@ -3158,6 +3289,72 @@ def test_marketplace_matches_allow_same_display_name_with_different_owner_subjec
     assert list_res.status_code == 200, list_res.text
     other = next(item for item in list_res.json()["items"] if item["listing_id"] == "other-active-bag-same-name")
     assert [match["listing_id"] for match in other["matches"]] == ["viewer-active-bag"]
+
+
+def test_closet_match_count_and_paginated_marketplace_matches_are_authoritative() -> None:
+    client = _build_client()
+    from app import deps
+
+    db = deps.get_db()
+
+    def insert_listing(listing_id: str, owner_subject: str, value: float) -> None:
+        db.insert_listing(
+            listing_id=listing_id,
+            owner_subject=owner_subject,
+            owner_name="Viewer" if owner_subject == "api-key" else "Seller",
+            title=listing_id,
+            mode="trade",
+            category="handbag",
+            brand="Jouft",
+            condition="LikeNew",
+            size="Medium",
+            estimated_value=value,
+            city="New York, NY",
+            image=f"https://example.test/{listing_id}.jpg",
+            images=[f"https://example.test/{listing_id}.jpg"],
+            description="Test listing.",
+            wants="Open to similar-value offers",
+            tags=[],
+            source_item_id=f"item-{listing_id}",
+            analysis={"item_id": f"item-{listing_id}"},
+            status="Active",
+        )
+
+    insert_listing("viewer-closet-item", "api-key", 1000.0)
+    insert_listing("marketplace-one", "seller-one", 950.0)
+    insert_listing("marketplace-two", "seller-two", 1050.0)
+    insert_listing("marketplace-outside-range", "seller-three", 2000.0)
+
+    closet_res = client.get(
+        "/v1/listings?mine=true&limit=1&include_matches=true",
+        headers={"x-api-key": "test-key"},
+    )
+    assert closet_res.status_code == 200, closet_res.text
+    closet_item = closet_res.json()["items"][0]
+    assert closet_item["listing_id"] == "viewer-closet-item"
+    assert closet_item["match_count"] == 2
+
+    first_page = client.get(
+        "/v1/listings/viewer-closet-item/marketplace-matches?limit=1&offset=0",
+        headers={"x-api-key": "test-key"},
+    )
+    assert first_page.status_code == 200, first_page.text
+    assert first_page.json()["count"] == 2
+    assert first_page.json()["has_more"] is True
+    assert first_page.json()["next_offset"] == 1
+
+    second_page = client.get(
+        "/v1/listings/viewer-closet-item/marketplace-matches?limit=1&offset=1",
+        headers={"x-api-key": "test-key"},
+    )
+    assert second_page.status_code == 200, second_page.text
+    assert second_page.json()["count"] == 2
+    assert second_page.json()["has_more"] is False
+    matched_ids = {
+        first_page.json()["items"][0]["listing_id"],
+        second_page.json()["items"][0]["listing_id"],
+    }
+    assert matched_ids == {"marketplace-one", "marketplace-two"}
 
 
 def test_trade_match_agent_generates_persisted_optional_matches() -> None:

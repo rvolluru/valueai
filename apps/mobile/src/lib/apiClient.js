@@ -275,7 +275,16 @@ export function createMobileApiClient({ apiBaseUrl }) {
       const offset = Math.max(0, Number(options.offset || 0));
       return requestJson({
         apiBaseUrl,
-        path: `/v1/listings?mine=true&limit=${limit}&offset=${offset}`,
+        path: `/v1/listings?mine=true&limit=${limit}&offset=${offset}&include_matches=true`,
+        method: 'GET',
+        auth,
+      });
+    },
+    listClosetListingMatches(listingId, limit = 50, auth = {}, options = {}) {
+      const offset = Math.max(0, Number(options.offset || 0));
+      return requestJson({
+        apiBaseUrl,
+        path: `/v1/listings/${encodeURIComponent(listingId)}/marketplace-matches?limit=${limit}&offset=${offset}`,
         method: 'GET',
         auth,
       });
