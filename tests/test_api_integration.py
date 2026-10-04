@@ -659,6 +659,9 @@ def test_mannequin_generation_prompt_is_limited_to_handbags_and_dresses() -> Non
     assert bag is not None
     assert bag[0] == "mannequin_handbag"
     assert "exact handbag" in bag[1]
+    assert "clearly contrasts with the handbag's dominant color" in bag[1]
+    assert "Never use clothing in the same color or a near-matching shade" in bag[1]
+    assert "do not place a black handbag on black or very dark clothing" in bag[1]
     assert "Do not redesign" in bag[1]
 
     dress = _mannequin_generation_prompt(category="clothes", title="Floral midi dress", description="Long sleeves")
@@ -1039,6 +1042,103 @@ def _stripe_signature(payload: dict, secret: str) -> str:
     timestamp = int(time.time())
     digest = hmac.new(secret.encode("utf-8"), f"{timestamp}.{body.decode('utf-8')}".encode("utf-8"), hashlib.sha256).hexdigest()
     return f"t={timestamp},v1={digest}"
+
+
+def test_setup_intent_recreates_stale_stripe_customer(monkeypatch):
+    client = _build_client()
+
+    from app import deps, settings
+
+    os.environ["STRIPE_SECRET_KEY"] = "sk_test_local"
+    os.environ["STRIPE_PUBLISHABLE_KEY"] = "pk_test_local"
+    settings.get_settings.cache_clear()
+    db = deps.get_db()
+    db.set_stripe_customer_id("api-key", "cus_stale")
+    calls = []
+
+    class StubResponse:
+        def __init__(self, status_code, payload, request_id):
+            self.status_code = status_code
+            self._payload = payload
+            self.headers = {"request-id": request_id}
+
+        def json(self):
+            return self._payload
+
+    class StubClient:
+        def __init__(self, timeout=None):
+            self.timeout = timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def post(self, url, data=None, auth=None):
+            calls.append({"url": url, "data": data, "auth": auth})
+            if url.endswith("/customers"):
+                return StubResponse(200, {"id": "cus_replacement"}, "req_customer")
+            if data["customer"] == "cus_stale":
+                return StubResponse(
+                    400,
+                    {"error": {"type": "invalid_request_error", "code": "resource_missing", "param": "customer"}},
+                    "req_stale",
+                )
+            return StubResponse(200, {"client_secret": "seti_secret"}, "req_setup")
+
+    monkeypatch.setattr("app.main.httpx.Client", StubClient)
+
+    response = client.post(
+        "/v1/me/payment-methods/stripe/setup-intent",
+        headers={"x-api-key": "test-key"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["client_secret"] == "seti_secret"
+    assert response.json()["customer_id"] == "cus_replacement"
+    assert db.get_stripe_customer_id("api-key") == "cus_replacement"
+    assert [call["url"].rsplit("/", 1)[-1] for call in calls] == ["setup_intents", "customers", "setup_intents"]
+
+
+def test_setup_intent_returns_safe_error_for_non_customer_stripe_failure(monkeypatch):
+    client = _build_client()
+
+    from app import deps, settings
+
+    os.environ["STRIPE_SECRET_KEY"] = "sk_test_local"
+    settings.get_settings.cache_clear()
+    deps.get_db().set_stripe_customer_id("api-key", "cus_valid")
+
+    class StubResponse:
+        status_code = 400
+        headers = {"request-id": "req_failure"}
+
+        def json(self):
+            return {"error": {"type": "invalid_request_error", "code": "parameter_invalid_integer", "param": "test"}}
+
+    class StubClient:
+        def __init__(self, timeout=None):
+            self.timeout = timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def post(self, url, data=None, auth=None):
+            return StubResponse()
+
+    monkeypatch.setattr("app.main.httpx.Client", StubClient)
+
+    response = client.post(
+        "/v1/me/payment-methods/stripe/setup-intent",
+        headers={"x-api-key": "test-key"},
+    )
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == "Stripe could not initialize the payment form. Please try again shortly."
 
 
 def test_activate_subscription_rejects_expired_card_before_calling_stripe():

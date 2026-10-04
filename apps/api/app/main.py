@@ -4228,26 +4228,74 @@ def create_stripe_setup_intent(
         else ""
     ) or None
     customer_id = db.get_stripe_customer_id(principal.subject)
+
+    def stripe_error_details(response: httpx.Response) -> dict[str, str | None]:
+        try:
+            payload = response.json()
+        except Exception:
+            payload = {}
+        error = payload.get("error") if isinstance(payload, dict) else None
+        error = error if isinstance(error, dict) else {}
+        return {
+            "type": str(error.get("type") or "").strip() or None,
+            "code": str(error.get("code") or "").strip() or None,
+            "param": str(error.get("param") or "").strip() or None,
+            "request_id": str(response.headers.get("request-id") or "").strip() or None,
+        }
+
+    def create_customer(client: httpx.Client) -> str:
+        response = client.post(
+            "https://api.stripe.com/v1/customers",
+            data={"metadata[owner_subject]": principal.subject, **({"email": email} if email else {})},
+            auth=(secret_key, ""),
+        )
+        if response.status_code >= 400:
+            details = stripe_error_details(response)
+            log_json("stripe_customer_creation_failed", actor=principal.subject, status_code=response.status_code, **details)
+            raise HTTPException(status_code=502, detail="Stripe customer creation failed")
+        created_customer_id = str(response.json().get("id") or "").strip()
+        if not created_customer_id:
+            raise HTTPException(status_code=502, detail="Stripe customer creation returned no customer ID")
+        db.set_stripe_customer_id(principal.subject, created_customer_id)
+        return created_customer_id
+
     try:
         with httpx.Client(timeout=10.0) as client:
             if not customer_id:
-                customer_resp = client.post(
-                    "https://api.stripe.com/v1/customers",
-                    data={"metadata[owner_subject]": principal.subject, **({"email": email} if email else {})},
-                    auth=(secret_key, ""),
-                )
-                if customer_resp.status_code >= 400:
-                    raise HTTPException(status_code=502, detail="Stripe customer creation failed")
-                customer_id = str(customer_resp.json().get("id") or "")
-                if customer_id:
-                    db.set_stripe_customer_id(principal.subject, customer_id)
+                customer_id = create_customer(client)
             si_resp = client.post(
                 "https://api.stripe.com/v1/setup_intents",
                 data={"customer": customer_id, "usage": "off_session", "automatic_payment_methods[enabled]": "true"},
                 auth=(secret_key, ""),
             )
             if si_resp.status_code >= 400:
-                raise HTTPException(status_code=502, detail="Stripe setup intent creation failed")
+                details = stripe_error_details(si_resp)
+                stale_customer = details["code"] == "resource_missing" and details["param"] == "customer"
+                if stale_customer:
+                    log_json(
+                        "stripe_setup_intent_stale_customer_recovery",
+                        actor=principal.subject,
+                        status_code=si_resp.status_code,
+                        **details,
+                    )
+                    customer_id = create_customer(client)
+                    si_resp = client.post(
+                        "https://api.stripe.com/v1/setup_intents",
+                        data={"customer": customer_id, "usage": "off_session", "automatic_payment_methods[enabled]": "true"},
+                        auth=(secret_key, ""),
+                    )
+                if si_resp.status_code >= 400:
+                    details = stripe_error_details(si_resp)
+                    log_json(
+                        "stripe_setup_intent_creation_failed",
+                        actor=principal.subject,
+                        status_code=si_resp.status_code,
+                        **details,
+                    )
+                    raise HTTPException(
+                        status_code=502,
+                        detail="Stripe could not initialize the payment form. Please try again shortly.",
+                    )
             client_secret = str(si_resp.json().get("client_secret") or "")
     except HTTPException:
         raise
@@ -9370,6 +9418,10 @@ def _mannequin_generation_prompt(*, category: str, title: str, description: str)
         return "mannequin_handbag", (
             "Place the exact handbag from the reference images on a neutral full-body female mannequin's shoulder. "
             "Preserve its exact shape, dimensions, material, color, hardware, straps, stitching, pattern, and visible logo. "
+            "Dress the mannequin in simple, solid-color clothing that clearly contrasts with the handbag's dominant color so the "
+            "bag remains visually distinct. Never use clothing in the same color or a near-matching shade as the handbag. For "
+            "example, do not place a black handbag on black or very dark clothing; use a light neutral such as white or light gray. "
+            "Likewise, use dark neutral clothing for a white or very light handbag. Do not use patterns that compete with the bag. "
             "Do not redesign, simplify, or add details to the bag. "
             f"{fidelity_rules}"
         )
