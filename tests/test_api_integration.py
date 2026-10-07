@@ -1674,6 +1674,7 @@ def test_google_places_address_suggest_parses_components(monkeypatch) -> None:
             assert headers["X-Goog-Api-Key"] == "google-key"
             assert headers["X-Ios-Bundle-Identifier"] == "com.jouft.app.dev"
             assert json["includedRegionCodes"] == ["us"]
+            assert "includedPrimaryTypes" not in json
             return FakeResponse({
                 "suggestions": [{
                     "placePrediction": {

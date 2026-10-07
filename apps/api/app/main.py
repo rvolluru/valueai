@@ -4602,7 +4602,6 @@ def _google_places_address_suggest(
     )
     payload = {
         "input": query,
-        "includedPrimaryTypes": ["street_address", "premise"],
         "includedRegionCodes": ["us"],
         "languageCode": "en-US",
     }
