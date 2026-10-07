@@ -95,6 +95,11 @@ jobs:
           if grep -qE '^[[:space:]]*aws_assume_role_arn[[:space:]]*=' "${TF_DIR}/terraform.tfvars"; then
             sed -i.bak -E 's#^[[:space:]]*aws_assume_role_arn[[:space:]]*=.*#aws_assume_role_arn               = null#' "${TF_DIR}/terraform.tfvars"
           fi
+          if grep -qE '^[[:space:]]*image_staging_photoroom_enabled[[:space:]]*=' "${TF_DIR}/terraform.tfvars"; then
+            sed -i.bak -E 's#^[[:space:]]*image_staging_photoroom_enabled[[:space:]]*=.*#image_staging_photoroom_enabled = false#' "${TF_DIR}/terraform.tfvars"
+          else
+            echo 'image_staging_photoroom_enabled = false' >> "${TF_DIR}/terraform.tfvars"
+          fi
           if [ -n "${STRIPE_SECRET_KEY:-}" ]; then
             if grep -qE '^[[:space:]]*stripe_secret_key[[:space:]]*=' "${TF_DIR}/terraform.tfvars"; then
               sed -i.bak -E "s#^[[:space:]]*stripe_secret_key[[:space:]]*=.*#stripe_secret_key                  = \"${STRIPE_SECRET_KEY}\"#" "${TF_DIR}/terraform.tfvars"
@@ -239,6 +244,7 @@ jobs:
                   (.image = $IMAGE
                   | upsert_env("OPENAI_API_KEY"; $OPENAI_API_KEY)
                   | upsert_env("PHOTOROOM_API_KEY"; $PHOTOROOM_API_KEY)
+                  | upsert_env("IMAGE_STAGING_PHOTOROOM_ENABLED"; "false")
                   | upsert_env("GPT_ITEM_PROFILE_PROVIDER_ORDER"; "hybrid,gemini,openai")
                   | upsert_env("GPT_ITEM_PROFILE_TIMEOUT_S"; "120")
                   | upsert_env("STRIPE_SECRET_KEY"; $STRIPE_SECRET_KEY)
@@ -273,6 +279,12 @@ jobs:
           fi
           aws ecs describe-task-definition --task-definition "${CURRENT_WORKER_TASK_DEF_ARN}" > /tmp/current-worker-td.json
           jq --arg IMAGE "${IMAGE_URI}" '
+            def upsert_env($n; $v):
+              if ((.secrets // []) | map(.name) | index($n)) != null then .
+              elif ((.environment // []) | map(.name) | index($n)) != null
+              then .environment = ((.environment // []) | map(if .name == $n then .value = $v else . end))
+              else .environment = ((.environment // []) + [{name: $n, value: $v}])
+              end;
             .taskDefinition
             | del(
                 .taskDefinitionArn,
@@ -283,7 +295,7 @@ jobs:
                 .registeredAt,
                 .registeredBy
               )
-            | .containerDefinitions |= map(.image = $IMAGE)
+            | .containerDefinitions |= map(.image = $IMAGE | upsert_env("IMAGE_STAGING_PHOTOROOM_ENABLED"; "false"))
           ' /tmp/current-worker-td.json > /tmp/new-worker-td.json
           NEW_WORKER_TASK_DEF_ARN=$(aws ecs register-task-definition \
             --cli-input-json file:///tmp/new-worker-td.json \
