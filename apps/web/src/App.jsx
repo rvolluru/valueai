@@ -6547,7 +6547,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                       <input value={primaryProfileAddress.address_line1 || ''} onChange={(e) => updatePrimaryShippingAddress({ address_line1: e.target.value })} />
                     </label>
                     <label>
-                      <span>Address Line 2</span>
+                      <span>Address Line 2 (Optional)</span>
                       <input value={primaryProfileAddress.address_line2 || ''} onChange={(e) => updatePrimaryShippingAddress({ address_line2: e.target.value })} />
                     </label>
                     <label>
@@ -7402,7 +7402,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                           </div>
                         )}
                         <label>
-                          <span>Address Line 2</span>
+                          <span>Address Line 2 (Optional)</span>
                           <input value={activeShippingAddress?.address_line2 || ''} onChange={(e) => updateActiveShippingAddress({ address_line2: e.target.value })} />
                         </label>
                         <label>

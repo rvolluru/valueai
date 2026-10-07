@@ -5489,7 +5489,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                       ))}
                     </View>
                   ) : null}
-                  <Text style={styles.label}>Address Line 2</Text>
+                  <Text style={styles.label}>Address Line 2 (Optional)</Text>
                   <TextInput value={entry.address_line2} onChangeText={(value) => updateProfileShippingAddress(entry.id, 'address_line2', value)} style={styles.input} />
                   <View style={styles.profileAddressRow}>
                     <View style={{ flex: 1 }}>
