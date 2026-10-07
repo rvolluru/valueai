@@ -2456,6 +2456,18 @@ def _check_shippo_health(settings: Settings) -> DependencyHealthCheck:
         return _dependency_health_check("shippo", "down", started_at=started, message=str(exc))
 
 
+def _google_places_headers(settings: Settings, field_mask: str) -> dict[str, str]:
+    headers = {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": settings.google_places_api_key or "",
+        "X-Goog-FieldMask": field_mask,
+    }
+    bundle_identifier = str(settings.google_places_ios_bundle_identifier or "").strip()
+    if bundle_identifier:
+        headers["X-Ios-Bundle-Identifier"] = bundle_identifier
+    return headers
+
+
 def _check_google_places_health(settings: Settings) -> DependencyHealthCheck:
     if not str(settings.google_places_api_key or "").strip():
         return _dependency_health_check(
@@ -2466,11 +2478,7 @@ def _check_google_places_health(settings: Settings) -> DependencyHealthCheck:
         with httpx.Client(timeout=10.0) as client:
             response = client.post(
                 settings.google_places_autocomplete_url,
-                headers={
-                    "Content-Type": "application/json",
-                    "X-Goog-Api-Key": settings.google_places_api_key or "",
-                    "X-Goog-FieldMask": "suggestions.placePrediction.placeId",
-                },
+                headers=_google_places_headers(settings, "suggestions.placePrediction.placeId"),
                 json={"input": "2652 wildberry", "includedRegionCodes": ["us"]},
             )
         if response.status_code < 400:
@@ -4588,11 +4596,10 @@ def _google_places_address_suggest(
     )
     if not key or len((q or "").strip()) < 3:
         return {"suggestions": []}
-    headers = {
-        "Content-Type": "application/json",
-        "X-Goog-Api-Key": key,
-        "X-Goog-FieldMask": "suggestions.placePrediction.placeId,suggestions.placePrediction.text",
-    }
+    headers = _google_places_headers(
+        settings,
+        "suggestions.placePrediction.placeId,suggestions.placePrediction.text",
+    )
     payload = {
         "input": query,
         "includedPrimaryTypes": ["street_address", "premise"],
@@ -4629,10 +4636,7 @@ def _google_places_address_suggest(
             formatted = str(text_obj.get("text") or "").strip()
             if not place_id:
                 continue
-            detail_headers = {
-                "X-Goog-Api-Key": key,
-                "X-Goog-FieldMask": "formattedAddress,addressComponents",
-            }
+            detail_headers = _google_places_headers(settings, "formattedAddress,addressComponents")
             try:
                 detail_resp = client.get(
                     settings.google_places_details_url.format(place_id=place_id),
@@ -8777,8 +8781,30 @@ async def app_assistant_chat(
     })
 
 
-def _listing_chat_orchestrate(context: dict, suggestions: dict, action: str = "none", natural_reply: str = "") -> dict:
+def _listing_chat_orchestrate(
+    context: dict,
+    suggestions: dict,
+    action: str = "none",
+    natural_reply: str = "",
+    unavailable_photo_roles: list[str] | None = None,
+) -> dict:
     state = {**context, **{key: value for key, value in suggestions.items() if value is not None}}
+    unavailable_roles = {
+        str(role).strip()
+        for role in (context.get("unavailable_photo_roles") or [])
+        if str(role).strip()
+    }
+    currently_missing_roles = {
+        str(role).strip()
+        for role in (context.get("missing_required_photo_roles") or [])
+        if str(role).strip()
+    }
+    unavailable_roles.update(
+        str(role).strip()
+        for role in (unavailable_photo_roles or [])
+        if str(role).strip() in currently_missing_roles
+    )
+    state["unavailable_photo_roles"] = sorted(unavailable_roles)
     if str(context.get("workflow_stage") or "") == "review":
         changed = [key for key, value in suggestions.items() if value is not None]
         if action == "publish":
@@ -8789,7 +8815,11 @@ def _listing_chat_orchestrate(context: dict, suggestions: dict, action: str = "n
             return {"state": state, "missing_fields": [], "quick_replies": [], "ready_to_create": True, "stage": "review", "action": "update", "reply": f"Done — I’ve updated the {names}. Would you like to change anything else, or should I publish the listing?"}
         return {"state": state, "missing_fields": [], "quick_replies": [], "ready_to_create": True, "stage": "review", "action": "none", "reply": natural_reply.strip() or "What would you like to change? You can tell me the title, brand, description, category, condition, or size. When everything looks right, just tell me to publish it."}
     missing = []
-    missing_photo_roles = [str(role) for role in (state.get("missing_required_photo_roles") or []) if role]
+    missing_photo_roles = [
+        str(role)
+        for role in (state.get("missing_required_photo_roles") or [])
+        if role and str(role) not in unavailable_roles
+    ]
     if int(state.get("photo_count") or 0) < 1 or missing_photo_roles:
         missing.append("photos")
     if not state.get("category"):
@@ -8859,7 +8889,7 @@ async def listing_assistant_chat(
     existing = db.get_listing_conversation(conversation_id, principal.subject)
     if request.conversation_id and not existing:
         raise HTTPException(status_code=404, detail="Listing conversation not found")
-    request_context = request.context.model_dump()
+    request_context = request.context.model_dump(exclude_unset=True)
     # Optional client fields can lag one render behind a confirmed assistant turn.
     # Do not let those nulls erase state already persisted for the conversation.
     context = {
@@ -8894,6 +8924,11 @@ async def listing_assistant_chat(
         "and explain why a requested detail helps when useful. The listing needs 1-6 photos, category, user-observed condition, and a size selection. "
         "Size is required for every supported category, including handbags and accessories; use options such as Mini, Small, Medium, Large, One Size, or Adjustable when appropriate. "
         "Use the current listing context to avoid asking for information already captured. "
+        "When the member says a requested photo or view is unavailable, cannot be provided, or does not exist, map it to the matching role in "
+        "CURRENT LISTING CONTEXT.missing_required_photo_roles and return that role in unavailable_photo_roles. This is an explicit waiver: acknowledge it once, "
+        "continue to the next missing field, and never request that role again. On every turn, include all roles explicitly waived anywhere in the conversation "
+        "or already present in CURRENT LISTING CONTEXT.unavailable_photo_roles so an existing conversation can recover this state. "
+        "Do not mark a role unavailable unless the member clearly says it cannot be provided. "
         "Never estimate or disclose monetary value, authenticate an item, claim a brand/model from unseen evidence, "
         "or override the member's condition assessment. Never scold or use alarming language. Keep the reply concise and actionable. "
         "Extract category, condition, size, brand, title, or description when the user's own message clearly supplies it. "
@@ -8928,8 +8963,13 @@ async def listing_assistant_chat(
             },
             "ready_to_create": {"type": "boolean"},
             "action": {"type": "string", "enum": ["none", "create_analyze", "update", "publish"]},
+            "unavailable_photo_roles": {
+                "type": "array",
+                "items": {"type": "string"},
+                "maxItems": 10,
+            },
         },
-        "required": ["reply", "suggestions", "missing_fields", "ready_to_create", "action"],
+        "required": ["reply", "suggestions", "missing_fields", "ready_to_create", "action", "unavailable_photo_roles"],
     }
     try:
         async with httpx.AsyncClient(timeout=settings.listing_assistant_timeout_s) as client:
@@ -8963,7 +9003,13 @@ async def listing_assistant_chat(
             for key, value in (parsed.get("suggestions") or {}).items()
             if value is not None and str(value).strip() != str(context.get(key) or "").strip()
         }
-        orchestrated = _listing_chat_orchestrate(context, suggestions, parsed.get("action") or "none", parsed.get("reply") or "")
+        orchestrated = _listing_chat_orchestrate(
+            context,
+            suggestions,
+            parsed.get("action") or "none",
+            parsed.get("reply") or "",
+            parsed.get("unavailable_photo_roles") or [],
+        )
         stage = orchestrated["stage"]
         db.upsert_listing_conversation(conversation_id=conversation_id, owner_subject=principal.subject, stage=stage, context=orchestrated["state"])
         for message in new_incoming:

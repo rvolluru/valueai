@@ -87,6 +87,7 @@ class ListingAssistantContext(BaseModel):
     photo_count: int = Field(default=0, ge=0, le=6)
     identified_photo_roles: list[str] = Field(default_factory=list, max_length=20)
     missing_required_photo_roles: list[str] = Field(default_factory=list, max_length=10)
+    unavailable_photo_roles: list[str] = Field(default_factory=list, max_length=10)
     workflow_stage: Literal["collecting", "ready_for_review", "analyzing", "review", "published", "failed"] | None = None
     listing_id: str | None = Field(default=None, max_length=120)
     brand: str | None = Field(default=None, max_length=200)

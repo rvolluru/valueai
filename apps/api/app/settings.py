@@ -159,6 +159,7 @@ class Settings(BaseSettings):
     usps_bearer_token: str | None = None
     usps_timeout_s: float = 8.0
     google_places_api_key: str | None = None
+    google_places_ios_bundle_identifier: str | None = "com.jouft.app.dev"
     google_places_autocomplete_url: str = "https://places.googleapis.com/v1/places:autocomplete"
     google_places_details_url: str = "https://places.googleapis.com/v1/places/{place_id}"
     google_places_timeout_s: float = 8.0

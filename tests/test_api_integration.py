@@ -1672,6 +1672,7 @@ def test_google_places_address_suggest_parses_components(monkeypatch) -> None:
         def post(self, url, json, headers):
             assert "places:autocomplete" in url
             assert headers["X-Goog-Api-Key"] == "google-key"
+            assert headers["X-Ios-Bundle-Identifier"] == "com.jouft.app.dev"
             assert json["includedRegionCodes"] == ["us"]
             return FakeResponse({
                 "suggestions": [{
@@ -1684,6 +1685,7 @@ def test_google_places_address_suggest_parses_components(monkeypatch) -> None:
 
         def get(self, url, headers):
             assert url.endswith("/places/abc123")
+            assert headers["X-Ios-Bundle-Identifier"] == "com.jouft.app.dev"
             return FakeResponse({
                 "formattedAddress": "120 Vantis Dr Suite 300, Aliso Viejo, CA 92656, USA",
                 "addressComponents": [
@@ -3868,6 +3870,8 @@ def _mock_listing_assistant_model(monkeypatch):
                 suggestions["condition"] = "New"
             if "size to large" in latest:
                 suggestions["size"] = "Large"
+            elif latest == "medium":
+                suggestions["size"] = "Medium"
             if "title to " in latest:
                 title_offset = latest.index("title to ") + len("title to ")
                 suggestions["title"] = latest_raw[title_offset:].splitlines()[0].strip()
@@ -3877,13 +3881,18 @@ def _mock_listing_assistant_model(monkeypatch):
                 action = "publish"
             elif latest == "reviewed":
                 action = "create_analyze"
-            reply = "Please add a clear photo of the interior." if latest == "reviewed" else "I understood your request."
+            unavailable_photo_roles = ["bag_interior"] if "interior" in latest and "not available" in latest else []
+            if unavailable_photo_roles:
+                reply = "Got it — noted that an interior photo isn’t available. What’s the bag’s condition?"
+            else:
+                reply = "Please add a clear photo of the interior." if latest == "reviewed" else "I understood your request."
             return FakeResponse({
                 "reply": reply,
                 "suggestions": suggestions,
                 "missing_fields": [],
                 "ready_to_create": False,
                 "action": action,
+                "unavailable_photo_roles": unavailable_photo_roles,
             })
 
     monkeypatch.setattr(main.httpx, "AsyncClient", FakeAsyncClient)
@@ -4022,6 +4031,57 @@ def test_listing_assistant_returns_structured_optional_suggestions(monkeypatch) 
     assert create_response.json()["action"] == "none"
     assert create_response.json()["missing_fields"] == ["photos"]
     assert "interior" in create_response.json()["reply"].lower()
+
+
+def test_listing_assistant_remembers_unavailable_photo_across_turns(monkeypatch) -> None:
+    client = _build_client()
+    os.environ["OPENAI_API_KEY"] = "test-openai-key"
+
+    from app import main, settings
+
+    settings.get_settings.cache_clear()
+    _mock_listing_assistant_model(monkeypatch)
+    stale_client_context = {
+        "step": 2,
+        "photo_count": 3,
+        "category": "handbag",
+        "condition": None,
+        "size": None,
+        "missing_required_photo_roles": ["bag_interior"],
+        "workflow_stage": "collecting",
+    }
+    unavailable_response = client.post(
+        "/v1/listing-assistant/chat",
+        headers={"x-api-key": "test-key"},
+        json={
+            "messages": [{"role": "user", "content": "The interior photo is not available."}],
+            "context": stale_client_context,
+        },
+    )
+
+    assert unavailable_response.status_code == 200, unavailable_response.text
+    first_payload = unavailable_response.json()
+    assert first_payload["missing_fields"] == ["condition", "size"]
+    assert "condition" in first_payload["reply"].lower()
+    conversation_id = first_payload["conversation_id"]
+
+    size_response = client.post(
+        "/v1/listing-assistant/chat",
+        headers={"x-api-key": "test-key"},
+        json={
+            "conversation_id": conversation_id,
+            "messages": [{"role": "user", "content": "Medium"}],
+            # The client photo classifier still reports the unavailable role.
+            "context": stale_client_context,
+        },
+    )
+
+    assert size_response.status_code == 200, size_response.text
+    second_payload = size_response.json()
+    assert second_payload["suggestions"]["size"] == "Medium"
+    assert second_payload["missing_fields"] == ["condition"]
+    assert "condition" in second_payload["reply"].lower()
+    assert "interior" not in second_payload["reply"].lower()
 
 
 def test_listing_assistant_requires_openai_configuration() -> None:
