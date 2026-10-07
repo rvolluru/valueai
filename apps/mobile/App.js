@@ -1177,7 +1177,7 @@ function OfferCard({ offer, apiBaseUrl, onPress = null }) {
   );
 }
 
-function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, clerkUserLabel = '', clerkUserProfile = {}, onSignOut = null }) {
+function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, clerkUserLabel = '', clerkUserProfile = {}, onSignOut = null, onChangePassword = null }) {
   const { width: viewportWidth } = useWindowDimensions();
   const hasAdminRole = useMemo(() => hasAdminRoleFromObject(clerkUserProfile), [clerkUserProfile]);
   const [apiBaseUrl, setApiBaseUrl] = useState(API_DEFAULT);
@@ -1234,6 +1234,10 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
   const [profileQuiz, setProfileQuiz] = useState(null);
   const [profileSaveBusy, setProfileSaveBusy] = useState(false);
   const [profileSaveMsg, setProfileSaveMsg] = useState('');
+  const [securityCurrentPassword, setSecurityCurrentPassword] = useState('');
+  const [securityNewPassword, setSecurityNewPassword] = useState('');
+  const [securityConfirmPassword, setSecurityConfirmPassword] = useState('');
+  const [securityBusy, setSecurityBusy] = useState(false);
   const [profileHydrationRetry, setProfileHydrationRetry] = useState(0);
   const [paymentMethods, setPaymentMethods] = useState([]);
   const [paymentBusy, setPaymentBusy] = useState(false);
@@ -1306,6 +1310,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
   const [closetPageLoading, setClosetPageLoading] = useState(false);
   const marketplacePageRequestRef = useRef(false);
   const closetPageRequestRef = useRef(false);
+  const closetAnalysisPollRequestRef = useRef(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
 
@@ -1822,6 +1827,62 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
       setClosetLoading(false);
     }
   }
+
+  const analyzingClosetListingIds = useMemo(() => myListings
+    .filter((listing) => String(listing?.status || '').toLowerCase() === 'analyzing')
+    .map((listing) => listingIdOf(listing))
+    .filter(Boolean)
+    .sort()
+    .join('|'), [myListings]);
+
+  useEffect(() => {
+    if (activeTab !== 'closet' || !analyzingClosetListingIds) return undefined;
+    let cancelled = false;
+    let timer = null;
+    let attempts = 0;
+    const listingIds = new Set(analyzingClosetListingIds.split('|'));
+
+    const poll = async () => {
+      if (cancelled) return;
+      if (closetAnalysisPollRequestRef.current) {
+        timer = setTimeout(poll, 1000);
+        return;
+      }
+      closetAnalysisPollRequestRef.current = true;
+      attempts += 1;
+      try {
+        let offset = 0;
+        let hasMore = true;
+        const refreshedById = new Map();
+        const auth = await authContext();
+        while (hasMore && refreshedById.size < listingIds.size) {
+          const page = await apiClient.listMyListings(100, auth, { offset });
+          const items = Array.isArray(page?.items) ? page.items : [];
+          items.forEach((listing) => {
+            const listingId = listingIdOf(listing);
+            if (listingIds.has(listingId)) refreshedById.set(listingId, listing);
+          });
+          hasMore = Boolean(page?.has_more);
+          offset = Number.isFinite(Number(page?.next_offset)) ? Number(page.next_offset) : 0;
+          if (!offset) break;
+        }
+        if (!cancelled && refreshedById.size > 0) {
+          setMyListings((current) => current.map((listing) => refreshedById.get(listingIdOf(listing)) || listing));
+        }
+      } catch {
+        // Keep the current cards visible and retry while analysis remains active.
+      } finally {
+        closetAnalysisPollRequestRef.current = false;
+        if (!cancelled) timer = setTimeout(poll, attempts < 30 ? 4000 : 10000);
+      }
+    };
+
+    poll();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [activeTab, analyzingClosetListingIds, apiClient]);
 
   useEffect(() => {
     if (listingChatStage !== 'analyzing' || !listingIdOf(listingChatListing)) return undefined;
@@ -2614,19 +2675,6 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
         },
       ],
     );
-  }
-
-  async function submitPrivacyRequest(requestType) {
-    setProfileSaveBusy(true);
-    setProfileSaveMsg('');
-    try {
-      await apiClient.createComplianceRequest({ request_type: requestType, details: '' }, await authContext());
-      setProfileSaveMsg(`${titleCase(requestType)} request submitted.`);
-    } catch (e) {
-      setError(e.message || 'Privacy request could not be submitted.');
-    } finally {
-      setProfileSaveBusy(false);
-    }
   }
 
   async function showSubscriptionAuthorization() {
@@ -5155,6 +5203,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
             <View style={styles.profileSectionGrid}>
               {[
                 { key: 'account', label: 'Account', icon: 'person-outline' },
+                ...(clerkEnabled ? [{ key: 'security', label: 'Security', icon: 'shield-checkmark-outline' }] : []),
                 { key: 'style', label: 'Style', icon: 'shirt-outline' },
                 { key: 'shipping', label: 'Shipping', icon: 'location-outline' },
                 { key: 'subscription', label: 'Subscription', icon: 'card-outline' },
@@ -5261,6 +5310,54 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
             >
               <Text style={styles.secondaryBtnText}>Test Notification</Text>
             </TouchableOpacity>
+              </>
+            ) : null}
+
+            {profileSection === 'security' && clerkEnabled ? (
+              <>
+                <View style={styles.profileDivider} />
+                <Text style={styles.label}>Verified Sign-in Email</Text>
+                <View style={styles.profileSecurityIdentity}>
+                  <Text style={styles.offerItemTitle}>{clerkUserProfile?.email || 'Not available'}</Text>
+                  <Text style={clerkUserProfile?.emailVerified ? styles.profileVerifiedText : styles.profileVerificationPendingText}>
+                    {clerkUserProfile?.emailVerified ? 'VERIFIED' : 'VERIFICATION REQUIRED'}
+                  </Text>
+                </View>
+                <Text style={styles.label}>Current Password</Text>
+                <TextInput value={securityCurrentPassword} onChangeText={setSecurityCurrentPassword} style={styles.input} secureTextEntry autoComplete="current-password" />
+                <Text style={styles.label}>New Password</Text>
+                <TextInput value={securityNewPassword} onChangeText={setSecurityNewPassword} style={styles.input} secureTextEntry autoComplete="new-password" />
+                <Text style={styles.label}>Confirm New Password</Text>
+                <TextInput value={securityConfirmPassword} onChangeText={setSecurityConfirmPassword} style={styles.input} secureTextEntry autoComplete="new-password" />
+                <TouchableOpacity style={[styles.primaryBtn, securityBusy && styles.primaryBtnDisabled]} disabled={securityBusy} onPress={async () => {
+                  setProfileSaveMsg('');
+                  const validationError = passwordValidationError(securityNewPassword);
+                  if (validationError) return setProfileSaveMsg(validationError);
+                  if (securityNewPassword !== securityConfirmPassword) return setProfileSaveMsg('New passwords do not match.');
+                  setSecurityBusy(true);
+                  try {
+                    await onChangePassword?.({ currentPassword: securityCurrentPassword, newPassword: securityNewPassword });
+                    setSecurityCurrentPassword('');
+                    setSecurityNewPassword('');
+                    setSecurityConfirmPassword('');
+                    setProfileSaveMsg('Password updated. Other sessions have been signed out.');
+                  } catch (e) {
+                    setProfileSaveMsg(e?.errors?.[0]?.longMessage || e?.errors?.[0]?.message || e.message || 'Password could not be updated.');
+                  } finally {
+                    setSecurityBusy(false);
+                  }
+                }}>
+                  <Text style={styles.primaryBtnText}>{securityBusy ? 'Updating...' : 'Update Password'}</Text>
+                </TouchableOpacity>
+                {!!profileSaveMsg && <Text style={styles.notice}>{profileSaveMsg}</Text>}
+                <View style={styles.profileDivider} />
+                <Text style={styles.label}>Account Actions</Text>
+                <TouchableOpacity style={styles.secondaryBtn} onPress={onSignOut}>
+                  <Text style={styles.secondaryBtnText}>Sign Out</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.secondaryBtn} onPress={() => Linking.openURL(`mailto:${CONTACT_EMAIL}?subject=Jouft%20account%20support`)}>
+                  <Text style={styles.secondaryBtnText}>Contact Support</Text>
+                </TouchableOpacity>
               </>
             ) : null}
 
@@ -5629,21 +5726,6 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                 <Text style={styles.secondaryBtnText}>Cancel Subscription</Text>
               </TouchableOpacity>
             ) : null}
-            <View style={styles.profileDivider} />
-            <Text style={styles.label}>Privacy Requests</Text>
-            <Text style={styles.helperText}>Request a copy of your data, a correction, or account-data deletion. Legal and transaction records may be retained where required.</Text>
-            <View style={styles.addressActionRow}>
-              <TouchableOpacity style={styles.secondaryBtnCompact} onPress={() => submitPrivacyRequest('access')} disabled={profileSaveBusy}>
-                <Text style={styles.secondaryBtnText}>Request Data</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.secondaryBtnCompact} onPress={() => submitPrivacyRequest('correction')} disabled={profileSaveBusy}>
-                <Text style={styles.secondaryBtnText}>Request Correction</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.secondaryBtnCompact} onPress={() => submitPrivacyRequest('deletion')} disabled={profileSaveBusy}>
-                <Text style={styles.secondaryBtnText}>Request Deletion</Text>
-              </TouchableOpacity>
-            </View>
-            {!!profileSaveMsg && <Text style={styles.notice}>{profileSaveMsg}</Text>}
               </>
             ) : null}
 
@@ -7072,6 +7154,7 @@ function ClerkMobileApp() {
     firstName: user?.firstName || '',
     lastName: user?.lastName || '',
     email: user?.primaryEmailAddress?.emailAddress || '',
+    emailVerified: user?.primaryEmailAddress?.verification?.status === 'verified',
     publicMetadata: user?.publicMetadata || {},
     unsafeMetadata: user?.unsafeMetadata || {},
   };
@@ -7083,6 +7166,7 @@ function ClerkMobileApp() {
       clerkUserLabel={label}
       clerkUserProfile={clerkUserProfile}
       onSignOut={() => signOut()}
+      onChangePassword={({ currentPassword, newPassword }) => user.updatePassword({ currentPassword, newPassword, signOutOfOtherSessions: true })}
     />
   );
 }
@@ -8655,6 +8739,23 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: 8,
     marginTop: 4,
+  },
+  profileSecurityIdentity: {
+    borderWidth: 1,
+    borderColor: theme.line,
+    padding: 12,
+    marginBottom: 12,
+    gap: 4,
+  },
+  profileVerifiedText: {
+    color: '#25633b',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  profileVerificationPendingText: {
+    color: '#9a6700',
+    fontSize: 11,
+    fontWeight: '700',
   },
   profileSectionButton: {
     width: '48%',

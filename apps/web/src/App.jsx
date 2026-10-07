@@ -1,6 +1,5 @@
 import { Fragment, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  UserButton,
   useAuth,
   useClerk,
   useSignIn,
@@ -2259,6 +2258,11 @@ function ClerkMarketplaceApp() {
   const [authPanelKey, setAuthPanelKey] = useState(0)
   const getBearerToken = useCallback((options) => getToken(options), [getToken])
   const handleLogout = useCallback(() => signOut({ redirectUrl: '/' }), [signOut])
+  const accountActions = useMemo(() => ({
+    changePassword: async ({ currentPassword, newPassword }) => {
+      await user.updatePassword({ currentPassword, newPassword, signOutOfOtherSessions: true })
+    },
+  }), [user])
   useEffect(() => {
     setWebBearerTokenProvider(getBearerToken)
     return () => setWebBearerTokenProvider(null)
@@ -2298,6 +2302,7 @@ function ClerkMarketplaceApp() {
     id: user.id,
     name: [user.firstName, user.lastName].filter(Boolean).join(' ') || user.username || user.primaryEmailAddress?.emailAddress || 'User',
     email: user.primaryEmailAddress?.emailAddress || '',
+    emailVerified: user.primaryEmailAddress?.verification?.status === 'verified',
     publicMetadata: user.publicMetadata || {},
     privateMetadata: user.privateMetadata || {},
     unsafeMetadata: user.unsafeMetadata || {},
@@ -2323,13 +2328,7 @@ function ClerkMarketplaceApp() {
 	      onLogout={handleLogout}
 	      clerkEnabled
 	      getBearerToken={getBearerToken}
-      userMenu={(
-        <UserButton afterSignOutUrl="/">
-          <UserButton.MenuItems>
-            <UserButton.Action label="Profile" />
-          </UserButton.MenuItems>
-        </UserButton>
-      )}
+      accountActions={accountActions}
     />
   )
 }
@@ -2621,7 +2620,7 @@ function LoadingShell({ message }) {
   )
 }
 
-function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnabled = false, getBearerToken, userMenu = null, onOpenProfile = null }) {
+function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnabled = false, getBearerToken, accountActions = null }) {
   const signupFullName = resolveSignupFullName(session, profileData)
   const hasAdminRole = useMemo(
     () => hasAdminRoleFromObject(session) || hasAdminRoleFromObject(profileData),
@@ -2642,6 +2641,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   const [marketListingsPageLoading, setMarketListingsPageLoading] = useState(false)
   const myListingsPageRequestRef = useRef(false)
   const marketListingsPageRequestRef = useRef(false)
+  const closetAnalysisPollRequestRef = useRef(false)
   const closetLoadMoreRef = useRef(null)
   const marketplaceLoadMoreRef = useRef(null)
   const [activeTab, setActiveTab] = useState(() => (shouldAutoOpenProfileSetupRef.current ? 'profile_setup' : tabFromLocation()))
@@ -2729,6 +2729,10 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   const [addressSuggestions, setAddressSuggestions] = useState([])
   const [addressAutocompleteActive, setAddressAutocompleteActive] = useState(false)
   const [profileSaveMsg, setProfileSaveMsg] = useState('')
+  const [securityCurrentPassword, setSecurityCurrentPassword] = useState('')
+  const [securityNewPassword, setSecurityNewPassword] = useState('')
+  const [securityConfirmPassword, setSecurityConfirmPassword] = useState('')
+  const [securityBusy, setSecurityBusy] = useState(false)
   const [profileTabReloading, setProfileTabReloading] = useState(false)
   const [profileTabReloadKey, setProfileTabReloadKey] = useState(0)
   const [profileHydrationRetry, setProfileHydrationRetry] = useState(0)
@@ -4262,6 +4266,70 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
       }
     }
   }, [apiBaseUrl, apiKey, clerkEnabled, getBearerToken])
+
+  const analyzingClosetListingIds = useMemo(() => myListings
+    .filter((listing) => String(listing?.status || '').toLowerCase() === 'analyzing')
+    .map((listing) => String(listing?.id || ''))
+    .filter(Boolean)
+    .sort()
+    .join('|'), [myListings])
+
+  useEffect(() => {
+    if (activeTab !== 'portfolio' || !analyzingClosetListingIds) return undefined
+    let cancelled = false
+    let timer = null
+    let attempts = 0
+    const listingIds = new Set(analyzingClosetListingIds.split('|'))
+
+    const poll = async () => {
+      if (cancelled) return
+      if (closetAnalysisPollRequestRef.current) {
+        timer = window.setTimeout(poll, 1000)
+        return
+      }
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+        timer = window.setTimeout(poll, 10000)
+        return
+      }
+      closetAnalysisPollRequestRef.current = true
+      attempts += 1
+      try {
+        const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
+        let offset = 0
+        let hasMore = true
+        const refreshedById = new Map()
+        while (hasMore && refreshedById.size < listingIds.size) {
+          const page = await fetchMyListings({
+            apiBaseUrl,
+            apiKey: clerkEnabled ? '' : apiKey.trim(),
+            bearerToken,
+            limit: 100,
+            offset,
+          })
+          page.items.map(fromRemoteListing).filter(Boolean).forEach((listing) => {
+            if (listingIds.has(String(listing.id))) refreshedById.set(String(listing.id), listing)
+          })
+          hasMore = page.hasMore
+          offset = page.nextOffset || 0
+          if (!offset) break
+        }
+        if (!cancelled && refreshedById.size > 0) {
+          setMyListings((current) => current.map((listing) => refreshedById.get(String(listing.id)) || listing))
+        }
+      } catch {
+        // Keep the current cards visible and retry while analysis remains active.
+      } finally {
+        closetAnalysisPollRequestRef.current = false
+        if (!cancelled) timer = window.setTimeout(poll, attempts < 30 ? 4000 : 10000)
+      }
+    }
+
+    void poll()
+    return () => {
+      cancelled = true
+      if (timer) window.clearTimeout(timer)
+    }
+  }, [activeTab, analyzingClosetListingIds, apiBaseUrl, apiKey, clerkEnabled, getBearerToken])
 
   const loadMoreMyListings = useCallback(async () => {
     if (myListingsPageLoading || myListingsLoading || myListingsPageRequestRef.current || !myListingsHasMore) return
@@ -6306,8 +6374,12 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                   </div>
                 )}
               </div>
-              <button className="ghost" type="button" onClick={() => navigateToTab('profile')}>Profile</button>
-              {userMenu}
+              <button className="account-menu-button" type="button" onClick={() => {
+                setProfileSection('general')
+                navigateToTab('profile')
+              }} aria-label="Open account settings">
+                {String(profileData?.firstName || profileData?.name || profileData?.email || 'J').trim().charAt(0).toUpperCase()}
+              </button>
             </>
           ) : <button className="ghost" onClick={onLogout}>Log out</button>}
         </div>
@@ -6872,13 +6944,14 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
               <div style={{ display: 'grid', gridTemplateColumns: '220px 1fr', gap: 16 }}>
                 <aside className="profile-nav" style={{ border: '1px solid var(--line)', borderRadius: 12, padding: 10, alignSelf: 'start' }}>
                   <button className={profileSection === 'general' ? 'nav-item active' : 'nav-item'} type="button" onClick={() => setProfileSection('general')}>General</button>
+                  {clerkEnabled && <button className={profileSection === 'security' ? 'nav-item active' : 'nav-item'} type="button" onClick={() => setProfileSection('security')}>Login & Security</button>}
                   <button className={profileSection === 'style' ? 'nav-item active' : 'nav-item'} type="button" onClick={() => setProfileSection('style')}>Style Preferences</button>
                   <button className={profileSection === 'subscription' ? 'nav-item active' : 'nav-item'} type="button" onClick={() => setProfileSection('subscription')}>Subscription</button>
                   <button className={profileSection === 'shipping' ? 'nav-item active' : 'nav-item'} type="button" onClick={() => setProfileSection('shipping')}>Shipping</button>
                 </aside>
 	                <div>
                   {profileHydrationError && <p className="error-text">{profileHydrationError}</p>}
-	                  {profileSection === 'general' && (
+                  {profileSection === 'general' && (
                     <div className="field-grid two">
                       <label>
                         <span>First Name</span>
@@ -6914,6 +6987,49 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                           placeholder="Phone number"
                         />
                       </label>
+                    </div>
+                  )}
+                  {profileSection === 'security' && clerkEnabled && (
+                    <div className="account-security">
+                      <p className="eyebrow">Login & Security</p>
+                      <div className="identity-summary">
+                        <div>
+                          <span className="tiny-note">Verified sign-in email</span>
+                          <strong>{profileData?.email || 'Not available'}</strong>
+                        </div>
+                        <span className={profileData?.emailVerified ? 'identity-status' : 'identity-status pending'}>{profileData?.emailVerified ? 'Verified' : 'Verification required'}</span>
+                      </div>
+                      <form className="security-form" onSubmit={async (event) => {
+                        event.preventDefault()
+                        setProfileSaveMsg('')
+                        const validationError = passwordValidationError(securityNewPassword)
+                        if (validationError) return setProfileSaveMsg(validationError)
+                        if (securityNewPassword !== securityConfirmPassword) return setProfileSaveMsg('New passwords do not match.')
+                        setSecurityBusy(true)
+                        try {
+                          await accountActions?.changePassword({ currentPassword: securityCurrentPassword, newPassword: securityNewPassword })
+                          setSecurityCurrentPassword('')
+                          setSecurityNewPassword('')
+                          setSecurityConfirmPassword('')
+                          setProfileSaveMsg('Password updated. Other sessions have been signed out.')
+                        } catch (err) {
+                          setProfileSaveMsg(err?.errors?.[0]?.longMessage || err?.errors?.[0]?.message || err.message || 'Password could not be updated.')
+                        } finally {
+                          setSecurityBusy(false)
+                        }
+                      }}>
+                        <h4>Change password</h4>
+                        <label><span>Current Password</span><input type="password" autoComplete="current-password" value={securityCurrentPassword} onChange={(event) => setSecurityCurrentPassword(event.target.value)} required /></label>
+                        <label><span>New Password</span><input type="password" autoComplete="new-password" value={securityNewPassword} onChange={(event) => setSecurityNewPassword(event.target.value)} required /></label>
+                        <label><span>Confirm New Password</span><input type="password" autoComplete="new-password" value={securityConfirmPassword} onChange={(event) => setSecurityConfirmPassword(event.target.value)} required /></label>
+                        <button className="primary" type="submit" disabled={securityBusy}>{securityBusy ? 'Updating...' : 'Update Password'}</button>
+                      </form>
+                      {profileSaveMsg && <p className="tiny-note" role="status">{profileSaveMsg}</p>}
+                      <div className="danger-zone">
+                        <h4>Account actions</h4>
+                        <button className="ghost" type="button" onClick={onLogout}>Sign Out</button>
+                        <a className="ghost" href="mailto:admin@jouft.com?subject=Jouft%20account%20support">Contact Support</a>
+                      </div>
                     </div>
                   )}
                   {profileSection === 'style' && (
@@ -7300,35 +7416,6 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                           })}
                         </div>
                       </div>
-                      <div style={{ marginTop: 18, borderTop: '1px solid var(--line)', paddingTop: 14 }}>
-                        <p className="eyebrow" style={{ marginBottom: 8 }}>Privacy Requests</p>
-                        <p className="tiny-note">Request access to, correction of, or deletion of your account data. Records required for transactions, fraud prevention, or legal obligations may be retained.</p>
-                        <div className="button-row" style={{ marginTop: 10 }}>
-                          {[
-                            ['access', 'Request My Data'],
-                            ['correction', 'Request Correction'],
-                            ['deletion', 'Request Deletion'],
-                          ].map(([requestType, label]) => (
-                            <button
-                              key={requestType}
-                              className="ghost small"
-                              type="button"
-                              onClick={async () => {
-                                setProfileSaveMsg('')
-                                try {
-                                  const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
-                                  await createComplianceRequestRemote({ apiBaseUrl, apiKey: clerkEnabled ? '' : apiKey.trim(), bearerToken, requestType })
-                                  setProfileSaveMsg(`${label} submitted.`)
-                                } catch (err) {
-                                  setProfileSaveMsg(err.message || 'Privacy request could not be submitted.')
-                                }
-                              }}
-                            >
-                              {label}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
                     </div>
                   )}
                   {profileSection === 'shipping' && (
@@ -7426,7 +7513,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                   )}
                 </div>
               </div>
-              <div className="button-row" style={{ marginTop: 12 }}>
+              {profileSection !== 'security' && <div className="button-row" style={{ marginTop: 12 }}>
                 <button
                   className="ghost small"
                   type="button"
@@ -7481,7 +7568,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                     : 'Save Profile'}
                 </button>
                 {profileSaveMsg && <span className="tiny-note">{profileSaveMsg}</span>}
-              </div>
+              </div>}
               </>
               )}
             </div>

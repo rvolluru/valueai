@@ -2135,6 +2135,73 @@ textarea:focus-visible,
   width: 44px;
   height: 44px;
 }
+
+.account-menu-button {
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--brand);
+  color: #fff;
+  font: 700 1rem/1 var(--font-ui);
+  cursor: pointer;
+}
+
+.account-security {
+  display: grid;
+  gap: 18px;
+  max-width: 620px;
+}
+
+.identity-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border: 1px solid var(--line);
+  padding: 14px;
+}
+
+.identity-summary div,
+.security-form {
+  display: grid;
+  gap: 8px;
+}
+
+.identity-status {
+  color: #25633b;
+  font-size: .75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.identity-status.pending {
+  color: #9a6700;
+}
+
+.security-form label {
+  display: grid;
+  gap: 5px;
+}
+
+.security-form .primary {
+  justify-self: start;
+}
+
+.danger-zone {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  border-top: 1px solid var(--line);
+  padding-top: 16px;
+}
+
+.danger-zone h4 {
+  width: 100%;
+  margin: 0;
+}
+
 .transient-notice-bar {
   position: relative;
   z-index: 20;
