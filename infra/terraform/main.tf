@@ -484,8 +484,7 @@ resource "aws_ecs_task_definition" "api" {
         { name = "EBAY_APP_ID", value = var.ebay_app_id },
         { name = "BRAND_ACCEPT_SCORE", value = tostring(var.brand_accept_score) },
         { name = "BRAND_ACCEPT_SCORE_LOW", value = tostring(var.brand_accept_score_low) },
-        { name = "BRAND_GAP_MIN", value = tostring(var.brand_gap_min) },
-        { name = "GOOGLE_PLACES_IOS_BUNDLE_IDENTIFIER", value = var.google_places_ios_bundle_identifier }
+        { name = "BRAND_GAP_MIN", value = tostring(var.brand_gap_min) }
       ], var.runtime_secret_arn == "" ? [
         { name = "API_KEY", value = var.api_key },
         { name = "DATABASE_URL", value = "postgresql://${var.db_username}:${var.db_password}@${aws_db_instance.postgres.address}:5432/${var.db_name}" },

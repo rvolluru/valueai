@@ -524,8 +524,3 @@ variable "google_places_api_key" {
   default   = ""
   sensitive = true
 }
-
-variable "google_places_ios_bundle_identifier" {
-  type    = string
-  default = "com.jouft.app.dev"
-}
