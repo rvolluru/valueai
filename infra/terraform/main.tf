@@ -463,6 +463,7 @@ resource "aws_ecs_task_definition" "api" {
         { name = "GPT_ITEM_PROFILE_MODEL", value = var.gpt_item_profile_model },
         { name = "GPT_ITEM_PROFILE_GEMINI_MODEL", value = var.gpt_item_profile_gemini_model },
         { name = "GPT_ITEM_PROFILE_TIMEOUT_S", value = tostring(var.gpt_item_profile_timeout_s) },
+        { name = "LISTING_ANALYSIS_ATTEMPT_TIMEOUT_S", value = tostring(var.listing_analysis_attempt_timeout_s) },
         { name = "GPT_ITEM_PROFILE_MAX_IMAGES", value = tostring(var.gpt_item_profile_max_images) },
         { name = "GPT_ITEM_PROFILE_IMAGE_DETAIL", value = var.gpt_item_profile_image_detail },
         { name = "GPT_ITEM_PROFILE_REASONING_EFFORT", value = var.gpt_item_profile_reasoning_effort },

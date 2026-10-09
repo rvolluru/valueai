@@ -32,6 +32,7 @@ gpt_item_profile_provider_order             = "hybrid,gemini,openai"
 gpt_item_profile_model                      = "gpt-5"
 gpt_item_profile_gemini_model               = "gemini-3.8-flash"
 gpt_item_profile_timeout_s                  = 120
+listing_analysis_attempt_timeout_s          = 180
 gpt_item_profile_max_images                 = 6
 gpt_item_profile_image_detail               = "auto"
 gpt_item_profile_reasoning_effort           = "low"

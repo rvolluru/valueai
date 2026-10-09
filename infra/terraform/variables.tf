@@ -360,6 +360,11 @@ variable "gpt_item_profile_timeout_s" {
   default = 120
 }
 
+variable "listing_analysis_attempt_timeout_s" {
+  type    = number
+  default = 180
+}
+
 variable "gpt_item_profile_max_images" {
   type    = number
   default = 6

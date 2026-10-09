@@ -100,6 +100,16 @@ jobs:
           else
             echo 'image_staging_photoroom_enabled = false' >> "${TF_DIR}/terraform.tfvars"
           fi
+          if grep -qE '^[[:space:]]*gpt_item_profile_timeout_s[[:space:]]*=' "${TF_DIR}/terraform.tfvars"; then
+            sed -i.bak -E 's#^[[:space:]]*gpt_item_profile_timeout_s[[:space:]]*=.*#gpt_item_profile_timeout_s = 240#' "${TF_DIR}/terraform.tfvars"
+          else
+            echo 'gpt_item_profile_timeout_s = 240' >> "${TF_DIR}/terraform.tfvars"
+          fi
+          if grep -qE '^[[:space:]]*listing_analysis_attempt_timeout_s[[:space:]]*=' "${TF_DIR}/terraform.tfvars"; then
+            sed -i.bak -E 's#^[[:space:]]*listing_analysis_attempt_timeout_s[[:space:]]*=.*#listing_analysis_attempt_timeout_s = 300#' "${TF_DIR}/terraform.tfvars"
+          else
+            echo 'listing_analysis_attempt_timeout_s = 300' >> "${TF_DIR}/terraform.tfvars"
+          fi
           if [ -n "${STRIPE_SECRET_KEY:-}" ]; then
             if grep -qE '^[[:space:]]*stripe_secret_key[[:space:]]*=' "${TF_DIR}/terraform.tfvars"; then
               sed -i.bak -E "s#^[[:space:]]*stripe_secret_key[[:space:]]*=.*#stripe_secret_key                  = \"${STRIPE_SECRET_KEY}\"#" "${TF_DIR}/terraform.tfvars"
@@ -246,7 +256,8 @@ jobs:
                   | upsert_env("PHOTOROOM_API_KEY"; $PHOTOROOM_API_KEY)
                   | upsert_env("IMAGE_STAGING_PHOTOROOM_ENABLED"; "false")
                   | upsert_env("GPT_ITEM_PROFILE_PROVIDER_ORDER"; "hybrid,gemini,openai")
-                  | upsert_env("GPT_ITEM_PROFILE_TIMEOUT_S"; "120")
+                  | upsert_env("GPT_ITEM_PROFILE_TIMEOUT_S"; "240")
+                  | upsert_env("LISTING_ANALYSIS_ATTEMPT_TIMEOUT_S"; "300")
                   | upsert_env("STRIPE_SECRET_KEY"; $STRIPE_SECRET_KEY)
                   | upsert_env("STRIPE_PUBLISHABLE_KEY"; $STRIPE_PUBLISHABLE_KEY)
                   | upsert_env("STRIPE_WEBHOOK_SECRET"; $STRIPE_WEBHOOK_SECRET)
@@ -295,7 +306,12 @@ jobs:
                 .registeredAt,
                 .registeredBy
               )
-            | .containerDefinitions |= map(.image = $IMAGE | upsert_env("IMAGE_STAGING_PHOTOROOM_ENABLED"; "false"))
+            | .containerDefinitions |= map(
+                .image = $IMAGE
+                | upsert_env("IMAGE_STAGING_PHOTOROOM_ENABLED"; "false")
+                | upsert_env("GPT_ITEM_PROFILE_TIMEOUT_S"; "240")
+                | upsert_env("LISTING_ANALYSIS_ATTEMPT_TIMEOUT_S"; "300")
+              )
           ' /tmp/current-worker-td.json > /tmp/new-worker-td.json
           NEW_WORKER_TASK_DEF_ARN=$(aws ecs register-task-definition \
             --cli-input-json file:///tmp/new-worker-td.json \
