@@ -4,6 +4,12 @@ on:
   schedule:
     - cron: "*/5 * * * *"
   workflow_dispatch:
+    inputs:
+      send_test_alert:
+        description: "Send a test health alert email"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -22,6 +28,7 @@ jobs:
       HEALTH_ALERT_SMTP_PORT: ${{ secrets.HEALTH_ALERT_SMTP_PORT }}
       HEALTH_ALERT_SMTP_USERNAME: ${{ secrets.HEALTH_ALERT_SMTP_USERNAME }}
       HEALTH_ALERT_SMTP_PASSWORD: ${{ secrets.HEALTH_ALERT_SMTP_PASSWORD }}
+      SEND_TEST_HEALTH_ALERT_EMAIL: ${{ inputs.send_test_alert || false }}
       REQUIRE_DEPENDENCY_HEALTH: "true"
       REQUIRED_HEALTH_CHECKS: database,analysis_queue,openai,gemini,shippo,stripe,email
     steps:
