@@ -6,6 +6,7 @@ import json
 import os
 import tempfile
 import time
+from datetime import datetime, timedelta, timezone
 
 from fastapi.testclient import TestClient
 from PIL import Image, ImageDraw
@@ -773,6 +774,7 @@ def test_dependency_health_reports_core_services_and_redacts_secrets():
     checks = {check["name"]: check for check in body["checks"]}
     assert checks["database"]["status"] == "ok"
     assert checks["storage"]["status"] == "ok"
+    assert checks["analysis_queue"]["status"] == "not_configured"
     assert checks["openai"]["status"] == "not_configured"
     assert checks["gemini"]["status"] == "not_configured"
     assert checks["photoroom"]["status"] == "not_configured"
@@ -783,6 +785,44 @@ def test_dependency_health_reports_core_services_and_redacts_secrets():
     assert checks["email"]["status"] == "not_configured"
     assert "push_notifications" not in checks
     assert "test-key" not in str(body)
+
+
+def test_analysis_queue_health_reports_backlog_timeout_risk(monkeypatch):
+    from app.main import _check_analysis_queue_health
+    from app.settings import Settings
+
+    class FakeSqs:
+        def get_queue_attributes(self, **kwargs):
+            assert kwargs["QueueUrl"].endswith("/analysis")
+            return {
+                "Attributes": {
+                    "ApproximateNumberOfMessages": "7",
+                    "ApproximateNumberOfMessagesNotVisible": "3",
+                    "ApproximateNumberOfMessagesDelayed": "0",
+                }
+            }
+
+    class FakeDb:
+        def list_listing_analysis_jobs(self, limit=50, status=None):
+            assert status == "queued"
+            return [
+                {
+                    "created_at": (
+                        datetime.now(timezone.utc) - timedelta(seconds=901)
+                    ).isoformat()
+                }
+            ]
+
+    monkeypatch.setattr("app.main.boto3.client", lambda *args, **kwargs: FakeSqs())
+    check = _check_analysis_queue_health(
+        Settings(sqs_analysis_queue_url="https://sqs.us-east-1.amazonaws.com/123/analysis"),
+        FakeDb(),
+    )
+
+    assert check.status == "down"
+    assert "visible=7" in str(check.message)
+    assert "in_flight=3" in str(check.message)
+    assert "oldest_queued_s=" in str(check.message)
 
 
 def test_photoroom_health_uses_account_endpoint_without_processing_image(monkeypatch):

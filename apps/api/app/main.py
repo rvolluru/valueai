@@ -2323,6 +2323,68 @@ def _check_storage_health(settings: Settings, storage: Storage) -> DependencyHea
         return _dependency_health_check("storage", "down", started_at=started, message=str(exc))
 
 
+def _check_analysis_queue_health(settings: Settings, db: Database) -> DependencyHealthCheck:
+    queue_url = str(settings.sqs_analysis_queue_url or "").strip()
+    if not queue_url:
+        return _dependency_health_check(
+            "analysis_queue", "not_configured", message="SQS_ANALYSIS_QUEUE_URL missing"
+        )
+
+    started = time.perf_counter()
+    try:
+        attributes = boto3.client("sqs", region_name=settings.aws_region).get_queue_attributes(
+            QueueUrl=queue_url,
+            AttributeNames=[
+                "ApproximateNumberOfMessages",
+                "ApproximateNumberOfMessagesNotVisible",
+                "ApproximateNumberOfMessagesDelayed",
+            ],
+        ).get("Attributes", {})
+        visible = int(attributes.get("ApproximateNumberOfMessages") or 0)
+        in_flight = int(attributes.get("ApproximateNumberOfMessagesNotVisible") or 0)
+        delayed = int(attributes.get("ApproximateNumberOfMessagesDelayed") or 0)
+
+        queued_jobs = db.list_listing_analysis_jobs(limit=200, status="queued")
+        now = datetime.now(timezone.utc)
+        queued_ages: list[int] = []
+        for job in queued_jobs:
+            raw_created_at = str(job.get("created_at") or "").strip()
+            if not raw_created_at:
+                continue
+            try:
+                created_at = datetime.fromisoformat(raw_created_at.replace("Z", "+00:00"))
+                if created_at.tzinfo is None:
+                    created_at = created_at.replace(tzinfo=timezone.utc)
+                queued_ages.append(max(0, int((now - created_at).total_seconds())))
+            except ValueError:
+                continue
+        oldest_queued_s = max(queued_ages, default=0)
+
+        warning_age = settings.health_analysis_queue_age_warning_seconds
+        timeout_age = settings.health_analysis_queue_timeout_seconds
+        warning_depth = settings.health_analysis_queue_depth_warning
+        if oldest_queued_s >= timeout_age:
+            status = "down"
+        elif oldest_queued_s >= warning_age or visible >= warning_depth:
+            status = "degraded"
+        else:
+            status = "ok"
+        return _dependency_health_check(
+            "analysis_queue",
+            status,
+            started_at=started,
+            message=(
+                f"visible={visible} in_flight={in_flight} delayed={delayed} "
+                f"queued_jobs={len(queued_jobs)} oldest_queued_s={oldest_queued_s} "
+                f"warning_s={warning_age} timeout_s={timeout_age}"
+            ),
+        )
+    except Exception as exc:
+        return _dependency_health_check(
+            "analysis_queue", "down", started_at=started, message=str(exc)
+        )
+
+
 def _check_openai_health(settings: Settings) -> DependencyHealthCheck:
     if not str(settings.openai_api_key or "").strip():
         return _dependency_health_check(
@@ -2628,6 +2690,7 @@ def dependency_health(
     checks = [
         _check_database_health(db),
         _check_storage_health(settings, storage),
+        _check_analysis_queue_health(settings, db),
         _check_openai_health(settings),
         _check_gemini_health(settings),
         _check_photoroom_health(settings),

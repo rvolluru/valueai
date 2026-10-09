@@ -126,6 +126,9 @@ class Settings(BaseSettings):
     sqs_analysis_queue_url: str | None = None
     sqs_analysis_wait_time_seconds: int = Field(default=20, ge=1, le=20)
     sqs_analysis_visibility_timeout_seconds: int = Field(default=600, ge=60, le=43200)
+    health_analysis_queue_depth_warning: int = Field(default=5, ge=1)
+    health_analysis_queue_age_warning_seconds: int = Field(default=300, ge=60)
+    health_analysis_queue_timeout_seconds: int = Field(default=900, ge=120)
 
     clerk_enabled: bool = False
     clerk_issuer: str | None = None
