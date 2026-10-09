@@ -595,7 +595,7 @@ resource "aws_ecs_service" "analysis_worker" {
   name            = "${var.project_name}-analysis-worker"
   cluster         = aws_ecs_cluster.this.id
   task_definition = aws_ecs_task_definition.analysis_worker[0].arn
-  desired_count   = 1
+  desired_count   = var.analysis_worker_desired_count
   launch_type     = "FARGATE"
 
   deployment_circuit_breaker {
@@ -607,6 +607,67 @@ resource "aws_ecs_service" "analysis_worker" {
     subnets          = aws_subnet.public[*].id
     security_groups  = [aws_security_group.ecs.id]
     assign_public_ip = true
+  }
+}
+
+resource "aws_appautoscaling_target" "analysis_worker" {
+  count              = var.analysis_queue_enabled && var.analysis_worker_autoscaling_enabled ? 1 : 0
+  max_capacity       = var.analysis_worker_max_count
+  min_capacity       = var.analysis_worker_min_count
+  resource_id        = "service/${aws_ecs_cluster.this.name}/${aws_ecs_service.analysis_worker[0].name}"
+  scalable_dimension = "ecs:service:DesiredCount"
+  service_namespace  = "ecs"
+}
+
+resource "aws_appautoscaling_policy" "analysis_worker_queue_depth" {
+  count              = var.analysis_queue_enabled && var.analysis_worker_autoscaling_enabled ? 1 : 0
+  name               = "${var.project_name}-analysis-worker-queue-depth"
+  policy_type        = "TargetTrackingScaling"
+  resource_id        = aws_appautoscaling_target.analysis_worker[0].resource_id
+  scalable_dimension = aws_appautoscaling_target.analysis_worker[0].scalable_dimension
+  service_namespace  = aws_appautoscaling_target.analysis_worker[0].service_namespace
+
+  target_tracking_scaling_policy_configuration {
+    target_value       = var.analysis_worker_queue_depth_target
+    scale_out_cooldown = 30
+    scale_in_cooldown  = 300
+
+    customized_metric_specification {
+      metric_name = "ApproximateNumberOfMessagesVisible"
+      namespace   = "AWS/SQS"
+      statistic   = "Average"
+
+      dimensions {
+        name  = "QueueName"
+        value = aws_sqs_queue.analysis[0].name
+      }
+    }
+  }
+}
+
+resource "aws_appautoscaling_policy" "analysis_worker_oldest_message_age" {
+  count              = var.analysis_queue_enabled && var.analysis_worker_autoscaling_enabled ? 1 : 0
+  name               = "${var.project_name}-analysis-worker-oldest-age"
+  policy_type        = "TargetTrackingScaling"
+  resource_id        = aws_appautoscaling_target.analysis_worker[0].resource_id
+  scalable_dimension = aws_appautoscaling_target.analysis_worker[0].scalable_dimension
+  service_namespace  = aws_appautoscaling_target.analysis_worker[0].service_namespace
+
+  target_tracking_scaling_policy_configuration {
+    target_value       = var.analysis_worker_oldest_age_target_s
+    scale_out_cooldown = 30
+    scale_in_cooldown  = 300
+
+    customized_metric_specification {
+      metric_name = "ApproximateAgeOfOldestMessage"
+      namespace   = "AWS/SQS"
+      statistic   = "Maximum"
+
+      dimensions {
+        name  = "QueueName"
+        value = aws_sqs_queue.analysis[0].name
+      }
+    }
   }
 }
 

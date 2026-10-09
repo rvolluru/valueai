@@ -110,6 +110,20 @@ jobs:
           else
             echo 'listing_analysis_attempt_timeout_s = 300' >> "${TF_DIR}/terraform.tfvars"
           fi
+          for setting in \
+            'analysis_worker_desired_count = 3' \
+            'analysis_worker_autoscaling_enabled = true' \
+            'analysis_worker_min_count = 2' \
+            'analysis_worker_max_count = 5' \
+            'analysis_worker_queue_depth_target = 1' \
+            'analysis_worker_oldest_age_target_s = 120'; do
+            name="${setting%% *}"
+            if grep -qE "^[[:space:]]*${name}[[:space:]]*=" "${TF_DIR}/terraform.tfvars"; then
+              sed -i.bak -E "s#^[[:space:]]*${name}[[:space:]]*=.*#${setting}#" "${TF_DIR}/terraform.tfvars"
+            else
+              echo "${setting}" >> "${TF_DIR}/terraform.tfvars"
+            fi
+          done
           if [ -n "${STRIPE_SECRET_KEY:-}" ]; then
             if grep -qE '^[[:space:]]*stripe_secret_key[[:space:]]*=' "${TF_DIR}/terraform.tfvars"; then
               sed -i.bak -E "s#^[[:space:]]*stripe_secret_key[[:space:]]*=.*#stripe_secret_key                  = \"${STRIPE_SECRET_KEY}\"#" "${TF_DIR}/terraform.tfvars"

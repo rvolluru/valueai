@@ -165,6 +165,36 @@ variable "analysis_queue_enabled" {
   default = false
 }
 
+variable "analysis_worker_desired_count" {
+  type    = number
+  default = 1
+}
+
+variable "analysis_worker_autoscaling_enabled" {
+  type    = bool
+  default = false
+}
+
+variable "analysis_worker_min_count" {
+  type    = number
+  default = 1
+}
+
+variable "analysis_worker_max_count" {
+  type    = number
+  default = 1
+}
+
+variable "analysis_worker_queue_depth_target" {
+  type    = number
+  default = 1
+}
+
+variable "analysis_worker_oldest_age_target_s" {
+  type    = number
+  default = 120
+}
+
 variable "runtime_secret_arn" {
   type        = string
   default     = ""
