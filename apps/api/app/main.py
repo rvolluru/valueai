@@ -9560,6 +9560,10 @@ def _mannequin_generation_prompt(*, category: str, title: str, description: str)
     return None
 
 
+def _listing_status_after_analysis(current_status: object) -> str:
+    return "Active" if str(current_status or "").strip().lower() == "active" else "Review"
+
+
 async def _generate_mannequin_listing_asset(
     *,
     files: list[dict[str, object]],
@@ -9933,7 +9937,7 @@ async def _run_listing_analysis_job(
             tags=[condition, brand, "trade"],
             source_item_id=source_item_id,
             analysis=response_payload,
-            status="Review",
+            status=_listing_status_after_analysis(current.get("status")),
         )
         log_json(
             "listing_analysis_job_completed",

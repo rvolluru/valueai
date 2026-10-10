@@ -705,6 +705,16 @@ def test_mannequin_generation_prompt_is_limited_to_handbags_and_dresses() -> Non
     assert _mannequin_generation_prompt(category="shoes", title="Leather pumps", description="Black") is None
 
 
+def test_listing_status_after_analysis_preserves_published_listings() -> None:
+    from app.main import _listing_status_after_analysis
+
+    assert _listing_status_after_analysis("Active") == "Active"
+    assert _listing_status_after_analysis("active") == "Active"
+    assert _listing_status_after_analysis("Analyzing") == "Review"
+    assert _listing_status_after_analysis("AnalysisFailed") == "Review"
+    assert _listing_status_after_analysis(None) == "Review"
+
+
 def test_profile_description_uses_product_focused_model_copy_and_condition_aware_fallback() -> None:
     from app.main import _description_from_analysis_or_user, _profile_description_from_analysis
 
