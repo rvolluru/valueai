@@ -675,6 +675,21 @@ def test_mannequin_generation_prompt_is_limited_to_handbags_and_dresses() -> Non
     assert blazer is not None
     assert blazer[0] == "mannequin_garment"
     assert "lapels" in blazer[1]
+    assert "Listing title: Wool blazer" in blazer[1]
+    assert "Item description: Gray jacket" in blazer[1]
+    assert "never convert the item into a different clothing type" in blazer[1]
+
+    top_description = "This Amanda Uprichard halter top has a gathered neckline and a waist-length hem."
+    top = _mannequin_generation_prompt(
+        category="clothes",
+        title="Printed Satin Halter Neck Top",
+        description=top_description,
+    )
+    assert top is not None
+    assert top[0] == "mannequin_garment"
+    assert "Listing title: Printed Satin Halter Neck Top" in top[1]
+    assert f"Item description: {top_description}" in top[1]
+    assert "extend its hem beyond the visible garment boundaries" in top[1]
     accessory_clutch = _mannequin_generation_prompt(
         category="accessories",
         title="Sequined evening clutch",
