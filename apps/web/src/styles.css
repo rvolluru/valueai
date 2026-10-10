@@ -4216,6 +4216,33 @@ textarea:focus-visible,
   line-height: 1.15;
 }
 
+.admin-analysis-thumbnails {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(88px, 112px));
+  gap: 10px;
+}
+
+.admin-analysis-thumbnails figure {
+  margin: 0;
+  min-width: 0;
+}
+
+.admin-analysis-thumbnails img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  border: 1px solid var(--line);
+  background: #f8f4ee;
+}
+
+.admin-analysis-thumbnails figcaption {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: .7rem;
+  line-height: 1.2;
+}
+
 .admin-metrics {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));

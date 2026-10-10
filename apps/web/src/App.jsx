@@ -10519,10 +10519,33 @@ function offerParticipantLabel(value) {
   return raw.length > 18 ? `${raw.slice(0, 18)}...` : raw
 }
 
+function adminAnalysisImageUrl(value) {
+  const raw = String(value || '').trim()
+  if (!raw) return null
+  if (/^https?:\/\//i.test(raw)) return raw
+  if (raw.startsWith('/')) return `${API_DEFAULT.replace(/\/$/, '')}${raw}`
+  return null
+}
+
 function AdminAnalysisCard({ entry }) {
   const response = entry.response || {}
   const debug = response.debug || {}
   const profile = response.item_profile || {}
+  const imageCandidates = [
+    ...(Array.isArray(response.uploaded_images)
+      ? response.uploaded_images.map((image) => ({ url: image?.image_url, kind: 'Source' }))
+      : []),
+    ...(Array.isArray(response.generated_assets)
+      ? response.generated_assets.map((image) => ({ url: image?.image_url, kind: 'Generated' }))
+      : []),
+  ]
+  const seenImages = new Set()
+  const thumbnails = imageCandidates.flatMap((image) => {
+    const url = adminAnalysisImageUrl(image.url)
+    if (!url || seenImages.has(url)) return []
+    seenImages.add(url)
+    return [{ ...image, url }]
+  })
   return (
     <article className="admin-card">
       <div className="admin-card-head">
@@ -10533,6 +10556,16 @@ function AdminAnalysisCard({ entry }) {
         </div>
         <div className="value-chip">{money(response.valuation?.estimated_value)}</div>
       </div>
+      {thumbnails.length > 0 && (
+        <div className="admin-analysis-thumbnails" aria-label="Listing image thumbnails">
+          {thumbnails.map((image, index) => (
+            <figure key={`${image.url}-${index}`}>
+              <img src={image.url} alt={`${image.kind} image ${index + 1} for ${response.brand?.name || 'listing'}`} loading="lazy" />
+              <figcaption>{image.kind}</figcaption>
+            </figure>
+          ))}
+        </div>
+      )}
       <div className="admin-metrics">
         <div><span>Condition</span><strong>{response.condition?.grade || 'n/a'}</strong></div>
         <div><span>User condition</span><strong>{response.user_condition || 'n/a'}</strong></div>
