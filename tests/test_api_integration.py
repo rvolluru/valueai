@@ -678,6 +678,8 @@ def test_mannequin_generation_prompt_is_limited_to_handbags_and_dresses() -> Non
     assert "Listing title: Wool blazer" in blazer[1]
     assert "Item description: Gray jacket" in blazer[1]
     assert "never convert the item into a different clothing type" in blazer[1]
+    assert "dress every uncovered area of the mannequin" in blazer[1]
+    assert "never appears undressed or naked" in blazer[1]
 
     top_description = "This Amanda Uprichard halter top has a gathered neckline and a waist-length hem."
     top = _mannequin_generation_prompt(

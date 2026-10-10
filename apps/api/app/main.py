@@ -9551,7 +9551,9 @@ def _mannequin_generation_prompt(*, category: str, title: str, description: str)
             "fabric texture, stitching, and proportions. Do not redesign, restyle, layer, or add details to the item. "
             "Preserve the product type stated in the listing text and supported by the reference images; never convert the item into "
             "a different clothing type or extend its hem beyond the visible garment boundaries. If other clothing is needed to dress "
-            "the mannequin, use simple neutral pieces that remain visually secondary and do not obscure the item. "
+            "the mannequin, use simple, fitted neutral pieces that remain visually secondary and do not obscure the item. When the "
+            "listed garment covers only part of the body, dress every uncovered area of the mannequin in an appropriate neutral base "
+            "outfit so the full-body mannequin never appears undressed or naked. "
             "Use realistic fabric draping and ensure the complete garment is visible. "
             f"{fidelity_rules}"
         )
