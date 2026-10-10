@@ -1246,6 +1246,20 @@ async function rerunAdminListingAnalysis({ apiBaseUrl, apiKey, bearerToken, list
   return payload
 }
 
+async function submitAdminAnalysisCorrection({ apiBaseUrl, apiKey, bearerToken, analysisId, correction }) {
+  const headers = { 'Content-Type': 'application/json' }
+  if (bearerToken) headers.Authorization = `Bearer ${bearerToken}`
+  else if (apiKey) headers['x-api-key'] = apiKey
+  const resp = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/v1/admin/analyses/${encodeURIComponent(analysisId)}/corrections`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(correction),
+  })
+  const payload = await resp.json().catch(() => null)
+  if (!resp.ok) throw new Error(payload?.detail || `API error (${resp.status})`)
+  return payload
+}
+
 async function fetchMyListings({ apiBaseUrl, apiKey, bearerToken, limit = 100, offset = 0 }) {
   const { client, authContext } = createWebApiClient({ apiBaseUrl, apiKey })
   const payload = await client.listMyListings(limit, authContext(bearerToken), { offset })
@@ -5113,8 +5127,32 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
         listingId,
       })
       await loadAdminAnalyses()
+      return true
     } catch (err) {
       setAdminError(err.message || String(err))
+      return false
+    } finally {
+      setAdminActionBusy('')
+    }
+  }
+
+  async function reviewAdminAnalysis(analysisId, correction) {
+    setAdminActionBusy(`review-${analysisId}`)
+    setAdminError('')
+    try {
+      const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
+      await submitAdminAnalysisCorrection({
+        apiBaseUrl,
+        apiKey: clerkEnabled ? '' : apiKey.trim(),
+        bearerToken,
+        analysisId,
+        correction,
+      })
+      await loadAdminAnalyses()
+      return true
+    } catch (err) {
+      setAdminError(err.message || String(err))
+      return false
     } finally {
       setAdminActionBusy('')
     }
@@ -8729,6 +8767,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                       ['valuation', 'Valuation disputes', adminDashboard.counts?.valuation_disputes],
                       ['risk', 'Auth risk', adminDashboard.counts?.suspicious_listings],
                       ['notes', 'Support notes', adminDashboard.counts?.support_notes],
+                      ['incidents', 'Incidents', adminDashboard.counts?.production_incidents],
                       ['experience', 'User experience', adminExperienceReport?.findings?.length],
                       ['marketplace_intelligence', 'Marketplace insights', adminMarketplaceReport?.summary?.active_listings],
                       ['analysis', 'Recent debug', adminFiltered.length],
@@ -8806,6 +8845,13 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                       {(adminDashboard.support_notes || []).map((note) => <AdminSupportNoteCard key={note.note_id} note={note} />)}
                     </div>
                   )}
+                  {adminQueue === 'incidents' && (
+                    <div className="admin-grid">
+                      {(adminDashboard.production_incidents || []).map((incident) => (
+                        <AdminIncidentCard key={incident.incident_id} incident={incident} />
+                      ))}
+                    </div>
+                  )}
                   {adminQueue === 'experience' && (
                     <AdminExperienceReport report={adminExperienceReport} />
                   )}
@@ -8815,7 +8861,12 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                   {adminQueue === 'analysis' && (
                     <div className="admin-grid">
                       {adminFiltered.map((entry) => (
-                        <AdminAnalysisCard key={entry.analysis_id} entry={entry} />
+                        <AdminAnalysisCard
+                          key={entry.analysis_id}
+                          entry={entry}
+                          busy={adminActionBusy === `review-${entry.analysis_id}`}
+                          onReview={(correction) => reviewAdminAnalysis(entry.analysis_id, correction)}
+                        />
                       ))}
                     </div>
                   )}
@@ -8828,7 +8879,12 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
               ) : (
                 <div className="admin-grid">
                   {adminFiltered.map((entry) => (
-                    <AdminAnalysisCard key={entry.analysis_id} entry={entry} />
+                    <AdminAnalysisCard
+                      key={entry.analysis_id}
+                      entry={entry}
+                      busy={adminActionBusy === `review-${entry.analysis_id}`}
+                      onReview={(correction) => reviewAdminAnalysis(entry.analysis_id, correction)}
+                    />
                   ))}
                 </div>
               )}
@@ -10512,6 +10568,30 @@ function AdminSupportNoteCard({ note }) {
   )
 }
 
+function AdminIncidentCard({ incident }) {
+  return (
+    <article className="admin-card">
+      <div className="admin-card-head">
+        <div>
+          <p className="eyebrow">{incident.source || 'Production'}</p>
+          <h3>{String(incident.incident_type || 'incident').replaceAll('_', ' ')}</h3>
+          <p className="listing-meta">{incident.listing_id || incident.item_id || incident.job_id || incident.incident_id}</p>
+        </div>
+        <span className="value-chip">{incident.severity}</span>
+      </div>
+      <p className="listing-notes">{incident.summary}</p>
+      <div className="admin-metrics">
+        <div><span>Status</span><strong>{incident.status}</strong></div>
+        <div><span>Created</span><strong>{new Date(incident.created_at).toLocaleString()}</strong></div>
+      </div>
+      <details className="debug-block">
+        <summary>Incident details</summary>
+        <pre>{JSON.stringify(incident.details || {}, null, 2)}</pre>
+      </details>
+    </article>
+  )
+}
+
 function offerParticipantLabel(value) {
   const raw = String(value || '')
   if (!raw) return 'unknown'
@@ -10527,7 +10607,11 @@ function adminAnalysisImageUrl(value) {
   return null
 }
 
-function AdminAnalysisCard({ entry }) {
+function AdminAnalysisCard({ entry, busy = false, onReview }) {
+  const [errorCategory, setErrorCategory] = useState('product_type_changed')
+  const [expectedProductType, setExpectedProductType] = useState('')
+  const [reviewNotes, setReviewNotes] = useState('')
+  const [reviewed, setReviewed] = useState(entry.correction?.verdict || '')
   const response = entry.response || {}
   const debug = response.debug || {}
   const profile = response.item_profile || {}
@@ -10546,6 +10630,22 @@ function AdminAnalysisCard({ entry }) {
     seenImages.add(url)
     return [{ ...image, url }]
   })
+  async function submitReview(verdict) {
+    if (!onReview) return
+    const prohibitedByCategory = {
+      product_type_changed: ['Do not convert the item into a different product type'],
+      attribute_not_preserved: ['Do not alter source garment attributes'],
+      mannequin_under_dressed: ['Do not leave uncovered mannequin areas undressed'],
+    }
+    const saved = await onReview({
+      verdict,
+      error_category: verdict === 'rejected' ? errorCategory : null,
+      expected_product_type: expectedProductType.trim() || null,
+      prohibited_outcomes: verdict === 'rejected' ? (prohibitedByCategory[errorCategory] || []) : [],
+      notes: reviewNotes.trim(),
+    })
+    if (saved) setReviewed(verdict)
+  }
   return (
     <article className="admin-card">
       <div className="admin-card-head">
@@ -10575,6 +10675,32 @@ function AdminAnalysisCard({ entry }) {
       <div className="tag-row">
         {(response.requested_photos || []).map((tag) => <span key={tag}>{tag}</span>)}
         {(response.warnings || []).map((tag) => <span key={tag}>{tag}</span>)}
+      </div>
+      <div className="admin-correction-form">
+        <label>
+          <span>Correction type</span>
+          <select value={errorCategory} onChange={(event) => setErrorCategory(event.target.value)} disabled={busy || Boolean(reviewed)}>
+            <option value="product_type_changed">Product type changed</option>
+            <option value="attribute_not_preserved">Attribute not preserved</option>
+            <option value="mannequin_under_dressed">Mannequin under-dressed</option>
+            <option value="incorrect_brand">Incorrect brand</option>
+            <option value="incorrect_condition">Incorrect condition</option>
+            <option value="incorrect_valuation">Incorrect valuation</option>
+            <option value="other">Other</option>
+          </select>
+        </label>
+        <label>
+          <span>Expected product type</span>
+          <input value={expectedProductType} onChange={(event) => setExpectedProductType(event.target.value)} placeholder="top, jacket, jumpsuit..." disabled={busy || Boolean(reviewed)} />
+        </label>
+        <label className="admin-correction-notes">
+          <span>Review notes</span>
+          <textarea value={reviewNotes} onChange={(event) => setReviewNotes(event.target.value)} rows="2" placeholder="What should be preserved or corrected?" disabled={busy || Boolean(reviewed)} />
+        </label>
+        <div className="button-row">
+          <button className="primary small" type="button" onClick={() => submitReview('approved')} disabled={busy || Boolean(reviewed)}>{reviewed === 'approved' ? 'Approved' : 'Approve'}</button>
+          <button className="ghost small" type="button" onClick={() => submitReview('rejected')} disabled={busy || Boolean(reviewed)}>{reviewed === 'rejected' ? 'Correction saved' : 'Reject & create case'}</button>
+        </div>
       </div>
       <VisualConditionDebug assessment={profile.visual_condition_assessment} />
       <details className="debug-block" open={false}>

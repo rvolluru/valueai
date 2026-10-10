@@ -292,6 +292,53 @@ class Database:
             )
             """,
             """
+            CREATE TABLE IF NOT EXISTS production_incidents (
+              incident_id TEXT PRIMARY KEY,
+              incident_type TEXT NOT NULL,
+              source TEXT NOT NULL,
+              severity TEXT NOT NULL,
+              status TEXT NOT NULL,
+              listing_id TEXT,
+              item_id TEXT,
+              job_id TEXT,
+              summary TEXT NOT NULL,
+              details_json TEXT NOT NULL DEFAULT '{}',
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL,
+              resolved_at TEXT
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS structured_corrections (
+              correction_id TEXT PRIMARY KEY,
+              incident_id TEXT,
+              analysis_id TEXT,
+              listing_id TEXT,
+              item_id TEXT,
+              verdict TEXT NOT NULL,
+              error_category TEXT,
+              expected_json TEXT NOT NULL DEFAULT '{}',
+              observed_json TEXT NOT NULL DEFAULT '{}',
+              notes TEXT NOT NULL DEFAULT '',
+              reviewer_subject TEXT NOT NULL,
+              review_status TEXT NOT NULL,
+              created_at TEXT NOT NULL
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS evaluation_cases (
+              case_id TEXT PRIMARY KEY,
+              correction_id TEXT NOT NULL,
+              task TEXT NOT NULL,
+              status TEXT NOT NULL,
+              input_json TEXT NOT NULL DEFAULT '{}',
+              expected_json TEXT NOT NULL DEFAULT '{}',
+              prohibited_json TEXT NOT NULL DEFAULT '[]',
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            )
+            """,
+            """
             CREATE TABLE IF NOT EXISTS user_profiles (
               owner_subject TEXT PRIMARY KEY,
               first_name TEXT,
@@ -1623,6 +1670,13 @@ class Database:
         cur.close()
         return [self._analysis_row_to_dict(row) for row in rows]
 
+    def get_analysis(self, analysis_id: str) -> dict | None:
+        row = self.fetchone(
+            f"SELECT analysis_id, item_id, response_json, created_at FROM analyses WHERE analysis_id = {self.param} LIMIT 1",
+            (analysis_id,),
+        )
+        return self._analysis_row_to_dict(row) if row else None
+
     def list_listing_analysis_jobs(self, limit: int = 50, status: str | None = None) -> list[dict]:
         safe_limit = max(1, min(int(limit or 50), 200))
         if status:
@@ -1648,6 +1702,137 @@ class Database:
             rows = cur.fetchall()
             cur.close()
         return [self._listing_analysis_job_row_to_dict(row) for row in rows]
+
+    def create_production_incident(
+        self,
+        *,
+        incident_id: str,
+        incident_type: str,
+        source: str,
+        severity: str,
+        summary: str,
+        listing_id: str | None = None,
+        item_id: str | None = None,
+        job_id: str | None = None,
+        details: dict | None = None,
+    ) -> dict:
+        now = utc_now_iso()
+        self.execute(
+            f"""INSERT INTO production_incidents
+            (incident_id, incident_type, source, severity, status, listing_id, item_id, job_id, summary, details_json, created_at, updated_at, resolved_at)
+            VALUES ({self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param})""",
+            (incident_id, incident_type, source, severity, "open", listing_id, item_id, job_id, summary, json.dumps(details or {}), now, now, None),
+        )
+        self.commit()
+        return self.get_production_incident(incident_id) or {}
+
+    def get_production_incident(self, incident_id: str) -> dict | None:
+        row = self.fetchone(
+            f"SELECT incident_id, incident_type, source, severity, status, listing_id, item_id, job_id, summary, details_json, created_at, updated_at, resolved_at FROM production_incidents WHERE incident_id = {self.param}",
+            (incident_id,),
+        )
+        return self._production_incident_row_to_dict(row) if row else None
+
+    def list_production_incidents(self, limit: int = 50, status: str | None = None) -> list[dict]:
+        safe_limit = max(1, min(int(limit or 50), 200))
+        query = "SELECT incident_id, incident_type, source, severity, status, listing_id, item_id, job_id, summary, details_json, created_at, updated_at, resolved_at FROM production_incidents"
+        params: tuple = ()
+        if status:
+            query += f" WHERE LOWER(status) = {self.param}"
+            params = (str(status).lower(),)
+        query += f" ORDER BY created_at DESC LIMIT {self.param}"
+        params += (safe_limit,)
+        rows = self.fetchall(query, params)
+        return [self._production_incident_row_to_dict(row) for row in rows]
+
+    def create_structured_correction(
+        self,
+        *,
+        correction_id: str,
+        incident_id: str | None,
+        analysis_id: str,
+        listing_id: str | None,
+        item_id: str,
+        verdict: str,
+        error_category: str | None,
+        expected: dict,
+        observed: dict,
+        notes: str,
+        reviewer_subject: str,
+    ) -> dict:
+        now = utc_now_iso()
+        self.execute(
+            f"""INSERT INTO structured_corrections
+            (correction_id, incident_id, analysis_id, listing_id, item_id, verdict, error_category, expected_json, observed_json, notes, reviewer_subject, review_status, created_at)
+            VALUES ({self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param})""",
+            (correction_id, incident_id, analysis_id, listing_id, item_id, verdict, error_category, json.dumps(expected), json.dumps(observed), notes, reviewer_subject, "verified", now),
+        )
+        self.commit()
+        return {
+            "correction_id": correction_id,
+            "incident_id": incident_id,
+            "analysis_id": analysis_id,
+            "listing_id": listing_id,
+            "item_id": item_id,
+            "verdict": verdict,
+            "error_category": error_category,
+            "expected": expected,
+            "observed": observed,
+            "notes": notes,
+            "reviewer_subject": reviewer_subject,
+            "review_status": "verified",
+            "created_at": now,
+        }
+
+    def get_latest_structured_correction(self, analysis_id: str) -> dict | None:
+        row = self.fetchone(
+            f"SELECT correction_id, incident_id, analysis_id, listing_id, item_id, verdict, error_category, expected_json, observed_json, notes, reviewer_subject, review_status, created_at FROM structured_corrections WHERE analysis_id = {self.param} ORDER BY created_at DESC LIMIT 1",
+            (analysis_id,),
+        )
+        if not row:
+            return None
+        if isinstance(row, sqlite3.Row):
+            data = dict(row)
+        else:
+            keys = [
+                "correction_id", "incident_id", "analysis_id", "listing_id", "item_id",
+                "verdict", "error_category", "expected_json", "observed_json", "notes",
+                "reviewer_subject", "review_status", "created_at",
+            ]
+            data = {key: row[idx] for idx, key in enumerate(keys)}
+        for source, target in (("expected_json", "expected"), ("observed_json", "observed")):
+            try:
+                data[target] = json.loads(data.pop(source) or "{}")
+            except Exception:
+                data[target] = {}
+        return data
+
+    def create_evaluation_case(
+        self,
+        *,
+        case_id: str,
+        correction_id: str,
+        task: str,
+        input_snapshot: dict,
+        expected: dict,
+        prohibited: list[str],
+    ) -> dict:
+        now = utc_now_iso()
+        self.execute(
+            f"""INSERT INTO evaluation_cases
+            (case_id, correction_id, task, status, input_json, expected_json, prohibited_json, created_at, updated_at)
+            VALUES ({self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param})""",
+            (case_id, correction_id, task, "draft", json.dumps(input_snapshot), json.dumps(expected), json.dumps(prohibited), now, now),
+        )
+        self.commit()
+        return {"case_id": case_id, "correction_id": correction_id, "task": task, "status": "draft", "created_at": now}
+
+    def get_listing_by_source_item_id(self, item_id: str) -> dict | None:
+        row = self.fetchone(
+            f"SELECT listing_id, owner_subject, owner_name, title, mode, category, brand, condition, size, estimated_value, city, image, images_json, description, wants, tags_json, source_item_id, analysis_json, status, created_at, COALESCE(updated_at, created_at) AS updated_at FROM listings WHERE source_item_id = {self.param} ORDER BY updated_at DESC LIMIT 1",
+            (item_id,),
+        )
+        return self._listing_row_to_dict(row) if row else None
 
     def list_all_trade_offers(self, limit: int = 50, status: str | None = None) -> list[dict]:
         safe_limit = max(1, min(int(limit or 50), 200))
@@ -3081,6 +3266,23 @@ class Database:
                 data[key] = int(data.get(key) or 0)
             except Exception:
                 data[key] = 0
+        return data
+
+    @staticmethod
+    def _production_incident_row_to_dict(row) -> dict:
+        if isinstance(row, sqlite3.Row):
+            data = dict(row)
+        else:
+            keys = [
+                "incident_id", "incident_type", "source", "severity", "status",
+                "listing_id", "item_id", "job_id", "summary", "details_json",
+                "created_at", "updated_at", "resolved_at",
+            ]
+            data = {key: row[idx] for idx, key in enumerate(keys)}
+        try:
+            data["details"] = json.loads(data.pop("details_json") or "{}")
+        except Exception:
+            data["details"] = {}
         return data
 
     def get_user_profile_quiz(self, owner_subject: str) -> dict | None:

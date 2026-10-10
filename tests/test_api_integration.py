@@ -653,6 +653,97 @@ def test_listing_analysis_job_lifecycle_helpers():
     assert failed["completed_at"]
 
 
+def test_production_feedback_creates_incident_correction_and_evaluation_case():
+    _build_client()
+
+    from app.deps import get_db
+
+    db = get_db()
+    incident = db.create_production_incident(
+        incident_id="incident-test",
+        incident_type="product_type_changed",
+        source="admin_review",
+        severity="medium",
+        summary="Top was rendered as a dress",
+        item_id="item-test",
+        details={"analysis_id": "analysis-test"},
+    )
+    correction = db.create_structured_correction(
+        correction_id="correction-test",
+        incident_id=incident["incident_id"],
+        analysis_id="analysis-test",
+        listing_id=None,
+        item_id="item-test",
+        verdict="rejected",
+        error_category="product_type_changed",
+        expected={"product_type": "top"},
+        observed={"product_type": "dress"},
+        notes="Preserve the blouse hem.",
+        reviewer_subject="admin-test",
+    )
+    evaluation_case = db.create_evaluation_case(
+        case_id="eval-case-test",
+        correction_id=correction["correction_id"],
+        task="mannequin_generation",
+        input_snapshot={"item_id": "item-test"},
+        expected={"product_type": "top"},
+        prohibited=["Do not extend the top into a dress"],
+    )
+
+    assert incident["status"] == "open"
+    assert incident["details"]["analysis_id"] == "analysis-test"
+    assert correction["review_status"] == "verified"
+    assert evaluation_case["status"] == "draft"
+    assert db.list_production_incidents(status="open")[0]["incident_id"] == "incident-test"
+
+
+def test_admin_analysis_rejection_creates_draft_regression_case():
+    client = _build_client()
+
+    from app.auth import AuthPrincipal, require_admin_user
+    from app.deps import get_db
+    from app.main import app
+
+    app.dependency_overrides[require_admin_user] = lambda: AuthPrincipal(
+        auth_type="clerk",
+        subject="admin-test",
+        claims={"sub": "admin-test", "role": "admin"},
+    )
+    db = get_db()
+    db.insert_item("item-review-test")
+    db.insert_analysis(
+        "analysis-review-test",
+        "item-review-test",
+        {
+            "item_id": "item-review-test",
+            "category": "clothes",
+            "brand": {"name": "PAIGE", "confidence": 0.9, "evidence": "label"},
+            "condition": {"grade": "NewWithTags", "confidence": 0.9, "issues": []},
+            "requested_photos": [],
+            "uploaded_images": [{"image_id": "source-image"}],
+            "generated_assets": [{"image_id": "generated-image"}],
+        },
+    )
+
+    response = client.post(
+        "/v1/admin/analyses/analysis-review-test/corrections",
+        json={
+            "verdict": "rejected",
+            "error_category": "product_type_changed",
+            "expected_product_type": "top",
+            "prohibited_outcomes": ["Do not extend the top into a dress"],
+            "notes": "Generated garment is too long.",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["incident"]["incident_type"] == "product_type_changed"
+    assert body["correction"]["expected"]["product_type"] == "top"
+    assert body["evaluation_case"]["task"] == "mannequin_generation"
+    assert body["evaluation_case"]["status"] == "draft"
+
+
 def test_mannequin_generation_prompt_is_limited_to_handbags_and_dresses() -> None:
     from app.main import _mannequin_generation_prompt
 

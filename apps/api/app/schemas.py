@@ -502,6 +502,24 @@ class ListingSupportResponse(BaseModel):
     listing_id: str
 
 
+class AdminAnalysisCorrectionRequest(BaseModel):
+    verdict: Literal["approved", "rejected"]
+    error_category: Literal[
+        "product_type_changed",
+        "attribute_not_preserved",
+        "mannequin_under_dressed",
+        "incorrect_brand",
+        "incorrect_condition",
+        "incorrect_valuation",
+        "other",
+    ] | None = None
+    expected_product_type: str | None = Field(default=None, max_length=120)
+    expected: dict[str, Any] = Field(default_factory=dict)
+    observed: dict[str, Any] = Field(default_factory=dict)
+    prohibited_outcomes: list[str] = Field(default_factory=list, max_length=20)
+    notes: str = Field(default="", max_length=4000)
+
+
 class OfferCreateRequest(BaseModel):
     target_listing_id: str
     offered_listing_id: str | None = None

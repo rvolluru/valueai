@@ -4243,6 +4243,52 @@ textarea:focus-visible,
   line-height: 1.2;
 }
 
+.admin-correction-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.admin-correction-form label {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: .75rem;
+}
+
+.admin-correction-form select,
+.admin-correction-form input,
+.admin-correction-form textarea {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--ink);
+  padding: 9px 10px;
+  font: inherit;
+  font-size: .82rem;
+}
+
+.admin-correction-notes,
+.admin-correction-form .button-row {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 640px) {
+  .admin-correction-form {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-correction-notes,
+  .admin-correction-form .button-row {
+    grid-column: auto;
+  }
+}
+
 .admin-metrics {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));

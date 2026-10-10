@@ -50,6 +50,7 @@ from .experience_agent import build_experience_report
 from .marketplace_intelligence_agent import build_marketplace_intelligence_report
 from .schemas import (
     AnalyzeResponse,
+    AdminAnalysisCorrectionRequest,
     AdminSupportNoteCreateRequest,
     AuthMeResponse,
     BrandOut,
@@ -4927,6 +4928,10 @@ def admin_recent_analyses(
 ):
     safe_limit = max(1, min(limit, 100))
     records = db.list_recent_analyses(limit=safe_limit)
+    records = [
+        {**record, "correction": db.get_latest_structured_correction(str(record["analysis_id"]))}
+        for record in records
+    ]
     return {
         "count": len(records),
         "items": records,
@@ -5123,6 +5128,7 @@ def admin_dashboard(
         if str(profile.get("subscription_status") or "").strip().lower() in refund_statuses
     ][:safe_limit]
     support_notes = db.list_admin_support_notes(limit=safe_limit)
+    incidents = db.list_production_incidents(limit=safe_limit, status="open")
     return {
         "actor": {"auth_type": principal.auth_type, "subject": principal.subject},
         "failed_analyses": failed_jobs,
@@ -5131,6 +5137,7 @@ def admin_dashboard(
         "valuation_disputes": valuation_disputes[:safe_limit],
         "suspicious_listings": suspicious_listings[:safe_limit],
         "support_notes": support_notes,
+        "production_incidents": incidents,
         "counts": {
             "failed_analyses": len(failed_jobs),
             "trades": len(trades),
@@ -5138,8 +5145,82 @@ def admin_dashboard(
             "valuation_disputes": len(valuation_disputes[:safe_limit]),
             "suspicious_listings": len(suspicious_listings[:safe_limit]),
             "support_notes": len(support_notes),
+            "production_incidents": len(incidents),
         },
     }
+
+
+@app.post("/v1/admin/analyses/{analysis_id}/corrections")
+def admin_create_analysis_correction(
+    analysis_id: str,
+    payload: AdminAnalysisCorrectionRequest,
+    principal: AuthPrincipal = Depends(require_admin_user),
+    db: Database = Depends(get_db),
+):
+    analysis = db.get_analysis(analysis_id)
+    if not analysis:
+        raise HTTPException(status_code=404, detail="analysis not found")
+    if db.get_latest_structured_correction(analysis_id):
+        raise HTTPException(status_code=409, detail="analysis has already been reviewed")
+    if payload.verdict == "rejected" and not payload.error_category:
+        raise HTTPException(status_code=400, detail="error_category is required when rejecting an analysis")
+
+    item_id = str(analysis.get("item_id") or "")
+    response = analysis.get("response") if isinstance(analysis.get("response"), dict) else {}
+    listing = db.get_listing_by_source_item_id(item_id)
+    listing_id = str(listing.get("listing_id") or "") if listing else None
+    expected = dict(payload.expected)
+    if payload.expected_product_type:
+        expected["product_type"] = payload.expected_product_type.strip()
+    observed = dict(payload.observed)
+    observed.setdefault("category", response.get("category"))
+    observed.setdefault("brand", (response.get("brand") or {}).get("name") if isinstance(response.get("brand"), dict) else None)
+
+    incident = None
+    if payload.verdict == "rejected":
+        incident = db.create_production_incident(
+            incident_id=f"incident-{uuid.uuid4()}",
+            incident_type=str(payload.error_category),
+            source="admin_review",
+            severity="medium",
+            summary=f"Analysis rejected: {payload.error_category}",
+            listing_id=listing_id,
+            item_id=item_id,
+            details={"analysis_id": analysis_id, "notes": payload.notes},
+        )
+
+    correction = db.create_structured_correction(
+        correction_id=f"correction-{uuid.uuid4()}",
+        incident_id=str(incident.get("incident_id")) if incident else None,
+        analysis_id=analysis_id,
+        listing_id=listing_id,
+        item_id=item_id,
+        verdict=payload.verdict,
+        error_category=payload.error_category,
+        expected=expected,
+        observed=observed,
+        notes=payload.notes.strip(),
+        reviewer_subject=principal.subject,
+    )
+    evaluation_case = None
+    if payload.verdict == "rejected":
+        generated_assets = response.get("generated_assets") if isinstance(response.get("generated_assets"), list) else []
+        evaluation_case = db.create_evaluation_case(
+            case_id=f"eval-case-{uuid.uuid4()}",
+            correction_id=str(correction["correction_id"]),
+            task="mannequin_generation" if generated_assets else "listing_analysis",
+            input_snapshot={
+                "analysis_id": analysis_id,
+                "item_id": item_id,
+                "listing_id": listing_id,
+                "title": listing.get("title") if listing else None,
+                "description": listing.get("description") if listing else None,
+                "source_image_ids": [image.get("image_id") for image in response.get("uploaded_images", []) if isinstance(image, dict)],
+            },
+            expected=expected,
+            prohibited=[value.strip() for value in payload.prohibited_outcomes if value.strip()],
+        )
+    return {"correction": correction, "incident": incident, "evaluation_case": evaluation_case}
 
 
 @app.post("/v1/admin/support-notes")
@@ -9777,6 +9858,29 @@ async def _run_listing_image_staging_job(
         log_json("listing_image_staging_error", listing_id=listing_id, actor=owner_subject, error=str(exc))
 
 
+def _record_analysis_failure_incident(
+    db: Database,
+    *,
+    listing_id: str,
+    item_id: str | None,
+    job_id: str | None,
+    error: str,
+    attempt: int,
+) -> None:
+    incident_type = "model_timeout" if "timeout" in error.lower() else "analysis_failure"
+    db.create_production_incident(
+        incident_id=f"incident-{uuid.uuid4()}",
+        incident_type=incident_type,
+        source="analysis_worker",
+        severity="high" if incident_type == "model_timeout" else "medium",
+        summary=error[:500] or "Listing analysis failed",
+        listing_id=listing_id,
+        item_id=item_id,
+        job_id=job_id,
+        details={"attempt": attempt},
+    )
+
+
 async def _run_listing_analysis_job(
     *,
     listing_id: str,
@@ -9831,6 +9935,14 @@ async def _run_listing_analysis_job(
                 completed=True,
             )
         _mark_listing_analysis_failed(job_db, current, owner_subject)
+        _record_analysis_failure_incident(
+            job_db,
+            listing_id=listing_id,
+            item_id=str(current.get("source_item_id") or "") or None,
+            job_id=job_id,
+            error="No readable images uploaded",
+            attempt=attempt,
+        )
         return
 
     try:
@@ -9986,6 +10098,14 @@ async def _run_listing_analysis_job(
                 completed=True,
             )
         _mark_listing_analysis_failed(job_db, current, owner_subject)
+        _record_analysis_failure_incident(
+            job_db,
+            listing_id=listing_id,
+            item_id=str((current or {}).get("source_item_id") or "") or None,
+            job_id=job_id,
+            error=str(exc),
+            attempt=attempt,
+        )
 
 
 def _run_listing_analysis_job_threaded(
@@ -10068,6 +10188,14 @@ def _run_listing_analysis_job_threaded(
             continue
         current = next((r for r in job_db.list_owner_listings(owner_subject, limit=500) if r["listing_id"] == listing_id), None)
         _mark_listing_analysis_failed(job_db, current, owner_subject)
+        _record_analysis_failure_incident(
+            job_db,
+            listing_id=listing_id,
+            item_id=str((current or {}).get("source_item_id") or "") or None,
+            job_id=job_id,
+            error=last_error,
+            attempt=attempt,
+        )
 
 
 def _run_listing_analysis_for_existing_listing_job(
@@ -10126,6 +10254,14 @@ def _run_listing_analysis_for_existing_listing_job(
                 error="No readable images uploaded",
                 completed=True,
             )
+        _record_analysis_failure_incident(
+            job_db,
+            listing_id=listing_id,
+            item_id=str(current.get("source_item_id") or "") or None,
+            job_id=job_id,
+            error="No readable images uploaded",
+            attempt=0,
+        )
         _mark_listing_analysis_failed(job_db, current, owner_subject)
         log_json("listing_analysis_auto_queue_no_files", listing_id=listing_id, actor=owner_subject)
         return
