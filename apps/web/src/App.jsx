@@ -1199,6 +1199,26 @@ async function fetchAdminMarketplaceIntelligence({ apiBaseUrl, apiKey, bearerTok
   return payload
 }
 
+async function fetchAdminUsers({ apiBaseUrl, bearerToken, limit = 200 }) {
+  const resp = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/v1/admin/users?limit=${limit}`, {
+    headers: { Authorization: `Bearer ${bearerToken}` },
+  })
+  const payload = await resp.json().catch(() => null)
+  if (!resp.ok) throw new Error(payload?.detail || `API error (${resp.status})`)
+  return payload
+}
+
+async function createAdminImpersonation({ apiBaseUrl, bearerToken, userSubject }) {
+  const resp = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/v1/admin/impersonation-sessions`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${bearerToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ user_subject: userSubject }),
+  })
+  const payload = await resp.json().catch(() => null)
+  if (!resp.ok) throw new Error(payload?.detail || `API error (${resp.status})`)
+  return payload
+}
+
 async function sendExperienceEvent({ apiBaseUrl, apiKey, bearerToken, event }) {
   const headers = { 'Content-Type': 'application/json' }
   if (bearerToken) headers.Authorization = `Bearer ${bearerToken}`
@@ -2270,7 +2290,12 @@ function ClerkMarketplaceApp() {
   const [authEntryPoint, setAuthEntryPoint] = useState('login')
   const [authPanelOpen, setAuthPanelOpen] = useState(false)
   const [authPanelKey, setAuthPanelKey] = useState(0)
-  const getBearerToken = useCallback((options) => getToken(options), [getToken])
+  const [impersonation, setImpersonation] = useState(null)
+  const getAdminBearerToken = useCallback((options) => getToken(options), [getToken])
+  const getBearerToken = useCallback(
+    (options) => impersonation?.token || getToken(options),
+    [getToken, impersonation?.token],
+  )
   const handleLogout = useCallback(() => signOut({ redirectUrl: '/' }), [signOut])
   const accountActions = useMemo(() => ({
     changePassword: async ({ currentPassword, newPassword }) => {
@@ -2334,15 +2359,33 @@ function ClerkMarketplaceApp() {
     privateMetadata: user.privateMetadata || {},
     unsafeMetadata: user.unsafeMetadata || {},
   }
+  const effectiveSession = impersonation ? {
+    id: impersonation.user.owner_subject,
+    name: [impersonation.user.first_name, impersonation.user.last_name].filter(Boolean).join(' ') || impersonation.user.email || 'Member',
+    email: impersonation.user.email || '',
+    emailVerified: true,
+  } : session
+  const effectiveProfile = impersonation ? {
+    userId: impersonation.user.owner_subject,
+    name: [impersonation.user.first_name, impersonation.user.last_name].filter(Boolean).join(' '),
+    firstName: impersonation.user.first_name || '',
+    lastName: impersonation.user.last_name || '',
+    email: impersonation.user.email || '',
+  } : profileData
 
   return (
     <MarketplaceWorkspace
-	      session={session}
-	      profileData={profileData}
+	      key={effectiveSession.id}
+	      session={effectiveSession}
+	      profileData={effectiveProfile}
 	      onLogout={handleLogout}
 	      clerkEnabled
 	      getBearerToken={getBearerToken}
-      accountActions={accountActions}
+      getAdminBearerToken={getAdminBearerToken}
+      impersonation={impersonation}
+      onStartImpersonation={setImpersonation}
+      onExitImpersonation={() => setImpersonation(null)}
+      accountActions={impersonation ? null : accountActions}
     />
   )
 }
@@ -2634,7 +2677,7 @@ function LoadingShell({ message }) {
   )
 }
 
-function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnabled = false, getBearerToken, accountActions = null }) {
+function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnabled = false, getBearerToken, getAdminBearerToken = null, impersonation = null, onStartImpersonation = null, onExitImpersonation = null, accountActions = null }) {
   const signupFullName = resolveSignupFullName(session, profileData)
   const hasAdminRole = useMemo(
     () => hasAdminRoleFromObject(session) || hasAdminRoleFromObject(profileData),
@@ -2682,6 +2725,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   const [adminLoading, setAdminLoading] = useState(false)
   const [adminError, setAdminError] = useState('')
   const [adminSearch, setAdminSearch] = useState('')
+  const [adminUsers, setAdminUsers] = useState([])
   const experienceSessionIdRef = useRef(
     typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `web-${Date.now()}`,
   )
@@ -2952,12 +2996,16 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     function handleUnauthorized() {
       if (forcedLogoutRef.current) return
       forcedLogoutRef.current = true
+      if (impersonation && typeof onExitImpersonation === 'function') {
+        onExitImpersonation()
+        return
+      }
       setSavedListingNotice('Your session expired. Please sign in again.')
       Promise.resolve(onLogout()).catch(() => {})
     }
     window.addEventListener('valueai:unauthorized', handleUnauthorized)
     return () => window.removeEventListener('valueai:unauthorized', handleUnauthorized)
-  }, [onLogout])
+  }, [impersonation, onExitImpersonation, onLogout])
 
   function resolveOfferActorSubject(offer) {
     const participants = [String(offer?.from_subject || ''), String(offer?.to_subject || '')]
@@ -5078,7 +5126,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     setAdminError('')
     setAdminLoading(true)
     try {
-      const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
+      const bearerToken = clerkEnabled && getAdminBearerToken ? await getAdminBearerToken() : (clerkEnabled && getBearerToken ? await getBearerToken() : null)
       const payload = await fetchAdminAnalyses({
         apiBaseUrl,
         apiKey: clerkEnabled ? '' : apiKey.trim(),
@@ -5103,14 +5151,31 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
         bearerToken,
         days: 30,
       })
+      const usersPayload = clerkEnabled ? await fetchAdminUsers({ apiBaseUrl, bearerToken, limit: 200 }) : { items: [] }
       setAdminAnalyses(payload.items || [])
       setAdminDashboard(dashboard)
       setAdminExperienceReport(experienceReport)
       setAdminMarketplaceReport(marketplaceReport)
+      setAdminUsers(usersPayload.items || [])
     } catch (err) {
       setAdminError(err.message || String(err))
     } finally {
       setAdminLoading(false)
+    }
+  }
+
+  async function loginAsAdminUser(userSubject) {
+    setAdminActionBusy(`impersonate-${userSubject}`)
+    setAdminError('')
+    try {
+      const bearerToken = await getAdminBearerToken()
+      const result = await createAdminImpersonation({ apiBaseUrl, bearerToken, userSubject })
+      onStartImpersonation?.(result)
+      if (typeof window !== 'undefined') window.history.replaceState({}, '', tabHref('market'))
+    } catch (err) {
+      setAdminError(err.message || String(err))
+    } finally {
+      setAdminActionBusy('')
     }
   }
 
@@ -6351,6 +6416,12 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
 
   return (
     <div className="shell app-shell">
+      {impersonation && (
+        <div className="impersonation-banner" role="status">
+          <span>Viewing as <strong>{session.name}</strong> ({session.email || session.id})</span>
+          <button className="ghost small" type="button" onClick={onExitImpersonation}>Exit user view</button>
+        </div>
+      )}
       <div className="topbar">
         <div className="topbar-copy">
           <div className="app-brand-row">
@@ -8770,6 +8841,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                       ['incidents', 'Incidents', adminDashboard.counts?.production_incidents],
                       ['experience', 'User experience', adminExperienceReport?.findings?.length],
                       ['marketplace_intelligence', 'Marketplace insights', adminMarketplaceReport?.summary?.active_listings],
+                      ['users', 'Users', adminUsers.length],
                       ['analysis', 'Recent debug', adminFiltered.length],
                     ].map(([key, label, count]) => (
                       <button key={key} type="button" className={adminQueue === key ? 'primary small' : 'ghost small'} onClick={() => setAdminQueue(key)}>
@@ -8857,6 +8929,18 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                   )}
                   {adminQueue === 'marketplace_intelligence' && (
                     <AdminMarketplaceIntelligence report={adminMarketplaceReport} />
+                  )}
+                  {adminQueue === 'users' && (
+                    <div className="admin-data-table-wrap"><table className="admin-data-table"><thead><tr><th>User</th><th>Email</th><th>Subscription</th><th /></tr></thead><tbody>
+                      {adminUsers.filter((entry) => JSON.stringify(entry).toLowerCase().includes(adminSearch.trim().toLowerCase())).map((entry) => (
+                        <tr key={entry.owner_subject}>
+                          <td>{[entry.first_name, entry.last_name].filter(Boolean).join(' ') || entry.owner_subject}</td>
+                          <td>{entry.email || 'n/a'}</td>
+                          <td>{entry.subscription_status || entry.subscription_plan || 'n/a'}</td>
+                          <td><button className="ghost small" type="button" disabled={adminActionBusy === `impersonate-${entry.owner_subject}`} onClick={() => loginAsAdminUser(entry.owner_subject)}>{adminActionBusy === `impersonate-${entry.owner_subject}` ? 'Opening...' : 'Login as user'}</button></td>
+                        </tr>
+                      ))}
+                    </tbody></table></div>
                   )}
                   {adminQueue === 'analysis' && (
                     <div className="admin-grid">

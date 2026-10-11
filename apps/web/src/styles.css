@@ -4182,6 +4182,20 @@ textarea:focus-visible,
   gap: 14px;
 }
 
+.impersonation-banner {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 10px 16px;
+  color: #171717;
+  background: #f6c453;
+  border-bottom: 1px solid #c58d16;
+}
+
 .admin-workspace .panel-header h2 {
   margin: 0;
 }

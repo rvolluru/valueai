@@ -1131,6 +1131,64 @@ def test_admin_dashboard_allows_admin_role_dependency_override():
     assert res.json()["actor"]["subject"] == "admin-user"
 
 
+def test_admin_can_start_audited_user_impersonation_session():
+    client = _build_client()
+
+    from app.auth import AuthPrincipal, require_admin_user
+    from app.deps import get_db
+    from app.main import app
+
+    db = get_db()
+    now = datetime.now(timezone.utc).isoformat()
+    db.execute(
+        "INSERT INTO user_profiles (owner_subject, first_name, last_name, email, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+        ("target-user", "Taylor", "Member", "taylor@example.com", now, now),
+    )
+    db.commit()
+    app.dependency_overrides[require_admin_user] = lambda: AuthPrincipal(
+        auth_type="clerk",
+        subject="admin-user",
+        claims={"sub": "admin-user", "role": "admin"},
+    )
+    try:
+        users = client.get("/v1/admin/users")
+        started = client.post("/v1/admin/impersonation-sessions", json={"user_subject": "target-user"})
+    finally:
+        app.dependency_overrides.clear()
+
+    assert users.status_code == 200, users.text
+    assert users.json()["items"][0]["owner_subject"] == "target-user"
+    assert started.status_code == 200, started.text
+    token = started.json()["token"]
+    profile = client.get("/v1/me/profile-quiz", headers={"Authorization": f"Bearer {token}"})
+    assert profile.status_code == 200, profile.text
+    assert profile.json()["owner_subject"] == "target-user"
+    assert client.get("/v1/admin/dashboard", headers={"Authorization": f"Bearer {token}"}).status_code == 401
+    note = db.list_admin_support_notes(limit=1)[0]
+    assert note["entity_id"] == "target-user"
+    assert note["actor_subject"] == "admin-user"
+
+
+def test_impersonation_token_rejects_signature_tampering():
+    _build_client()
+
+    from app.auth import create_impersonation_token, get_request_principal
+    from app.settings import get_settings
+
+    token = create_impersonation_token(
+        admin_subject="admin-user",
+        user_subject="target-user",
+        settings=get_settings(),
+    )
+    tampered = f"{token[:-1]}{'a' if token[-1] != 'a' else 'b'}"
+
+    try:
+        get_request_principal(authorization=f"Bearer {tampered}", settings=get_settings())
+        assert False, "tampered token should be rejected"
+    except Exception as exc:
+        assert getattr(exc, "status_code", None) == 401
+
+
 def test_experience_events_are_ingested_and_admin_report_is_role_restricted():
     client = _build_client()
     event = {

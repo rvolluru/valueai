@@ -3396,6 +3396,23 @@ class Database:
             "updated_at": data["updated_at"],
         }
 
+    def list_user_profile_summaries(self, limit: int = 200) -> list[dict]:
+        safe_limit = max(1, min(int(limit or 200), 500))
+        query = (
+            "SELECT owner_subject, first_name, last_name, email, subscription_plan, "
+            f"subscription_status, created_at, updated_at FROM user_profiles ORDER BY updated_at DESC LIMIT {self.param}"
+        )
+        if self._sqlite_conn is not None:
+            with self._sqlite_lock:
+                rows = self._sqlite_conn.execute(query, (safe_limit,)).fetchall()
+        else:
+            cur = self._pg_cursor()
+            cur.execute(query, (safe_limit,))
+            rows = cur.fetchall()
+            cur.close()
+        keys = ("owner_subject", "first_name", "last_name", "email", "subscription_plan", "subscription_status", "created_at", "updated_at")
+        return [dict(row) if isinstance(row, sqlite3.Row) else {key: row[index] for index, key in enumerate(keys)} for row in rows]
+
     def upsert_user_profile_quiz(
         self,
         *,

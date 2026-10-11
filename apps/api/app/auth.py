@@ -3,6 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any, Annotated
+import base64
+import hashlib
+import hmac
+import json
+import time
 
 from fastapi import Depends, Header, HTTPException
 
@@ -73,6 +78,49 @@ def _parse_bearer(authorization: str | None) -> str | None:
     return token or None
 
 
+def _impersonation_signing_key(settings: Settings) -> bytes:
+    material = f"{settings.api_key}|{settings.clerk_issuer or ''}|valueai-admin-impersonation"
+    return hashlib.sha256(material.encode("utf-8")).digest()
+
+
+def create_impersonation_token(*, admin_subject: str, user_subject: str, settings: Settings, ttl_seconds: int = 1800) -> str:
+    now = int(time.time())
+    payload = {
+        "typ": "admin_impersonation",
+        "sub": user_subject,
+        "impersonated_by": admin_subject,
+        "iat": now,
+        "exp": now + max(60, min(ttl_seconds, 3600)),
+    }
+    encoded = base64.urlsafe_b64encode(
+        json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    ).decode("ascii").rstrip("=")
+    signature = hmac.new(_impersonation_signing_key(settings), encoded.encode("ascii"), hashlib.sha256).digest()
+    encoded_signature = base64.urlsafe_b64encode(signature).decode("ascii").rstrip("=")
+    return f"imp.{encoded}.{encoded_signature}"
+
+
+def _verify_impersonation_token(token: str, settings: Settings) -> dict[str, Any] | None:
+    if not token.startswith("imp."):
+        return None
+    try:
+        _, encoded, encoded_signature = token.split(".", 2)
+        expected = hmac.new(_impersonation_signing_key(settings), encoded.encode("ascii"), hashlib.sha256).digest()
+        supplied = base64.urlsafe_b64decode(encoded_signature + "=" * (-len(encoded_signature) % 4))
+        if not hmac.compare_digest(expected, supplied):
+            raise _unauthorized("Invalid impersonation token")
+        payload = json.loads(base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)))
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise _unauthorized("Invalid impersonation token") from exc
+    if payload.get("typ") != "admin_impersonation" or int(payload.get("exp") or 0) <= int(time.time()):
+        raise _unauthorized("Impersonation session expired")
+    if not payload.get("sub") or not payload.get("impersonated_by"):
+        raise _unauthorized("Invalid impersonation token")
+    return payload
+
+
 @lru_cache(maxsize=8)
 def _jwks_client(jwks_url: str):
     if PyJWKClient is None:
@@ -124,6 +172,13 @@ def get_request_principal(
 
     token = _parse_bearer(authorization)
     if token:
+        impersonation_claims = _verify_impersonation_token(token, settings)
+        if impersonation_claims is not None:
+            return AuthPrincipal(
+                auth_type="admin_impersonation",
+                subject=str(impersonation_claims["sub"]),
+                claims=impersonation_claims,
+            )
         claims = _verify_clerk_token(token, settings)
         sub = str(claims.get("sub") or "")
         if not sub:

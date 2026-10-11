@@ -301,6 +301,10 @@ class AdminSupportNoteCreateRequest(BaseModel):
     note: str = ""
 
 
+class AdminImpersonationRequest(BaseModel):
+    user_subject: str = Field(min_length=1, max_length=255)
+
+
 class ExperienceEventCreateRequest(BaseModel):
     event_name: Literal[
         "screen_viewed",

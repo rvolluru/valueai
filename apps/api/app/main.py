@@ -35,7 +35,7 @@ from brand.types import ImageInput
 from valuation import ValuationConfig, ValuationService
 from valuation.types import ValuationRequest
 
-from .auth import AuthPrincipal, get_request_principal, require_admin_or_api_key, require_admin_user, require_clerk_user
+from .auth import AuthPrincipal, create_impersonation_token, get_request_principal, require_admin_or_api_key, require_admin_user, require_clerk_user
 from .analysis_queue import enqueue_listing_analysis
 from .db import Database, PersistedImage, TradeListingUnavailableError, utc_now_iso
 from .deps import (
@@ -51,6 +51,7 @@ from .marketplace_intelligence_agent import build_marketplace_intelligence_repor
 from .schemas import (
     AnalyzeResponse,
     AdminAnalysisCorrectionRequest,
+    AdminImpersonationRequest,
     AdminSupportNoteCreateRequest,
     AuthMeResponse,
     BrandOut,
@@ -4960,6 +4961,52 @@ def admin_recent_analyses(
         "items": enriched_records,
         "actor": {"auth_type": principal.auth_type, "subject": principal.subject},
     }
+
+
+@app.get("/v1/admin/users")
+def admin_users(
+    limit: int = Query(default=200, ge=1, le=500),
+    principal: AuthPrincipal = Depends(require_admin_user),
+    db: Database = Depends(get_db),
+):
+    users = db.list_user_profile_summaries(limit=limit)
+    return {
+        "count": len(users),
+        "items": users,
+        "actor": {"auth_type": principal.auth_type, "subject": principal.subject},
+    }
+
+
+@app.post("/v1/admin/impersonation-sessions")
+def create_admin_impersonation_session(
+    payload: AdminImpersonationRequest,
+    principal: AuthPrincipal = Depends(require_admin_user),
+    db: Database = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+):
+    user_subject = payload.user_subject.strip()
+    profile = db.get_user_profile_quiz(user_subject)
+    if profile is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    if user_subject == principal.subject:
+        raise HTTPException(status_code=400, detail="Cannot impersonate your own account")
+    expires_in = 1800
+    token = create_impersonation_token(
+        admin_subject=principal.subject,
+        user_subject=user_subject,
+        settings=settings,
+        ttl_seconds=expires_in,
+    )
+    db.create_admin_support_note(
+        note_id=f"support-note-{uuid.uuid4()}",
+        entity_type="user",
+        entity_id=user_subject,
+        category="general",
+        status="resolved",
+        note=f"Impersonation session started by {principal.subject}",
+        actor_subject=principal.subject,
+    )
+    return {"token": token, "expires_in": expires_in, "user": profile}
 
 
 def _admin_listing_auth_risk_details(listing: dict) -> list[dict]:
