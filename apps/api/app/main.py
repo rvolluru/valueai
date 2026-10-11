@@ -4928,13 +4928,36 @@ def admin_recent_analyses(
 ):
     safe_limit = max(1, min(limit, 100))
     records = db.list_recent_analyses(limit=safe_limit)
-    records = [
-        {**record, "correction": db.get_latest_structured_correction(str(record["analysis_id"]))}
-        for record in records
-    ]
+    enriched_records = []
+    for record in records:
+        response = dict(record.get("response") or {})
+        generated_assets = [
+            asset for asset in response.get("generated_assets") or []
+            if isinstance(asset, dict)
+        ]
+        seen_assets = {
+            str(asset.get("image_id") or asset.get("image_url") or "").strip()
+            for asset in generated_assets
+        }
+        listing = db.get_listing_by_source_item_id(str(record.get("item_id") or ""))
+        listing_analysis = listing.get("analysis") if isinstance(listing, dict) else None
+        for asset in (listing_analysis or {}).get("generated_assets") or []:
+            if not isinstance(asset, dict) or "mannequin" not in str(asset.get("kind") or "").lower():
+                continue
+            asset_key = str(asset.get("image_id") or asset.get("image_url") or "").strip()
+            if not asset_key or asset_key in seen_assets:
+                continue
+            generated_assets.append(asset)
+            seen_assets.add(asset_key)
+        response["generated_assets"] = generated_assets
+        enriched_records.append({
+            **record,
+            "response": response,
+            "correction": db.get_latest_structured_correction(str(record["analysis_id"])),
+        })
     return {
-        "count": len(records),
-        "items": records,
+        "count": len(enriched_records),
+        "items": enriched_records,
         "actor": {"auth_type": principal.auth_type, "subject": principal.subject},
     }
 

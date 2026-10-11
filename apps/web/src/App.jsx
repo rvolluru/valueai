@@ -10620,7 +10620,10 @@ function AdminAnalysisCard({ entry, busy = false, onReview }) {
       ? response.uploaded_images.map((image) => ({ url: image?.image_url, kind: 'Source' }))
       : []),
     ...(Array.isArray(response.generated_assets)
-      ? response.generated_assets.map((image) => ({ url: image?.image_url, kind: 'Generated' }))
+      ? response.generated_assets.map((image) => ({
+          url: image?.image_url,
+          kind: String(image?.kind || '').toLowerCase().includes('mannequin') ? 'Mannequin' : 'Generated',
+        }))
       : []),
   ]
   const seenImages = new Set()

@@ -744,6 +744,75 @@ def test_admin_analysis_rejection_creates_draft_regression_case():
     assert body["evaluation_case"]["status"] == "draft"
 
 
+def test_admin_recent_analyses_includes_linked_listing_mannequin():
+    client = _build_client()
+
+    from app.auth import AuthPrincipal, require_admin_user
+    from app.deps import get_db
+    from app.main import app
+
+    app.dependency_overrides[require_admin_user] = lambda: AuthPrincipal(
+        auth_type="clerk",
+        subject="admin-test",
+        claims={"sub": "admin-test", "role": "admin"},
+    )
+    db = get_db()
+    db.insert_item("item-debug-thumbnails")
+    db.insert_analysis(
+        "analysis-debug-thumbnails",
+        "item-debug-thumbnails",
+        {
+            "item_id": "item-debug-thumbnails",
+            "category": "clothes",
+            "brand": {"name": "Example", "confidence": 0.9, "evidence": "label"},
+            "condition": {"grade": "LikeNew", "confidence": 0.9, "issues": []},
+            "requested_photos": [],
+            "uploaded_images": [{"image_id": "source-image", "image_url": "/v1/images/source-image"}],
+        },
+    )
+    db.insert_listing(
+        listing_id="listing-debug-thumbnails",
+        owner_subject="owner-test",
+        owner_name="Owner",
+        title="Test jacket",
+        mode="trade",
+        category="clothes",
+        brand="Example",
+        condition="LikeNew",
+        size="M",
+        estimated_value=100,
+        city="New York",
+        image="/v1/images/source-image",
+        images=["/v1/images/source-image"],
+        description="Test jacket",
+        wants="",
+        tags=[],
+        source_item_id="item-debug-thumbnails",
+        analysis={
+            "generated_assets": [
+                {
+                    "kind": "mannequin_garment",
+                    "image_id": "mannequin-image",
+                    "image_url": "/v1/images/mannequin-image",
+                }
+            ]
+        },
+        status="Active",
+    )
+
+    response = client.get("/v1/admin/analyses?limit=100")
+
+    assert response.status_code == 200, response.text
+    record = next(item for item in response.json()["items"] if item["analysis_id"] == "analysis-debug-thumbnails")
+    assert record["response"]["generated_assets"] == [
+        {
+            "kind": "mannequin_garment",
+            "image_id": "mannequin-image",
+            "image_url": "/v1/images/mannequin-image",
+        }
+    ]
+
+
 def test_mannequin_generation_prompt_is_limited_to_handbags_and_dresses() -> None:
     from app.main import _mannequin_generation_prompt
 
