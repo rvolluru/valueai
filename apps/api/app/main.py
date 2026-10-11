@@ -52,6 +52,8 @@ from .schemas import (
     AnalyzeResponse,
     AdminAnalysisCorrectionRequest,
     AdminImpersonationRequest,
+    AdminIncidentUpdateRequest,
+    AdminEvaluationRunRequest,
     AdminSupportNoteCreateRequest,
     AuthMeResponse,
     BrandOut,
@@ -5198,7 +5200,16 @@ def admin_dashboard(
         if str(profile.get("subscription_status") or "").strip().lower() in refund_statuses
     ][:safe_limit]
     support_notes = db.list_admin_support_notes(limit=safe_limit)
-    incidents = db.list_production_incidents(limit=safe_limit, status="open")
+    incidents = [
+        incident for incident in db.list_production_incidents(limit=200)
+        if str(incident.get("status") or "").lower() != "resolved"
+    ][:safe_limit]
+    for incident in incidents:
+        correction = db.get_structured_correction_for_incident(str(incident["incident_id"]))
+        incident["correction"] = correction
+        incident["evaluation_case"] = (
+            db.get_evaluation_case_for_correction(str(correction["correction_id"])) if correction else None
+        )
     return {
         "actor": {"auth_type": principal.auth_type, "subject": principal.subject},
         "failed_analyses": failed_jobs,
@@ -5218,6 +5229,90 @@ def admin_dashboard(
             "production_incidents": len(incidents),
         },
     }
+
+
+@app.patch("/v1/admin/incidents/{incident_id}")
+def admin_update_incident(
+    incident_id: str,
+    payload: AdminIncidentUpdateRequest,
+    principal: AuthPrincipal = Depends(require_admin_user),
+    db: Database = Depends(get_db),
+):
+    incident = db.get_production_incident(incident_id)
+    if not incident:
+        raise HTTPException(status_code=404, detail="incident not found")
+    details = dict(incident.get("details") or {})
+    for key, value in {
+        "owner_subject": payload.owner_subject,
+        "root_cause": payload.root_cause,
+        "fix_reference": payload.fix_reference,
+        "notes": payload.notes,
+    }.items():
+        if value is not None:
+            details[key] = value.strip()
+    if payload.expected:
+        details["expected"] = payload.expected
+        correction = db.get_structured_correction_for_incident(incident_id)
+        evaluation = db.get_evaluation_case_for_correction(str(correction.get("correction_id") or "")) if correction else None
+        if evaluation:
+            db.update_evaluation_case_expected(str(evaluation["case_id"]), payload.expected)
+    details["last_updated_by"] = principal.subject
+    if payload.status in {"deployed", "resolved"} and not str(details.get("fix_reference") or "").strip():
+        raise HTTPException(status_code=400, detail="fix_reference is required before deployment or resolution")
+    if payload.status in {"deployed", "resolved"}:
+        correction = db.get_structured_correction_for_incident(incident_id)
+        evaluation = db.get_evaluation_case_for_correction(str(correction.get("correction_id") or "")) if correction else None
+        latest_run = (details.get("evaluation_runs") or [])[-1:] if evaluation else []
+        if evaluation and (not latest_run or latest_run[0].get("outcome") != "passed"):
+            raise HTTPException(status_code=409, detail="a passing evaluation is required before deployment or resolution")
+    updated = db.update_production_incident(incident_id, status=payload.status, details=details)
+    return {"incident": updated}
+
+
+@app.post("/v1/admin/incidents/{incident_id}/evaluation-runs")
+def admin_run_incident_evaluation(
+    incident_id: str,
+    payload: AdminEvaluationRunRequest,
+    principal: AuthPrincipal = Depends(require_admin_user),
+    db: Database = Depends(get_db),
+):
+    incident = db.get_production_incident(incident_id)
+    if not incident:
+        raise HTTPException(status_code=404, detail="incident not found")
+    correction = db.get_structured_correction_for_incident(incident_id)
+    evaluation = db.get_evaluation_case_for_correction(str(correction.get("correction_id") or "")) if correction else None
+    if not evaluation:
+        raise HTTPException(status_code=409, detail="incident does not have an evaluation case")
+    outcome = payload.outcome
+    evidence: dict = {}
+    if outcome == "auto":
+        if evaluation.get("task") == "mannequin_generation":
+            outcome = "manual_review_required"
+            evidence["reason"] = "Visual mannequin output requires human review"
+        else:
+            analysis_id = str((evaluation.get("input") or {}).get("analysis_id") or "")
+            analysis = db.get_analysis(analysis_id) if analysis_id else None
+            response = analysis.get("response") if isinstance(analysis, dict) else {}
+            expected = evaluation.get("expected") or {}
+            actual_product_type = ((response.get("item_profile") or {}).get("product_type") if isinstance(response.get("item_profile"), dict) else None) or response.get("category")
+            expected_product_type = expected.get("product_type")
+            evidence = {"expected_product_type": expected_product_type, "actual_product_type": actual_product_type}
+            outcome = "passed" if expected_product_type and str(expected_product_type).casefold() == str(actual_product_type).casefold() else "failed"
+    run = {
+        "run_id": f"eval-run-{uuid.uuid4()}",
+        "outcome": outcome,
+        "notes": payload.notes.strip(),
+        "evidence": evidence,
+        "actor_subject": principal.subject,
+        "created_at": utc_now_iso(),
+    }
+    details = dict(incident.get("details") or {})
+    details["evaluation_runs"] = [*(details.get("evaluation_runs") or []), run][-20:]
+    details["last_updated_by"] = principal.subject
+    db.update_production_incident(incident_id, status=str(incident.get("status") or "open"), details=details)
+    if outcome in {"passed", "failed"}:
+        db.update_evaluation_case_status(str(evaluation["case_id"]), outcome)
+    return {"run": run, "evaluation_case": db.get_evaluation_case_for_correction(str(correction["correction_id"]))}
 
 
 @app.post("/v1/admin/analyses/{analysis_id}/corrections")

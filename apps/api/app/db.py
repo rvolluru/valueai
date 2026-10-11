@@ -1745,6 +1745,16 @@ class Database:
         rows = self.fetchall(query, params)
         return [self._production_incident_row_to_dict(row) for row in rows]
 
+    def update_production_incident(self, incident_id: str, *, status: str, details: dict) -> dict | None:
+        now = utc_now_iso()
+        resolved_at = now if status == "resolved" else None
+        self.execute(
+            f"UPDATE production_incidents SET status = {self.param}, details_json = {self.param}, updated_at = {self.param}, resolved_at = {self.param} WHERE incident_id = {self.param}",
+            (status, json.dumps(details), now, resolved_at, incident_id),
+        )
+        self.commit()
+        return self.get_production_incident(incident_id)
+
     def create_structured_correction(
         self,
         *,
@@ -1807,6 +1817,23 @@ class Database:
                 data[target] = {}
         return data
 
+    def get_structured_correction_for_incident(self, incident_id: str) -> dict | None:
+        row = self.fetchone(
+            f"SELECT correction_id, incident_id, analysis_id, listing_id, item_id, verdict, error_category, expected_json, observed_json, notes, reviewer_subject, review_status, created_at FROM structured_corrections WHERE incident_id = {self.param} ORDER BY created_at DESC LIMIT 1",
+            (incident_id,),
+        )
+        if not row:
+            return None
+        data = dict(row) if isinstance(row, sqlite3.Row) else dict(zip(
+            ("correction_id", "incident_id", "analysis_id", "listing_id", "item_id", "verdict", "error_category", "expected_json", "observed_json", "notes", "reviewer_subject", "review_status", "created_at"), row
+        ))
+        for source, target in (("expected_json", "expected"), ("observed_json", "observed")):
+            try:
+                data[target] = json.loads(data.pop(source) or "{}")
+            except Exception:
+                data[target] = {}
+        return data
+
     def create_evaluation_case(
         self,
         *,
@@ -1826,6 +1853,37 @@ class Database:
         )
         self.commit()
         return {"case_id": case_id, "correction_id": correction_id, "task": task, "status": "draft", "created_at": now}
+
+    def get_evaluation_case_for_correction(self, correction_id: str) -> dict | None:
+        row = self.fetchone(
+            f"SELECT case_id, correction_id, task, status, input_json, expected_json, prohibited_json, created_at, updated_at FROM evaluation_cases WHERE correction_id = {self.param} ORDER BY updated_at DESC LIMIT 1",
+            (correction_id,),
+        )
+        if not row:
+            return None
+        data = dict(row) if isinstance(row, sqlite3.Row) else dict(zip(
+            ("case_id", "correction_id", "task", "status", "input_json", "expected_json", "prohibited_json", "created_at", "updated_at"), row
+        ))
+        for source, target, fallback in (("input_json", "input", {}), ("expected_json", "expected", {}), ("prohibited_json", "prohibited", [])):
+            try:
+                data[target] = json.loads(data.pop(source) or json.dumps(fallback))
+            except Exception:
+                data[target] = fallback
+        return data
+
+    def update_evaluation_case_status(self, case_id: str, status: str) -> None:
+        self.execute(
+            f"UPDATE evaluation_cases SET status = {self.param}, updated_at = {self.param} WHERE case_id = {self.param}",
+            (status, utc_now_iso(), case_id),
+        )
+        self.commit()
+
+    def update_evaluation_case_expected(self, case_id: str, expected: dict) -> None:
+        self.execute(
+            f"UPDATE evaluation_cases SET expected_json = {self.param}, updated_at = {self.param} WHERE case_id = {self.param}",
+            (json.dumps(expected), utc_now_iso(), case_id),
+        )
+        self.commit()
 
     def get_listing_by_source_item_id(self, item_id: str) -> dict | None:
         row = self.fetchone(

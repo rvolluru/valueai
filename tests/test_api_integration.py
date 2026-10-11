@@ -697,6 +697,88 @@ def test_production_feedback_creates_incident_correction_and_evaluation_case():
     assert db.list_production_incidents(status="open")[0]["incident_id"] == "incident-test"
 
 
+def test_admin_incident_workflow_tracks_evaluation_and_resolution():
+    client = _build_client()
+
+    from app.auth import AuthPrincipal, require_admin_user
+    from app.deps import get_db
+    from app.main import app
+
+    app.dependency_overrides[require_admin_user] = lambda: AuthPrincipal(
+        auth_type="clerk", subject="admin-test", claims={"role": "admin"}
+    )
+    db = get_db()
+    db.insert_item("item-incident-workflow")
+    db.insert_analysis(
+        "analysis-incident-workflow",
+        "item-incident-workflow",
+        {
+            "category": "top",
+            "brand": {"name": "Example", "confidence": 0.9, "evidence": "label"},
+            "condition": {"grade": "LikeNew", "confidence": 0.9, "issues": []},
+            "requested_photos": [],
+            "item_profile": {"product_type": "top"},
+        },
+    )
+    db.create_production_incident(
+        incident_id="incident-workflow",
+        incident_type="product_type_changed",
+        source="admin_review",
+        severity="medium",
+        summary="Top classified incorrectly",
+        item_id="item-incident-workflow",
+        details={"analysis_id": "analysis-incident-workflow"},
+    )
+    correction = db.create_structured_correction(
+        correction_id="correction-workflow",
+        incident_id="incident-workflow",
+        analysis_id="analysis-incident-workflow",
+        listing_id=None,
+        item_id="item-incident-workflow",
+        verdict="rejected",
+        error_category="product_type_changed",
+        expected={"product_type": "top"},
+        observed={"product_type": "dress"},
+        notes="Preserve the top length",
+        reviewer_subject="admin-test",
+    )
+    db.create_evaluation_case(
+        case_id="eval-workflow",
+        correction_id=correction["correction_id"],
+        task="listing_analysis",
+        input_snapshot={"analysis_id": "analysis-incident-workflow"},
+        expected={"product_type": "top"},
+        prohibited=["Do not classify as a dress"],
+    )
+
+    evaluation = client.post(
+        "/v1/admin/incidents/incident-workflow/evaluation-runs",
+        json={"outcome": "auto", "notes": "Regression check"},
+    )
+    invalid_resolution = client.patch(
+        "/v1/admin/incidents/incident-workflow",
+        json={"status": "resolved", "owner_subject": "admin-test"},
+    )
+    resolution = client.patch(
+        "/v1/admin/incidents/incident-workflow",
+        json={
+            "status": "resolved",
+            "owner_subject": "admin-test",
+            "root_cause": "Prompt ambiguity",
+            "expected": {"product_type": "top"},
+            "fix_reference": "commit-123",
+            "notes": "Deployed and verified",
+        },
+    )
+
+    assert evaluation.status_code == 200, evaluation.text
+    assert evaluation.json()["run"]["outcome"] == "passed"
+    assert invalid_resolution.status_code == 400
+    assert resolution.status_code == 200, resolution.text
+    assert resolution.json()["incident"]["status"] == "resolved"
+    assert resolution.json()["incident"]["details"]["fix_reference"] == "commit-123"
+
+
 def test_admin_analysis_rejection_creates_draft_regression_case():
     client = _build_client()
 

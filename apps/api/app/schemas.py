@@ -305,6 +305,20 @@ class AdminImpersonationRequest(BaseModel):
     user_subject: str = Field(min_length=1, max_length=255)
 
 
+class AdminIncidentUpdateRequest(BaseModel):
+    status: Literal["open", "investigating", "correction_approved", "fix_ready", "deployed", "resolved"]
+    owner_subject: str | None = Field(default=None, max_length=255)
+    root_cause: str | None = Field(default=None, max_length=4000)
+    expected: dict[str, Any] = Field(default_factory=dict)
+    fix_reference: str | None = Field(default=None, max_length=500)
+    notes: str | None = Field(default=None, max_length=4000)
+
+
+class AdminEvaluationRunRequest(BaseModel):
+    outcome: Literal["auto", "passed", "failed"] = "auto"
+    notes: str = Field(default="", max_length=4000)
+
+
 class ExperienceEventCreateRequest(BaseModel):
     event_name: Literal[
         "screen_viewed",

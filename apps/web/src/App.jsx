@@ -1280,6 +1280,28 @@ async function submitAdminAnalysisCorrection({ apiBaseUrl, apiKey, bearerToken, 
   return payload
 }
 
+async function updateAdminIncident({ apiBaseUrl, bearerToken, incidentId, update }) {
+  const resp = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/v1/admin/incidents/${encodeURIComponent(incidentId)}`, {
+    method: 'PATCH',
+    headers: { Authorization: `Bearer ${bearerToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(update),
+  })
+  const payload = await resp.json().catch(() => null)
+  if (!resp.ok) throw new Error(payload?.detail || `API error (${resp.status})`)
+  return payload
+}
+
+async function runAdminIncidentEvaluation({ apiBaseUrl, bearerToken, incidentId, outcome = 'auto', notes = '' }) {
+  const resp = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/v1/admin/incidents/${encodeURIComponent(incidentId)}/evaluation-runs`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${bearerToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ outcome, notes }),
+  })
+  const payload = await resp.json().catch(() => null)
+  if (!resp.ok) throw new Error(payload?.detail || `API error (${resp.status})`)
+  return payload
+}
+
 async function fetchMyListings({ apiBaseUrl, apiKey, bearerToken, limit = 100, offset = 0 }) {
   const { client, authContext } = createWebApiClient({ apiBaseUrl, apiKey })
   const payload = await client.listMyListings(limit, authContext(bearerToken), { offset })
@@ -5179,6 +5201,38 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     }
   }
 
+  async function updateIncident(incidentId, update) {
+    setAdminActionBusy(`incident-${incidentId}`)
+    setAdminError('')
+    try {
+      const bearerToken = await getAdminBearerToken()
+      await updateAdminIncident({ apiBaseUrl, bearerToken, incidentId, update })
+      await loadAdminAnalyses()
+      return true
+    } catch (err) {
+      setAdminError(err.message || String(err))
+      return false
+    } finally {
+      setAdminActionBusy('')
+    }
+  }
+
+  async function runIncidentEvaluation(incidentId, outcome = 'auto', notes = '') {
+    setAdminActionBusy(`incident-${incidentId}`)
+    setAdminError('')
+    try {
+      const bearerToken = await getAdminBearerToken()
+      await runAdminIncidentEvaluation({ apiBaseUrl, bearerToken, incidentId, outcome, notes })
+      await loadAdminAnalyses()
+      return true
+    } catch (err) {
+      setAdminError(err.message || String(err))
+      return false
+    } finally {
+      setAdminActionBusy('')
+    }
+  }
+
   async function rerunAdminAnalysis(listingId) {
     if (!listingId) return
     setAdminActionBusy(`rerun-${listingId}`)
@@ -8920,7 +8974,14 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                   {adminQueue === 'incidents' && (
                     <div className="admin-grid">
                       {(adminDashboard.production_incidents || []).map((incident) => (
-                        <AdminIncidentCard key={incident.incident_id} incident={incident} />
+                        <AdminIncidentCard
+                          key={incident.incident_id}
+                          incident={incident}
+                          busy={adminActionBusy === `incident-${incident.incident_id}`}
+                          onUpdate={(update) => updateIncident(incident.incident_id, update)}
+                          onEvaluate={(outcome, notes) => runIncidentEvaluation(incident.incident_id, outcome, notes)}
+                          onRerun={incident.listing_id ? () => rerunAdminAnalysis(incident.listing_id) : null}
+                        />
                       ))}
                     </div>
                   )}
@@ -10652,7 +10713,26 @@ function AdminSupportNoteCard({ note }) {
   )
 }
 
-function AdminIncidentCard({ incident }) {
+function AdminIncidentCard({ incident, busy = false, onUpdate, onEvaluate, onRerun }) {
+  const details = incident.details || {}
+  const [status, setStatus] = useState(incident.status || 'open')
+  const [ownerSubject, setOwnerSubject] = useState(details.owner_subject || '')
+  const [rootCause, setRootCause] = useState(details.root_cause || '')
+  const [expectedText, setExpectedText] = useState(JSON.stringify(details.expected || incident.correction?.expected || {}, null, 2))
+  const [fixReference, setFixReference] = useState(details.fix_reference || '')
+  const [notes, setNotes] = useState(details.notes || '')
+  const latestRun = (details.evaluation_runs || []).at(-1)
+
+  async function saveIncident() {
+    let expected = {}
+    try {
+      expected = expectedText.trim() ? JSON.parse(expectedText) : {}
+    } catch {
+      return
+    }
+    await onUpdate?.({ status, owner_subject: ownerSubject, root_cause: rootCause, expected, fix_reference: fixReference, notes })
+  }
+
   return (
     <article className="admin-card">
       <div className="admin-card-head">
@@ -10667,7 +10747,26 @@ function AdminIncidentCard({ incident }) {
       <div className="admin-metrics">
         <div><span>Status</span><strong>{incident.status}</strong></div>
         <div><span>Created</span><strong>{new Date(incident.created_at).toLocaleString()}</strong></div>
+        <div><span>Evaluation</span><strong>{latestRun?.outcome || incident.evaluation_case?.status || 'not run'}</strong></div>
+        <div><span>Owner</span><strong>{details.owner_subject || 'unassigned'}</strong></div>
       </div>
+      <div className="admin-correction-form incident-workflow-form">
+        <label><span>Workflow status</span><select value={status} onChange={(event) => setStatus(event.target.value)} disabled={busy}>
+          <option value="open">Open</option><option value="investigating">Investigating</option><option value="correction_approved">Correction approved</option><option value="fix_ready">Fix ready</option><option value="deployed">Deployed</option><option value="resolved">Resolved</option>
+        </select></label>
+        <label><span>Owner</span><input value={ownerSubject} onChange={(event) => setOwnerSubject(event.target.value)} placeholder="Admin subject or team" disabled={busy} /></label>
+        <label className="admin-correction-notes"><span>Root cause</span><textarea rows="2" value={rootCause} onChange={(event) => setRootCause(event.target.value)} disabled={busy} /></label>
+        <label className="admin-correction-notes"><span>Expected result (JSON)</span><textarea rows="3" value={expectedText} onChange={(event) => setExpectedText(event.target.value)} disabled={busy} /></label>
+        <label><span>Fix reference</span><input value={fixReference} onChange={(event) => setFixReference(event.target.value)} placeholder="Commit, PR, or deployment" disabled={busy} /></label>
+        <label className="admin-correction-notes"><span>Notes</span><textarea rows="2" value={notes} onChange={(event) => setNotes(event.target.value)} disabled={busy} /></label>
+        <div className="button-row">
+          <button className="primary small" type="button" onClick={saveIncident} disabled={busy}>{busy ? 'Saving...' : 'Save workflow'}</button>
+          {incident.evaluation_case && <button className="ghost small" type="button" onClick={() => onEvaluate?.('auto', notes)} disabled={busy}>Run evaluation</button>}
+          {incident.evaluation_case?.task === 'mannequin_generation' && <button className="ghost small" type="button" onClick={() => onEvaluate?.('passed', notes)} disabled={busy}>Approve visual result</button>}
+          {onRerun && <button className="ghost small" type="button" onClick={onRerun} disabled={busy}>Rerun listing</button>}
+        </div>
+      </div>
+      {details.evaluation_runs?.length > 0 && <details className="debug-block"><summary>Evaluation history</summary><pre>{JSON.stringify(details.evaluation_runs, null, 2)}</pre></details>}
       <details className="debug-block">
         <summary>Incident details</summary>
         <pre>{JSON.stringify(incident.details || {}, null, 2)}</pre>
