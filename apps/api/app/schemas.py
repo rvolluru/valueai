@@ -488,6 +488,8 @@ class ListingCreateRequest(BaseModel):
     source_item_id: str | None = None
     analysis: dict[str, Any] | None = None
     status: Literal["Analyzing", "Review", "AnalysisFailed", "Active", "Traded"] = "Review"
+    mannequin_choice: Literal["include", "exclude"] | None = None
+    mannequin_feedback: str = Field(default="", max_length=2000)
 
 
 class ListingResponse(ListingCreateRequest):

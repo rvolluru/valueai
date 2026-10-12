@@ -59,7 +59,7 @@ def _reference_files(db: Database, listing: dict, settings) -> list[dict[str, ob
                 "source_url": f"/v1/images/{record['image_id']}",
             }
         )
-        if len(files) == 3:
+        if len(files) == 6:
             break
     return files
 
@@ -105,7 +105,8 @@ async def backfill(limit: int, scan_limit: int, dry_run: bool) -> int:
         analysis["generated_assets"] = generated_assets
         listed_images = copy.deepcopy(listing.get("listed_images") or listing.get("images") or [])
         generated_url = str(asset["image_url"])
-        listed_images.append({"p_img": generated_url, "d_img": generated_url, "is_hero": False})
+        if str(listing.get("status") or "").lower() != "active":
+            listed_images.append({"p_img": generated_url, "d_img": generated_url, "is_hero": False})
         updated = db.update_listing(
             listing_id=listing_id,
             owner_subject=str(listing["owner_subject"]),

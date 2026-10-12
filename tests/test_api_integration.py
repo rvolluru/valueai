@@ -2460,6 +2460,55 @@ def test_publish_listing_transition_queues_published_email(monkeypatch) -> None:
     assert len(sent) == 1
 
 
+def test_owner_can_publish_without_mannequin_and_rejection_survives_later_saves(monkeypatch):
+    client = _build_client()
+    from app import deps
+
+    headers = {"x-api-key": "test-key"}
+    original = "/v1/images/original-photo"
+    candidate = "/v1/images/mannequin-preview"
+    analysis = {"uploaded_images": [{"image_id": "original-photo", "image_url": original}],
+                "generated_assets": [{"synthetic": True, "kind": "mannequin_dress",
+                    "image_id": "mannequin-preview", "image_url": candidate, "provider": "gemini",
+                    "model": "gemini-2.5-flash-image", "prompt": "preserve zipper", "review_decision": "pending"}]}
+    created = client.post("/v1/listings", headers=headers, json={
+        "title": "Olive dress", "category": "clothes", "brand": "RtA", "condition": "LikeNew", "size": "XS",
+        "estimated_value": 130, "image": original, "images": [original, candidate], "analysis": analysis,
+        "status": "Review",
+    })
+    assert created.status_code == 200, created.text
+    listing = created.json()
+    url = f"/v1/listings/{listing['listing_id']}"
+    payload = {**listing, "status": "Active"}
+    assert client.put(url, headers=headers, json=payload).status_code == 409
+    excluded = client.put(url, headers=headers, json={**payload, "mannequin_choice": "exclude",
+                                                      "mannequin_feedback": "Zipper ends too early"})
+    assert excluded.status_code == 200, excluded.text
+    result = excluded.json()
+    assert result["status"] == "Active"
+    assert result["images"] == [original]
+    assert result["analysis"]["generated_assets"][0]["review_decision"] == "exclude"
+    incidents = deps.get_db().list_production_incidents()
+    assert len(incidents) == 1
+    incident = incidents[0]
+    assert incident["source"] == "listing_owner_review"
+    assert incident["details"]["notes"] == "Zipper ends too early"
+    assert incident["details"]["source_images"][0]["image_url"] == original
+    assert incident["details"]["generated_assets"][0]["prompt"] == "preserve zipper"
+    # A stale client resends the old gallery and analysis, but cannot resurrect the rejected preview.
+    saved = client.put(url, headers=headers, json=payload)
+    assert saved.status_code == 200, saved.text
+    assert candidate not in saved.json()["images"]
+    repeated = client.put(url, headers=headers, json={**payload, "mannequin_choice": "exclude"})
+    assert repeated.status_code == 200
+    assert len(deps.get_db().list_production_incidents()) == 1
+    # Owner can explicitly change their mind; the incident remains as evidence.
+    included = client.put(url, headers=headers, json={**payload, "mannequin_choice": "include"})
+    assert included.status_code == 200, included.text
+    assert candidate in included.json()["images"]
+    assert len(deps.get_db().list_production_incidents()) == 1
+
+
 def test_update_listing_brand_change_forces_reanalysis(monkeypatch) -> None:
     client = _build_client()
     queued: list[dict] = []

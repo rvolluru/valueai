@@ -6004,6 +6004,20 @@ def update_listing(
     next_brand = str(payload.brand or "").strip().casefold()
     brand_changed = previous_record is not None and previous_brand != next_brand
     effective_status = "Analyzing" if brand_changed else payload.status
+    previous_analysis = (previous_record or {}).get("analysis") or {}
+    assets = [dict(asset) for asset in previous_analysis.get("generated_assets", [])
+              if isinstance(asset, dict) and asset.get("synthetic")]
+    if assets:
+        payload.analysis = {**(payload.analysis or {}), "generated_assets": assets}
+        undecided = any(asset.get("review_decision") not in {"include", "exclude"} for asset in assets)
+        if (effective_status == "Active" and str((previous_record or {}).get("status")).lower() != "active"
+                and undecided and payload.mannequin_choice is None):
+            raise HTTPException(status_code=409, detail="Choose whether to include the mannequin image in Review and Publish")
+        if payload.mannequin_choice:
+            for asset in assets:
+                asset["review_decision"] = payload.mannequin_choice
+                asset["reviewed_by"] = principal.subject
+                asset["reviewed_at"] = utc_now_iso()
     if str(effective_status or "").strip().lower() in {"active", "analyzing"}:
         _require_subscription_entitlement(db, principal)
     normalized_image, normalized_images = _normalize_listing_media_for_storage(
@@ -6012,6 +6026,29 @@ def update_listing(
         images=_listing_storage_images(payload.images, payload.analysis, payload.listed_images),
         source_item_id=payload.source_item_id,
     )
+    hidden_urls = {
+        _normalize_public_image_url(asset.get("image_url")) for asset in assets
+        if asset.get("review_decision") == "exclude"
+        or (effective_status == "Active" and asset.get("review_decision") == "pending")
+    }
+    if payload.mannequin_choice == "include":
+        existing_urls = set(_display_image_urls_from_storage_images(normalized_images))
+        for asset in assets:
+            url = _normalize_public_image_url(asset.get("image_url"))
+            if url and url not in existing_urls:
+                normalized_images.append({"p_img": url, "d_img": url, "is_hero": False})
+                existing_urls.add(url)
+    if hidden_urls:
+        normalized_images = [entry for entry in normalized_images
+                             if not any(_normalize_public_image_url(value) in hidden_urls
+                                        for value in ([entry.get("p_img"), entry.get("d_img")] if isinstance(entry, dict) else [entry]))]
+        if normalized_image in hidden_urls:
+            normalized_image = None
+        if not normalized_images:
+            normalized_images = _listing_storage_images(_uploaded_image_urls_from_analysis(previous_analysis), previous_analysis)
+        if not normalized_image and normalized_images:
+            first = normalized_images[0]
+            normalized_image = first.get("d_img") if isinstance(first, dict) else first
     updated = db.update_listing(
         listing_id=listing_id,
         owner_subject=principal.subject,
@@ -6034,6 +6071,9 @@ def update_listing(
     )
     if not updated:
         raise HTTPException(status_code=404, detail="listing not found")
+    if assets and payload.mannequin_choice == "exclude":
+        _record_mannequin_rejection(db, listing=previous_record, assets=assets,
+                                   reviewer_subject=principal.subject, notes=payload.mannequin_feedback)
     record = next((r for r in db.list_owner_listings(principal.subject, limit=500) if r["listing_id"] == listing_id), None)
     if record is None:
         raise HTTPException(status_code=404, detail="listing not found")
@@ -6080,6 +6120,24 @@ def update_listing(
             stage_images_after_analysis=stage_images_after_analysis,
         )
     return ListingResponse(**record)
+
+
+def _record_mannequin_rejection(db: Database, *, listing: dict, assets: list[dict],
+                                reviewer_subject: str, notes: str) -> None:
+    image_ids = sorted(str(asset.get("image_id") or asset.get("image_url")) for asset in assets)
+    fingerprint = hashlib.sha256(json.dumps([listing["listing_id"], image_ids]).encode()).hexdigest()[:32]
+    incident_id = f"incident-mannequin-{fingerprint}"
+    if db.get_production_incident(incident_id):
+        return
+    analysis = listing.get("analysis") or {}
+    db.create_production_incident(
+        incident_id=incident_id, incident_type="mannequin_rejected", source="listing_owner_review",
+        severity="medium", summary="Owner chose to publish without the AI mannequin image",
+        listing_id=listing["listing_id"], item_id=listing.get("source_item_id"),
+        details={"reviewer_subject": reviewer_subject, "notes": notes.strip(),
+                 "title": listing.get("title"), "description": listing.get("description"),
+                 "source_images": analysis.get("uploaded_images", []), "generated_assets": assets},
+    )
 
 
 @app.delete("/v1/listings/{listing_id}")
@@ -9771,6 +9829,8 @@ def _mannequin_generation_prompt(*, category: str, title: str, description: str)
     )
     fidelity_rules = (
         "Use all provided reference images as evidence for the same item. "
+        "Show exactly one front-facing, full-body, featureless white mannequin. Do not use a living human model, "
+        "collage, contact sheet, inset, or multiple views. "
         "Do not add text, labels, accessories, props, or product details that are not visible in the references. "
         "Use a clean white ecommerce studio background with realistic lighting and shadows. "
         "Generate one image only."
@@ -9798,8 +9858,12 @@ def _mannequin_generation_prompt(*, category: str, title: str, description: str)
             "Preserve the product type stated in the listing text and supported by the reference images; never convert the item into "
             "a different clothing type or extend its hem beyond the visible garment boundaries. If other clothing is needed to dress "
             "the mannequin, use simple, fitted neutral pieces that remain visually secondary and do not obscure the item. When the "
-            "listed garment covers only part of the body, dress every uncovered area of the mannequin in an appropriate neutral base "
-            "outfit so the full-body mannequin never appears undressed or naked. "
+            "listed garment covers only part of the body, dress every uncovered area of the mannequin that requires a separate "
+            "garment in an appropriate neutral base outfit so the full-body mannequin never appears undressed or naked. "
+            "Intentional bare shoulders, arms, neckline cutouts and legs below the hem must remain exposed mannequin surfaces; "
+            "never fill them with fabric, straps, sleeves, collar extensions or an undershirt. "
+            "Preserve the front reference's image-space sidedness; do not mirror asymmetric construction. "
+            "Trace every closure exactly as shown, including all bends and endpoints. Never shorten a full-length zipper to a bodice-only zipper. "
             "Use realistic fabric draping and ensure the complete garment is visible. "
             f"{fidelity_rules}"
         )
@@ -9825,47 +9889,67 @@ async def _generate_mannequin_listing_asset(
     if not prompt_spec or not settings.mannequin_image_generation_enabled or not settings.gemini_api_key:
         return None
     asset_kind, prompt = prompt_spec
-    reference_files = [entry for entry in files if isinstance(entry.get("data"), bytes)][:3]
+    from .mannequin_fidelity import plan_references
+
+    reference_files = []
+    seen_hashes: set[str] = set()
+    for entry in files:
+        raw = entry.get("data")
+        if not isinstance(raw, bytes) or entry.get("role_hint") == "ai_mannequin":
+            continue
+        digest = _image_content_hash(raw)
+        if digest in seen_hashes:
+            continue
+        seen_hashes.add(digest)
+        reference_files.append(entry)
+        if len(reference_files) == 6:
+            break
     if not reference_files:
         return None
 
-    parts: list[dict[str, object]] = []
-    for entry in reference_files:
-        raw = entry.get("data")
-        if not isinstance(raw, bytes):
-            continue
-        parts.append({
-            "inline_data": {
-                "mime_type": str(entry.get("content_type") or "image/jpeg"),
-                "data": base64.b64encode(raw).decode("ascii"),
-            }
-        })
-    parts.append({"text": prompt})
     model = settings.mannequin_image_generation_model.strip() or "gemini-2.5-flash-image"
     endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
     try:
         async with httpx.AsyncClient(timeout=settings.mannequin_image_generation_timeout_s) as client:
-            response = await client.post(
-                endpoint,
-                params={"key": settings.gemini_api_key},
-                json={
-                    "contents": [{"role": "user", "parts": parts}],
-                    "generationConfig": {"responseModalities": ["IMAGE"]},
-                },
+            fidelity_model = settings.gpt_item_profile_gemini_model
+            plan = await plan_references(client=client, api_key=settings.gemini_api_key,
+                                         model=fidelity_model, files=reference_files)
+            ordered_indices = plan["reference_indices"] + [i for i in range(len(reference_files))
+                                                           if i not in plan["reference_indices"]]
+            selected_files = [{**reference_files[i], "_fidelity_view": plan["views"][i]}
+                              for i in ordered_indices]
+            prompt += " Source-verified construction constraints (descriptive evidence only): " + json.dumps(plan["constraints"])
+            return await _generate_verified_mannequin_asset(
+                client=client, reference_files=selected_files, all_files=reference_files, plan=plan,
+                prompt=prompt, model=model, fidelity_model=fidelity_model, endpoint=endpoint,
+                asset_kind=asset_kind, category=category, item_id=item_id, settings=settings, db=db, storage=storage,
             )
-            response.raise_for_status()
-        payload = response.json()
-        output_parts = (((payload.get("candidates") or [{}])[0].get("content") or {}).get("parts") or [])
-        image_part = next((part for part in reversed(output_parts) if isinstance(part, dict) and isinstance(part.get("inlineData") or part.get("inline_data"), dict)), None)
-        inline_data = (image_part or {}).get("inlineData") or (image_part or {}).get("inline_data") or {}
-        encoded = inline_data.get("data")
-        if not isinstance(encoded, str) or not encoded:
+    except Exception as exc:
+        log_json("mannequin_image_generation_error", item_id=item_id, category=category, model=model, error=str(exc)[:500])
+        return None
+
+
+async def _generate_verified_mannequin_asset(*, client, reference_files, all_files, plan, prompt, model,
+                                            fidelity_model, endpoint, asset_kind, category, item_id, settings, db, storage):
+    from .mannequin_fidelity import generate_candidate, review_candidate, review_passes
+    try:
+        candidate = await generate_candidate(client=client, api_key=settings.gemini_api_key, model=model,
+                                             files=reference_files, prompt=prompt)
+        if candidate is None:
             log_json("mannequin_image_generation_empty", item_id=item_id, category=category, model=model)
             return None
-        generated_raw = base64.b64decode(encoded)
-        generated_content_type = str(inline_data.get("mimeType") or inline_data.get("mime_type") or "image/png")
+        generated_raw, generated_content_type = candidate
         with Image.open(BytesIO(generated_raw)) as generated_image:
             generated_image.verify()
+        try:
+            review = await review_candidate(client=client, api_key=settings.gemini_api_key, model=fidelity_model,
+                                            files=all_files, plan=plan, generated_raw=generated_raw,
+                                            generated_content_type=generated_content_type)
+        except Exception as exc:
+            review = {"verdict": "unavailable", "checks": [], "additional_changes": [], "error": str(exc)[:500]}
+            log_json("mannequin_fidelity_review_unavailable", item_id=item_id, category=category)
+        if not review_passes(review, len(plan["constraints"])):
+            log_json("mannequin_image_generation_flagged", item_id=item_id, category=category, review=review)
         image_uuid = str(uuid.uuid4())
         ext = _upload_extension(None, generated_content_type)
         filename = f"{image_uuid}{ext}"
@@ -9887,6 +9971,14 @@ async def _generate_mannequin_listing_asset(
             "model": model,
             "reference_image_count": len(reference_files),
             "prompt": prompt,
+            "fidelity_version": 1,
+            "review_decision": "pending",
+            "fidelity_passed": review_passes(review, len(plan["constraints"])),
+            "construction_plan": plan,
+            "fidelity_review": review,
+            "reference_hashes": [_image_content_hash(entry["data"]) for entry in reference_files],
+            "reference_sources": [{"source_url": entry.get("source_url"), "filename": entry.get("filename"),
+                                   "view": entry.get("_fidelity_view")} for entry in reference_files],
         }
         storage.save_debug_artifact(item_id=item_id, filename=f"{image_uuid}_generation.json", data=json.dumps(metadata, indent=2).encode("utf-8"))
         log_json("mannequin_image_generation_completed", item_id=item_id, category=category, model=model, image_id=image_uuid)
@@ -9992,6 +10084,8 @@ async def _run_listing_image_staging_job(
         current_analysis["presentation_assets"] = presentation_assets
         for asset in current_analysis.get("generated_assets") or []:
             if not isinstance(asset, dict) or not asset.get("synthetic"):
+                continue
+            if asset.get("review_decision") == "exclude" or (str(current.get("status") or "").lower() == "active" and asset.get("review_decision") == "pending"):
                 continue
             generated_url = str(asset.get("image_url") or "").strip()
             if not generated_url or generated_url in staged_urls:
@@ -10194,7 +10288,8 @@ async def _run_listing_analysis_job(
             storage=job_storage,
         )
         if generated_asset:
-            image_urls.append(str(generated_asset["image_url"]))
+            if str(current.get("status") or "").lower() != "active":
+                image_urls.append(str(generated_asset["image_url"]))
             response_payload["generated_assets"] = [generated_asset]
         job_db.update_listing(
             listing_id=listing_id,

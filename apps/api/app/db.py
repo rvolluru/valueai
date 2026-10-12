@@ -3255,6 +3255,8 @@ class Database:
             normalize_public_listing_image_url(asset.get("image_url"))
             for asset in ((analysis or {}).get("generated_assets") or [])
             if isinstance(asset, dict) and asset.get("synthetic")
+            and asset.get("review_decision") != "exclude"
+            and not (str(data.get("status") or "").lower() == "active" and asset.get("review_decision") == "pending")
         ] if isinstance(analysis, dict) else []
         for generated_url in generated_asset_urls:
             key = listing_image_dedupe_key(generated_url)
@@ -3268,6 +3270,18 @@ class Database:
             safe_listed_images = [{"p_img": url, "d_img": url, "is_hero": False} for url in safe_images]
         elif not safe_listed_images:
             safe_listed_images = [{"p_img": url, "d_img": url, "is_hero": False} for url in safe_images]
+        hidden_generated_urls = {
+            normalize_public_listing_image_url(asset.get("image_url"))
+            for asset in ((analysis or {}).get("generated_assets") or [])
+            if isinstance(asset, dict) and asset.get("synthetic")
+            and (asset.get("review_decision") == "exclude"
+                 or (str(data.get("status") or "").lower() == "active" and asset.get("review_decision") == "pending"))
+        } if isinstance(analysis, dict) else set()
+        safe_images = [url for url in safe_images if url not in hidden_generated_urls]
+        safe_listed_images = [entry for entry in safe_listed_images
+                              if entry.get("d_img") not in hidden_generated_urls and entry.get("p_img") not in hidden_generated_urls]
+        if image in hidden_generated_urls:
+            image = None
         if not image and safe_images:
             image = safe_images[0]
         for entry in safe_listed_images:

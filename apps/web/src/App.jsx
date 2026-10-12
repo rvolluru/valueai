@@ -2759,6 +2759,8 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   const [receiptPromptDismissed, setReceiptPromptDismissed] = useState(false)
   const [editingListingId, setEditingListingId] = useState(null)
   const [reviewListingId, setReviewListingId] = useState(null)
+  const [mannequinFeedback, setMannequinFeedback] = useState('')
+  const [reviewPublishBusy, setReviewPublishBusy] = useState(false)
   const [showCreateListingModal, setShowCreateListingModal] = useState(false)
   const [createListingStep, setCreateListingStep] = useState(1)
   const [createListingMode, setCreateListingMode] = useState('standard')
@@ -4203,8 +4205,12 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
 	      ? item.analysis.uploaded_images.map((u) => resolveUrl(u?.image_url)).filter(Boolean)
 	      : []
 	    const generatedImages = Array.isArray(item.analysis?.generated_assets)
-	      ? item.analysis.generated_assets.filter((asset) => asset?.synthetic).map((asset) => resolveUrl(asset?.image_url)).filter(Boolean)
+	      ? item.analysis.generated_assets.filter((asset) => asset?.synthetic && asset.review_decision !== 'exclude').map((asset) => resolveUrl(asset?.image_url)).filter(Boolean)
 	      : []
+    const hiddenGeneratedImages = new Set((item.analysis?.generated_assets || [])
+      .filter((asset) => asset?.synthetic && (asset.review_decision === 'exclude' || (item.status === 'Active' && asset.review_decision === 'pending')))
+      .map((asset) => resolveUrl(asset.image_url)).filter(Boolean))
+    const visibleGeneratedImages = generatedImages.filter((url) => !hiddenGeneratedImages.has(url))
 	    const normalizedListedImages = Array.isArray(item.listed_images)
 	      ? item.listed_images.map((entry, idx) => {
 	        if (!entry || typeof entry !== 'object') return null
@@ -4226,11 +4232,12 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     if (normalizedImages.length === 0 && fromAnalysisUploads.length > 0) {
       normalizedImages = fromAnalysisUploads
     }
-    for (const generatedImage of generatedImages) {
+    normalizedImages = normalizedImages.filter((url) => !hiddenGeneratedImages.has(url))
+    for (const generatedImage of visibleGeneratedImages) {
       if (!normalizedImages.includes(generatedImage)) normalizedImages.push(generatedImage)
     }
-    const completeListedImages = [...normalizedListedImages]
-    for (const generatedImage of generatedImages) {
+    const completeListedImages = normalizedListedImages.filter((entry) => !hiddenGeneratedImages.has(entry.d_img) && !hiddenGeneratedImages.has(entry.p_img))
+    for (const generatedImage of visibleGeneratedImages) {
       if (!completeListedImages.some((entry) => entry.d_img === generatedImage)) {
         completeListedImages.push({ p_img: generatedImage, d_img: generatedImage, is_hero: false })
       }
@@ -4309,6 +4316,8 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
       analysis: listing.analysis || null,
       status: listing.status || 'Review',
       description: listing.description || '',
+      mannequin_choice: listing.mannequinChoice || null,
+      mannequin_feedback: listing.mannequinFeedback || '',
     }
   }
 
@@ -5131,6 +5140,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
 
   useEffect(() => {
     setSelectedReviewImageIndex(0)
+    setMannequinFeedback('')
   }, [reviewListing?.id])
 
   useEffect(() => {
@@ -6051,6 +6061,12 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
 
   async function publishChatListing() {
     if (!listingChatListing) return
+    if (listingChatListing.generatedImages?.length) {
+      setShowCreateListingModal(false)
+      setAppAssistantListingFlow(false)
+      openReviewListing(listingChatListing)
+      return
+    }
     setCreateListingBusy(true)
     setListingAssistantError('')
     try {
@@ -6331,8 +6347,13 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     }
   }
 
-  async function publishListingToMarketplace(listing) {
+  async function publishListingToMarketplace(listing, mannequinChoice = null) {
     if (!listing) return
+    if (reviewPublishBusy) return
+    if (listing.generatedImages?.length && !mannequinChoice) {
+      openReviewListing(listing)
+      return
+    }
     const missingMessage = missingPublishFieldsMessage(listing)
     if (missingMessage) {
       setAnalysisError(missingMessage)
@@ -6342,6 +6363,8 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     setAnalysisError('')
     const next = {
       ...listing,
+      mannequinChoice,
+      mannequinFeedback,
       status: 'Active',
       tags: [
         listing.condition || 'LikeNew',
@@ -6349,6 +6372,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
         'trade',
       ].filter(Boolean),
     }
+    setReviewPublishBusy(true)
     try {
       const updated = await updateListingRemote({
         apiBaseUrl,
@@ -6363,6 +6387,8 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
       showClosetSuccess('Listing published to Marketplace.')
     } catch (err) {
       setAnalysisError(err.message || String(err))
+    } finally {
+      setReviewPublishBusy(false)
     }
   }
 
@@ -8080,11 +8106,21 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                       EST. {money(reviewListing.estimatedValue)} · {String(reviewListing.brand || 'Unknown').toUpperCase()} · {displayConditionLabel(reviewListing.condition).toUpperCase()} · SIZE {String(reviewListing.size || 'N/A').toUpperCase()}
                     </p>
                     <p className="listing-review-description">{getListingDescription(reviewListing) || 'No description provided.'}</p>
+                    {reviewListing.generatedImages?.length > 0 && (
+                      <div className="mannequin-review">
+                        <h3>AI mannequin preview</h3>
+                        <p>Check that the garment matches your photos. You can publish with or without this optional image.</p>
+                        {reviewListing.generatedImages.map((src) => <img key={src} src={src} alt="Optional AI-generated mannequin preview" style={{ maxWidth: '100%', maxHeight: 360, objectFit: 'contain' }} />)}
+                        <label>What looks wrong? (optional)<textarea value={mannequinFeedback} onChange={(event) => setMannequinFeedback(event.target.value)} maxLength={2000} rows={2} placeholder="For example: the sleeve or zipper is different" /></label>
+                        <p>If you publish without it, we’ll send the image and your feedback to our team for review. Your listing can go live right away.</p>
+                      </div>
+                    )}
                     {analysisError && <p className="error-text">{analysisError}</p>}
                     {savedListingNotice && <p className="ok-text">{savedListingNotice}</p>}
                     <div className="button-row listing-review-actions">
                       <button className="ghost" type="button" onClick={() => openEditListingModal(reviewListing)}>Edit</button>
-                      <button className="primary" type="button" onClick={() => publishListingToMarketplace(reviewListing)}>Publish</button>
+                      <button className="primary" type="button" disabled={reviewPublishBusy} onClick={() => publishListingToMarketplace(reviewListing, reviewListing.generatedImages?.length ? 'include' : null)}>{reviewPublishBusy ? 'Publishing…' : reviewListing.generatedImages?.length ? 'Publish with mannequin image' : 'Publish'}</button>
+                      {reviewListing.generatedImages?.length > 0 && <button className="ghost" type="button" disabled={reviewPublishBusy} onClick={() => publishListingToMarketplace(reviewListing, 'exclude')}>Publish without mannequin image</button>}
                     </div>
                   </div>
                 </div>
@@ -10744,6 +10780,9 @@ function AdminIncidentCard({ incident, busy = false, onUpdate, onEvaluate, onRer
         <span className="value-chip">{incident.severity}</span>
       </div>
       <p className="listing-notes">{incident.summary}</p>
+      {details.source_images?.length > 0 && <div><h4>Original product photos</h4>{details.source_images.map((entry) => <img key={entry.image_id || entry.image_url} src={adminAnalysisImageUrl(entry.image_url)} alt="Original product evidence" style={{ width: 120, height: 160, objectFit: 'contain' }} />)}</div>}
+      {details.generated_assets?.length > 0 && <div><h4>Rejected mannequin image</h4>{details.generated_assets.map((entry) => <img key={entry.image_id || entry.image_url} src={adminAnalysisImageUrl(entry.image_url)} alt="Rejected AI mannequin evidence" style={{ width: 180, height: 240, objectFit: 'contain' }} />)}</div>}
+      {details.notes && <p className="listing-notes">Owner feedback: {details.notes}</p>}
       <div className="admin-metrics">
         <div><span>Status</span><strong>{incident.status}</strong></div>
         <div><span>Created</span><strong>{new Date(incident.created_at).toLocaleString()}</strong></div>
