@@ -1,10 +1,10 @@
 # syntax=docker/dockerfile:1.7
 
-FROM node:20-alpine AS web-build
+FROM --platform=$BUILDPLATFORM node:22-alpine AS web-build
 
 WORKDIR /web
 COPY apps/web/package.json apps/web/package-lock.json* ./
-RUN --mount=type=cache,target=/root/.npm npm ci
+RUN --mount=type=cache,target=/root/.npm npm ci --no-audit --no-fund --loglevel=info
 COPY apps/web ./
 COPY packages /packages
 ARG VITE_CLERK_PUBLISHABLE_KEY=""

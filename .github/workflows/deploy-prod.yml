@@ -12,9 +12,14 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
 jobs:
   deploy:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
     env:
       AWS_REGION: us-east-1
       ECR_REPOSITORY: valueai-mvp-api
@@ -42,6 +47,7 @@ jobs:
 
       - name: Build and push API image (with Clerk build arg)
         id: image
+        timeout-minutes: 20
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           IMAGE_TAG: prod-${{ github.run_number }}-${{ github.sha }}
@@ -58,6 +64,7 @@ jobs:
           echo "clerk_key_prefix=${VITE_CLERK_PUBLISHABLE_KEY:0:3}"
           IMAGE_URI="${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
           docker buildx build \
+            --progress plain \
             --platform linux/arm64 \
             --cache-from type=gha \
             --cache-to type=gha,mode=max \
