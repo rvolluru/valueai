@@ -133,6 +133,8 @@ def test_flagged_candidate_is_saved_only_as_pending_owner_preview(monkeypatch, o
 
     class Client:
         async def post(self, *args, **kwargs):
+            assert kwargs["headers"] == {"x-goog-api-key": "test"}
+            assert "key" not in kwargs.get("params", {})
             return Response()
 
     class Storage:

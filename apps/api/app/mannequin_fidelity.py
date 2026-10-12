@@ -27,7 +27,7 @@ def generation_parts(files: list[dict], prompt: str) -> list[dict]:
 async def generate_candidate(*, client, api_key, model, files: list[dict], prompt: str) -> tuple[bytes, str] | None:
     response = await client.post(
         f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
-        params={"key": api_key},
+        headers={"x-goog-api-key": api_key},
         json={"contents": [{"role": "user", "parts": generation_parts(files, prompt)}],
               "generationConfig": {"responseModalities": ["IMAGE"]}},
     )
@@ -45,7 +45,7 @@ async def generate_candidate(*, client, api_key, model, files: list[dict], promp
 async def inspect_json(*, client: httpx.AsyncClient, api_key: str, model: str, parts: list[dict]) -> dict:
     response = await client.post(
         f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
-        params={"key": api_key},
+        headers={"x-goog-api-key": api_key},
         json={"contents": [{"role": "user", "parts": parts}],
               "generationConfig": {"responseMimeType": "application/json", "temperature": 0}},
     )
