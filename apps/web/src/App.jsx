@@ -9,6 +9,7 @@ import {
 import { FaFacebookF, FaPinterestP } from 'react-icons/fa'
 import { FiBell, FiTrash2 } from 'react-icons/fi'
 import { createWebApiClient, setWebBearerTokenProvider } from './lib/apiClient'
+import { navigateTabLink } from './lib/navigation.mjs'
 import jouftLogo from './assets/jouft-logo.png'
 
 const API_DEFAULT =
@@ -3428,8 +3429,8 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
         setProfileSaveMsg(message)
         showTransientNotice(message, { afterReload: navigateToProfileTab })
       }
-      if (navigateToProfileTab && typeof window !== 'undefined') {
-        window.location.assign(tabHref('profile'))
+      if (navigateToProfileTab) {
+        navigateToTab('profile')
       }
     } finally {
       setProfileTabReloading(false)
@@ -6512,10 +6513,10 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
               </div>
             </div>
             <div className="app-brand-links" aria-label="Primary app sections">
-              <a href={tabHref('market')} className={activeTab === 'market' ? 'app-brand-link active' : 'app-brand-link'}>Marketplace</a>
-              <a href={tabHref('portfolio')} className={activeTab === 'portfolio' ? 'app-brand-link active' : 'app-brand-link'}>My Closet</a>
-              <a href={tabHref('inbox')} className={activeTab === 'inbox' ? 'app-brand-link active' : 'app-brand-link'}>Trade Inbox</a>
-              <a href={tabHref('profile')} className={activeTab === 'profile' || activeTab === 'profile_setup' ? 'app-brand-link active' : 'app-brand-link'}>Profile</a>
+              <a href={tabHref('market')} onClick={(event) => navigateTabLink(event, 'market', navigateToTab)} className={activeTab === 'market' ? 'app-brand-link active' : 'app-brand-link'}>Marketplace</a>
+              <a href={tabHref('portfolio')} onClick={(event) => navigateTabLink(event, 'portfolio', navigateToTab)} className={activeTab === 'portfolio' ? 'app-brand-link active' : 'app-brand-link'}>My Closet</a>
+              <a href={tabHref('inbox')} onClick={(event) => navigateTabLink(event, 'inbox', navigateToTab)} className={activeTab === 'inbox' ? 'app-brand-link active' : 'app-brand-link'}>Trade Inbox</a>
+              <a href={tabHref('profile')} onClick={(event) => navigateTabLink(event, 'profile', navigateToTab)} className={activeTab === 'profile' || activeTab === 'profile_setup' ? 'app-brand-link active' : 'app-brand-link'}>Profile</a>
             </div>
           </div>
         </div>
