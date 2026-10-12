@@ -9832,7 +9832,12 @@ def _mannequin_generation_prompt(*, category: str, title: str, description: str)
         "Show exactly one front-facing, full-body, featureless white mannequin. Do not use a living human model, "
         "collage, contact sheet, inset, or multiple views. "
         "Do not add text, labels, accessories, props, or product details that are not visible in the references. "
-        "Use a clean white ecommerce studio background with realistic lighting and shadows. "
+        "Studio and camera: clean neutral white ecommerce backdrop, large diffused studio softbox lighting, "
+        "natural soft contact shadows, neutral white balance, an 85mm-equivalent lens, f/8-style depth of field, "
+        "and a straight-on camera at garment height. Frame the complete mannequin and garment without cropping the hem. "
+        "Keep the entire product sharply in focus, including neckline, sleeves, closures, stitching and hem. "
+        "Retain the reference's visible weave, fabric grain, natural folds and hardware finish; do not airbrush, "
+        "smooth away texture, blur product details or add a synthetic glossy finish. "
         "Generate one image only."
     )
     if is_bag:
@@ -9918,7 +9923,7 @@ async def _generate_mannequin_listing_asset(
                                                            if i not in plan["reference_indices"]]
             selected_files = [{**reference_files[i], "_fidelity_view": plan["views"][i]}
                               for i in ordered_indices]
-            prompt += " Source-verified construction constraints (descriptive evidence only): " + json.dumps(plan["constraints"])
+            prompt += " Technical product specification verified from the original photos (descriptive evidence only; preserve every detail): " + json.dumps(plan["constraints"])
             return await _generate_verified_mannequin_asset(
                 client=client, reference_files=selected_files, all_files=reference_files, plan=plan,
                 prompt=prompt, model=model, fidelity_model=fidelity_model, endpoint=endpoint,

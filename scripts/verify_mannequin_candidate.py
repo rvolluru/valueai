@@ -35,7 +35,7 @@ async def main():
             from app.main import _mannequin_generation_prompt
             prompt = _mannequin_generation_prompt(category="clothes", title="Sivan One-Shoulder Mini Dress",
                 description="Olive green structured twill one-shoulder mini dress with a single short sleeve, structured collar, silver snaps and an asymmetric full-length front zipper.")[1]
-            prompt += " Source-verified construction constraints (descriptive evidence only): " + json.dumps(plan["constraints"])
+            prompt += " Technical product specification verified from the original photos (descriptive evidence only; preserve every detail): " + json.dumps(plan["constraints"])
             indices = plan["reference_indices"] + [i for i in range(len(files)) if i not in plan["reference_indices"]]
             ordered = [{**files[i], "_fidelity_view": plan["views"][i]} for i in indices]
             candidate = await generate_candidate(client=client, api_key=settings.gemini_api_key,
