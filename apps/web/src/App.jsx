@@ -6,10 +6,11 @@ import {
   useSignUp,
   useUser,
 } from '@clerk/clerk-react'
+import { FiBell } from 'react-icons/fi'
 import { FaFacebookF, FaPinterestP } from 'react-icons/fa'
-import { FiBell, FiTrash2 } from 'react-icons/fi'
 import { createWebApiClient, setWebBearerTokenProvider } from './lib/apiClient'
-import { navigateTabLink } from './lib/navigation.mjs'
+import { navigateTabLink, initializeAppHistory, writeAppHistory, backInApp } from './lib/navigation.mjs'
+import { reconcileListingImages } from './lib/listingMedia.mjs'
 import { tradeOfferGroup } from '../../../packages/app-client/src/tradeOffers.js'
 import TradeItemPicker from './components/TradeItemPicker'
 import jouftLogo from './assets/jouft-logo.png'
@@ -22,6 +23,10 @@ const IS_PROD = Boolean(import.meta.env.PROD)
 const VALID_TABS = new Set(['market', 'portfolio', 'closet_matches', 'inbox', 'sender_items', 'profile', 'profile_setup', 'admin', 'trade', 'edit_listing', 'review_listing'])
 const TEMP_SHOW_PROFILE_QUESTIONNAIRE_ON_LOGIN = false
 const LISTINGS_PAGE_SIZE = 24
+
+function LogoJ({ small = false }) {
+  return <span className={`app-assistant-logo-j${small ? ' is-small' : ''}`} aria-hidden="true"><img src={jouftLogo} alt="" /></span>
+}
 
 function tabFromLocation() {
   if (typeof window === 'undefined') return 'market'
@@ -520,6 +525,7 @@ function missingPublishFields(listing) {
 
 function missingPublishFieldsMessage(listing) {
   const missing = missingPublishFields(listing)
+  if (listing?.analysis?.pricing_review?.status === 'pending' || missing.includes('AI estimated value')) return "We couldn't determine this item's value. It needs manual review before publishing. You do not need to set a value."
   if (missing.length < 1) return ''
   return `Listing missing fields: ${missing.join(', ')}. Please edit the listing and add the missing information before publishing.`
 }
@@ -659,7 +665,7 @@ function PhotoAnalysisSummary({ result }) {
   const missingRequired = result.missing_required || []
   return (
     <div className="app-assistant-turn assistant app-assistant-photo-analysis" role="status">
-      <span>J</span>
+      <span aria-hidden="true"><LogoJ small /></span>
       <div>
         <strong>Photo check complete</strong>
         <p>Category: {categoryLabel}</p>
@@ -2703,6 +2709,26 @@ function LoadingShell({ message }) {
 }
 
 function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnabled = false, getBearerToken, getAdminBearerToken = null, impersonation = null, onStartImpersonation = null, onExitImpersonation = null, accountActions = null }) {
+  const [routeRevision, setRouteRevision] = useState(0)
+  const detailListingsByIdRef = useRef(new Map())
+  const accountMenuRef = useRef(null)
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false)
+  useEffect(() => {
+    if (!accountMenuOpen) return
+    function dismiss(event) {
+      if (event.type === 'keydown') {
+        if (event.key !== 'Escape') return
+        accountMenuRef.current?.querySelector('button')?.focus()
+      } else if (accountMenuRef.current?.contains(event.target)) return
+      setAccountMenuOpen(false)
+    }
+    document.addEventListener('pointerdown', dismiss)
+    document.addEventListener('keydown', dismiss)
+    return () => {
+      document.removeEventListener('pointerdown', dismiss)
+      document.removeEventListener('keydown', dismiss)
+    }
+  }, [accountMenuOpen])
   const signupFullName = resolveSignupFullName(session, profileData)
   const hasAdminRole = useMemo(
     () => hasAdminRoleFromObject(session) || hasAdminRoleFromObject(profileData),
@@ -3014,10 +3040,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   useEffect(() => {
     if (activeTab !== 'admin') return
     if (hasAdminRole) return
-    setActiveTab('market')
-    if (typeof window !== 'undefined') {
-      window.history.replaceState({}, '', tabHref('market'))
-    }
+    navigateToRoute('market', tabHref('market'), { replace: true })
   }, [activeTab, hasAdminRole])
 
   useEffect(() => {
@@ -3065,42 +3088,59 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     return Boolean(ownerName && currentName && ownerName === currentName)
   }
 
-  function navigateToTab(tab) {
-    if (!VALID_TABS.has(tab)) return
-    const nextTab = profileSetupRequired && tab !== 'profile_setup' ? 'profile_setup' : tab
-    setActiveTab(nextTab)
-    if (typeof window !== 'undefined') {
-      window.history.pushState({}, '', tabHref(nextTab))
+  function syncRouteFromLocation(profileSetupComplete = false) {
+    const requestedTab = tabFromLocation()
+    const nextTab = profileSetupRequired && !profileSetupComplete && requestedTab !== 'profile_setup' ? 'profile_setup' : requestedTab
+    if (nextTab !== 'edit_listing') {
+      setEditingListingId(null)
+      setModalEditingListing(null)
+      setImages([])
+      setEditPreviewUrls([])
+      setSelectedEditHeroImageIndex(null)
+      setAnalysisError('')
     }
+    setReviewListingId(nextTab === 'review_listing' ? listingIdFromLocation() : null)
+    const matchesId = new URLSearchParams(window.location.search).get('matches') || null
+    setMarketMatchesTargetId(nextTab === 'closet_matches' ? listingIdFromLocation() : nextTab === 'market' ? matchesId : null)
+    const detailId = new URLSearchParams(window.location.search).get('detail')
+    setTradeDetailListing(detailId ? detailListingsByIdRef.current.get(detailId) || null : null)
+    setZoomedListingImage(null)
+    setShowCreateListingModal(false)
+    setNotificationPanelOpen(false)
+    setAccountMenuOpen(false)
+    setSupportListing(null)
+    if (!(nextTab === 'market' && listingIdFromLocation())) {
+      setSelectedMarketListingIndex(null)
+      setSelectedMarketImageIndex(0)
+    }
+    setActiveTab(nextTab)
+    setRouteRevision((revision) => revision + 1)
+    if (nextTab !== requestedTab) {
+      writeAppHistory(window, tabHref(nextTab), { replace: true })
+    }
+  }
+
+  function navigateToRoute(tab, href = tabHref(tab), { replace = false, profileSetupComplete = false } = {}) {
+    if (!VALID_TABS.has(tab)) return
+    const nextTab = profileSetupRequired && !profileSetupComplete && tab !== 'profile_setup' ? 'profile_setup' : tab
+    if (typeof window === 'undefined') { setActiveTab(nextTab); return }
+    writeAppHistory(window, nextTab === tab ? href : tabHref(nextTab), { replace })
+    syncRouteFromLocation(profileSetupComplete)
+  }
+
+  function navigateToTab(tab) { navigateToRoute(tab) }
+
+  function navigateBack(fallbackTab, fallbackHref = tabHref(fallbackTab)) {
+    if (typeof window === 'undefined') { navigateToTab(fallbackTab); return }
+    backInApp(window, fallbackHref, () => syncRouteFromLocation())
   }
 
   useEffect(() => {
     if (typeof window === 'undefined') return undefined
+    initializeAppHistory(window)
+    syncRouteFromLocation()
     function handlePopState() {
-      const requestedTab = tabFromLocation()
-      const nextTab = profileSetupRequired && requestedTab !== 'profile_setup' ? 'profile_setup' : requestedTab
-      if (nextTab !== 'edit_listing') {
-        setEditingListingId(null)
-        setModalEditingListing(null)
-        setImages([])
-        setEditPreviewUrls([])
-        setSelectedEditHeroImageIndex(null)
-        setAnalysisError('')
-      }
-      if (nextTab !== 'review_listing') {
-        setReviewListingId(null)
-      }
-      if (nextTab !== 'closet_matches') {
-        setMarketMatchesTargetId(null)
-      }
-      if (!(nextTab === 'market' && listingIdFromLocation())) {
-        setSelectedMarketListingIndex(null)
-        setSelectedMarketImageIndex(0)
-      }
-      setActiveTab(nextTab)
-      if (nextTab !== requestedTab) {
-        window.history.replaceState({}, '', tabHref(nextTab))
-      }
+      syncRouteFromLocation()
     }
     window.addEventListener('popstate', handlePopState)
     return () => window.removeEventListener('popstate', handlePopState)
@@ -3417,7 +3457,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   async function reloadProfileTabAfterSuccess(message = '', { navigateToProfileTab = false } = {}) {
     setProfileTabReloading(true)
     try {
-      setActiveTab('profile')
+      navigateToTab('profile')
       setProfileSection('general')
       const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
       await loadProfileQuizIntoState({ force: true })
@@ -3604,7 +3644,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
       } finally {
         params.delete('stripe_setup')
         const next = params.toString()
-        window.history.replaceState({}, '', `${window.location.pathname}${next ? `?${next}` : ''}`)
+        writeAppHistory(window, `${window.location.pathname}${next ? `?${next}` : ''}`, { replace: true })
       }
     })()
     return () => { cancelled = true }
@@ -4225,15 +4265,13 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
 	        return { p_img: original, d_img: display, is_hero: Boolean(entry.is_hero) || display === listedCover || idx === 0 }
 	      }).filter(Boolean)
 	      : []
-	    const targetCount = fromAnalysisUploads.length > 0 ? fromAnalysisUploads.length + generatedImages.length : null
 	    let normalizedImages = normalizedListedImages.length > 0
 	      ? normalizedListedImages.map((entry) => entry.d_img)
 	      : listedImages.length > 0
 	      ? listedImages
 	      : (listedCover ? [listedCover] : [])
-    if (targetCount && normalizedImages.length > targetCount) {
-      normalizedImages = normalizedImages.slice(0, targetCount)
-    }
+    // An older analysis can describe fewer photos than the newly saved gallery.
+    // Never truncate explicitly saved photos to that analysis's upload count.
     if (normalizedImages.length === 0 && fromAnalysisUploads.length > 0) {
       normalizedImages = fromAnalysisUploads
     }
@@ -4314,7 +4352,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
       city: listing.city || 'Your area',
 	      image: imageUrls[0] || null,
 	      images: imageUrls,
-	      listed_images: listedImages,
+      listed_images: reconcileListingImages(imageUrls, listedImages),
       wants: listing.wants || 'Open to similar-value offers',
       tags: Array.isArray(listing.tags) ? listing.tags : [],
       source_item_id: listing.sourceItemId || null,
@@ -4531,7 +4569,9 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
           }
         } else if (status !== 'analyzing') {
           setListingChatStage('review')
-          const content = 'Your analysis is ready! Take a look at the listing details below. Is there anything you’d like to change before publishing?'
+          const content = refreshed?.analysis?.pricing_review?.status === 'pending'
+            ? refreshed.analysis.pricing_review.message
+            : 'Your analysis is ready! Take a look at the listing details below. Is there anything you’d like to change before publishing?'
           setListingAssistantMessages((current) => [...current, { role: 'assistant', content }].slice(-12))
           if (listingAssistantConversationId) {
             const { client, authContext } = createWebApiClient({ apiBaseUrl, apiKey })
@@ -4941,7 +4981,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   useEffect(() => {
     if (!marketMatchesTarget) return
     function onKeyDown(e) {
-      if (e.key === 'Escape') setMarketMatchesTargetId(null)
+      if (e.key === 'Escape') navigateBack('market')
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
@@ -4984,7 +5024,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
       setSelectedMarketListingIndex(idx)
       setSelectedMarketImageIndex(0)
     }
-  }, [activeTab, filteredListings, selectedMarketListingIndex])
+  }, [activeTab, filteredListings, selectedMarketListingIndex, routeRevision])
 
   useEffect(() => {
     if (activeTab !== 'closet_matches') return
@@ -4992,7 +5032,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     if (requestedListingId && requestedListingId !== marketMatchesTargetId) {
       setMarketMatchesTargetId(requestedListingId)
     }
-  }, [activeTab, marketMatchesTargetId])
+  }, [activeTab, marketMatchesTargetId, routeRevision])
 
   function openMarketplaceListingDetails(item, preferredOfferedListingId = null) {
     const idx = filteredListings.findIndex((entry) => entry?.id === item?.id)
@@ -5001,9 +5041,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
       setSelectedMarketImageIndex(0)
       setSuggestedTradeListingId(preferredOfferedListingId)
       trackExperience('marketplace_listing_viewed', { screen: 'market', entityType: 'listing', entityId: item?.id || item?.listing_id })
-      if (typeof window !== 'undefined') {
-        window.history.pushState({}, '', marketListingHref(item?.id || item?.listing_id))
-      }
+      navigateToRoute('market', marketListingHref(item?.id || item?.listing_id))
     }
   }
 
@@ -5141,7 +5179,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     if (requestedId && requestedId !== reviewListingId) {
       setReviewListingId(requestedId)
     }
-  }, [activeTab, reviewListingId])
+  }, [activeTab, reviewListingId, routeRevision])
 
   useEffect(() => {
     setSelectedReviewImageIndex(0)
@@ -5208,7 +5246,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
       const bearerToken = await getAdminBearerToken()
       const result = await createAdminImpersonation({ apiBaseUrl, bearerToken, userSubject })
       onStartImpersonation?.(result)
-      if (typeof window !== 'undefined') window.history.replaceState({}, '', tabHref('market'))
+      if (typeof window !== 'undefined') writeAppHistory(window, tabHref('market'), { replace: true })
     } catch (err) {
       setAdminError(err.message || String(err))
     } finally {
@@ -5320,12 +5358,12 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     }
   }
 
-  async function openTradeComposer(targetListing, preferredOfferedListingId = null) {
+  async function openTradeComposer(targetListing, preferredOfferedListingId = null, { navigate = true } = {}) {
     if (!targetListing?.id) return
     setTradeComposerTarget(targetListing)
     setTradeOfferError('')
     setMarketMatchesTargetId(null)
-    setActiveTab('trade')
+    if (navigate) navigateToRoute('trade', `/?tab=trade&listing=${encodeURIComponent(targetListing.id)}`)
     trackExperience('trade_composer_started', { screen: 'trade', entityType: 'listing', entityId: targetListing.id })
 
     try {
@@ -5427,7 +5465,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
       setTradeOfferCandidates([])
       setTradeOfferListingIds([])
       setSavedListingNotice('Trade offer sent. The listing owner has been notified.')
-      setActiveTab('market')
+      navigateToTab('market')
     } catch (err) {
       setTradeOfferError(err.message || 'Failed to send trade offer.')
     } finally {
@@ -5436,8 +5474,8 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   }
 
   function openMarketMatches(targetListing) {
-    setMarketMatchesTargetId(targetListing?.id || null)
-    setActiveTab('market')
+    if (!targetListing?.id) return
+    navigateToRoute('market', `/?tab=market&matches=${encodeURIComponent(targetListing.id)}`)
   }
 
   function openClosetListingMatches(targetListing) {
@@ -5446,22 +5484,43 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     setMarketMatchesTargetId(listingId)
     setSelectedMarketListingIndex(null)
     setSelectedMarketImageIndex(0)
-    setActiveTab('closet_matches')
-    if (typeof window !== 'undefined') {
-      window.history.pushState({}, '', closetMatchesHref(listingId))
-    }
+    navigateToRoute('closet_matches', closetMatchesHref(listingId))
   }
 
   function openMatchedMarketplaceListing(item) {
     setMarketMatchesTargetId(null)
-    setActiveTab('market')
     openMarketplaceListingDetails(item)
   }
 
   function openTradeDetailListing(listing) {
-    setTradeDetailListing(listing || null)
+    const listingId = String(listing?.id || listing?.listing_id || '')
+    if (!listingId) return
+    detailListingsByIdRef.current.set(listingId, listing)
+    const params = new URLSearchParams(window.location.search)
+    params.set('detail', listingId)
+    navigateToRoute(activeTab, `${window.location.pathname}?${params}`)
     setTradeDetailImageIndex(0)
   }
+
+  function closeTradeDetailListing() {
+    const params = new URLSearchParams(window.location.search)
+    params.delete('detail')
+    navigateBack(activeTab, `${window.location.pathname}?${params}`)
+  }
+
+  useEffect(() => {
+    const detailId = new URLSearchParams(window.location.search).get('detail')
+    if (!detailId) return
+    const candidates = [...allListings, ...myListings,
+      ...incomingOffers.flatMap((offer) => [offer.target_listing, offer.offered_listing].filter(Boolean)),
+      ...Object.values(proposalCandidatesByOffer).flat()]
+    const listing = detailListingsByIdRef.current.get(detailId)
+      || candidates.find((entry) => String(entry?.id || entry?.listing_id || '') === detailId)
+    if (listing) {
+      detailListingsByIdRef.current.set(detailId, listing)
+      setTradeDetailListing(listing)
+    }
+  }, [routeRevision, allListings, myListings, incomingOffers, proposalCandidatesByOffer])
 
   function openZoomedListingImage(image) {
     setZoomedListingImage(image || null)
@@ -5603,8 +5662,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     setProposalBrowserOfferId(offerId)
     setProposalBrowserError('')
     if (openPage) {
-      setActiveTab('sender_items')
-      window.history.pushState({}, '', `${tabHref('sender_items')}&offer=${encodeURIComponent(offerId)}`)
+      navigateToRoute('sender_items', `${tabHref('sender_items')}&offer=${encodeURIComponent(offerId)}`)
       window.scrollTo(0, 0)
     }
     setOfferActionBusyById((prev) => ({ ...prev, [offerId]: 'loading-options' }))
@@ -5633,7 +5691,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
       if (!items.some((offer) => offer.offer_id === offerId)) setProposalBrowserError('This request could not be loaded. Return to the inbox and reopen it.')
     }).catch((error) => setProposalBrowserError(error.message || 'Unable to load this request.'))
     loadProposalCandidates(offerId, false)
-  }, [activeTab])
+  }, [activeTab, routeRevision])
 
   async function proposeTrade(offerId) {
     const listingId = proposalSelectionByOffer[offerId]
@@ -6033,7 +6091,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
         resetDraft()
         setAppAssistantListingFlow(true)
       } else if (tabMap[result.navigation]) {
-        setActiveTab(tabMap[result.navigation])
+        navigateToTab(tabMap[result.navigation])
       }
       if (result.intent === 'confirm_action') {
         await Promise.allSettled([
@@ -6229,7 +6287,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
         scheduleListingRefreshes()
         return normalized
       }
-      setActiveTab('portfolio')
+      navigateToTab('portfolio')
       setAnalysisError('')
       showClosetSuccess('Listing created. AI analysis is running in the background.')
       setShowCreateListingModal(false)
@@ -6334,7 +6392,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
       setEditingListingId(null)
       setModalEditingListing(null)
       setShowCreateListingModal(false)
-      setActiveTab('portfolio')
+      navigateToTab('portfolio')
       showClosetSuccess(publishAfterAnalysis
         ? 'Listing changes saved. AI analysis is running before publishing.'
         : 'Listing updated. AI analysis is running in the background.')
@@ -6369,7 +6427,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
       setEditingListingId(null)
       setModalEditingListing(null)
       setShowCreateListingModal(false)
-      setActiveTab('portfolio')
+      navigateToTab('portfolio')
       showClosetSuccess('Listing changes saved.')
     } catch (err) {
       setAnalysisError(err.message || String(err))
@@ -6412,7 +6470,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
       })
       setMyListings((prev) => prev.map((item) => item.id === listing.id ? fromRemoteListing(updated) : item))
       trackExperience('listing_published', { screen: 'review_listing', entityType: 'listing', entityId: listing.id })
-      setActiveTab('portfolio')
+      navigateToTab('portfolio')
       showClosetSuccess('Listing published to Marketplace.')
     } catch (err) {
       setAnalysisError(err.message || String(err))
@@ -6452,11 +6510,11 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   }
 
   function openCreateListingFromCloset() {
-    setActiveTab('portfolio')
+    navigateToTab('portfolio')
     openCreateListingModal()
   }
 
-  function openEditListingModal(listing) {
+  function openEditListingModal(listing, { navigate = true } = {}) {
     const existingImages = Array.isArray(listing.images) && listing.images.length > 0
       ? listing.images
       : [listing.image].filter(Boolean)
@@ -6487,10 +6545,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     setAnalysisError('')
     setSavedListingNotice('')
     setShowCreateListingModal(false)
-    setActiveTab('edit_listing')
-    if (typeof window !== 'undefined') {
-      window.history.pushState({}, '', editListingHref(listing.id))
-    }
+    if (navigate) navigateToRoute('edit_listing', editListingHref(listing.id))
   }
 
   function openReviewListing(listing) {
@@ -6498,11 +6553,24 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     setReviewListingId(listing.id)
     setAnalysisError('')
     setSavedListingNotice('')
-    setActiveTab('review_listing')
-    if (typeof window !== 'undefined') {
-      window.history.pushState({}, '', reviewListingHref(listing.id))
-    }
+    navigateToRoute('review_listing', reviewListingHref(listing.id))
   }
+
+  useEffect(() => {
+    if (activeTab !== 'edit_listing') return
+    const listingId = listingIdFromLocation()
+    if (!listingId || listingId === editingListingId) return
+    const listing = myListings.find((entry) => String(entry.id) === listingId)
+    if (listing) openEditListingModal(listing, { navigate: false })
+  }, [activeTab, routeRevision, myListings, editingListingId])
+
+  useEffect(() => {
+    if (activeTab !== 'trade') return
+    const listingId = listingIdFromLocation()
+    if (!listingId || listingId === tradeComposerTarget?.id) return
+    const listing = allListings.find((entry) => String(entry.id) === listingId)
+    if (listing) void openTradeComposer(listing, null, { navigate: false })
+  }, [activeTab, routeRevision, allListings, tradeComposerTarget?.id])
 
   function removeEditListingImageAtIndex(imageIndex) {
     if (imageIndex < editPreviewUrls.length) {
@@ -6592,12 +6660,19 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                   </div>
                 )}
               </div>
-              <button className="account-menu-button" type="button" onClick={() => {
-                setProfileSection('general')
-                navigateToTab('profile')
-              }} aria-label="Open account settings">
-                {String(profileData?.firstName || profileData?.name || profileData?.email || 'J').trim().charAt(0).toUpperCase()}
-              </button>
+              <div className="account-menu" ref={accountMenuRef}>
+                <button className="account-menu-button" type="button" onClick={() => {
+                  setAccountMenuOpen((open) => !open)
+                  setNotificationPanelOpen(false)
+                }} aria-label="User account" aria-expanded={accountMenuOpen} aria-controls="user-account-menu">
+                  {String(profileData?.firstName || profileData?.name || session?.name || profileData?.email || session?.email || 'J').trim().charAt(0).toUpperCase()}
+                </button>
+                {accountMenuOpen && <nav id="user-account-menu" className="account-menu-dropdown" aria-label="User account options">
+                  <button type="button" onClick={() => { setProfileSection('general'); navigateToTab('profile') }}>My Profile</button>
+                  <a href="mailto:admin@jouft.com?subject=Jouft%20account%20support" onClick={() => setAccountMenuOpen(false)}>Support</a>
+                  <button type="button" className="account-sign-out" onClick={() => { setAccountMenuOpen(false); onLogout?.() }}>Sign Out</button>
+                </nav>}
+              </div>
             </>
           ) : <button className="ghost" onClick={onLogout}>Log out</button>}
         </div>
@@ -6699,14 +6774,14 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
             <h2 style={{ marginTop: 4 }}>Fresh active listings</h2>
           </div>
           <div className="button-row">
-            <button className="ghost small" type="button" onClick={() => setActiveTab('market')}>View Marketplace</button>
+            <button className="ghost small" type="button" onClick={() => navigateToTab('market')}>View Marketplace</button>
           </div>
         </div>
         <div className="latest-rail">
           {latestActiveListings.map((item) => {
             const thumb = (Array.isArray(item.images) && item.images.length > 0) ? item.images[0] : item.image
             return (
-              <button key={`latest-${item.id}`} type="button" className="latest-card" onClick={() => setActiveTab('market')}>
+              <button key={`latest-${item.id}`} type="button" className="latest-card" onClick={() => navigateToTab('market')}>
                 <div className="latest-thumb" aria-hidden="true">
                   {thumb ? (
                     <img src={thumb} alt="" />
@@ -7124,10 +7199,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                             : 'Your free JOUFT plan is active.',
                           primaryLabel: 'Continue',
                         })
-                        setActiveTab('market')
-                        if (typeof window !== 'undefined') {
-                          window.history.pushState({}, '', tabHref('market'))
-                        }
+                        navigateToRoute('market', tabHref('market'), { profileSetupComplete: true })
                       } catch (err) {
                         setProfileSetupStep(PROFILE_SETUP_TOTAL_STEPS)
                         setProfileSaveMsg(err.message || 'Payment was not processed. Please update your payment details.')
@@ -7243,11 +7315,6 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                         <button className="primary" type="submit" disabled={securityBusy}>{securityBusy ? 'Updating...' : 'Update Password'}</button>
                       </form>
                       {profileSaveMsg && <p className="tiny-note" role="status">{profileSaveMsg}</p>}
-                      <div className="danger-zone">
-                        <h4>Account actions</h4>
-                        <button className="ghost" type="button" onClick={onLogout}>Sign Out</button>
-                        <a className="ghost" href="mailto:admin@jouft.com?subject=Jouft%20account%20support">Contact Support</a>
-                      </div>
                     </div>
                   )}
                   {profileSection === 'style' && (
@@ -7804,19 +7871,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                   <button
                     className="ghost"
                     type="button"
-                    onClick={() => {
-                      if (typeof window !== 'undefined' && tabFromLocation() === 'edit_listing' && window.history.length > 1) {
-                        window.history.back()
-                        return
-                      }
-                      setActiveTab('portfolio')
-                      setEditingListingId(null)
-                      setModalEditingListing(null)
-                      setImages([])
-                      setEditPreviewUrls([])
-                      setSelectedEditHeroImageIndex(null)
-                      setAnalysisError('')
-                    }}
+                    onClick={() => navigateBack('portfolio')}
                     disabled={analysisLoading || createListingBusy}
                   >
                     Back to Closet
@@ -8002,7 +8057,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                         className="ghost"
                         type="button"
                         onClick={() => {
-                          setActiveTab('portfolio')
+                          navigateToTab('portfolio')
                           setEditingListingId(null)
                           setModalEditingListing(null)
                           setImages([])
@@ -8083,14 +8138,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                   <button
                     className="ghost"
                     type="button"
-                    onClick={() => {
-                      if (typeof window !== 'undefined' && tabFromLocation() === 'review_listing' && window.history.length > 1) {
-                        window.history.back()
-                        return
-                      }
-                      setReviewListingId(null)
-                      navigateToTab('portfolio')
-                    }}
+                    onClick={() => navigateBack('portfolio')}
                   >
                     Back to Closet
                   </button>
@@ -8105,6 +8153,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                 </div>
               ) : (
                 <div className="listing-review-layout">
+                  {reviewListing?.analysis?.pricing_review?.status === 'pending' && <p role="status">{reviewListing.analysis.pricing_review.message}</p>}
                   <div className={`listing-review-gallery ${reviewListingGallery.length <= 1 ? 'single-image' : ''}`}>
                     {reviewListingGallery.length > 1 && (
                       <div className="listing-review-thumbnails" aria-label="Listing image thumbnails">
@@ -8210,15 +8259,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                 <button
                   className="ghost"
                   type="button"
-                  onClick={() => {
-                    if (typeof window !== 'undefined' && window.history.length > 1) {
-                      window.history.back()
-                      return
-                    }
-                    setMarketMatchesTargetId(null)
-                    setActiveTab('portfolio')
-                    if (typeof window !== 'undefined') window.history.replaceState({}, '', tabHref('portfolio'))
-                  }}
+                  onClick={() => navigateBack('portfolio')}
                 >
                   Back to My Closet
                 </button>
@@ -8549,17 +8590,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                                 <button
                                   className="ghost small"
                                   type="button"
-                                  onClick={() => {
-                                    if (typeof window !== 'undefined' && tabFromLocation() === 'market' && listingIdFromLocation() && window.history.length > 1) {
-                                      window.history.back()
-                                      return
-                                    }
-                                    setSelectedMarketListingIndex(null)
-                                    setSelectedMarketImageIndex(0)
-                                    if (typeof window !== 'undefined') {
-                                      window.history.replaceState({}, '', tabHref('market'))
-                                    }
-                                  }}
+                                  onClick={() => navigateBack('market')}
                                 >
                                   Back
                                 </button>
@@ -8703,14 +8734,14 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
 	                  <p className="eyebrow">Trade Offer</p>
 	                </div>
                 <div className="header-actions">
-                  <button className="ghost" type="button" onClick={() => setActiveTab('market')}>Back to Marketplace</button>
+                  <button className="ghost" type="button" onClick={() => navigateBack('market')}>Back to Marketplace</button>
                 </div>
               </div>
               {!tradeComposerTarget ? (
                 <div className="empty-state">
                   <h3>No target selected</h3>
                   <p>Open Marketplace and click Start Trade on a listing to begin.</p>
-                  <button className="primary" type="button" onClick={() => setActiveTab('market')}>Go to Marketplace</button>
+                  <button className="primary" type="button" onClick={() => navigateToTab('market')}>Go to Marketplace</button>
                 </div>
               ) : (
                 <>
@@ -8778,7 +8809,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                     </div>
                     {tradeOfferError ? <p className="error-text">{tradeOfferError}</p> : null}
                     <div className="button-row trade-offer-actions">
-                      <button className="ghost" type="button" onClick={() => setActiveTab('market')}>Cancel</button>
+                      <button className="ghost" type="button" onClick={() => navigateBack('market')}>Cancel</button>
                       <button className="primary" type="button" onClick={submitTradeOffer} disabled={tradeOfferBusy || !composerWithinBand}>
                         {tradeOfferBusy ? 'Sending...' : 'Send Trade Offer'}
                       </button>
@@ -8959,14 +8990,14 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
         </main>
       )}
 
-      <button className="app-assistant-launcher" type="button" aria-label={appAssistantOpen ? 'Close Jouft assistant' : 'Open Jouft assistant'} title="Jouft assistant" onClick={() => setAppAssistantOpen((open) => !open)}>J</button>
+      <button className="app-assistant-launcher" type="button" aria-label={appAssistantOpen ? 'Close Jouft assistant' : 'Open Jouft assistant'} title="Jouft assistant" onClick={() => setAppAssistantOpen((open) => !open)}><span className="app-assistant-logo-j" aria-hidden="true"><img src={jouftLogo} alt="" /></span></button>
       {appAssistantOpen && (
         <aside className="app-assistant-panel" aria-label="Jouft assistant">
           <header><div><small>JOUFT ASSISTANT</small><strong>What would you like to do?</strong></div><button type="button" aria-label="Close assistant" onClick={() => setAppAssistantOpen(false)}>×</button></header>
           <div ref={listingAssistantMessagesRef} className="app-assistant-transcript" aria-live="polite">
-            {appAssistantMessages.length === 0 && <div className="app-assistant-turn assistant"><span>J</span><p>I can help create a listing, find matches, start a trade, or check shipping. Just tell me what you need.</p></div>}
+            {appAssistantMessages.length === 0 && <div className="app-assistant-turn assistant"><span aria-hidden="true"><LogoJ small /></span><p>I can help create a listing, find matches, start a trade, or check shipping. Just tell me what you need.</p></div>}
             {appAssistantMessages.map((message, index) => <div className={`app-assistant-turn ${message.role}`} key={message.message_id || `${message.role}-${index}`}>
-              {message.role === 'assistant' && <span>J</span>}
+              {message.role === 'assistant' && <span aria-hidden="true"><LogoJ small /></span>}
               <div><p>{message.content}</p>
                 {message.listings?.length > 0 && <div className="app-assistant-results">{message.listings.map((listing, listingIndex) => <article key={listing.listing_id}>{listing.image && <img src={listing.image} alt={listing.title || 'Listing'} />}<div><small>{listingIndex + 1} · {listing.brand || 'Unknown brand'}</small><strong>{listing.title}</strong><span>{listing.size || 'Size not provided'} · {displayConditionLabel(listing.condition)}</span></div></article>)}</div>}
                 {message.trades?.length > 0 && <div className="app-assistant-status-list">{message.trades.map((trade) => <article key={trade.offer_id}><strong>{trade.target_listing?.title || 'Trade offer'}</strong><span>Status: {trade.status}</span></article>)}</div>}
@@ -8974,17 +9005,17 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
               </div>
             </div>)}
             {appAssistantListingFlow && <div className="app-assistant-listing-flow">
-              <div className="app-assistant-turn assistant"><span>J</span><div><p>{createImageSlots.filter(Boolean).length ? `${createImageSlots.filter(Boolean).length}/6 photos added.` : 'Add clear photos of the item to begin.'}</p><label className="ghost small listing-chat-upload"><span>{createImageSlots.filter(Boolean).length ? 'Add more photos' : 'Choose photos'}</span><input type="file" accept="image/*" multiple onChange={(event) => { handleCreatePhotoFiles(event.target.files); event.target.value = '' }} /></label></div></div>
+              <div className="app-assistant-turn assistant"><span aria-hidden="true"><LogoJ small /></span><div><p>{createImageSlots.filter(Boolean).length ? `${createImageSlots.filter(Boolean).length}/6 photos added.` : 'Add clear photos of the item to begin.'}</p><label className="ghost small listing-chat-upload"><span>{createImageSlots.filter(Boolean).length ? 'Add more photos' : 'Choose photos'}</span><input type="file" accept="image/*" multiple onChange={(event) => { handleCreatePhotoFiles(event.target.files); event.target.value = '' }} /></label></div></div>
               {createSlotPreviewUrls.filter(Boolean).length > 0 && <div className="app-assistant-photo-row">{createSlotPreviewUrls.filter(Boolean).map((url, index) => {
                 const assignment = createImageRoleCheck?.images?.[index]
                 const roles = assignment ? [assignment.role, ...(assignment.additional_roles || [])].filter(Boolean) : []
                 return <figure key={`${url}-${index}`}><img src={url} alt={`Item photo ${index + 1}`} />{roles.length > 0 && <figcaption>{roles.map((role) => IMAGE_ROLE_LABELS[role] || role).join(' + ')}</figcaption>}</figure>
               })}</div>}
-              {createImageRoleBusy && <div className="app-assistant-turn assistant"><span>J</span><p>I'm reviewing the photos and identifying each view...</p></div>}
-              {createImageRoleError && <div className="app-assistant-turn assistant"><span>J</span><div><p>{createImageRoleError}</p><button className="ghost small" type="button" onClick={() => setCreateImageRoleRetry((value) => value + 1)}>Retry photo check</button></div></div>}
+              {createImageRoleBusy && <div className="app-assistant-turn assistant"><span aria-hidden="true"><LogoJ small /></span><p>I'm reviewing the photos and identifying each view...</p></div>}
+              {createImageRoleError && <div className="app-assistant-turn assistant"><span aria-hidden="true"><LogoJ small /></span><div><p>{createImageRoleError}</p><button className="ghost small" type="button" onClick={() => setCreateImageRoleRetry((value) => value + 1)}>Retry photo check</button></div></div>}
               {!createImageRoleBusy && <PhotoAnalysisSummary result={createImageRoleCheck} />}
-              {createImageRoleCheck?.missing_required?.length > 0 && <div className="app-assistant-turn assistant"><span>J</span><div><p>Please add {createImageRoleCheck.missing_required.map((role) => IMAGE_ROLE_LABELS[role] || role).join(', ')} before we continue.</p></div></div>}
-              {listingChatPhotoGateOpen && listingAssistantMessages.length === 0 && !createImageRoleBusy && createImageRoleCheck?.missing_required?.length === 0 && <div className="app-assistant-turn assistant"><span>J</span><div><p>How would you describe the item’s condition?</p><div className="listing-chat-quick-replies"><button type="button" onClick={() => chooseListingAssistantCondition('NewWithTags')}>New with tags</button><button type="button" onClick={() => chooseListingAssistantCondition('New')}>New</button><button type="button" onClick={() => chooseListingAssistantCondition('LikeNew')}>Like new</button></div></div></div>}
+              {createImageRoleCheck?.missing_required?.length > 0 && <div className="app-assistant-turn assistant"><span aria-hidden="true"><LogoJ small /></span><div><p>Please add {createImageRoleCheck.missing_required.map((role) => IMAGE_ROLE_LABELS[role] || role).join(', ')} before we continue.</p></div></div>}
+              {listingChatPhotoGateOpen && listingAssistantMessages.length === 0 && !createImageRoleBusy && createImageRoleCheck?.missing_required?.length === 0 && <div className="app-assistant-turn assistant"><span aria-hidden="true"><LogoJ small /></span><div><p>How would you describe the item’s condition?</p><div className="listing-chat-quick-replies"><button type="button" onClick={() => chooseListingAssistantCondition('NewWithTags')}>New with tags</button><button type="button" onClick={() => chooseListingAssistantCondition('New')}>New</button><button type="button" onClick={() => chooseListingAssistantCondition('LikeNew')}>Like new</button></div></div></div>}
               {listingAssistantMessages.map((message, index) => {
                 const showSizeChoices = message.role === 'assistant'
                   && index === listingAssistantMessages.length - 1
@@ -8992,7 +9023,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                   && Array.isArray(message.missing_fields)
                   && message.missing_fields.includes('size')
                 return <div className={`app-assistant-turn ${message.role}`} key={`listing-${message.role}-${index}`}>
-                  {message.role === 'assistant' && <span>J</span>}
+                  {message.role === 'assistant' && <span aria-hidden="true"><LogoJ small /></span>}
                   <div>
                     <p>{message.content}</p>
                     {showSizeChoices && <div className="listing-chat-quick-replies">{sizeOptionsForCategory(category).map((size) => <button key={size} type="button" onClick={() => chooseListingAssistantSize(size)}>{size}</button>)}</div>}
@@ -9000,9 +9031,9 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                   </div>
                 </div>
               })}
-              {listingChatStage === 'confirm' && <div className="app-assistant-turn assistant"><span>J</span><div className="app-assistant-workflow-summary"><strong>Review before analysis</strong><p>Category: {category ? category.charAt(0).toUpperCase() + category.slice(1) : 'Not provided'}</p><p>Condition: {displayConditionLabel(userCondition) || 'Not provided'}</p><p>Size: {itemSize || 'Not provided'}</p><p>Tell me what to change, or say “go ahead” to create the private draft and begin analysis.</p></div></div>}
-              {listingChatStage === 'analyzing' && <div className="app-assistant-turn assistant"><span>J</span><div className="app-assistant-analysis-status" role="status"><span className="image-processing-spinner" aria-hidden="true" /><div><strong>Analyzing your listing</strong><p>I'm identifying the item, researching its value, and preparing the details. This can take up to two minutes.</p></div></div></div>}
-              {listingChatStage === 'review' && listingChatListing && <div className="app-assistant-turn assistant"><span>J</span><div className="app-assistant-listing-result">
+              {listingChatStage === 'confirm' && <div className="app-assistant-turn assistant"><span aria-hidden="true"><LogoJ small /></span><div className="app-assistant-workflow-summary"><strong>Review before analysis</strong><p>Category: {category ? category.charAt(0).toUpperCase() + category.slice(1) : 'Not provided'}</p><p>Condition: {displayConditionLabel(userCondition) || 'Not provided'}</p><p>Size: {itemSize || 'Not provided'}</p><p>Tell me what to change, or say “go ahead” to create the private draft and begin analysis.</p></div></div>}
+              {listingChatStage === 'analyzing' && <div className="app-assistant-turn assistant"><span aria-hidden="true"><LogoJ small /></span><div className="app-assistant-analysis-status" role="status"><span className="image-processing-spinner" aria-hidden="true" /><div><strong>Analyzing your listing</strong><p>I'm identifying the item, researching its value, and preparing the details. This can take up to two minutes.</p></div></div></div>}
+              {listingChatStage === 'review' && listingChatListing && <div className="app-assistant-turn assistant"><span aria-hidden="true"><LogoJ small /></span><div className="app-assistant-listing-result">
                 {getListingGallery(listingChatListing)[0] && <img src={getListingGallery(listingChatListing)[0]} alt={listingChatListing.title || 'Analyzed listing'} />}
                 <small>{listingChatListing.brand || 'Unknown brand'}</small>
                 <strong>{listingChatListing.title || 'Listing draft'}</strong>
@@ -9012,18 +9043,18 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                 {listingChatListing.generatedImages?.[0] && <figure className="app-assistant-generated-preview"><img src={listingChatListing.generatedImages[0]} alt={`AI-generated mannequin preview for ${listingChatListing.title || 'listing'}`} /><figcaption>AI-generated mannequin preview</figcaption></figure>}
                 <p>Tell me what you'd like to change, or say “publish it” when everything looks right.</p>
               </div></div>}
-              {listingChatStage === 'published' && listingChatListing && <div className="app-assistant-turn assistant"><span>J</span><div className="app-assistant-published-result"><strong>Your listing is live</strong><p>{listingChatMatches.length ? `I found ${listingChatMatches.length} potential ${listingChatMatches.length === 1 ? 'match' : 'matches'}. Tell me which one you want by number or title, and I'll help prepare the trade.` : 'No close matches are available yet. I’ll keep matching it as marketplace inventory changes.'}</p>{listingChatMatches.length > 0 && <div className="app-assistant-results">{listingChatMatches.map((match, matchIndex) => <article key={match.id || match.listing_id}>{getListingGallery(match)[0] && <img src={getListingGallery(match)[0]} alt={match.title || 'Matched listing'} />}<div><small>{matchIndex + 1} · {match.brand || 'Unknown brand'}</small><strong>{match.title || 'Matched listing'}</strong><span>{match.size || 'Size not provided'} · {displayConditionLabel(match.condition)}</span></div></article>)}</div>}</div></div>}
-              {listingAssistantBusy && <div className="app-assistant-turn assistant"><span>J</span><p>Thinking…</p></div>}
+              {listingChatStage === 'published' && listingChatListing && <div className="app-assistant-turn assistant"><span aria-hidden="true"><LogoJ small /></span><div className="app-assistant-published-result"><strong>Your listing is live</strong><p>{listingChatMatches.length ? `I found ${listingChatMatches.length} potential ${listingChatMatches.length === 1 ? 'match' : 'matches'}. Tell me which one you want by number or title, and I'll help prepare the trade.` : 'No close matches are available yet. I’ll keep matching it as marketplace inventory changes.'}</p>{listingChatMatches.length > 0 && <div className="app-assistant-results">{listingChatMatches.map((match, matchIndex) => <article key={match.id || match.listing_id}>{getListingGallery(match)[0] && <img src={getListingGallery(match)[0]} alt={match.title || 'Matched listing'} />}<div><small>{matchIndex + 1} · {match.brand || 'Unknown brand'}</small><strong>{match.title || 'Matched listing'}</strong><span>{match.size || 'Size not provided'} · {displayConditionLabel(match.condition)}</span></div></article>)}</div>}</div></div>}
+              {listingAssistantBusy && <div className="app-assistant-turn assistant"><span aria-hidden="true"><LogoJ small /></span><p>Thinking…</p></div>}
               {listingAssistantError && <p className="app-assistant-error">{listingAssistantError}</p>}
             </div>}
-            {appAssistantBusy && <div className="app-assistant-turn assistant"><span>J</span><p>Thinking…</p></div>}
+            {appAssistantBusy && <div className="app-assistant-turn assistant"><span aria-hidden="true"><LogoJ small /></span><p>Thinking…</p></div>}
             {appAssistantError && <p className="app-assistant-error">{appAssistantError}</p>}
           </div>
           <form className="app-assistant-compose" onSubmit={(event) => { event.preventDefault(); if (appAssistantListingFlow) { const value = appAssistantInput; setAppAssistantInput(''); void sendListingAssistantMessage(value) } else { void sendAppAssistantMessage() } }}><textarea value={appAssistantInput} onChange={(event) => setAppAssistantInput(event.target.value)} placeholder={appAssistantListingFlow ? (listingChatStage === 'review' ? 'Describe a change or say “publish it”' : listingChatStage === 'published' ? 'Choose a match or ask what to do next' : 'Reply about your listing') : 'Ask Jouft anything'} rows={2} disabled={appAssistantBusy || listingAssistantBusy || createImageRoleBusy || listingChatStage === 'analyzing'} /><button className="primary small" type="submit" disabled={!appAssistantInput.trim() || appAssistantBusy || listingAssistantBusy || createImageRoleBusy || listingChatStage === 'analyzing'}>Send</button></form>
         </aside>
       )}
 
-      {activeTab === 'sender_items' && !incomingOffers.find((offer) => offer.offer_id === proposalBrowserOfferId) && <section className="trade-picker-page"><button className="ghost" onClick={() => navigateToTab('inbox')}>Back to inbox</button><p role="status">{proposalBrowserError || 'Loading trade request…'}</p></section>}
+      {activeTab === 'sender_items' && !incomingOffers.find((offer) => offer.offer_id === proposalBrowserOfferId) && <section className="trade-picker-page"><button className="ghost" onClick={() => navigateBack('inbox')}>Back to inbox</button><p role="status">{proposalBrowserError || 'Loading trade request…'}</p></section>}
       {activeTab === 'sender_items' && proposalBrowserOfferId && incomingOffers.find((offer) => offer.offer_id === proposalBrowserOfferId) && <TradeItemPicker
         offer={incomingOffers.find((offer) => offer.offer_id === proposalBrowserOfferId)}
         items={proposalCandidatesByOffer[proposalBrowserOfferId] || []}
@@ -9033,7 +9064,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
         onSelect={(id) => setProposalSelectionByOffer((prev) => ({ ...prev, [proposalBrowserOfferId]: id }))}
         onDetails={openTradeDetailListing}
         onConfirm={() => proposeTrade(proposalBrowserOfferId)}
-        onClose={() => navigateToTab('inbox')}
+        onClose={() => navigateBack('inbox')}
       />}
       {tradeDetailListing && (
         <div className="trade-detail-backdrop">
@@ -9094,7 +9125,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                           </p>
                         </div>
                         <div className="market-selected-actions">
-                          <button className="ghost small" type="button" onClick={() => setTradeDetailListing(null)}>
+                          <button className="ghost small" type="button" onClick={closeTradeDetailListing}>
                             Back
                           </button>
                         </div>
@@ -9157,15 +9188,15 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
         </div>
       )}
 
-      {activeTab !== 'closet_matches' && marketMatchesTarget && (
-        <div className="market-matches-backdrop" onClick={() => setMarketMatchesTargetId(null)}>
+      {activeTab === 'market' && marketMatchesTarget && (
+        <div className="market-matches-backdrop" onClick={() => navigateBack('market')}>
           <aside className={`market-matches-drawer ${similarListingsForTarget.length === 1 ? 'single-match' : ''}`} onClick={(e) => e.stopPropagation()}>
             <div className="market-matches-head">
               <div>
                 <p className="eyebrow">Similar Matches</p>
                 <h3>Matches for {marketMatchesTarget.title}</h3>
               </div>
-              <button className="ghost small" type="button" onClick={() => setMarketMatchesTargetId(null)}>Close</button>
+              <button className="ghost small" type="button" onClick={() => navigateBack('market')}>Close</button>
             </div>
             {similarListingsForTarget.length === 0 ? (
               <p className="tiny-note">No close value matches found right now.</p>
@@ -9399,12 +9430,12 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
 
             {createListingMode === 'chat' && <section className="listing-assistant is-open listing-chat-create">
                 <div className="listing-chat-header">
-                  <span className="listing-chat-avatar" aria-hidden="true">J</span>
+                  <span className="listing-chat-avatar" aria-hidden="true"><LogoJ small /></span>
                   <div><strong>Jouft Listing Assistant</strong><small>Ready to create your listing</small></div>
                 </div>
                 <div className="listing-chat-photos">
                   <div className="listing-chat-turn assistant">
-                    <span className="listing-chat-avatar" aria-hidden="true">J</span>
+                    <span className="listing-chat-avatar" aria-hidden="true"><LogoJ small /></span>
                     <div className="listing-chat-bubble">
                       <p>Hi! Let’s create your listing together. Start by sharing a few clear photos, and I’ll guide you through the rest.</p>
                       <div className="listing-chat-photo-action">
@@ -9425,10 +9456,10 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                       </div>
                     ))}
                   </div>
-                  {createImageRoleBusy && <div className="listing-chat-turn assistant"><span className="listing-chat-avatar" aria-hidden="true">J</span><p className="listing-chat-bubble listing-assistant-thinking">I’m reviewing the photos and identifying each view...</p></div>}
+                  {createImageRoleBusy && <div className="listing-chat-turn assistant"><span className="listing-chat-avatar" aria-hidden="true"><LogoJ small /></span><p className="listing-chat-bubble listing-assistant-thinking">I’m reviewing the photos and identifying each view...</p></div>}
                   {createImageRoleCheck?.missing_required?.length > 0 && (
                     <div className="listing-chat-turn assistant" role="status">
-                      <span className="listing-chat-avatar" aria-hidden="true">J</span>
+                      <span className="listing-chat-avatar" aria-hidden="true"><LogoJ small /></span>
                       <div className="listing-chat-guidance">
                         <strong>These photos are a great start. Could you add {createImageRoleCheck.missing_required.length === 1 ? 'one more view' : 'a few more views'}?</strong>
                         {createImageRoleCheck.missing_required.map((role) => <p key={role}>{imageRoleGuidance(role)}</p>)}
@@ -9440,7 +9471,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                   <div ref={listingAssistantMessagesRef} className="listing-assistant-messages" aria-live="polite">
                     {listingAssistantMessages.length === 0 && (
                       <div className="listing-chat-turn assistant">
-                        <span className="listing-chat-avatar" aria-hidden="true">J</span>
+                        <span className="listing-chat-avatar" aria-hidden="true"><LogoJ small /></span>
                         <div className="listing-chat-bubble">
                           <p>Thanks for the photos! How would you describe the item’s condition?</p>
                           <div className="listing-chat-quick-replies">
@@ -9460,20 +9491,20 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                       return (
                         <Fragment key={`${message.role}-${index}`}>
                           <div className={`listing-chat-turn ${message.role}${message.interaction_type === 'quick_reply' ? ' quick-reply-selection' : ''}`}>
-                            {message.role === 'assistant' && <span className="listing-chat-avatar" aria-hidden="true">J</span>}
+                            {message.role === 'assistant' && <span className="listing-chat-avatar" aria-hidden="true"><LogoJ small /></span>}
                             <div className={`listing-assistant-message ${message.role}`}>
                               <p>{message.content}</p>
                               {message.role === 'user' && message.interaction_type === 'quick_reply' && <small className="listing-chat-selected-label">Selected</small>}
                               {showSizeChoices && <div className="listing-chat-quick-replies">{sizeOptionsForCategory(category).map((size) => <button key={size} type="button" onClick={() => chooseListingAssistantSize(size)}>{size}</button>)}</div>}
                             </div>
                           </div>
-                          {message.role === 'assistant' && /review (?:the summary|everything)/i.test(message.content) && <div className="listing-chat-turn assistant"><span className="listing-chat-avatar" aria-hidden="true">J</span><div className="listing-chat-captured"><strong>Here’s what I have so far</strong><span>Category: {category ? category.charAt(0).toUpperCase() + category.slice(1) : 'I still need this'}</span><span>Condition: {displayConditionLabel(userCondition) || 'I still need this'}</span><span>Size: {itemSize || 'I still need this'}</span></div></div>}
+                          {message.role === 'assistant' && /review (?:the summary|everything)/i.test(message.content) && <div className="listing-chat-turn assistant"><span className="listing-chat-avatar" aria-hidden="true"><LogoJ small /></span><div className="listing-chat-captured"><strong>Here’s what I have so far</strong><span>Category: {category ? category.charAt(0).toUpperCase() + category.slice(1) : 'I still need this'}</span><span>Condition: {displayConditionLabel(userCondition) || 'I still need this'}</span><span>Size: {itemSize || 'I still need this'}</span></div></div>}
                           {message.role === 'assistant' && message.content.startsWith('Your analysis is ready') && listingChatListing && <div className="listing-chat-result">{getListingGallery(listingChatListing)[0] && <img src={getListingGallery(listingChatListing)[0]} alt={listingChatListing.title || 'Analyzed item'} />}<div><small>{listingChatListing.brand || 'Unknown brand'}</small><strong>{listingChatListing.title || 'Listing draft'}</strong><span>{listingChatListing.category || category} · {listingChatListing.size || itemSize || 'Size not provided'} · {displayConditionLabel(listingChatListing.condition || userCondition)}</span>{Number(listingChatListing.estimatedValue || 0) > 0 && <span>Estimated trade value: {money(listingChatListing.estimatedValue)}</span>}{listingChatListing.description && <p>{listingChatListing.description}</p>}</div></div>}
-                          {message.role === 'assistant' && /^(I found|I did not find)/.test(message.content) && listingChatStage === 'published' && <div className="listing-chat-workflow-card"><strong>{listingChatMatches.length ? `${listingChatMatches.length} potential ${listingChatMatches.length === 1 ? 'match' : 'matches'} found` : 'Your listing is live'}</strong><p>{listingChatMatches.length ? 'Tell me which item you like by number or title.' : 'No close matches are available yet. We’ll keep matching it as marketplace inventory changes.'}</p>{listingChatMatches.length > 0 && <div className="listing-chat-match-grid">{listingChatMatches.slice(0, 3).map((match, matchIndex) => <article key={match.id || match.listing_id}>{getListingGallery(match)[0] && <img src={getListingGallery(match)[0]} alt={match.title || 'Matched item'} />}<div><small>Match {matchIndex + 1} · {match.brand || 'Unknown brand'}</small><strong>{match.title || 'Matched listing'}</strong><span>{match.size || 'Size not provided'} · {displayConditionLabel(match.condition)}</span></div></article>)}</div>}<button className="primary small" type="button" onClick={() => { setShowCreateListingModal(false); setActiveTab('portfolio') }}>View in My Closet</button></div>}
+                          {message.role === 'assistant' && /^(I found|I did not find)/.test(message.content) && listingChatStage === 'published' && <div className="listing-chat-workflow-card"><strong>{listingChatMatches.length ? `${listingChatMatches.length} potential ${listingChatMatches.length === 1 ? 'match' : 'matches'} found` : 'Your listing is live'}</strong><p>{listingChatMatches.length ? 'Tell me which item you like by number or title.' : 'No close matches are available yet. We’ll keep matching it as marketplace inventory changes.'}</p>{listingChatMatches.length > 0 && <div className="listing-chat-match-grid">{listingChatMatches.slice(0, 3).map((match, matchIndex) => <article key={match.id || match.listing_id}>{getListingGallery(match)[0] && <img src={getListingGallery(match)[0]} alt={match.title || 'Matched item'} />}<div><small>Match {matchIndex + 1} · {match.brand || 'Unknown brand'}</small><strong>{match.title || 'Matched listing'}</strong><span>{match.size || 'Size not provided'} · {displayConditionLabel(match.condition)}</span></div></article>)}</div>}<button className="primary small" type="button" onClick={() => { setShowCreateListingModal(false); navigateToTab('portfolio') }}>View in My Closet</button></div>}
                         </Fragment>
                       )
                     })}
-                    {listingAssistantBusy && <div className="listing-chat-turn assistant"><span className="listing-chat-avatar" aria-hidden="true">J</span><p className="listing-assistant-thinking">Thinking...</p></div>}
+                    {listingAssistantBusy && <div className="listing-chat-turn assistant"><span className="listing-chat-avatar" aria-hidden="true"><LogoJ small /></span><p className="listing-assistant-thinking">Thinking...</p></div>}
                   </div>
                   {listingChatStage === 'confirm' && (
                     <div className="listing-chat-workflow-card">
@@ -9667,11 +9698,6 @@ function LikeIcon({ liked = false }) {
   )
 }
 
-function SocialShareIcon({ network }) {
-  const Icon = network === 'facebook' ? FaFacebookF : FaPinterestP
-  return <Icon className="listing-share-icon" aria-hidden="true" focusable="false" />
-}
-
 function ListingImage({ src, alt, onFailed }) {
   const [status, setStatus] = useState('loading')
   const [blobUrl, setBlobUrl] = useState('')
@@ -9833,6 +9859,32 @@ function ListingCard({ item, own = false, onEditDraft = null, onReviewListing = 
     window.open(url, '_blank', 'noopener,noreferrer,width=900,height=700')
   }
 
+  function renderOwnerMenus(buttonClass) {
+    const closeMenu = (event) => {
+      event.stopPropagation()
+      event.currentTarget.closest('details')?.removeAttribute('open')
+    }
+    return <>
+      <span className="listing-social-actions" onKeyDown={(event) => event.stopPropagation()}>
+        <button type="button" className="listing-social-circle" onClick={shareToFacebook} title="Share on Facebook" aria-label="Share on Facebook"><FaFacebookF aria-hidden="true" /></button>
+        <button type="button" className="listing-social-circle" onClick={shareToPinterest} title="Share on Pinterest" aria-label="Share on Pinterest"><FaPinterestP aria-hidden="true" /></button>
+      </span>
+      {(typeof onRemoveListing === 'function' || typeof onReportIssue === 'function') && <details className="listing-action-menu" onClick={(event) => event.stopPropagation()} onKeyDown={(event) => {
+        event.stopPropagation()
+        if (event.key === 'Escape') {
+          event.currentTarget.removeAttribute('open')
+          event.currentTarget.querySelector('summary')?.focus()
+        }
+      }}>
+        <summary className={buttonClass} aria-label="More listing options">More ⋯</summary>
+        <div className="listing-action-menu-options">
+          {typeof onReportIssue === 'function' && <button type="button" onClick={(event) => { closeMenu(event); onReportIssue(item) }}>Report issue</button>}
+          {typeof onRemoveListing === 'function' && <button type="button" className="listing-menu-delete" onClick={(event) => { closeMenu(event); onRemoveListing(item) }}>Delete listing</button>}
+        </div>
+      </details>}
+    </>
+  }
+
   return (
     <>
       <article
@@ -9867,7 +9919,7 @@ function ListingCard({ item, own = false, onEditDraft = null, onReviewListing = 
             Image unavailable
           </div>
         )}
-        {own && !isEditorial && <span className={`status-badge ${badgeClass}`}>{badgeLabel}</span>}
+        {own && !isEditorial && normalizedStatus !== 'review' && <span className={`status-badge ${badgeClass}`}>{badgeLabel}</span>}
         {own && Number.isFinite(matchCount) && matchCount > 0 && (
           <span className="closet-match-count" aria-label={`${matchCount} matched ${matchCount === 1 ? 'item' : 'items'}`}>
             {matchCount} {matchCount === 1 ? 'MATCH' : 'MATCHES'}
@@ -9962,50 +10014,7 @@ function ListingCard({ item, own = false, onEditDraft = null, onReviewListing = 
                     >
                       <span>EDIT LISTING</span>
                     </button>
-                    {typeof onRemoveListing === 'function' && (
-                      <button
-                        className="editorial-match-btn listing-remove-btn listing-icon-btn"
-                        type="button"
-                        title="Delete listing"
-                        aria-label="Delete listing"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          onRemoveListing(item)
-                        }}
-                      >
-                        <FiTrash2 aria-hidden="true" />
-                      </button>
-                    )}
-                    {typeof onReportIssue === 'function' && (
-                      <button
-                        className="editorial-match-btn"
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          onReportIssue(item)
-                        }}
-                      >
-                        <span>REPORT ISSUE</span>
-                      </button>
-                    )}
-                    <button
-                      className="editorial-match-btn listing-share-icon-btn"
-                      type="button"
-                      onClick={shareToFacebook}
-                      title="Share on Facebook"
-                      aria-label="Share on Facebook"
-                    >
-                      <SocialShareIcon network="facebook" />
-                    </button>
-                    <button
-                      className="editorial-match-btn listing-share-icon-btn"
-                      type="button"
-                      onClick={shareToPinterest}
-                      title="Share on Pinterest"
-                      aria-label="Share on Pinterest"
-                    >
-                      <SocialShareIcon network="pinterest" />
-                    </button>
+                    {renderOwnerMenus("editorial-match-btn")}
                   </div>
                 )}
               </div>
@@ -10085,38 +10094,7 @@ function ListingCard({ item, own = false, onEditDraft = null, onReviewListing = 
                       >
                         Edit Listing
                       </button>
-                      {typeof onRemoveListing === 'function' && (
-                        <button
-                          className="ghost small listing-remove-btn listing-icon-btn"
-                          type="button"
-                          title="Delete listing"
-                          aria-label="Delete listing"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            onRemoveListing(item)
-                          }}
-                        >
-                          <FiTrash2 aria-hidden="true" />
-                        </button>
-                      )}
-                      <button
-                        className="ghost small listing-share-icon-btn"
-                        type="button"
-                        onClick={shareToFacebook}
-                        title="Share on Facebook"
-                        aria-label="Share on Facebook"
-                      >
-                        <SocialShareIcon network="facebook" />
-                      </button>
-                      <button
-                        className="ghost small listing-share-icon-btn"
-                        type="button"
-                        onClick={shareToPinterest}
-                        title="Share on Pinterest"
-                        aria-label="Share on Pinterest"
-                      >
-                        <SocialShareIcon network="pinterest" />
-                      </button>
+                      {renderOwnerMenus("ghost small")}
                     </>
                   )}
                 </div>

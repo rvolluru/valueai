@@ -131,6 +131,7 @@ class Settings(BaseSettings):
     health_analysis_queue_timeout_seconds: int = Field(default=900, ge=120)
 
     clerk_enabled: bool = False
+    clerk_secret_key: str | None = None
     clerk_issuer: str | None = None
     clerk_jwks_url: str | None = None
     clerk_audience: str | None = None

@@ -863,6 +863,7 @@ class GptItemProfiler:
                         "confidence": {"type": "number", "minimum": 0, "maximum": 1},
                         "rationale": {"type": "string"},
                         "condition_assumption": {"type": "string"},
+                        "condition_grade": {"type": "string", "enum": ["NewWithTags", "New", "LikeNew", "Good", "Fair", "Poor"]},
                         "references": {
                             "type": "array",
                             "items": {
@@ -882,6 +883,7 @@ class GptItemProfiler:
                         "confidence",
                         "rationale",
                         "condition_assumption",
+                        "condition_grade",
                         "references",
                     ],
                 },
@@ -892,6 +894,7 @@ class GptItemProfiler:
                         "additionalProperties": False,
                         "properties": {
                             "label": {"type": "string"},
+                            "condition_grade": {"type": "string", "enum": ["NewWithTags", "New", "LikeNew", "Good", "Fair", "Poor"]},
                             "estimated_price": {"type": ["number", "null"]},
                             "range_low": {"type": ["number", "null"]},
                             "range_high": {"type": ["number", "null"]},
@@ -901,6 +904,7 @@ class GptItemProfiler:
                         },
                         "required": [
                             "label",
+                            "condition_grade",
                             "estimated_price",
                             "range_low",
                             "range_high",
@@ -1044,8 +1048,12 @@ class GptItemProfiler:
             "Do not increase, decrease, discount, premium, or otherwise adjust valuation because of size, season, "
             "current-season status, off-season status, archive status, or common/outlier sizing.\n"
             "6. USER CONDITION IS AUTHORITATIVE: The user-selected condition is provided as user_condition. "
-            "Use that exact condition for the final resale_price_estimate. Do not override it based on visible tags, packaging, "
-            "box, dust bag, or inferred accessory cues. If user_condition is New, do NOT value the item as NewWithTags, NWT, "
+            "Use that exact condition for the final resale_price_estimate. "
+            "Set resale_price_estimate.condition_grade to the exact normalized user_condition, and include an explicit "
+            "condition_grade on every resale_price_breakdown row. Include a priced row for the exact user condition. "
+            "New means unused/unworn without a tags premium; LikeNew/EUC means lightly used and is NOT New. "
+            "Do not override it based on visible tags, packaging, box, dust bag, or inferred accessory cues. "
+            "If user_condition is New, do NOT value the item as NewWithTags, NWT, "
             "new-in-box/NIB, full set, with tags, or with a box/dust-bag/full-set premium. Only apply NewWithTags/NWT/NIB/"
             "full-set premiums when user_condition is exactly NewWithTags. The condition-tier table may include NWT as a "
             "separate row, but resale_price_estimate must not use that row unless user_condition is NewWithTags.\n"
@@ -1605,6 +1613,25 @@ class GptItemProfiler:
                 raise RuntimeError(f"openai_http_{resp.status_code}: {resp.text[:600]}")
             raw = resp.json()
         return self._parse_response(raw)
+
+    def estimate_new_from_like_new(self, *, item_profile: dict, reference: dict) -> dict | None:
+        """One pricing-only retry; existing identification remains authoritative."""
+        if not self.openai_api_key:
+            return None
+        instruction = (
+            "Estimate a separate resale price for user-selected condition New (unused/unworn, "
+            "retail tags NOT required). The supplied Like New band is a reference, NOT the New price. "
+            "Use item-specific resale evidence to justify any adjustment; do not apply a fixed "
+            "percentage uplift or invent comparable sales. Return condition_grade New explicitly. "
+            "If evidence is insufficient, return a null estimated_price and explain why. "
+            "Reduce confidence when deriving rather than observing New-condition comparables. "
+            "Do not change the item identification. Reference band: " + json.dumps(reference)
+        )
+        return self._call_openai_valuation(
+            content=[{"type": "input_text", "text": instruction}],
+            gemini_profile=item_profile, condition_grade="New",
+            valuation_prompt_override=instruction,
+        )
 
     def _call_openai_valuation(
         self,
@@ -2329,6 +2356,7 @@ class GptItemProfiler:
                 "confidence": base_confidence,
                 "rationale": rationale,
                 "references": refs,
+                **({"condition_grade": value.get("condition_grade")} if "condition_grade" in value else {}),
                 **(
                     {
                         "condition_assumption": self._as_nullable_str(value.get("condition_assumption")) or "",
@@ -2414,6 +2442,7 @@ class GptItemProfiler:
                 rows.append(
                     {
                         "label": label,
+                        **({"condition_grade": entry.get("condition_grade")} if "condition_grade" in entry else {}),
                         "estimated_price": est,
                         "range_low": low,
                         "range_high": high,
@@ -2435,6 +2464,7 @@ class GptItemProfiler:
                 rows.append(
                     {
                         "label": str(label),
+                        **({"condition_grade": entry.get("condition_grade")} if "condition_grade" in entry else {}),
                         "estimated_price": est,
                         "range_low": low,
                         "range_high": high,

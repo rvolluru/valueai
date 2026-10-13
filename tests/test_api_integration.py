@@ -1781,6 +1781,7 @@ def _stub_item_profile(
     model: str = "Air Force 1",
     category: str = "shoes",
     estimated_price: float | None = 700.0,
+    condition_assumption: str = "LikeNew",
 ) -> dict:
     resale_price = estimated_price
     return {
@@ -1817,7 +1818,7 @@ def _stub_item_profile(
             "currency": "USD",
             "confidence": 0.66,
             "rationale": "stub",
-            "condition_assumption": "LikeNew",
+            "condition_assumption": condition_assumption,
             "references": [],
         },
     }
@@ -2786,6 +2787,7 @@ def test_create_listing_reuses_recent_analysis_across_accounts_for_same_uploaded
             model="Bandage Dress",
             category="clothes",
             estimated_price=475,
+                condition_assumption="New",
         )
     )
 
@@ -3229,10 +3231,10 @@ def test_new_with_tags_condition_normalization_and_breakdown_selection() -> None
     }
     plain_new = valuation_from_gpt_item_profile(plain_new_profile, default_currency="USD", condition_grade="New")
 
-    assert new_with_tags["estimated_value"] == 260.0
-    assert new_with_tags["selected_breakdown_label"] == "Current-season style with MSRP context"
-    assert plain_new["estimated_value"] == 75.0
-    assert plain_new["selected_breakdown_label"] == "Without tags / excellent condition"
+    assert new_with_tags["estimated_value"] == 210.0
+    assert new_with_tags["selected_breakdown_label"] == "New with tags / brand new"
+    assert plain_new["estimated_value"] == 356.4
+    assert plain_new["basis"] == "gpt_retail_reference_resale_fallback"
 
 
 def test_plain_new_condition_ignores_nwt_breakdown_row_when_primary_missing() -> None:
@@ -3262,8 +3264,8 @@ def test_plain_new_condition_ignores_nwt_breakdown_row_when_primary_missing() ->
 
     valuation = valuation_from_gpt_item_profile(profile, default_currency="USD", condition_grade="New")
 
-    assert valuation["estimated_value"] == 380.0
-    assert valuation["selected_breakdown_label"] == "EUC / Like New"
+    assert valuation["estimated_value"] == 720.0
+    assert valuation["basis"] == "gpt_retail_reference_resale_fallback"
 
 
 def test_plain_new_condition_replaces_primary_nwt_framing_with_non_nwt_breakdown() -> None:
@@ -3299,8 +3301,8 @@ def test_plain_new_condition_replaces_primary_nwt_framing_with_non_nwt_breakdown
 
     valuation = valuation_from_gpt_item_profile(profile, default_currency="USD", condition_grade="New")
 
-    assert valuation["estimated_value"] == 380.0
-    assert valuation["selected_breakdown_label"] == "EUC / Like New"
+    assert valuation["estimated_value"] == 720.0
+    assert valuation["basis"] == "gpt_retail_reference_resale_fallback"
 
 
 def test_analyze_skips_crawler_when_gemini_retail_reference_can_be_derived(monkeypatch) -> None:

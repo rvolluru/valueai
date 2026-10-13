@@ -37,6 +37,13 @@
     },
     "plugins": [
       [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow Jouft to take photos of items for your listings.",
+          "recordAudioAndroid": false
+        }
+      ],
+      [
         "expo-image-picker",
         {
           "cameraPermission": "Allow Jouft to take photos of items for your listings.",

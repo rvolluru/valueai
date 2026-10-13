@@ -35,6 +35,10 @@ PODS:
     - Yoga
   - ExpoAsset (12.0.13):
     - ExpoModulesCore
+  - ExpoCamera (17.0.10):
+    - ExpoModulesCore
+    - ZXingObjC/OneD
+    - ZXingObjC/PDF417
   - ExpoCrypto (15.0.9):
     - ExpoModulesCore
   - ExpoDevice (8.0.10):
@@ -1886,6 +1890,11 @@ PODS:
   - StripeUICore (24.19.0):
     - StripeCore (= 24.19.0)
   - Yoga (0.0.0)
+  - ZXingObjC/Core (3.6.9)
+  - ZXingObjC/OneD (3.6.9):
+    - ZXingObjC/Core
+  - ZXingObjC/PDF417 (3.6.9):
+    - ZXingObjC/Core
 
 DEPENDENCIES:
   - EXApplication (from `../node_modules/expo-application/ios`)
@@ -1894,6 +1903,7 @@ DEPENDENCIES:
   - EXNotifications (from `../node_modules/expo-notifications/ios`)
   - Expo (from `../node_modules/expo`)
   - ExpoAsset (from `../node_modules/expo/node_modules/expo-asset/ios`)
+  - ExpoCamera (from `../node_modules/expo-camera/ios`)
   - ExpoCrypto (from `../node_modules/expo-auth-session/node_modules/expo-crypto/ios`)
   - ExpoDevice (from `../node_modules/expo-device/ios`)
   - ExpoFileSystem (from `../node_modules/expo/node_modules/expo-file-system/ios`)
@@ -1990,6 +2000,7 @@ SPEC REPOS:
     - StripePaymentSheet
     - StripePaymentsUI
     - StripeUICore
+    - ZXingObjC
 
 EXTERNAL SOURCES:
   EXApplication:
@@ -2004,6 +2015,8 @@ EXTERNAL SOURCES:
     :path: "../node_modules/expo"
   ExpoAsset:
     :path: "../node_modules/expo/node_modules/expo-asset/ios"
+  ExpoCamera:
+    :path: "../node_modules/expo-camera/ios"
   ExpoCrypto:
     :path: "../node_modules/expo-auth-session/node_modules/expo-crypto/ios"
   ExpoDevice:
@@ -2175,6 +2188,7 @@ SPEC CHECKSUMS:
   EXNotifications: c67e92b9fdfe785ff9dbdc5f4c0ff935de357da7
   Expo: edf5879dd9f83d2aa5b05d012412c810bc182ac1
   ExpoAsset: 9e5a7c9c0a9fb83ad5b2bb365141f2bd7f289b66
+  ExpoCamera: 6a326deb45ba840749652e4c15198317aa78497e
   ExpoCrypto: e2a2c4c748aac8485e5675f027b7901f511d43ff
   ExpoDevice: 6327c3c200816795708885adf540d26ecab83d1a
   ExpoFileSystem: a8e7fb1e958471764fb48d281cf9fa81a9e4d77c
@@ -2267,6 +2281,7 @@ SPEC CHECKSUMS:
   StripePaymentsUI: 05d4be35b34f821d5ddc8617dee04219f3646253
   StripeUICore: d07bd63a4b53dee8cab4d6f81ce5a7ab3e28511e
   Yoga: 5934998fbeaef7845dbf698f698518695ab4cd1a
+  ZXingObjC: 8898711ab495761b2dbbdec76d90164a6d7e14c5
 
 PODFILE CHECKSUM: e5cf684fd1480e6f10f1a763b7717cade5934adb
 

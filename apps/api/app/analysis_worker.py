@@ -44,6 +44,7 @@ def process_message(payload: dict[str, Any]) -> None:
         valuation_service=get_valuation_service(),
         gpt_item_profiler=get_gpt_item_profiler(),
         stage_images_after_analysis=bool(payload.get("stage_images_after_analysis")),
+        force_fresh_analysis=bool(payload.get("force_fresh_analysis")),
         job_id=str(payload["job_id"]),
     )
 

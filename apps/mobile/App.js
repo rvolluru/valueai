@@ -18,6 +18,9 @@ import {
 } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
+import { useCameraPermissions } from 'expo-camera';
+import ListingCamera from './src/components/ListingCamera';
+import { appendListingPhotos, remainingPhotoSlots } from './src/lib/listingPhotos.mjs';
 import * as ImageManipulator from 'expo-image-manipulator';
 import * as Location from 'expo-location';
 import * as WebBrowser from 'expo-web-browser';
@@ -515,6 +518,7 @@ function missingPublishFields(listing) {
 
 function missingPublishFieldsMessage(listing) {
   const missing = missingPublishFields(listing);
+  if (listing?.analysis?.pricing_review?.status === 'pending' || missing.includes('AI estimated value')) return "We couldn't determine this item's value. It needs manual review before publishing. You do not need to set a value.";
   return missing.length > 0
     ? `Listing missing fields: ${missing.join(', ')}. Please edit the listing and add the missing information before publishing.`
     : '';
@@ -851,6 +855,12 @@ function SectionHeader({ title, subtitle, rightText, onRightPress }) {
   );
 }
 
+function LogoJ({ small = false }) {
+  return <View style={[styles.appAssistantLogoJ, small && styles.chatLogoJ]} pointerEvents="none" accessible={false}>
+    <Image source={JOUFT_LOGO_IMAGE} style={[styles.appAssistantLogoImage, small && styles.chatLogoImage]} resizeMode="stretch" accessible={false} />
+  </View>;
+}
+
 function AppTabButton({ tab, activeTab, onPress }) {
   const active = tab === activeTab;
   const label = TAB_LABELS[tab] || titleCase(tab);
@@ -1029,7 +1039,7 @@ function ListingCard({
         ) : null}
         {showStatus && statusLabel || onEditDraft || onRemoveListing || onShareListing || onShareToPinterest || onShareToFacebook ? (
           <View style={styles.listingActionRow}>
-            {showStatus && statusLabel ? (
+            {showStatus && statusLabel && statusLabel.toLowerCase() !== 'review' ? (
               <View style={[styles.statusBadge, analysisFailed && styles.statusBadgeFailed]}>
                 <Text style={[styles.statusBadgeText, analysisFailed && styles.statusBadgeTextFailed]}>
                   {titleCase(statusLabel)}
@@ -1047,46 +1057,27 @@ function ListingCard({
                 <FontAwesome name="pencil-square-o" size={19} color="#4b433a" />
               </TouchableOpacity>
             ) : null}
+            <View style={styles.listingSocialActions}>
+              {[[onShareToFacebook, 'facebook', 'Facebook'], [onShareToPinterest, 'pinterest-p', 'Pinterest']].filter(([action]) => action).map(([action, icon, label]) => (
+                <TouchableOpacity key={label} style={[styles.listingSocialCircle, closetCardDisabled && styles.primaryBtnDisabled]}
+                  onPress={(event) => runCardAction(event, () => action(item))} disabled={closetCardDisabled}
+                  accessibilityRole="button" accessibilityLabel={`Share on ${label}`}>
+                  <FontAwesome name={icon} size={18} color="#4a161b" />
+                </TouchableOpacity>
+              ))}
+            </View>
             {onRemoveListing ? (
               <TouchableOpacity
-                style={[styles.secondaryBtnCompact, styles.listingIconButton, styles.dangerBtnCompact, closetCardDisabled && styles.primaryBtnDisabled]}
-                onPress={(event) => runCardAction(event, () => onRemoveListing(item))}
-                disabled={closetCardDisabled}
-                accessibilityRole="button"
-                accessibilityLabel="Delete listing"
-              >
-                <FontAwesome name="trash-o" size={20} color="#b42318" />
-              </TouchableOpacity>
-            ) : null}
-            {onShareListing ? (
-              <TouchableOpacity
-                style={[styles.secondaryBtnCompact, styles.listingTextButton, closetCardDisabled && styles.primaryBtnDisabled]}
-                onPress={(event) => runCardAction(event, () => onShareListing(item))}
-                disabled={closetCardDisabled}
-              >
-                <Text style={styles.secondaryBtnText}>Share</Text>
-              </TouchableOpacity>
-            ) : null}
-            {onShareToPinterest ? (
-              <TouchableOpacity
                 style={[styles.secondaryBtnCompact, styles.shareIconButton, closetCardDisabled && styles.primaryBtnDisabled]}
-                onPress={(event) => runCardAction(event, () => onShareToPinterest(item))}
+                onPress={(event) => runCardAction(event, () => Alert.alert('More options', undefined, [
+                  { text: 'Delete listing', style: 'destructive', onPress: () => onRemoveListing(item) },
+                  { text: 'Cancel', style: 'cancel' },
+                ]))}
                 disabled={closetCardDisabled}
                 accessibilityRole="button"
-                accessibilityLabel="Share on Pinterest"
+                accessibilityLabel="More listing options"
               >
-                <FontAwesome name="pinterest-p" size={18} color="#4b433a" />
-              </TouchableOpacity>
-            ) : null}
-            {onShareToFacebook ? (
-              <TouchableOpacity
-                style={[styles.secondaryBtnCompact, styles.shareIconButton, closetCardDisabled && styles.primaryBtnDisabled]}
-                onPress={(event) => runCardAction(event, () => onShareToFacebook(item))}
-                disabled={closetCardDisabled}
-                accessibilityRole="button"
-                accessibilityLabel="Share on Facebook"
-              >
-                <FontAwesome name="facebook" size={18} color="#4b433a" />
+                <FontAwesome name="ellipsis-h" size={18} color="#4b433a" />
               </TouchableOpacity>
             ) : null}
           </View>
@@ -1249,6 +1240,8 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
   const [editingListing, setEditingListing] = useState(null);
   const [selectedHeroImageIndex, setSelectedHeroImageIndex] = useState(0);
   const photoPickerBusyRef = useRef(false);
+  const [, requestListingCameraPermission] = useCameraPermissions();
+  const [listingCameraOpen, setListingCameraOpen] = useState(false);
   const [selectedEditHeroImageIndex, setSelectedEditHeroImageIndex] = useState(null);
   const [profileSection, setProfileSection] = useState('account');
   const [images, setImages] = useState([]);
@@ -1922,7 +1915,9 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
         } else if (jobStatus === 'succeeded' || status !== 'analyzing') {
           setListingChatStage('review');
           setListingAnalysisProgress('');
-          const content = 'Your analysis is ready! Take a look at the listing details below. Is there anything you’d like to change before publishing?';
+          const content = refreshed?.analysis?.pricing_review?.status === 'pending'
+            ? refreshed.analysis.pricing_review.message
+            : 'Your analysis is ready! Take a look at the listing details below. Is there anything you’d like to change before publishing?';
           setListingAssistantMessages((current) => [...current, { role: 'assistant', content }].slice(-12));
           if (listingAssistantConversationId) await apiClient.updateListingAssistantConversation(listingAssistantConversationId, { stage: 'review', listing_id: listingId, context: { listing_id: listingId, category: refreshed?.category, condition: refreshed?.condition, size: refreshed?.size, brand: refreshed?.brand, title: refreshed?.title, description: refreshed?.description }, messages: [{ role: 'assistant', interaction_type: 'workflow', content, metadata: { event: 'analysis_completed' } }] }, await authContext());
         }
@@ -3618,14 +3613,14 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
       return;
     }
     Alert.alert('Add listing photos', 'Take a new photo or choose existing photos.', [
-      { text: 'Take photo', onPress: () => selectListingPhotos('camera') },
+      { text: 'Take photos', onPress: () => selectListingPhotos('camera') },
       { text: 'Photo library', onPress: () => selectListingPhotos('library') },
       { text: 'Cancel', style: 'cancel' },
     ]);
   }
 
   async function selectListingPhotos(source) {
-    if (photoPickerBusyRef.current) return;
+    if (photoPickerBusyRef.current || listingCameraOpen) return;
     photoPickerBusyRef.current = true;
     try {
     const existingImageCount = images.length + (editingListingId ? editImageUrls.length : 0);
@@ -3634,7 +3629,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
       return;
     }
     const perm = source === 'camera'
-      ? await ImagePicker.requestCameraPermissionsAsync()
+      ? await requestListingCameraPermission()
       : await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) {
       const message = source === 'camera' ? 'Camera access is required to take listing photos. You can still use the photo library.' : 'Photo-library access is required to choose photos.';
@@ -3645,9 +3640,12 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
       ]);
       return;
     }
-    const result = source === 'camera' ? await ImagePicker.launchCameraAsync({
-      mediaTypes: ['images'], quality: 0.9, allowsEditing: false,
-    }) : await ImagePicker.launchImageLibraryAsync({
+    if (source === 'camera') {
+      setError('');
+      setListingCameraOpen(true);
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'],
       allowsMultipleSelection: true,
       quality: 0.9,
@@ -3655,24 +3653,25 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     });
     if (!result.canceled) {
       const selectedAssets = Array.isArray(result.assets) ? result.assets : [];
-      if (editingListingId) {
-        setImages((prev) => {
-          const remaining = Math.max(0, 6 - editImageUrls.length - prev.length);
-          return [...prev, ...selectedAssets.slice(0, remaining)];
-        });
-        setAnalysisResult(null);
-        setWizardStep((step) => Math.min(step, 2));
-      } else {
-        setImages((prev) => [...prev, ...selectedAssets.slice(0, Math.max(0, 6 - prev.length))]);
-        if (images.length === 0) setSelectedHeroImageIndex(0);
-      }
-      setError('');
+      addListingPhotoAssets(selectedAssets);
     }
     } catch (error) {
       setError(source === 'camera' ? 'Unable to open the camera. Try on a physical device or choose photos from the library.' : error.message || 'Unable to open the photo library.');
     } finally {
       photoPickerBusyRef.current = false;
     }
+  }
+
+  function addListingPhotoAssets(assets) {
+    if (!assets.length) return;
+    setImages((prev) => appendListingPhotos(prev, assets, editingListingId ? editImageUrls.length : 0));
+    if (editingListingId) {
+      setAnalysisResult(null);
+      setWizardStep((step) => Math.min(step, 2));
+    } else if (!images.length) {
+      setSelectedHeroImageIndex(0);
+    }
+    setError('');
   }
 
   async function nextStep() {
@@ -3809,6 +3808,9 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
   }
 
   function handleTabPress(tab) {
+    closeListingDetails();
+    setSelectedOfferId(null);
+    if (!supportBusy) setSupportListing(null);
     const requiredProfileSection = profileSetupSectionFor();
     if (requiredProfileSection) {
       setProfileSection(requiredProfileSection);
@@ -4138,7 +4140,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     }
   }
 
-  function renderListingDetailContent({ asScreen = false } = {}) {
+  function renderListingDetailContent({ asScreen = false, fullScreen = false } = {}) {
     if (!selectedListing) return null;
     const gallery = listingGallery(selectedListing, apiBaseUrl);
     const hasMatches = getCrossOwnerMatches(selectedListing, marketplaceActorSubject).length > 0;
@@ -4225,6 +4227,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
           ) : null}
           {canReviewClosetListing ? (
             <View style={styles.listingDetailActionRow}>
+              {selectedListing?.analysis?.pricing_review?.status === 'pending' ? <Text accessibilityRole="alert" style={styles.helperText}>{selectedListing.analysis.pricing_review.message}</Text> : null}
               <TouchableOpacity
                 style={styles.secondaryBtnCompact}
                 onPress={() => {
@@ -4291,7 +4294,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
           </View>
         ) : null}
 
-        {canStartTrade && hasMatches ? (
+        {!fullScreen && canStartTrade && hasMatches ? (
           <View style={styles.offerDetailPanel}>
             <TouchableOpacity
               style={styles.primaryBtn}
@@ -4343,7 +4346,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     );
 
     return (
-      <View style={asScreen ? styles.listingDetailScreen : styles.offerDetailShell}>
+      <View style={fullScreen ? styles.marketplaceDetailScreen : asScreen ? styles.listingDetailScreen : styles.offerDetailShell}>
         <View style={styles.offerDetailHead}>
           <View style={styles.offerDetailTitleWrap}>
             <Text style={styles.sectionEyebrow}>Listing Details</Text>
@@ -4353,13 +4356,25 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
             <Text style={styles.secondaryBtnText}>{asScreen ? 'Back' : 'Close'}</Text>
           </TouchableOpacity>
         </View>
-        {asScreen ? (
+        {fullScreen ? (
+          <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.offerDetailBody} keyboardShouldPersistTaps="handled">{body}</ScrollView>
+        ) : asScreen ? (
           <View style={styles.offerDetailBody}>{body}</View>
         ) : (
           <ScrollView contentContainerStyle={styles.offerDetailBody} keyboardShouldPersistTaps="handled">
             {body}
           </ScrollView>
         )}
+        {fullScreen && <View style={styles.marketplaceDetailFooter}>
+          {!canStartTrade ? <Text style={styles.helperText}>This is your listing.</Text> : !hasMatches && !activeTradeRequest ? <Text style={styles.helperText}>Add an eligible item to your closet to request a trade.</Text> : null}
+          <TouchableOpacity
+            style={[styles.primaryBtn, (tradeOfferBusy || activeTradeRequest || !canStartTrade || !hasMatches) && styles.primaryBtnDisabled]}
+            accessibilityRole="button"
+            accessibilityState={{ disabled: Boolean(tradeOfferBusy || activeTradeRequest || !canStartTrade || !hasMatches), busy: tradeOfferBusy }}
+            onPress={() => requestTrade(selectedListing)}
+            disabled={tradeOfferBusy || Boolean(activeTradeRequest) || !canStartTrade || !hasMatches}
+          ><Text style={styles.primaryBtnText}>{tradeOfferBusy ? 'Sending...' : activeTradeRequest ? 'Request Sent' : 'Request Trade'}</Text></TouchableOpacity>
+        </View>}
       </View>
     );
   }
@@ -4463,7 +4478,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
         {activeTab === 'marketplace' && (
           <View style={styles.section}>
             {isListingDetailOpen && selectedListingSource === 'marketplace' && selectedListing ? (
-              renderListingDetailContent({ asScreen: true })
+              null
             ) : (
               <>
                 <SectionHeader title="Marketplace" subtitle="CURATED MATCHES" rightText="Refresh" onRightPress={refreshActiveTab} />
@@ -4825,7 +4840,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
             {!editingListingId && createListingMode === 'chat' ? (
               <View style={styles.listingAssistantPanel}>
                 <View style={styles.listingChatHeader}>
-                  <View style={styles.listingChatAvatar}><Text style={styles.listingChatAvatarText}>J</Text></View>
+                  <View style={styles.listingChatAvatar}><LogoJ small /></View>
                   <View>
                     <Text style={styles.listingAssistantTitle}>Jouft Listing Assistant</Text>
                     <Text style={styles.listingAssistantSubtitle}>Ready to create your listing</Text>
@@ -4833,7 +4848,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                 </View>
                 <View style={styles.listingChatPhotos}>
                   <View style={styles.listingChatAssistantTurn}>
-                    <View style={styles.listingChatAvatar}><Text style={styles.listingChatAvatarText}>J</Text></View>
+                    <View style={styles.listingChatAvatar}><LogoJ small /></View>
                     <View style={styles.listingChatAssistantBubble}>
                       <Text style={styles.listingAssistantMessageText}>Hi! Let’s create your listing together. Start by sharing a few clear photos, and I’ll guide you through the rest.</Text>
                       <Text style={styles.listingAssistantSubtitle}>{images.length}/6 photos added</Text>
@@ -4855,10 +4870,10 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                       ))}
                     </ScrollView>
                   ) : null}
-                  {createImageRoleBusy ? <View style={styles.listingChatAssistantTurn}><View style={styles.listingChatAvatar}><Text style={styles.listingChatAvatarText}>J</Text></View><View style={styles.listingChatAssistantBubble}><Text style={styles.helperText}>I’m reviewing the photos and identifying each view...</Text></View></View> : null}
+                  {createImageRoleBusy ? <View style={styles.listingChatAssistantTurn}><View style={styles.listingChatAvatar}><LogoJ small /></View><View style={styles.listingChatAssistantBubble}><Text style={styles.helperText}>I’m reviewing the photos and identifying each view...</Text></View></View> : null}
                   {createImageRoleCheck?.missing_required?.length ? (
                     <View style={styles.listingChatAssistantTurn} accessibilityRole="summary">
-                      <View style={styles.listingChatAvatar}><Text style={styles.listingChatAvatarText}>J</Text></View>
+                      <View style={styles.listingChatAvatar}><LogoJ small /></View>
                       <View style={styles.listingChatGuidance}>
                         <Text style={styles.listingChatGuidanceTitle}>These photos are a great start. Could you add {createImageRoleCheck.missing_required.length === 1 ? 'one more view' : 'a few more views'}?</Text>
                         {createImageRoleCheck.missing_required.map((role) => <Text key={role} style={styles.listingChatGuidanceText}>{imageRoleGuidance(role)}</Text>)}
@@ -4869,7 +4884,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                   {listingChatPhotoGateOpen ? <View style={styles.listingAssistantBody}>
                     {listingAssistantMessages.length === 0 ? (
                       <View style={styles.listingChatAssistantTurn}>
-                        <View style={styles.listingChatAvatar}><Text style={styles.listingChatAvatarText}>J</Text></View>
+                        <View style={styles.listingChatAvatar}><LogoJ small /></View>
                         <View style={styles.listingChatAssistantBubble}>
                           <Text style={styles.listingAssistantWelcome}>Thanks for the photos! How would you describe the item’s condition?</Text>
                           <View style={styles.listingChatQuickReplies}>
@@ -4895,14 +4910,14 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                       return (
                         <React.Fragment key={`${message.role}-${index}`}>
                           <View style={[styles.listingChatAssistantTurn, message.role === 'user' && styles.listingChatUserTurn]}>
-                            {message.role === 'assistant' ? <View style={styles.listingChatAvatar}><Text style={styles.listingChatAvatarText}>J</Text></View> : null}
+                            {message.role === 'assistant' ? <View style={styles.listingChatAvatar}><LogoJ small /></View> : null}
                             <View style={[styles.listingAssistantMessage, message.role === 'user' && styles.listingAssistantUserMessage]}>
                               <Text style={[styles.listingAssistantMessageText, message.role === 'user' && styles.listingAssistantUserMessageText]}>{message.content}</Text>
                               {message.role === 'user' && message.interaction_type === 'quick_reply' ? <Text style={styles.listingChatSelectedLabel}>Selected</Text> : null}
                               {showSizeChoices ? <View style={styles.listingChatQuickReplies}>{sizeOptionsForCategory(category).map((size) => <TouchableOpacity key={size} style={styles.listingChatQuickReply} onPress={() => chooseListingAssistantSize(size)}><Text style={styles.listingChatQuickReplyText}>{size}</Text></TouchableOpacity>)}</View> : null}
                             </View>
                           </View>
-                          {message.role === 'assistant' && /review (?:the summary|everything)/i.test(message.content) ? <View style={styles.listingChatAssistantTurn}><View style={styles.listingChatAvatar}><Text style={styles.listingChatAvatarText}>J</Text></View><View style={styles.listingChatCaptured}><Text style={styles.listingAssistantTitle}>Here’s what I have so far</Text><Text style={styles.helperText}>Category: {category ? titleCase(category) : 'I still need this'}</Text><Text style={styles.helperText}>Condition: {userCondition ? displayConditionLabel(userCondition) : 'I still need this'}</Text><Text style={styles.helperText}>Size: {itemSize || 'I still need this'}</Text></View></View> : null}
+                          {message.role === 'assistant' && /review (?:the summary|everything)/i.test(message.content) ? <View style={styles.listingChatAssistantTurn}><View style={styles.listingChatAvatar}><LogoJ small /></View><View style={styles.listingChatCaptured}><Text style={styles.listingAssistantTitle}>Here’s what I have so far</Text><Text style={styles.helperText}>Category: {category ? titleCase(category) : 'I still need this'}</Text><Text style={styles.helperText}>Condition: {userCondition ? displayConditionLabel(userCondition) : 'I still need this'}</Text><Text style={styles.helperText}>Size: {itemSize || 'I still need this'}</Text></View></View> : null}
                           {message.role === 'assistant' && message.content.startsWith('Your analysis is ready') && listingChatListing ? <View style={styles.listingChatResult}>{listingGallery(listingChatListing, apiBaseUrl)[0] ? <Image source={{ uri: listingGallery(listingChatListing, apiBaseUrl)[0] }} style={styles.listingChatResultImage} /> : null}<View style={styles.tradeTargetCopy}><Text style={styles.offerLaneLabel}>{listingChatListing?.brand || 'Unknown brand'}</Text><Text style={styles.listingAssistantTitle}>{listingChatListing?.title || 'Listing draft'}</Text><Text style={styles.helperText}>{titleCase(listingChatListing?.category || category)} • {listingChatListing?.size || itemSize || 'Size not provided'} • {displayConditionLabel(listingChatListing?.condition || userCondition)}</Text>{Number(listingChatListing?.estimated_value || 0) > 0 ? <Text style={styles.helperText}>Estimated trade value: {money(listingChatListing.estimated_value)}</Text> : null}</View></View> : null}
                           {message.role === 'assistant' && /^(I found|I did not find)/.test(message.content) && listingChatStage === 'published' ? <View style={styles.listingChatWorkflowCard}><Text style={styles.listingAssistantTitle}>{listingChatMatches.length ? `${listingChatMatches.length} potential ${listingChatMatches.length === 1 ? 'match' : 'matches'} found` : 'Your listing is live'}</Text><Text style={styles.helperText}>{listingChatMatches.length ? 'Tell me which item you like by number or title.' : 'No close matches are available yet. We’ll keep matching it as marketplace inventory changes.'}</Text>{listingChatMatches.slice(0, 3).map((match, matchIndex) => { const matchImage = listingGallery(match, apiBaseUrl)[0]; return <View key={listingIdOf(match)} style={styles.listingChatMatchRow}>{matchImage ? <Image source={{ uri: matchImage }} style={styles.listingChatMatchImage} /> : null}<View style={styles.tradeTargetCopy}><Text style={styles.offerLaneLabel}>Match {matchIndex + 1} • {match?.brand || 'Unknown brand'}</Text><Text style={styles.listingAssistantTitle} numberOfLines={2}>{match?.title || 'Matched listing'}</Text><Text style={styles.helperText}>{match?.size || 'Size not provided'} • {displayConditionLabel(match?.condition)}</Text></View></View>; })}<TouchableOpacity style={styles.primaryBtnCompact} onPress={() => setActiveTab('closet')}><Text style={styles.primaryBtnText}>View in My Closet</Text></TouchableOpacity></View> : null}
                         </React.Fragment>
@@ -5805,35 +5820,6 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
               </>
             ) : null}
 
-            {profileSection === 'account' ? (
-              <>
-            <View style={styles.profileDivider} />
-            <Text style={styles.label}>Legal & Contact</Text>
-            <View style={styles.profileLegalCard}>
-              <Text style={styles.offerLaneLabel}>Company Address</Text>
-              {CONTACT_ADDRESS_LINES.map((line) => (
-                <Text key={line} style={styles.profileLegalText}>{line}</Text>
-              ))}
-              <TouchableOpacity style={styles.secondaryBtnCompact} onPress={() => Linking.openURL(CONTACT_DIRECTIONS_URL)}>
-                <Text style={styles.secondaryBtnText}>Get Directions</Text>
-              </TouchableOpacity>
-            </View>
-            <View style={styles.profileLegalCard}>
-              <Text style={styles.offerLaneLabel}>Contact Email</Text>
-              <TouchableOpacity onPress={() => Linking.openURL(`mailto:${CONTACT_EMAIL}`)}>
-                <Text style={styles.profileLegalLink}>{CONTACT_EMAIL}</Text>
-              </TouchableOpacity>
-            </View>
-            <View style={styles.profileLegalActions}>
-              <TouchableOpacity style={styles.secondaryBtnCompact} onPress={() => Linking.openURL(TERMS_URL)}>
-                <Text style={styles.secondaryBtnText}>Terms</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.secondaryBtnCompact} onPress={() => Linking.openURL(PRIVACY_POLICY_URL)}>
-                <Text style={styles.secondaryBtnText}>Privacy Policy</Text>
-              </TouchableOpacity>
-            </View>
-              </>
-            ) : null}
 
             {profileSection === 'account' && clerkEnabled && onSignOut ? (
               <View style={styles.profileSignOutFooter}>
@@ -6351,6 +6337,18 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
           </View>
         </View>
       ) : null}
+      {listingCameraOpen && <ListingCamera
+        maxPhotos={remainingPhotoSlots(images.length + (editingListingId ? editImageUrls.length : 0))}
+        onCancel={() => setListingCameraOpen(false)}
+        onUsePhotos={(assets) => { addListingPhotoAssets(assets); setListingCameraOpen(false); }}
+      />}
+      {activeTab === 'marketplace' && isListingDetailOpen && selectedListingSource === 'marketplace' && selectedListing && (
+        <View style={styles.marketplaceDetailOverlay}>
+          <SafeAreaView style={{ flex: 1 }} edges={['top', 'right', 'bottom', 'left']}>
+            {renderListingDetailContent({ asScreen: true, fullScreen: true })}
+          </SafeAreaView>
+        </View>
+      )}
       <Modal
         visible={Boolean(supportListing)}
         animationType="slide"
@@ -6445,7 +6443,9 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
         </View>
       </Modal>
       <TouchableOpacity style={styles.appAssistantLauncher} onPress={() => setAppAssistantOpen(true)} accessibilityRole="button" accessibilityLabel="Open Jouft assistant">
-        <Text style={styles.appAssistantLauncherText}>J</Text>
+        <View style={styles.appAssistantLogoJ} pointerEvents="none" accessible={false}>
+          <Image source={JOUFT_LOGO_IMAGE} style={styles.appAssistantLogoImage} resizeMode="stretch" accessible={false} />
+        </View>
       </TouchableOpacity>
       <Modal visible={appAssistantOpen} animationType="slide" onRequestClose={() => setAppAssistantOpen(false)}>
         <SafeAreaView style={styles.appAssistantRoot}>
@@ -6454,9 +6454,9 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
             <TouchableOpacity style={styles.secondaryBtnCompact} onPress={() => setAppAssistantOpen(false)} accessibilityLabel="Close assistant"><Ionicons name="close" size={22} color={theme.text} /></TouchableOpacity>
           </View>
           <ScrollView style={styles.appAssistantTranscript} contentContainerStyle={styles.appAssistantTranscriptContent} keyboardShouldPersistTaps="handled">
-            {appAssistantMessages.length === 0 ? <View style={styles.appAssistantTurn}><View style={styles.listingChatAvatar}><Text style={styles.listingChatAvatarText}>J</Text></View><View style={styles.appAssistantBubble}><Text style={styles.listingAssistantMessageText}>I can help create a listing, find matches, start a trade, or check shipping. Just tell me what you need.</Text></View></View> : null}
+            {appAssistantMessages.length === 0 ? <View style={styles.appAssistantTurn}><View style={styles.listingChatAvatar}><LogoJ small /></View><View style={styles.appAssistantBubble}><Text style={styles.listingAssistantMessageText}>I can help create a listing, find matches, start a trade, or check shipping. Just tell me what you need.</Text></View></View> : null}
             {appAssistantMessages.map((message, index) => <View key={message.message_id || `${message.role}-${index}`} style={[styles.appAssistantTurn, message.role === 'user' && styles.appAssistantUserTurn]}>
-              {message.role === 'assistant' ? <View style={styles.listingChatAvatar}><Text style={styles.listingChatAvatarText}>J</Text></View> : null}
+              {message.role === 'assistant' ? <View style={styles.listingChatAvatar}><LogoJ small /></View> : null}
               <View style={[styles.appAssistantBubble, message.role === 'user' && styles.appAssistantUserBubble]}>
                 <Text style={[styles.listingAssistantMessageText, message.role === 'user' && styles.listingAssistantUserMessageText]}>{message.content}</Text>
                 {(message.listings || []).map((listing, listingIndex) => <View key={listing.listing_id} style={styles.appAssistantResultRow}>{listing.image ? <Image source={{ uri: listing.image }} style={styles.appAssistantResultImage} /> : null}<View style={styles.tradeTargetCopy}><Text style={styles.offerLaneLabel}>{listingIndex + 1} • {listing.brand || 'Unknown brand'}</Text><Text style={styles.listingAssistantTitle} numberOfLines={2}>{listing.title}</Text><Text style={styles.helperText}>{listing.size || 'Size not provided'} • {displayConditionLabel(listing.condition)}</Text></View></View>)}
@@ -6465,11 +6465,11 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
               </View>
             </View>)}
             {appAssistantListingFlow ? <View style={styles.appAssistantListingFlow}>
-              <View style={styles.appAssistantTurn}><View style={styles.listingChatAvatar}><Text style={styles.listingChatAvatarText}>J</Text></View><View style={styles.appAssistantBubble}><Text style={styles.listingAssistantMessageText}>{images.length ? `${images.length}/6 photos added.` : 'Add clear photos of the item to begin.'}</Text><TouchableOpacity style={styles.secondaryBtnCompact} onPress={pickImages} disabled={images.length >= 6 || createImageRoleBusy}><Text style={styles.secondaryBtnText}>{images.length ? 'Add More Photos' : 'Choose Photos'}</Text></TouchableOpacity></View></View>
+              <View style={styles.appAssistantTurn}><View style={styles.listingChatAvatar}><LogoJ small /></View><View style={styles.appAssistantBubble}><Text style={styles.listingAssistantMessageText}>{images.length ? `${images.length}/6 photos added.` : 'Add clear photos of the item to begin.'}</Text><TouchableOpacity style={styles.secondaryBtnCompact} onPress={pickImages} disabled={images.length >= 6 || createImageRoleBusy}><Text style={styles.secondaryBtnText}>{images.length ? 'Add More Photos' : 'Choose Photos'}</Text></TouchableOpacity></View></View>
               {images.length > 0 ? <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.listingChatPhotoRow}>{images.map((asset, index) => <Image key={`${asset?.uri}-${index}`} source={{ uri: asset.uri }} style={styles.listingChatPhoto} />)}</ScrollView> : null}
-              {createImageRoleCheck?.missing_required?.length > 0 ? <View style={styles.appAssistantTurn}><View style={styles.listingChatAvatar}><Text style={styles.listingChatAvatarText}>J</Text></View><View style={styles.appAssistantBubble}><Text style={styles.listingAssistantMessageText}>Please add {createImageRoleCheck.missing_required.map((role) => IMAGE_ROLE_LABELS[role] || role).join(', ')} before we continue.</Text></View></View> : null}
-              {listingChatPhotoGateOpen && listingAssistantMessages.length === 0 && !createImageRoleBusy && createImageRoleCheck?.missing_required?.length === 0 ? <View style={styles.appAssistantTurn}><View style={styles.listingChatAvatar}><Text style={styles.listingChatAvatarText}>J</Text></View><View style={styles.appAssistantBubble}><Text style={styles.listingAssistantMessageText}>How would you describe the item’s condition?</Text><View style={styles.listingChatQuickReplies}>{[['NewWithTags', 'New with tags'], ['New', 'New'], ['LikeNew', 'Like new']].map(([value, label]) => <TouchableOpacity key={value} style={styles.listingChatQuickReply} onPress={() => chooseListingAssistantCondition(value)}><Text style={styles.listingChatQuickReplyText}>{label}</Text></TouchableOpacity>)}</View></View></View> : null}
-              {listingAssistantMessages.map((message, index) => <View key={`listing-${message.role}-${index}`} style={[styles.appAssistantTurn, message.role === 'user' && styles.appAssistantUserTurn]}>{message.role === 'assistant' ? <View style={styles.listingChatAvatar}><Text style={styles.listingChatAvatarText}>J</Text></View> : null}<View style={[styles.appAssistantBubble, message.role === 'user' && styles.appAssistantUserBubble]}><Text style={[styles.listingAssistantMessageText, message.role === 'user' && styles.listingAssistantUserMessageText]}>{message.content}</Text></View></View>)}
+              {createImageRoleCheck?.missing_required?.length > 0 ? <View style={styles.appAssistantTurn}><View style={styles.listingChatAvatar}><LogoJ small /></View><View style={styles.appAssistantBubble}><Text style={styles.listingAssistantMessageText}>Please add {createImageRoleCheck.missing_required.map((role) => IMAGE_ROLE_LABELS[role] || role).join(', ')} before we continue.</Text></View></View> : null}
+              {listingChatPhotoGateOpen && listingAssistantMessages.length === 0 && !createImageRoleBusy && createImageRoleCheck?.missing_required?.length === 0 ? <View style={styles.appAssistantTurn}><View style={styles.listingChatAvatar}><LogoJ small /></View><View style={styles.appAssistantBubble}><Text style={styles.listingAssistantMessageText}>How would you describe the item’s condition?</Text><View style={styles.listingChatQuickReplies}>{[['NewWithTags', 'New with tags'], ['New', 'New'], ['LikeNew', 'Like new']].map(([value, label]) => <TouchableOpacity key={value} style={styles.listingChatQuickReply} onPress={() => chooseListingAssistantCondition(value)}><Text style={styles.listingChatQuickReplyText}>{label}</Text></TouchableOpacity>)}</View></View></View> : null}
+              {listingAssistantMessages.map((message, index) => <View key={`listing-${message.role}-${index}`} style={[styles.appAssistantTurn, message.role === 'user' && styles.appAssistantUserTurn]}>{message.role === 'assistant' ? <View style={styles.listingChatAvatar}><LogoJ small /></View> : null}<View style={[styles.appAssistantBubble, message.role === 'user' && styles.appAssistantUserBubble]}><Text style={[styles.listingAssistantMessageText, message.role === 'user' && styles.listingAssistantUserMessageText]}>{message.content}</Text></View></View>)}
               {listingAssistantBusy ? <ActivityIndicator color={theme.brand} /> : null}
               {listingAssistantError ? <Text style={styles.error}>{listingAssistantError}</Text> : null}
             </View> : null}
@@ -8427,6 +8427,15 @@ const styles = StyleSheet.create({
     borderColor: theme.line,
     backgroundColor: theme.surface,
   },
+  marketplaceDetailOverlay: {
+    position: 'absolute', top: 0, right: 0, bottom: 0, left: 0,
+    zIndex: 200, elevation: 20, backgroundColor: theme.surface,
+  },
+  marketplaceDetailScreen: { flex: 1, backgroundColor: theme.surface },
+  marketplaceDetailFooter: {
+    paddingHorizontal: 16, paddingVertical: 12, gap: 8,
+    borderTopWidth: 1, borderTopColor: theme.line, backgroundColor: theme.surface,
+  },
   offerDetailHead: {
     flexDirection: 'row',
     alignItems: 'flex-start',
@@ -9576,6 +9585,8 @@ const styles = StyleSheet.create({
     gap: 8,
     marginTop: 6,
   },
+  listingSocialActions: { flexDirection: 'row', gap: 6 },
+  listingSocialCircle: { width: 44, height: 44, borderRadius: 22, borderWidth: 1, borderColor: theme.lineStrong, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.surface },
   listingTextButton: {
     minHeight: 40,
     justifyContent: 'center',
@@ -9750,7 +9761,10 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 5 },
     elevation: 6,
   },
-  appAssistantLauncherText: { color: '#fff', fontFamily: fonts.display, fontSize: 22 },
+  appAssistantLogoJ: { width: 14.03, height: 28, overflow: 'hidden' },
+  appAssistantLogoImage: { position: 'absolute', width: 130.11, height: 30.66, left: -0.56, top: -1.79, tintColor: '#fff' },
+  chatLogoJ: { width: 10.02, height: 20 },
+  chatLogoImage: { width: 92.94, height: 21.9, left: -0.4, top: -1.28 },
   appAssistantRoot: { flex: 1, backgroundColor: theme.surface },
   appAssistantHeader: { minHeight: 68, paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: theme.line, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   appAssistantTitle: { color: theme.text, fontFamily: fonts.bodyBold, fontSize: 17, marginTop: 3 },

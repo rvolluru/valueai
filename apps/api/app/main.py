@@ -35,7 +35,7 @@ from brand.types import ImageInput
 from valuation import ValuationConfig, ValuationService
 from valuation.types import ValuationRequest
 
-from .auth import AuthPrincipal, create_impersonation_token, get_request_principal, require_admin_or_api_key, require_admin_user, require_clerk_user
+from .auth import AuthPrincipal, create_impersonation_token, get_request_principal, principal_has_admin_role, require_admin_or_api_key, require_admin_user, require_clerk_user
 from .analysis_queue import enqueue_listing_analysis
 from .db import Database, PersistedImage, TradeListingUnavailableError, utc_now_iso
 from .deps import (
@@ -963,6 +963,19 @@ def _reuse_recent_analysis_for_listing(
         )
         return None
     response_payload = copy.deepcopy(cached["response"])
+    # Cached prices may have been selected by older, permissive band logic.
+    # Revalidate condition alignment instead of copying that price unchanged.
+    aligned_valuation = valuation_from_gpt_item_profile(
+        response_payload.get("item_profile"),
+        default_currency=str((response_payload.get("valuation") or {}).get("currency") or "USD"),
+        condition_grade=current_condition,
+    )
+    if aligned_valuation is None:
+        return None
+    if current_condition == "New" and aligned_valuation.get("basis") == "gpt_retail_reference_resale_fallback":
+        # Older cache entries must not bypass the new condition-specific retry.
+        return None
+    response_payload["valuation"] = aligned_valuation
     response_payload["item_id"] = source_item_id
     uploaded_images = _uploaded_images_for_item(db, source_item_id)
     if uploaded_images:
@@ -975,6 +988,8 @@ def _reuse_recent_analysis_for_listing(
         "matched_image_count": len(image_hashes),
         "scope": "global",
     }
+    debug_payload["valuation"] = {**(debug_payload.get("valuation") or {}),
+                                  "condition_alignment": aligned_valuation.get("condition_alignment")}
     response_payload["debug"] = debug_payload
 
     profile = response_payload.get("item_profile") if isinstance(response_payload.get("item_profile"), dict) else {}
@@ -1223,6 +1238,7 @@ def _enqueue_existing_listing_analysis(
     stage_images_after_analysis: bool,
     job_id: str,
     brand_override: str | None = None,
+    force_fresh_analysis: bool = False,
 ) -> None:
     payload = {
         "listing_id": listing_id,
@@ -1232,6 +1248,7 @@ def _enqueue_existing_listing_analysis(
         "user_condition": user_condition,
         "item_description": item_description,
         "brand_override": brand_override,
+        "force_fresh_analysis": force_fresh_analysis,
         "debug": debug,
         "stage_images_after_analysis": stage_images_after_analysis,
         "job_id": job_id,
@@ -1904,6 +1921,45 @@ def _uses_nwt_or_full_set_language(value: object) -> bool:
     return _is_nwt_or_full_set_label(text)
 
 
+def _pricing_condition_label(value: object) -> str:
+    """Resolve explicit condition labels, never substring-match New in Like New."""
+    text = str(value or "").strip().casefold()
+    text = text.replace("‑", "-").replace("–", "-")
+    text = re.sub(r"\b(?:not|no|without)\s+(?:retail\s+)?(?:tags|nwt|new with tags)\b", "", text)
+    text = re.sub(r"\b(?:no|does not include)\s+(?:full[- ]set/)?nwt(?:\s+(?:uplift|premium))?", "", text)
+    if re.search(r"\bnot\b|\bno longer\b", text):
+        return ""
+    compact = re.sub(r"[\s_-]+", "", text)
+    canonical = {**VALID_CONDITION_GRADES, "good": "Good", "fair": "Fair", "poor": "Poor"}
+    if compact in canonical:
+        return canonical[compact]
+    grades = set()
+    like_new = r"\blike[\s-]*new\b|\beuc\b|\bexcellent(?: used)? condition\b"
+    if re.search(like_new, text):
+        grades.add("LikeNew")
+        text = re.sub(like_new, "", text)
+    nwt = r"\bnew[\s-]+with[\s-]+tags\b|\bnwt\b|\bnew[\s-]+in[\s-]+box\b|\bnib\b"
+    if re.search(nwt, text):
+        grades.add("NewWithTags")
+    elif re.search(r"\bnew\b|\bunused\b|\bunworn\b", text):
+        grades.add("New")
+    for grade in ("Good", "Fair", "Poor"):
+        if re.search(rf"\b{grade.lower()}\b", text):
+            grades.add(grade)
+    return next(iter(grades)) if len(grades) == 1 else "Ambiguous" if grades else ""
+
+
+def _pricing_row_condition(row: dict, *, primary: bool = False) -> str:
+    explicit = row.get("condition_grade")
+    declared = _pricing_condition_label(explicit) if explicit is not None else ""
+    legacy = _pricing_condition_label(row.get("condition_assumption" if primary else "label"))
+    if explicit is not None and declared not in {"NewWithTags", "New", "LikeNew", "Good", "Fair", "Poor"}:
+        return ""
+    if declared and legacy and declared != legacy:
+        return ""
+    return declared or legacy
+
+
 def _select_breakdown_row(
     breakdown: object,
     *,
@@ -1912,51 +1968,12 @@ def _select_breakdown_row(
     if not isinstance(breakdown, list):
         return None, None, None, "default"
 
-    target = (condition_grade or "").strip().casefold()
-    rows = [r for r in breakdown if isinstance(r, dict)]
+    target = _pricing_condition_label(condition_grade)
+    rows = [r for r in breakdown if isinstance(r, dict) and target
+            and _pricing_row_condition(r) == target]
     if not rows:
         return None, None, None, "default"
-    if target == "new":
-        non_nwt_rows = [r for r in rows if not _is_nwt_or_full_set_label(r.get("label"))]
-        if non_nwt_rows:
-            rows = non_nwt_rows
-
-    def score(label: str) -> int:
-        lbl = label.casefold()
-        if target == "newwithtags":
-            if "current-season" in lbl or "current season" in lbl:
-                return 105
-            if "new with tags" in lbl or "nwt" in lbl or "brand new with tags" in lbl:
-                return 100
-            if "brand new" in lbl or "tags" in lbl:
-                return 95
-            if "new" in lbl or "pristine" in lbl:
-                return 85
-        if target == "new":
-            if "original retail" in lbl:
-                return 40
-            if "high-end" in lbl or "excellent" in lbl or "new" in lbl or "pristine" in lbl:
-                return 90
-        if target == "likenew":
-            if "high-end" in lbl or "excellent" in lbl or "like" in lbl or "pristine" in lbl:
-                return 100
-            if "good" in lbl or "pre-owned" in lbl:
-                return 70
-        if target == "good":
-            if "good" in lbl or "pre-owned" in lbl:
-                return 100
-            if "excellent" in lbl or "high-end" in lbl:
-                return 70
-        if target in {"fair", "poor"}:
-            if "good" in lbl or "pre-owned" in lbl:
-                return 90
-            if "excellent" in lbl or "high-end" in lbl:
-                return 60
-        if "default" in lbl:
-            return 50
-        return 10
-
-    best = max(rows, key=lambda r: score(str(r.get("label") or "")))
+    best = rows[0]
     label = str(best.get("label") or "default")
     est = _coerce_positive_float(best.get("estimated_price"))
     low = _coerce_positive_float(best.get("range_low"))
@@ -1972,6 +1989,40 @@ def _select_breakdown_row(
     if est is None and low is not None and high is not None:
         est = round((low + high) / 2.0, 2)
     return est, low, high, label
+
+
+async def retry_new_condition_pricing(item_profile, profiler, debug):
+    """Retry only missing New pricing, retaining the original identification and bands."""
+    if not isinstance(item_profile, dict):
+        return
+    primary = item_profile.get("resale_price_estimate")
+    rows = item_profile.get("resale_price_breakdown") or []
+    if isinstance(primary, dict) and _pricing_row_condition(primary, primary=True) == "New" and _coerce_positive_float(primary.get("estimated_price")):
+        return
+    if _select_breakdown_row(rows, condition_grade="New")[0] is not None:
+        return
+    reference = next((r for r in rows if isinstance(r, dict) and _pricing_row_condition(r) == "LikeNew"
+                      and _select_breakdown_row([r], condition_grade="LikeNew")[0] is not None), None)
+    if reference is None:
+        return
+    audit = {"provider": "openai", "reference_condition": "LikeNew", "requested_condition": "New", "status": "unavailable"}
+    debug["condition_pricing_retry"] = audit
+    try:
+        result = await asyncio.to_thread(profiler.estimate_new_from_like_new, item_profile=item_profile, reference=reference)
+        candidate = result.get("resale_price_estimate") if isinstance(result, dict) else None
+        if not isinstance(candidate, dict) or _pricing_row_condition(candidate, primary=True) != "New" or not _coerce_positive_float(candidate.get("estimated_price")):
+            audit["reason"] = "missing_or_mismatched_new_estimate"
+            return
+        if candidate.get("currency", "USD") != reference.get("currency", "USD"):
+            audit["reason"] = "currency_mismatch"
+            return
+        candidate = dict(candidate)
+        candidate["confidence"] = min(float(candidate.get("confidence") or 0.2), 0.2)
+        item_profile["resale_price_estimate"] = candidate
+        item_profile["condition_pricing_provenance"] = {**audit, "status": "estimated", "reference": reference}
+        audit["status"] = "estimated"
+    except Exception:
+        audit["reason"] = "pricing_retry_failed"
 
 
 def valuation_from_gpt_item_profile(
@@ -1990,31 +2041,16 @@ def valuation_from_gpt_item_profile(
     range_low = None
     range_high = None
     pricing_row_label = "resale_price_estimate"
-    if isinstance(resale, dict):
+    target_condition = _pricing_condition_label(condition_grade)
+    primary_condition = _pricing_row_condition(resale, primary=True) if isinstance(resale, dict) else ""
+    if target_condition not in {"NewWithTags", "New", "LikeNew", "Good", "Fair", "Poor"}:
+        return None
+    if isinstance(resale, dict) and target_condition and primary_condition == target_condition:
         estimated_value = _coerce_positive_float(resale.get("estimated_price"))
     breakdown_estimated_value, breakdown_range_low, breakdown_range_high, breakdown_row_label = _select_breakdown_row(
         resale_breakdown,
         condition_grade=condition_grade,
     )
-    if (
-        str(condition_grade or "").strip().casefold() == "newwithtags"
-        and breakdown_estimated_value is not None
-        and (estimated_value is None or breakdown_estimated_value > estimated_value)
-    ):
-        estimated_value = breakdown_estimated_value
-        range_low = breakdown_range_low
-        range_high = breakdown_range_high
-        pricing_row_label = breakdown_row_label
-    if (
-        str(condition_grade or "").strip().casefold() == "new"
-        and breakdown_estimated_value is not None
-        and isinstance(resale, dict)
-        and _uses_nwt_or_full_set_language(resale.get("condition_assumption"))
-    ):
-        estimated_value = breakdown_estimated_value
-        range_low = breakdown_range_low
-        range_high = breakdown_range_high
-        pricing_row_label = breakdown_row_label
     if estimated_value is None:
         estimated_value = breakdown_estimated_value
         range_low = breakdown_range_low
@@ -2026,7 +2062,7 @@ def valuation_from_gpt_item_profile(
     visual_condition_adjustment: dict[str, object] = {"applied": False}
     if estimated_value is None and retail_reference is not None:
         factor = _retail_to_resale_factor_for_category(item_profile.get("category"))
-        condition_multiplier = _condition_multiplier_for_retail_fallback(condition_grade)
+        condition_multiplier = _condition_multiplier_for_retail_fallback(target_condition)
         if str(condition_grade or "").strip().casefold() == "new":
             visual_multiplier = 1.0
             visual_condition_adjustment = {
@@ -2043,7 +2079,12 @@ def valuation_from_gpt_item_profile(
     if estimated_value is None:
         return None
 
-    confidence = resale.get("confidence") if isinstance(resale, dict) else None
+    selected_pricing = resale if isinstance(resale, dict) else {}
+    if pricing_row_label not in {"resale_price_estimate", "retail_price_estimate_resale_fallback"}:
+        selected_pricing = next((row for row in resale_breakdown or []
+                                 if isinstance(row, dict) and row.get("label") == pricing_row_label
+                                 and _pricing_row_condition(row) == target_condition), {})
+    confidence = selected_pricing.get("confidence")
     if retail_derived:
         retail_confidence = retail.get("confidence") if isinstance(retail, dict) else None
         try:
@@ -2055,8 +2096,8 @@ def valuation_from_gpt_item_profile(
     except Exception:
         confidence_01 = 0.5
     currency = (
-        resale.get("currency")
-        if isinstance(resale, dict) and isinstance(resale.get("currency"), str)
+        selected_pricing.get("currency")
+        if isinstance(selected_pricing.get("currency"), str)
         else retail.get("currency")
         if isinstance(retail, dict) and isinstance(retail.get("currency"), str)
         else default_currency
@@ -2080,6 +2121,11 @@ def valuation_from_gpt_item_profile(
         "retail_reference_value": round(retail_reference, 2) if retail_reference is not None else None,
         "selected_breakdown_label": pricing_row_label if pricing_row_label != "resale_price_estimate" else None,
         "visual_condition_adjustment": visual_condition_adjustment if retail_derived else {"applied": False},
+        "condition_alignment": {"requested_condition": target_condition,
+                                "primary_condition": primary_condition or None,
+                                "primary_rejected": isinstance(resale, dict) and primary_condition != target_condition,
+                                "selected_condition": target_condition},
+        "condition_pricing_provenance": item_profile.get("condition_pricing_provenance"),
     }
 
 
@@ -6005,6 +6051,13 @@ def update_listing(
     brand_changed = previous_record is not None and previous_brand != next_brand
     effective_status = "Analyzing" if brand_changed else payload.status
     previous_analysis = (previous_record or {}).get("analysis") or {}
+    if (str(payload.status or "").casefold() == "active"
+            and (previous_analysis.get("pricing_review") or {}).get("status") == "pending"):
+        raise HTTPException(status_code=409, detail="This item needs manual pricing review before publishing. You do not need to set a value.")
+    if (previous_analysis.get("pricing_review") or {}).get("status") == "pending":
+        # Owner edits cannot clear the admin review requirement or supply a price.
+        payload.analysis = {**(payload.analysis or {}), "pricing_review": previous_analysis["pricing_review"]}
+        payload.estimated_value = 0
     assets = [dict(asset) for asset in previous_analysis.get("generated_assets", [])
               if isinstance(asset, dict) and asset.get("synthetic")]
     if assets:
@@ -6107,6 +6160,7 @@ def update_listing(
             brand_override=(str(payload.brand).strip() if brand_changed else None),
             debug=True,
             stage_images_after_analysis=stage_images_after_analysis,
+            force_fresh_analysis=stage_images_after_analysis,
             job_id=str(analysis_job.get("job_id") or ""),
         )
         record = _with_latest_analysis_job(db, record, principal.subject)
@@ -10128,6 +10182,72 @@ async def _run_listing_image_staging_job(
         log_json("listing_image_staging_error", listing_id=listing_id, actor=owner_subject, error=str(exc))
 
 
+def _pricing_review_admin_recipients(settings):
+    if not settings.clerk_secret_key:
+        raise RuntimeError("clerk_admin_directory_not_configured")
+    recipients = set()
+    offset = 0
+    with httpx.Client(timeout=20) as client:
+        while True:
+            response = client.get("https://api.clerk.com/v1/users",
+                                  headers={"Authorization": f"Bearer {settings.clerk_secret_key}"},
+                                  params={"limit": 100, "offset": offset})
+            response.raise_for_status()
+            users = response.json()
+            if not isinstance(users, list):
+                raise RuntimeError("invalid_clerk_directory_response")
+            for user in users:
+                # Never use user-editable unsafe metadata to determine alert recipients.
+                claims = {key: user.get(key) for key in ("public_metadata", "private_metadata")}
+                if not principal_has_admin_role(AuthPrincipal(auth_type="clerk", subject=user["id"], claims=claims)):
+                    continue
+                for address in user.get("email_addresses") or []:
+                    if (address.get("id") == user.get("primary_email_address_id")
+                            and (address.get("verification") or {}).get("status") == "verified"):
+                        email = str(address.get("email_address") or "").strip().lower()
+                        if email:
+                            recipients.add(email)
+            if len(users) < 100:
+                break
+            offset += len(users)
+    return sorted(recipients)
+
+
+def _request_listing_pricing_review(db, settings, *, listing_id, item_id, job_id, title, previous_review=None):
+    review = dict(previous_review or {})
+    review.update({"status": "pending", "message": "We couldn't determine this item's value. It needs manual review before publishing. You do not need to set a value."})
+    if not review.get("incident_id"):
+        review["incident_id"] = f"incident-{uuid.uuid4()}"
+        db.create_production_incident(
+            incident_id=review["incident_id"], incident_type="pricing_review_required",
+            source="analysis_worker", severity="medium", listing_id=listing_id,
+            item_id=item_id, job_id=job_id, summary="Item value could not be determined; manual pricing review required",
+            details={"title": title, "requested_action": "Review evidence and set an admin-verified value"},
+        )
+    deliveries = dict(review.get("email_deliveries") or {})
+    try:
+        recipients = _pricing_review_admin_recipients(settings)
+        for recipient in recipients:
+            if str(deliveries.get(recipient) or "").startswith("sent"):
+                continue
+            try:
+                deliveries[recipient] = _send_support_email(
+                    settings=settings, recipient=recipient,
+                    customer_name="Admin", subject=f"Manual pricing review required: {title}",
+                    heading="Item value needs manual review", message=f"Pricing could not be determined for {title}.\nListing ID: {listing_id}\nReview its photos, condition and pricing evidence before publishing.",
+                    thread_id=review["incident_id"], listing_id=listing_id,
+                )
+            except Exception:
+                deliveries[recipient] = "failed"
+        review["email_status"] = ("sent" if recipients and all(str(deliveries.get(r) or "").startswith("sent") for r in recipients)
+                                  else "failed" if recipients else "no_admin_recipients")
+    except Exception:
+        review["email_status"] = "admin_directory_unavailable"
+    review["email_deliveries"] = deliveries
+    log_json("listing_pricing_review_alert", listing_id=listing_id, incident_id=review["incident_id"], email_status=review["email_status"])
+    return review
+
+
 def _record_analysis_failure_incident(
     db: Database,
     *,
@@ -10261,7 +10381,8 @@ async def _run_listing_analysis_job(
         condition = str(response_payload.get("user_condition") or user_condition or current.get("condition") or "LikeNew")
         resolved_category = str(response_payload.get("category") or current.get("category") or "handbag")
         valuation = response_payload.get("valuation") if isinstance(response_payload.get("valuation"), dict) else {}
-        estimated_value = float(valuation.get("estimated_value") or current.get("estimated_value") or 0)
+        # A previous estimate must not disguise failure to value the current photos/condition.
+        estimated_value = float(valuation.get("estimated_value") or 0)
         existing_images = current.get("images") if isinstance(current.get("images"), list) else []
         image_urls = [url for url in existing_images if isinstance(url, str) and url.strip()]
         if not image_urls and isinstance(current.get("image"), str) and current.get("image"):
@@ -10280,6 +10401,12 @@ async def _run_listing_analysis_job(
             profile_description=profile_description,
         )
         previous_analysis = current.get("analysis") if isinstance(current.get("analysis"), dict) else {}
+        if estimated_value <= 0:
+            response_payload["pricing_review"] = await asyncio.to_thread(
+                _request_listing_pricing_review, job_db, settings,
+                listing_id=listing_id, item_id=response_payload.get("item_id"), job_id=job_id,
+                title=title or "New listing", previous_review=previous_analysis.get("pricing_review"),
+            )
         previous_generated_urls = {
             str(asset.get("image_url") or "").strip()
             for asset in (previous_analysis.get("generated_assets") or [])
@@ -10320,7 +10447,7 @@ async def _run_listing_analysis_job(
             tags=[condition, brand, "trade"],
             source_item_id=source_item_id,
             analysis=response_payload,
-            status=_listing_status_after_analysis(current.get("status")),
+            status="Review" if estimated_value <= 0 else _listing_status_after_analysis(current.get("status")),
         )
         log_json(
             "listing_analysis_job_completed",
@@ -10484,6 +10611,7 @@ def _run_listing_analysis_for_existing_listing_job(
     stage_images_after_analysis: bool = False,
     job_id: str | None = None,
     brand_override: str | None = None,
+    force_fresh_analysis: bool = False,
 ) -> None:
     job_db = Database(settings.database_url)
     job_db.initialize()
@@ -10492,7 +10620,10 @@ def _run_listing_analysis_for_existing_listing_job(
         log_json("listing_analysis_job_missing_listing", listing_id=listing_id, actor=owner_subject)
         return
 
-    reused_payload = None if brand_override else _reuse_recent_analysis_for_listing(
+    # Photo changes set this flag when the edit is queued (also carried through
+    # SQS). The source item can still point at the old uploads, so its cached
+    # hashes must not be used for an edited photo set.
+    reused_payload = None if brand_override or force_fresh_analysis else _reuse_recent_analysis_for_listing(
         db=job_db,
         listing_id=listing_id,
         owner_subject=owner_subject,
@@ -10876,6 +11007,8 @@ async def analyze(
         requested_photos = list(dict.fromkeys(requested_photos))
 
     if settings.valuation_enabled and brand_out.name != "unknown":
+        if valuation_condition_grade == "New":
+            await retry_new_condition_pricing(item_profile_payload, gpt_item_profiler, item_profile_debug)
         valuation_payload = valuation_from_gpt_item_profile(
             item_profile_payload,
             default_currency=settings.valuation_currency,
@@ -10885,6 +11018,7 @@ async def analyze(
             valuation_debug = {
                 "pricing_source": "gpt_primary",
                 "pricing_fallback_used": False,
+                "condition_alignment": valuation_payload.get("condition_alignment"),
             }
         if valuation_payload is None and settings.valuation_comps_enabled:
             valuation_request = ValuationRequest(
