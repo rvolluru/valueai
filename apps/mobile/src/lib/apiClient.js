@@ -1,3 +1,5 @@
+import { tradeOfferGroup } from '../../../../packages/app-client/src/tradeOffers.js';
+
 function normalizeBaseUrl(apiBaseUrl) {
   return String(apiBaseUrl || '').replace(/\/$/, '');
 }
@@ -307,13 +309,30 @@ export function createMobileApiClient({ apiBaseUrl }) {
         body: JSON.stringify(payload),
       });
     },
-    incomingOffers(status = 'pending', limit = 50, auth = {}) {
-      return requestJson({
-        apiBaseUrl,
-        path: `/v1/offers/incoming?status=${encodeURIComponent(status)}&limit=${limit}`,
-        method: 'GET',
-        auth,
-      });
+    async proposalCandidates(offerId, limit = 100, auth = {}) {
+      const items = [];
+      let offset = 0;
+      while (true) {
+        const page = await requestJson({ apiBaseUrl, path: `/v1/offers/${encodeURIComponent(offerId)}/proposal-candidates?limit=${limit}&offset=${offset}`, method: 'GET', auth });
+        items.push(...(Array.isArray(page?.items) ? page.items : []));
+        if (!page?.has_more) return { count: items.length, items };
+        if (!Number.isInteger(page.next_offset) || page.next_offset <= offset) throw new Error('Invalid eligible-item pagination');
+        offset = page.next_offset;
+      }
+    },
+    proposeOffer(offerId, listingIds, auth = {}) {
+      return requestJson({ apiBaseUrl, path: `/v1/offers/${encodeURIComponent(offerId)}/action`, method: 'POST', auth,
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'proposed', proposed_listing_ids: listingIds }) });
+    },
+    async incomingOffers(status = 'pending', limit = 50, auth = {}) {
+      try {
+        return await requestJson({ apiBaseUrl, path: `/v1/offers/incoming?status=${encodeURIComponent(status)}&limit=${limit}`, method: 'GET', auth });
+      } catch (error) {
+        if (!['active', 'done'].includes(status) || error.message !== 'Invalid status filter') throw error;
+        const payload = await requestJson({ apiBaseUrl, path: '/v1/offers/incoming?status=all&limit=200', method: 'GET', auth });
+        const items = (Array.isArray(payload?.items) ? payload.items : []).filter((offer) => tradeOfferGroup(offer) === status);
+        return { ...payload, items, count: items.length, legacy_filter_fallback: true };
+      }
     },
     actionOffer(offerId, status, receiveAddress = null, selectedOfferedListingId = null, auth = {}) {
       const selectedIsAuth = selectedOfferedListingId

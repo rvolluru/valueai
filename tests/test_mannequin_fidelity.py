@@ -76,7 +76,8 @@ def test_asymmetric_source_generates_owner_review_preview(monkeypatch):
 
     async def generate(**kwargs):
         assert kwargs["plan"]["requires_human_review"] is True
-        assert "Bare shoulder" in kwargs["prompt"]
+        assert "Technical product specification" not in kwargs["prompt"]
+        assert kwargs["model"] == "gemini-3-pro-image"
         return {"review_decision": "pending"}
 
     monkeypatch.setattr(mannequin_fidelity, "plan_references", inspect)
@@ -90,7 +91,7 @@ def test_asymmetric_source_generates_owner_review_preview(monkeypatch):
     assert result == {"review_decision": "pending"}
 
 
-def test_pipeline_sends_all_originals_with_front_first_and_label_supporting(monkeypatch):
+def test_pipeline_generates_from_front_only_but_keeps_all_originals_for_review(monkeypatch):
     from app import main, mannequin_fidelity
     from app.settings import Settings
 
@@ -99,8 +100,10 @@ def test_pipeline_sends_all_originals_with_front_first_and_label_supporting(monk
         return plan()
 
     async def generate(**kwargs):
-        assert [entry["data"] for entry in kwargs["reference_files"]] == [b"front", b"back", b"label"]
-        assert [entry["_fidelity_view"] for entry in kwargs["reference_files"]] == ["front", "back", "label"]
+        assert [entry["data"] for entry in kwargs["reference_files"]] == [b"front"]
+        assert [entry["_fidelity_view"] for entry in kwargs["reference_files"]] == ["front"]
+        assert [entry["data"] for entry in kwargs["all_files"]] == [b"label", b"front", b"back"]
+        assert kwargs["plan"]["constraints"] == plan()["constraints"]
         return {"review_decision": "pending"}
 
     monkeypatch.setattr(mannequin_fidelity, "plan_references", inspect)
@@ -164,3 +167,31 @@ def test_flagged_candidate_is_saved_only_as_pending_owner_preview(monkeypatch, o
     ))
     assert result["review_decision"] == "pending"
     assert result["fidelity_passed"] is False
+
+
+@pytest.mark.parametrize("title,required,forbidden", [
+    ("Silk blouse", "Dress the lower body", "Do not add unnecessary layers"),
+    ("Wool blazer", "neutral underlayer", "Do not add unnecessary layers"),
+    ("One-shoulder dress", "Do not add unnecessary layers", "Dress the lower body"),
+    ("Utility jumpsuit", "Do not add unnecessary layers", "Dress the lower body"),
+    ("Pleated skirt", "neutral top covering", "Dress the lower body"),
+    ("Halter top", "Dress the lower body", "Do not add unnecessary layers"),
+])
+def test_category_specific_supporting_clothing(title, required, forbidden):
+    from app.main import _mannequin_generation_prompt
+    _, prompt = _mannequin_generation_prompt(category="clothes", title=title, description="Pairs with a dress")
+    assert required in prompt
+    assert forbidden not in prompt
+    assert "Preserve intentional bare shoulders" in prompt
+    assert "must not obscure, extend or alter" in prompt
+
+
+def test_bag_is_fully_dressed_in_contrast_without_inventing_straps():
+    from app.main import _mannequin_generation_prompt
+    _, prompt = _mannequin_generation_prompt(category="handbag", title="Black clutch", description="")
+    assert "Fully dress" in prompt
+    assert "top and trousers or skirt" in prompt
+    assert "clearly contrast" in prompt
+    assert "light neutral clothing for dark bags" in prompt
+    assert "dark neutral clothing for light bags" in prompt
+    assert "do not invent a shoulder strap" in prompt

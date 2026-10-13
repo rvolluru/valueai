@@ -379,8 +379,17 @@ export function createApiClient(options) {
     listOfferCandidates: (listingId, limit = 100, auth = {}) =>
       get(`/v1/listings/${encodeURIComponent(listingId)}/offer-candidates?limit=${limit}`, auth),
     createOffer: (payload, auth = {}) => post("/v1/offers", payload, auth),
-    proposalCandidates: (offerId, limit = 100, auth = {}) =>
-      get(`/v1/offers/${encodeURIComponent(offerId)}/proposal-candidates?limit=${limit}`, auth),
+    proposalCandidates: async (offerId, limit = 100, auth = {}) => {
+      const items = [];
+      let offset = 0;
+      while (true) {
+        const page = await get(`/v1/offers/${encodeURIComponent(offerId)}/proposal-candidates?limit=${limit}&offset=${offset}`, auth);
+        items.push(...(Array.isArray(page?.items) ? page.items : []));
+        if (!page?.has_more) return { count: items.length, items };
+        if (!Number.isInteger(page.next_offset) || page.next_offset <= offset) throw new Error('Invalid eligible-item pagination');
+        offset = page.next_offset;
+      }
+    },
     incomingOffers: (status = "pending", limit = 50, auth = {}) =>
       get(`/v1/offers/incoming?status=${encodeURIComponent(status)}&limit=${limit}`, auth),
     offerAction: (offerId, status, receiveAddress = null, selectedOfferedListingId = null, auth = {}) => {

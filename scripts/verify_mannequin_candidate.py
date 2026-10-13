@@ -17,7 +17,7 @@ async def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", action="append", required=True)
     parser.add_argument("--candidate", help="Optional candidate image; omit for source-only planning verification")
-    parser.add_argument("--generate", action="store_true", help="Generate a local Gemini preview from all original photos")
+    parser.add_argument("--generate", action="store_true", help="Generate a local Gemini preview from the selected original front photo")
     parser.add_argument("--output", help="Output file for --generate; never updates a production listing")
     parser.add_argument("--model", help="Gemini image model override for local generation comparison")
     args = parser.parse_args()
@@ -35,8 +35,7 @@ async def main():
             from app.main import _mannequin_generation_prompt
             prompt = _mannequin_generation_prompt(category="clothes", title="Sivan One-Shoulder Mini Dress",
                 description="Olive green structured twill one-shoulder mini dress with a single short sleeve, structured collar, silver snaps and an asymmetric full-length front zipper.")[1]
-            prompt += " Technical product specification verified from the original photos (descriptive evidence only; preserve every detail): " + json.dumps(plan["constraints"])
-            indices = plan["reference_indices"] + [i for i in range(len(files)) if i not in plan["reference_indices"]]
+            indices = plan["reference_indices"][:1]
             ordered = [{**files[i], "_fidelity_view": plan["views"][i]} for i in indices]
             candidate = await generate_candidate(client=client, api_key=settings.gemini_api_key,
                 model=args.model or settings.mannequin_image_generation_model, files=ordered, prompt=prompt)

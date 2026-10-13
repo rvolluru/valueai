@@ -36,7 +36,14 @@
       ]
     },
     "plugins": [
-      "expo-image-picker",
+      [
+        "expo-image-picker",
+        {
+          "cameraPermission": "Allow Jouft to take photos of items for your listings.",
+          "photosPermission": "Allow Jouft to select product photos for your listings.",
+          "microphonePermission": false
+        }
+      ],
       [
         "expo-location",
         {

@@ -10,6 +10,8 @@ import { FaFacebookF, FaPinterestP } from 'react-icons/fa'
 import { FiBell, FiTrash2 } from 'react-icons/fi'
 import { createWebApiClient, setWebBearerTokenProvider } from './lib/apiClient'
 import { navigateTabLink } from './lib/navigation.mjs'
+import { tradeOfferGroup } from '../../../packages/app-client/src/tradeOffers.js'
+import TradeItemPicker from './components/TradeItemPicker'
 import jouftLogo from './assets/jouft-logo.png'
 
 const API_DEFAULT =
@@ -17,7 +19,7 @@ const API_DEFAULT =
   (typeof window !== 'undefined' ? window.location.origin : 'http://127.0.0.1:8000')
 const CLERK_ENABLED = Boolean(import.meta.env.VITE_CLERK_PUBLISHABLE_KEY)
 const IS_PROD = Boolean(import.meta.env.PROD)
-const VALID_TABS = new Set(['market', 'portfolio', 'closet_matches', 'inbox', 'profile', 'profile_setup', 'admin', 'trade', 'edit_listing', 'review_listing'])
+const VALID_TABS = new Set(['market', 'portfolio', 'closet_matches', 'inbox', 'sender_items', 'profile', 'profile_setup', 'admin', 'trade', 'edit_listing', 'review_listing'])
 const TEMP_SHOW_PROFILE_QUESTIONNAIRE_ON_LOGIN = false
 const LISTINGS_PAGE_SIZE = 24
 
@@ -2794,6 +2796,8 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   const [supportError, setSupportError] = useState('')
   const [offerActionBusyById, setOfferActionBusyById] = useState({})
   const [proposalCandidatesByOffer, setProposalCandidatesByOffer] = useState({})
+  const [proposalBrowserOfferId, setProposalBrowserOfferId] = useState(null)
+  const [proposalBrowserError, setProposalBrowserError] = useState('')
   const [proposalSelectionByOffer, setProposalSelectionByOffer] = useState({})
   const [offerAcceptedListingById, setOfferAcceptedListingById] = useState({})
   const [selectedShippingLabel, setSelectedShippingLabel] = useState(null)
@@ -2874,7 +2878,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   const [tradeDetailImageIndex, setTradeDetailImageIndex] = useState(0)
   const [zoomedListingImage, setZoomedListingImage] = useState(null)
   const [zoomedListingImageScale, setZoomedListingImageScale] = useState(1)
-  const [offerStatusFilter, setOfferStatusFilter] = useState('all')
+  const [offerStatusFilter, setOfferStatusFilter] = useState('active')
   const [closetFilter, setClosetFilter] = useState('all')
   const [profileSection, setProfileSection] = useState(TEMP_SHOW_PROFILE_QUESTIONNAIRE_ON_LOGIN ? 'style' : 'general')
   const [shippingLabelsByOffer, setShippingLabelsByOffer] = useState({})
@@ -3134,7 +3138,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     setNotifications((prev) => prev.filter((entry) => entry.id !== notification?.id && !entry.read))
     if (notification?.actionTab) {
       navigateToTab(notification.actionTab)
-      if (notification.actionTab === 'inbox') setOfferStatusFilter('all')
+      if (notification.actionTab === 'inbox') setOfferStatusFilter('active')
     }
   }
 
@@ -3685,7 +3689,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     })
     const items = Array.isArray(payload?.items) ? payload.items : []
     const actorSubject = typeof payload?.actor?.subject === 'string' ? payload.actor.subject : ''
-    if (status === 'pending' || status === 'all') {
+    if (status === 'active' || status === 'pending' || status === 'all') {
       setActiveTradeRequestListingIds(items
         .filter((offer) => String(offer?.from_subject || '') === actorSubject)
         .filter((offer) => ['requested', 'proposed', 'pending'].includes(String(offer?.status || '').toLowerCase()))
@@ -3762,7 +3766,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
         if (inboxActive) {
           const visibleItems = offerStatusFilter === 'all'
             ? items
-            : items.filter((offer) => String(offer?.status || '').toLowerCase() === offerStatusFilter)
+            : items.filter((offer) => tradeOfferGroup(offer) === offerStatusFilter)
           setIncomingOffers(visibleItems)
           setOffersActorSubject(actorSubject)
           setOfferReceiveAddressById((prev) => {
@@ -5562,19 +5566,19 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
         setMarketListingsNextOffset(marketItems.nextOffset || 0)
         if (updatedOffer?.status === 'accepted') {
           setSavedListingNotice('Trade accepted successfully. This trade is now in Accepted.')
-          setOfferStatusFilter('accepted')
+          setOfferStatusFilter('active')
           try {
             await createShippingLabelsForOffer(offerId)
           } catch {}
         } else if (actorAccepted) {
           setSavedListingNotice('Your acceptance is recorded. Waiting for the other user to accept.')
-          setOfferStatusFilter('accepted')
+          setOfferStatusFilter('active')
         }
       }
       if (status === 'declined') {
         setSavedListingNotice('Trade offer declined.')
       }
-      const nextOfferStatusFilter = status === 'accepted' ? 'accepted' : offerStatusFilter
+      const nextOfferStatusFilter = status === 'accepted' ? 'active' : offerStatusFilter
       const refreshed = await fetchIncomingOffersRemote({
         apiBaseUrl,
         apiKey: clerkEnabled ? '' : apiKey.trim(),
@@ -5595,19 +5599,41 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     }
   }
 
-  async function loadProposalCandidates(offerId) {
+  async function loadProposalCandidates(offerId, openPage = true) {
+    setProposalBrowserOfferId(offerId)
+    setProposalBrowserError('')
+    if (openPage) {
+      setActiveTab('sender_items')
+      window.history.pushState({}, '', `${tabHref('sender_items')}&offer=${encodeURIComponent(offerId)}`)
+      window.scrollTo(0, 0)
+    }
     setOfferActionBusyById((prev) => ({ ...prev, [offerId]: 'loading-options' }))
     try {
       const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
       const { client, authContext } = createWebApiClient({ apiBaseUrl, apiKey: clerkEnabled ? '' : apiKey.trim() })
-      const payload = await client.get(`/v1/offers/${encodeURIComponent(offerId)}/proposal-candidates?limit=100`, authContext(bearerToken))
+      const payload = await client.proposalCandidates(offerId, 100, authContext(bearerToken))
       setProposalCandidatesByOffer((prev) => ({ ...prev, [offerId]: Array.isArray(payload?.items) ? payload.items : [] }))
     } catch (err) {
+      setProposalBrowserError(err.message || 'Unable to load eligible items.')
       setSavedListingNotice(err.message || 'Unable to load the requester’s eligible listings.')
     } finally {
       setOfferActionBusyById((prev) => ({ ...prev, [offerId]: '' }))
     }
   }
+
+  useEffect(() => {
+    if (activeTab !== 'sender_items') return
+    const offerId = new URLSearchParams(window.location.search).get('offer') || ''
+    if (!offerId) {
+      setProposalBrowserError('No trade request was specified. Return to the inbox and choose a request.')
+      return
+    }
+    if (offerId === proposalBrowserOfferId && (proposalCandidatesByOffer[offerId] || offerActionBusyById[offerId])) return
+    loadIncomingOffers({ status: 'all' }).then(({ items }) => {
+      if (!items.some((offer) => offer.offer_id === offerId)) setProposalBrowserError('This request could not be loaded. Return to the inbox and reopen it.')
+    }).catch((error) => setProposalBrowserError(error.message || 'Unable to load this request.'))
+    loadProposalCandidates(offerId, false)
+  }, [activeTab])
 
   async function proposeTrade(offerId) {
     const listingId = proposalSelectionByOffer[offerId]
@@ -5618,7 +5644,9 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
       const { client, authContext } = createWebApiClient({ apiBaseUrl, apiKey: clerkEnabled ? '' : apiKey.trim() })
       await client.proposeOffer(offerId, [listingId], authContext(bearerToken))
       setSavedListingNotice('Trade proposal sent. Waiting for the requester to accept.')
-      await loadIncomingOffers({ status: 'pending' })
+      setProposalBrowserOfferId(null)
+      navigateToTab('inbox')
+      await loadIncomingOffers({ status: 'active' })
     } catch (err) {
       setSavedListingNotice(err.message || 'Unable to send the trade proposal.')
     } finally {
@@ -6594,7 +6622,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
               onClick={() => {
                 setTradeNotification(null)
                 navigateToTab('inbox')
-                setOfferStatusFilter('pending')
+                setOfferStatusFilter('active')
               }}
             >
               View
@@ -8239,10 +8267,8 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
 	              <div className="panel-header">
 	                <div><p className="eyebrow">Trade Inbox</p></div>
                 <div className="market-controls">
-                  <button className={offerStatusFilter === 'all' ? 'primary' : 'ghost small'} type="button" onClick={() => setOfferStatusFilter('all')}>All</button>
-                  <button className={offerStatusFilter === 'pending' ? 'primary' : 'ghost small'} type="button" onClick={() => setOfferStatusFilter('pending')}>Pending</button>
-                  <button className={offerStatusFilter === 'accepted' ? 'primary' : 'ghost small'} type="button" onClick={() => setOfferStatusFilter('accepted')}>Accepted</button>
-                  <button className={offerStatusFilter === 'declined' ? 'primary' : 'ghost small'} type="button" onClick={() => setOfferStatusFilter('declined')}>Declined</button>
+                  <button className={offerStatusFilter === 'active' ? 'primary' : 'ghost small'} type="button" onClick={() => setOfferStatusFilter('active')}>Active</button>
+                  <button className={offerStatusFilter === 'done' ? 'primary' : 'ghost small'} type="button" onClick={() => setOfferStatusFilter('done')}>Closed</button>
                 </div>
               </div>
               {incomingOffers.length === 0 ? (
@@ -8269,14 +8295,10 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                       || (offeredChoices.length === 1 ? listingRecordId(offeredChoices[0]) : '')
                     const quote = shippingQuoteByOffer[offer.offer_id]
                     const offerActionBusy = offerActionBusyById[offer.offer_id] || ''
-                    const proposalCandidates = proposalCandidatesByOffer[offer.offer_id] || []
                     const targetThumbs = (Array.isArray(offer.target_listing?.images) && offer.target_listing.images.length > 0
                       ? offer.target_listing.images
                       : [offer.target_listing?.image].filter(Boolean)
                     ).slice(0, 4)
-                    const offeredThumbs = (Array.isArray(offer.offered_listings) && offer.offered_listings.length > 0 ? offer.offered_listings : (offer.offered_listing ? [offer.offered_listing] : []))
-                      .flatMap((listing) => ((Array.isArray(listing?.images) && listing.images.length > 0 ? listing.images : [listing?.image].filter(Boolean)).slice(0, 2)).map((url) => ({ url, listing })))
-                      .slice(0, 8)
                     const targetHero = targetThumbs[0] || null
                     return (
                     <article key={offer.offer_id} className="inbox-editorial-card">
@@ -8288,91 +8310,28 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                             ) : (
                               <span className="inbox-target-fallback">No image</span>
                             )}
-                            <span className="inbox-target-chip">Your Item</span>
+                            <span className="inbox-target-chip">{isSender ? 'Requested item' : 'Your item'}</span>
                           </button>
-                          <div className="inbox-offered-column">
-                            <p className="inbox-lane-label">Offered Items</p>
-                            <div className="inbox-offered-grid">
-                              {offeredThumbs.map(({ url, listing }) => (
-                                <button key={`offered-${offer.offer_id}-${listing?.listing_id || 'listing'}-${url}`} type="button" className="inbox-thumb-btn" onClick={() => openTradeDetailListing(listing || null)}>
-                                  <img src={url} alt="Offered listing" className="inbox-thumb" />
-                                </button>
-                              ))}
-                            </div>
-                          </div>
                         </div>
                         <div className="inbox-editorial-content">
                           <div className="inbox-editorial-head">
-                            <p className="eyebrow">Trade Offer</p>
-                            <span className={`inbox-status-pill inbox-status-${String(offer.status || '').toLowerCase() || 'pending'}`}>{offer.status || 'pending'}</span>
+                            <p className="eyebrow">{isSender ? 'Your trade request' : 'Incoming trade request'}</p>
+                            <span className={`inbox-status-pill inbox-status-${String(offer.status || '').toLowerCase() || 'pending'}`}>{['requested', 'pending'].includes(offer.status) ? 'Awaiting selection' : offer.status === 'proposed' ? 'Awaiting sender' : offer.status === 'accepted' ? 'Confirmed' : offer.status}</span>
                           </div>
                           <h3 className="inbox-editorial-title">
-                            {offer.status === 'requested'
-                              ? `${offerParticipantName(offer, 'from')} wants to trade for your item`
-                              : `${offerParticipantName(offer, 'from')} proposed ${offer.offered_listing?.title || 'an item'}`}
+                            {['requested', 'pending'].includes(String(offer.status).toLowerCase())
+                              ? (isSender ? `You requested ${offer.target_listing?.title || 'an item'}` : `${offerParticipantName(offer, 'from')} wants your ${offer.target_listing?.title || 'item'}`)
+                              : offer.status === 'proposed'
+                                ? (isSender ? `${offerParticipantName(offer, 'to')} selected an exchange item` : 'You selected an exchange item')
+                                : `${offer.target_listing?.title || 'Requested item'} ↔ ${offer.offered_listing?.title || 'Exchange item'}`}
                           </h3>
-                          <p className="inbox-editorial-subtitle">For your {offer.target_listing?.title || 'listing'}</p>
+                          <p className="inbox-editorial-subtitle">{offer.target_listing?.brand || 'Unknown brand'} · Size {offer.target_listing?.size || 'Not provided'} · {displayConditionLabel(offer.target_listing?.condition)} · Est. {money(offer.target_listing?.estimated_value)}</p>
                           {['requested', 'pending'].includes(String(offer.status || '').toLowerCase()) && !isSender ? (
                             <div className="button-row inbox-editorial-actions">
-                              {proposalCandidates.length === 0 ? (
-                                <button className="primary" type="button" onClick={() => loadProposalCandidates(offer.offer_id)} disabled={Boolean(offerActionBusy)}>
-                                  {offerActionBusy === 'loading-options' ? 'Loading...' : 'Choose an item'}
-                                </button>
-                              ) : (
-                                <>
-                                  <div className="inbox-proposal-browser">
-                                    <div className="inbox-proposal-browser-head">
-                                      <strong>Choose what you want in return</strong>
-                                      <span>{proposalCandidates.length} eligible {proposalCandidates.length === 1 ? 'item' : 'items'}</span>
-                                    </div>
-                                    <div className="inbox-proposal-grid">
-                                      {proposalCandidates.map((listing) => {
-                                        const listingId = String(listing?.listing_id || listing?.id || '')
-                                        const selected = proposalSelectionByOffer[offer.offer_id] === listingId
-                                        const image = (Array.isArray(listing?.images) ? listing.images.find(Boolean) : null) || listing?.image || null
-                                        return (
-                                          <div
-                                            key={listingId}
-                                            className={`inbox-proposal-item ${selected ? 'selected' : ''}`}
-                                            onClick={() => setProposalSelectionByOffer((prev) => ({ ...prev, [offer.offer_id]: listingId }))}
-                                            onKeyDown={(e) => {
-                                              if (e.key === 'Enter' || e.key === ' ') {
-                                                e.preventDefault()
-                                                setProposalSelectionByOffer((prev) => ({ ...prev, [offer.offer_id]: listingId }))
-                                              }
-                                            }}
-                                            role="button"
-                                            tabIndex={0}
-                                            aria-pressed={selected}
-                                            aria-label={`Select ${listing?.title || 'listing'} for the proposal`}
-                                          >
-                                            {image ? <img src={image} alt="" /> : <span className="inbox-proposal-image-fallback">No image</span>}
-                                            <span className="inbox-proposal-copy">
-                                              <small>{listing?.brand || 'Unknown brand'}</small>
-                                              <button
-                                                type="button"
-                                                className="inbox-proposal-title"
-                                                onClick={(e) => {
-                                                  e.stopPropagation()
-                                                  openTradeDetailListing(listing)
-                                                }}
-                                              >
-                                                {listing?.title || 'Untitled listing'}
-                                              </button>
-                                              <span>Size {listing?.size || 'N/A'} · {displayConditionLabel(listing?.condition)}</span>
-                                            </span>
-                                            <span className="inbox-proposal-check" aria-hidden="true">{selected ? '✓' : ''}</span>
-                                          </div>
-                                        )
-                                      })}
-                                    </div>
-                                  </div>
-                                  <button className="primary" type="button" onClick={() => proposeTrade(offer.offer_id)} disabled={Boolean(offerActionBusy) || !proposalSelectionByOffer[offer.offer_id]}>
-                                    {offerActionBusy === 'proposed' ? 'Sending...' : 'Send Proposal'}
-                                  </button>
-                                </>
-                              )}
-                              <button className="ghost" type="button" onClick={() => respondToOffer(offer.offer_id, 'declined')} disabled={Boolean(offerActionBusy)}>Decline</button>
+                              <button className="primary" type="button" onClick={() => loadProposalCandidates(offer.offer_id)} disabled={Boolean(offerActionBusy)}>
+                                {offerActionBusy === 'loading-options' ? 'Loading...' : 'View sender’s items'}
+                              </button>
+                              <button className="ghost" type="button" onClick={() => respondToOffer(offer.offer_id, 'declined')} disabled={Boolean(offerActionBusy)}>Decline request</button>
                             </div>
                           ) : null}
                           {offer.status === 'proposed' && isSender ? (
@@ -8390,84 +8349,9 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                               <button className="ghost" type="button" onClick={() => respondToOffer(offer.offer_id, 'declined')} disabled={Boolean(offerActionBusy)}>Decline</button>
                             </div>
                           ) : null}
-                          {offer.status === 'pending' && isSender && (
-                            <div className="button-row inbox-editorial-actions">
-                              {canReceiverAccept && !actorAccepted ? (
-                                <>
-                                  <p className="tiny-note inbox-flow-note">
-                                    Shipping cost to send your item: {
-                                      quote?.status === 'quoted' && quote?.amount
-                                        ? `${quote.currency || 'USD'} ${quote.amount} • ${quote.carrier || 'USPS'} ${quote.service_level || ''}`
-                                        : quote?.status === 'loading'
-                                          ? 'Calculating...'
-                                          : 'Unavailable until shipping addresses are complete.'
-                                    }
-                                  </p>
-                                  <label className="inbox-address-select">
-                                    <span>Receive At Address</span>
-                                    <select
-                                      value={selectedAddressId}
-                                      onChange={(e) => setOfferReceiveAddressById((prev) => ({ ...prev, [offer.offer_id]: e.target.value }))}
-                                    >
-                                      <option value="">
-                                        {selectableAddresses.length === 0 ? 'Add complete address in Profile' : 'Select shipping address'}
-                                      </option>
-                                      {selectableAddresses.map((addr, idx) => (
-                                        <option key={addr.id} value={addr.id}>{addr.label?.trim() || `Address ${idx + 1}`} - {addr.city || 'City'} {addr.state || ''}</option>
-                                      ))}
-                                    </select>
-                                  </label>
-                                  <label className="inbox-address-select">
-                                    <span>Accepted Offered Item</span>
-                                    <select
-                                      value={selectedOfferedListingId || ''}
-                                      onChange={(e) => setOfferAcceptedListingById((prev) => ({ ...prev, [offer.offer_id]: e.target.value }))}
-                                    >
-                                      <option value="">
-                                        {offeredChoices.length === 0 ? 'No offered items available' : 'Select offered item'}
-                                      </option>
-                                      {offeredChoices.map((listing, idx) => (
-                                        <option key={`${offer.offer_id}-choice-${listingRecordId(listing) || idx}`} value={listingRecordId(listing)}>
-                                          {listing?.title || `Offered item ${idx + 1}`} - {money(listing?.estimated_value)}
-                                        </option>
-                                      ))}
-                                    </select>
-                                  </label>
-                                  <button
-                                    className="primary"
-                                    type="button"
-                                    onClick={() => respondToOffer(
-                                      offer.offer_id,
-                                      'accepted',
-                                      selectedAddress ? {
-                                        label: selectedAddress.label || null,
-                                        full_name: selectedAddress.full_name || null,
-                                        address_line1: selectedAddress.address_line1 || null,
-                                        address_line2: selectedAddress.address_line2 || null,
-                                        city: selectedAddress.city || null,
-                                        state: selectedAddress.state || null,
-                                        postal_code: selectedAddress.postal_code || null,
-                                        country: selectedAddress.country || null,
-                                        is_default: false,
-                                      } : null,
-                                      selectedOfferedListingId,
-                                    )}
-                                    disabled={Boolean(offerActionBusy) || !selectedOfferedListingId}
-                                  >
-                                    {offerActionBusy === 'accepted' ? 'Accepting...' : 'Accept Trade'}
-                                  </button>
-                                  <button className="ghost" type="button" onClick={() => respondToOffer(offer.offer_id, 'declined')} disabled={Boolean(offerActionBusy)}>
-                                    {offerActionBusy === 'declined' ? 'Declining...' : 'Decline'}
-                                  </button>
-                                </>
-                              ) : isSender ? (
-                                <span className="tiny-note inbox-flow-note">Offer sent. Waiting for receiver to accept.</span>
-                              ) : (
-                                <span className="tiny-note inbox-flow-note">You accepted this trade. Finalizing shipment labels.</span>
-                              )}
-                            </div>
-                          )}
-                          {quote?.amount ? (
+                          {['requested', 'pending'].includes(String(offer.status).toLowerCase()) && isSender && <p className="inbox-waiting-note">Waiting for them to choose an item from your eligible listings.</p>}
+                          {offer.status === 'proposed' && !isSender && <p className="inbox-waiting-note">Selection sent. Waiting for the sender to review and accept.</p>}
+                          {quote?.amount && ['proposed', 'accepted'].includes(offer.status) ? (
                             <p className="tiny-note inbox-flow-note">
                               Quote: {quote.currency || 'USD'} {quote.amount} • {quote.carrier || 'USPS'} {quote.service_level || ''}
                             </p>
@@ -9139,6 +9023,18 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
         </aside>
       )}
 
+      {activeTab === 'sender_items' && !incomingOffers.find((offer) => offer.offer_id === proposalBrowserOfferId) && <section className="trade-picker-page"><button className="ghost" onClick={() => navigateToTab('inbox')}>Back to inbox</button><p role="status">{proposalBrowserError || 'Loading trade request…'}</p></section>}
+      {activeTab === 'sender_items' && proposalBrowserOfferId && incomingOffers.find((offer) => offer.offer_id === proposalBrowserOfferId) && <TradeItemPicker
+        offer={incomingOffers.find((offer) => offer.offer_id === proposalBrowserOfferId)}
+        items={proposalCandidatesByOffer[proposalBrowserOfferId] || []}
+        loading={Boolean(offerActionBusyById[proposalBrowserOfferId])}
+        error={proposalBrowserError}
+        selectedId={proposalSelectionByOffer[proposalBrowserOfferId] || ''}
+        onSelect={(id) => setProposalSelectionByOffer((prev) => ({ ...prev, [proposalBrowserOfferId]: id }))}
+        onDetails={openTradeDetailListing}
+        onConfirm={() => proposeTrade(proposalBrowserOfferId)}
+        onClose={() => navigateToTab('inbox')}
+      />}
       {tradeDetailListing && (
         <div className="trade-detail-backdrop">
           <div className="trade-detail-shell">

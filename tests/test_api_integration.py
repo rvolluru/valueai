@@ -902,26 +902,24 @@ def test_mannequin_generation_prompt_is_limited_to_handbags_and_dresses() -> Non
     assert bag is not None
     assert bag[0] == "mannequin_handbag"
     assert "exact handbag" in bag[1]
-    assert "clearly contrasts with the handbag's dominant color" in bag[1]
-    assert "Never use clothing in the same color or a near-matching shade" in bag[1]
-    assert "do not place a black handbag on black or very dark clothing" in bag[1]
-    assert "Do not redesign" in bag[1]
+    assert "clearly contrast with" in bag[1]
+    assert "Never use same-color or near-matching clothing" in bag[1]
+    assert "light neutral clothing for dark bags" in bag[1]
+    assert "do not mirror or redesign" in bag[1]
 
     dress = _mannequin_generation_prompt(category="clothes", title="Floral midi dress", description="Long sleeves")
     assert dress is not None
     assert dress[0] == "mannequin_dress"
-    assert "full-body female mannequin" in dress[1]
+    assert "matte white headless mannequin" in dress[1]
     assert "fabric texture" in dress[1]
 
     blazer = _mannequin_generation_prompt(category="clothes", title="Wool blazer", description="Gray jacket")
     assert blazer is not None
     assert blazer[0] == "mannequin_garment"
     assert "lapels" in blazer[1]
-    assert "Listing title: Wool blazer" in blazer[1]
-    assert "Item description: Gray jacket" in blazer[1]
-    assert "never convert the item into a different clothing type" in blazer[1]
-    assert "dress every uncovered area of the mannequin" in blazer[1]
-    assert "never appears undressed or naked" in blazer[1]
+    assert "Dress the lower body" in blazer[1]
+    assert "must not appear naked below the listed top" in blazer[1]
+    assert "neutral underlayer" in blazer[1]
 
     top_description = "This Amanda Uprichard halter top has a gathered neckline and a waist-length hem."
     top = _mannequin_generation_prompt(
@@ -931,9 +929,8 @@ def test_mannequin_generation_prompt_is_limited_to_handbags_and_dresses() -> Non
     )
     assert top is not None
     assert top[0] == "mannequin_garment"
-    assert "Listing title: Printed Satin Halter Neck Top" in top[1]
-    assert f"Item description: {top_description}" in top[1]
-    assert "extend its hem beyond the visible garment boundaries" in top[1]
+    assert "Dress the lower body" in top[1]
+    assert "must not obscure, extend or alter" in top[1]
     accessory_clutch = _mannequin_generation_prompt(
         category="accessories",
         title="Sequined evening clutch",

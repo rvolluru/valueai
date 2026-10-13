@@ -109,7 +109,7 @@ class Settings(BaseSettings):
     image_staging_imagen_model: str = "imagen-3.0-capability-001"
     image_staging_vertexai_enabled: bool = True
     mannequin_image_generation_enabled: bool = True
-    mannequin_image_generation_model: str = "gemini-2.5-flash-image"
+    mannequin_image_generation_model: str = "gemini-3-pro-image"
     mannequin_image_generation_timeout_s: float = 90.0
     gcp_project_id: str | None = None
     gcp_location: str = "us-central1"
