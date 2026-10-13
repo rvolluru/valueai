@@ -1181,7 +1181,8 @@ class Database:
         if status in {"active", "done"}:
             operator = "IN" if status == "done" else "NOT IN"
             query = (
-                f"SELECT * FROM trade_offers WHERE (to_subject = {self.param} OR from_subject = {self.param}) "
+                f"SELECT offer_id, target_listing_id, offered_listing_id, selected_offered_listing_id, from_subject, to_subject, status, accepted_by_from, accepted_by_to, from_receive_address_json, to_receive_address_json, message, created_at, updated_at, offered_listing_ids_json "
+                f"FROM trade_offers WHERE (to_subject = {self.param} OR from_subject = {self.param}) "
                 f"AND LOWER(TRIM(COALESCE(status, ''))) {operator} ('declined', 'completed', 'finished') "
                 f"ORDER BY created_at DESC LIMIT {self.param}"
             )
