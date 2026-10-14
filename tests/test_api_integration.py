@@ -1473,6 +1473,7 @@ def test_setup_intent_returns_safe_error_for_non_customer_stripe_failure(monkeyp
     from app import deps, settings
 
     os.environ["STRIPE_SECRET_KEY"] = "sk_test_local"
+    os.environ["STRIPE_PUBLISHABLE_KEY"] = "pk_test_local"
     settings.get_settings.cache_clear()
     deps.get_db().set_stripe_customer_id("api-key", "cus_valid")
 
@@ -1505,6 +1506,34 @@ def test_setup_intent_returns_safe_error_for_non_customer_stripe_failure(monkeyp
 
     assert response.status_code == 502
     assert response.json()["detail"] == "Stripe could not initialize the payment form. Please try again shortly."
+
+
+def test_setup_intent_rejects_invalid_key_configuration_before_stripe(monkeypatch):
+    from app import settings
+
+    def unexpected_client(*args, **kwargs):
+        raise AssertionError("Invalid key configuration must not call Stripe")
+
+    monkeypatch.setattr("app.main.httpx.Client", unexpected_client)
+    for secret, public in [
+        ("sk_live_private", "pk_test_public"),
+        ("sk_test_private", "pk_live_public"),
+        ("sk_live_private", ""),
+        ("invalid", "pk_live_public"),
+    ]:
+        client = _build_client()
+        monkeypatch.setenv("STRIPE_SECRET_KEY", secret)
+        monkeypatch.setenv("STRIPE_PUBLISHABLE_KEY", public)
+        settings.get_settings.cache_clear()
+        response = client.post(
+            "/v1/me/payment-methods/stripe/setup-intent",
+            headers={"x-api-key": "test-key"},
+        )
+        assert response.status_code == 503
+        assert "configuration issue" in response.json()["detail"]
+        assert secret not in response.text
+        if public:
+            assert public not in response.text
 
 
 def test_activate_subscription_rejects_expired_card_before_calling_stripe():

@@ -4398,6 +4398,20 @@ def create_stripe_setup_intent(
             status="disabled",
             message="Stripe not configured on server",
         )
+    publishable_key = (settings.stripe_publishable_key or "").strip()
+    secret_mode = next((mode for mode in ("test", "live") if secret_key.startswith((f"sk_{mode}_", f"rk_{mode}_"))), None)
+    publishable_mode = next((mode for mode in ("test", "live") if publishable_key.startswith(f"pk_{mode}_")), None)
+    if not secret_mode or not publishable_mode or secret_mode != publishable_mode:
+        log_json(
+            "stripe_setup_key_configuration_invalid",
+            actor=principal.subject,
+            secret_mode=secret_mode,
+            publishable_mode=publishable_mode,
+        )
+        raise HTTPException(
+            status_code=503,
+            detail="Payment setup is temporarily unavailable due to a configuration issue. Please try again later.",
+        )
     email = (
         str(principal.claims.get("email") or "").strip()
         if isinstance(principal.claims, dict)
