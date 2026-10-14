@@ -1,5 +1,6 @@
 from app.db import Database
 import pytest
+from types import SimpleNamespace
 
 
 class _FakePG:
@@ -64,6 +65,24 @@ def test_required_notification_migration_failure_is_not_swallowed():
     db.execute = fail
     with pytest.raises(RuntimeError, match="migration lock timeout"):
         db.initialize()
+
+
+def test_production_dependency_does_not_run_optional_migrations(monkeypatch):
+    from app import deps
+    calls = []
+    class ProductionDatabase:
+        _pg = object()
+        def __init__(self, url): pass
+        def initialize(self): raise AssertionError('Optional migrations must not run on request startup')
+        def ensure_notification_history_schema(self): calls.append('ready')
+    deps.get_db.cache_clear()
+    monkeypatch.setattr(deps, 'Database', ProductionDatabase)
+    monkeypatch.setattr(deps, 'get_settings', lambda: SimpleNamespace(database_url='postgresql://test'))
+    try:
+        assert deps.get_db() is deps.get_db()
+        assert calls == ['ready']
+    finally:
+        deps.get_db.cache_clear()
 
 
 @pytest.mark.parametrize('method,args', [('fetchone', ('SELECT 1',)), ('fetchall', ('SELECT 1',)), ('_fetch_dicts', ('SELECT 1',)), ('list_user_notifications', ('owner',))])
