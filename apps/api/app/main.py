@@ -5680,6 +5680,7 @@ def list_recent_listings(
     offset: int = 0,
     mine: bool = False,
     include_matches: bool = False,
+    q: str = "",
     principal: AuthPrincipal = Depends(get_request_principal),
     db: Database = Depends(get_db),
     settings: Settings = Depends(get_settings),
@@ -5728,6 +5729,8 @@ def list_recent_listings(
             record["images"] = []
         return record
 
+    if len(q) > 120:
+        raise HTTPException(status_code=422, detail="Search must be 120 characters or fewer")
     safe_limit = max(1, min(limit, 100))
     safe_offset = max(0, offset)
     cutoff = (datetime.now(timezone.utc) - timedelta(minutes=15)).isoformat()
@@ -5739,9 +5742,9 @@ def list_recent_listings(
     except Exception as exc:
         log_json("stale_analyzing_cleanup_error", error=str(exc))
     records = (
-        db.list_owner_listings(principal.subject, limit=safe_limit + 1, offset=safe_offset)
+        db.list_owner_listings(principal.subject, limit=safe_limit + 1, offset=safe_offset, search=q)
         if mine
-        else db.list_recent_listings(limit=safe_limit + 1, offset=safe_offset, include_analysis=False, include_media=True, active_only=True)
+        else db.list_recent_listings(limit=safe_limit + 1, offset=safe_offset, include_analysis=False, include_media=True, active_only=True, search=q)
     )
     has_more = len(records) > safe_limit
     records = records[:safe_limit]

@@ -2649,11 +2649,17 @@ class Database:
         include_analysis: bool = True,
         include_media: bool = True,
         active_only: bool = False,
+        search: str = "",
     ) -> list[dict]:
         analysis_select = "analysis_json" if include_analysis else "NULL AS analysis_json"
         image_select = "image" if include_media else "NULL AS image"
         images_select = "images_json" if include_media else "'[]' AS images_json"
         where_clause = "WHERE LOWER(status) = 'active'" if active_only else ""
+        params = []
+        if search.strip():
+            where_clause += (" AND " if where_clause else "WHERE ") + f"LOWER(COALESCE(title, '') || ' ' || COALESCE(brand, '') || ' ' || COALESCE(category, '')) LIKE {self.param} ESCAPE '!'"
+            params.append('%' + search.strip().lower().replace('!', '!!').replace('%', '!%').replace('_', '!_') + '%')
+        params.extend([limit, offset])
         query = (
             f"SELECT listing_id, owner_subject, owner_name, title, mode, category, brand, condition, "
             f"size, estimated_value, city, {image_select}, {images_select}, description, wants, tags_json, source_item_id, {analysis_select}, status, created_at, COALESCE(updated_at, created_at) AS updated_at "
@@ -2661,26 +2667,32 @@ class Database:
         )
         if self._sqlite_conn is not None:
             with self._sqlite_lock:
-                rows = self._sqlite_conn.execute(query, (limit, offset)).fetchall()
+                rows = self._sqlite_conn.execute(query, tuple(params)).fetchall()
             return [self._listing_row_to_dict(row) for row in rows]
         cur = self._pg_cursor()
-        cur.execute(query, (limit, offset))
+        cur.execute(query, tuple(params))
         rows = cur.fetchall()
         cur.close()
         return [self._listing_row_to_dict(row) for row in rows]
 
-    def list_owner_listings(self, owner_subject: str, limit: int = 50, offset: int = 0) -> list[dict]:
+    def list_owner_listings(self, owner_subject: str, limit: int = 50, offset: int = 0, search: str = "") -> list[dict]:
+        search_clause = ""
+        params = [owner_subject]
+        if search.strip():
+            search_clause = f" AND LOWER(COALESCE(title, '') || ' ' || COALESCE(brand, '') || ' ' || COALESCE(category, '')) LIKE {self.param} ESCAPE '!'"
+            params.append('%' + search.strip().lower().replace('!', '!!').replace('%', '!%').replace('_', '!_') + '%')
+        params.extend([limit, offset])
         query = (
             f"SELECT listing_id, owner_subject, owner_name, title, mode, category, brand, condition, "
             f"size, estimated_value, city, image, images_json, description, wants, tags_json, source_item_id, analysis_json, status, created_at, COALESCE(updated_at, created_at) AS updated_at "
-            f"FROM listings WHERE owner_subject = {self.param} ORDER BY created_at DESC LIMIT {self.param} OFFSET {self.param}"
+            f"FROM listings WHERE owner_subject = {self.param}{search_clause} ORDER BY created_at DESC LIMIT {self.param} OFFSET {self.param}"
         )
         if self._sqlite_conn is not None:
             with self._sqlite_lock:
-                rows = self._sqlite_conn.execute(query, (owner_subject, limit, offset)).fetchall()
+                rows = self._sqlite_conn.execute(query, tuple(params)).fetchall()
             return [self._listing_row_to_dict(row) for row in rows]
         cur = self._pg_cursor()
-        cur.execute(query, (owner_subject, limit, offset))
+        cur.execute(query, tuple(params))
         rows = cur.fetchall()
         cur.close()
         return [self._listing_row_to_dict(row) for row in rows]
