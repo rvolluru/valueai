@@ -26,7 +26,7 @@ function errorDetail(payload) {
   return payload.detail || null;
 }
 
-async function requestJson({ apiBaseUrl, path, method = 'GET', auth = {}, body, headers = {} }) {
+async function requestJson({ apiBaseUrl, path, method = 'GET', auth = {}, body, headers = {}, signal }) {
   const url = `${normalizeBaseUrl(apiBaseUrl)}${path}`;
   let resp;
   try {
@@ -37,6 +37,7 @@ async function requestJson({ apiBaseUrl, path, method = 'GET', auth = {}, body, 
         ...headers,
       },
       body,
+      signal,
     });
   } catch (e) {
     const baseUrl = normalizeBaseUrl(apiBaseUrl);
@@ -87,7 +88,7 @@ export function createMobileApiClient({ apiBaseUrl }) {
         body: JSON.stringify(event),
       });
     },
-    async classifyImageRoles({ images = [], category }, auth = {}) {
+    async classifyImageRoles({ images = [], category, signal }, auth = {}) {
       const fd = new FormData();
       images.forEach((img, idx) => {
         fd.append('images', {
@@ -100,6 +101,7 @@ export function createMobileApiClient({ apiBaseUrl }) {
       return requestJson({
         apiBaseUrl,
         path: '/v1/images/classify-roles',
+        signal,
         method: 'POST',
         auth,
         body: fd,
@@ -425,13 +427,16 @@ export function createMobileApiClient({ apiBaseUrl }) {
         body: JSON.stringify(payload || {}),
       });
     },
-    listNotifications(limit = 50, auth = {}) {
+    listNotifications(limit = 50, auth = {}, offset = 0) {
       return requestJson({
         apiBaseUrl,
-        path: `/v1/me/notifications?limit=${limit}`,
+        path: `/v1/me/notifications?limit=${limit}&offset=${offset}&include_read=true`,
         method: 'GET',
         auth,
       });
+    },
+    markNotificationRead(id, auth = {}) {
+      return requestJson({ apiBaseUrl, path: `/v1/me/notifications/${encodeURIComponent(id)}/read`, method: 'PATCH', auth, body: '{}' , headers: { 'Content-Type': 'application/json' } });
     },
     clearNotifications(auth = {}) {
       return requestJson({

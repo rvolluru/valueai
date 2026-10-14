@@ -11,8 +11,12 @@ import { FaFacebookF, FaPinterestP } from 'react-icons/fa'
 import { createWebApiClient, setWebBearerTokenProvider } from './lib/apiClient'
 import { navigateTabLink, initializeAppHistory, writeAppHistory, backInApp } from './lib/navigation.mjs'
 import { reconcileListingImages } from './lib/listingMedia.mjs'
+import { createPhotoCarousel, movePhotoCarousel } from './lib/photoCarousel.mjs'
+import { withPhotoCheckTimeout } from '../../../packages/app-client/src/photoCheck.js'
 import { tradeOfferGroup } from '../../../packages/app-client/src/tradeOffers.js'
 import TradeItemPicker from './components/TradeItemPicker'
+import ListingPhotoEditor from './components/ListingPhotoEditor'
+import NotificationsPage from './components/NotificationsPage'
 import jouftLogo from './assets/jouft-logo.png'
 
 const API_DEFAULT =
@@ -20,7 +24,7 @@ const API_DEFAULT =
   (typeof window !== 'undefined' ? window.location.origin : 'http://127.0.0.1:8000')
 const CLERK_ENABLED = Boolean(import.meta.env.VITE_CLERK_PUBLISHABLE_KEY)
 const IS_PROD = Boolean(import.meta.env.PROD)
-const VALID_TABS = new Set(['market', 'portfolio', 'closet_matches', 'inbox', 'sender_items', 'profile', 'profile_setup', 'admin', 'trade', 'edit_listing', 'review_listing'])
+const VALID_TABS = new Set(['market', 'portfolio', 'closet_matches', 'inbox', 'sender_items', 'profile', 'profile_setup', 'admin', 'trade', 'edit_listing', 'review_listing', 'notifications'])
 const TEMP_SHOW_PROFILE_QUESTIONNAIRE_ON_LOGIN = false
 const LISTINGS_PAGE_SIZE = 24
 
@@ -2812,6 +2816,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   const [appAssistantError, setAppAssistantError] = useState('')
   const [listingModalMode, setListingModalMode] = useState('create')
   const [modalEditingListing, setModalEditingListing] = useState(null)
+  const [photoEditTarget, setPhotoEditTarget] = useState(null)
   const [savedListingNotice, setSavedListingNotice] = useState('')
   const [transientNotice, setTransientNotice] = useState(null)
   const [appAlert, setAppAlert] = useState(null)
@@ -2887,11 +2892,11 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   const [createSlotPreviewUrls, setCreateSlotPreviewUrls] = useState(() => Array(6).fill(null))
   const [createImageRoleCheck, setCreateImageRoleCheck] = useState(null)
   const [createImageRoleBusy, setCreateImageRoleBusy] = useState(false)
+  const [createImageRoleError, setCreateImageRoleError] = useState('')
   const listingChatPhotoGateOpen = createImageSlots.filter(Boolean).length > 0
     && !createImageRoleBusy
-    && Boolean(createImageRoleCheck)
+    && (Boolean(createImageRoleCheck) || Boolean(createImageRoleError && category))
     && (createImageRoleCheck?.missing_required || []).length === 0
-  const [createImageRoleError, setCreateImageRoleError] = useState('')
   const [createImageRoleRetry, setCreateImageRoleRetry] = useState(0)
   const [selectedEditImageIndex, setSelectedEditImageIndex] = useState(0)
   const [selectedReviewImageIndex, setSelectedReviewImageIndex] = useState(0)
@@ -2904,6 +2909,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   const [tradeDetailImageIndex, setTradeDetailImageIndex] = useState(0)
   const [zoomedListingImage, setZoomedListingImage] = useState(null)
   const [zoomedListingImageScale, setZoomedListingImageScale] = useState(1)
+  const zoomSwipeStart = useRef(null)
   const [offerStatusFilter, setOfferStatusFilter] = useState('active')
   const [closetFilter, setClosetFilter] = useState('all')
   const [profileSection, setProfileSection] = useState(TEMP_SHOW_PROFILE_QUESTIONNAIRE_ON_LOGIN ? 'style' : 'general')
@@ -3105,6 +3111,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     const detailId = new URLSearchParams(window.location.search).get('detail')
     setTradeDetailListing(detailId ? detailListingsByIdRef.current.get(detailId) || null : null)
     setZoomedListingImage(null)
+    setPhotoEditTarget(null)
     setShowCreateListingModal(false)
     setNotificationPanelOpen(false)
     setAccountMenuOpen(false)
@@ -3148,34 +3155,34 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
 
   const unreadNotificationCount = notifications.filter((entry) => !entry.read).length
 
-  function addAppNotification({ type, title, body, actionTab = 'inbox', entityId = '' }) {
+  function addAppNotification({ type, title, body, actionTab = 'inbox', entityId = '', serverId = null, createdAt = null, read = false }) {
     const notification = {
-      id: `${type || 'notification'}-${entityId || Date.now()}-${Date.now()}`,
+      id: serverId || `${type || 'notification'}-${entityId || Date.now()}-${Date.now()}`,
+      serverId,
       type: type || 'notification',
       title: title || 'Notification',
       body: body || '',
       actionTab,
       entityId,
-      createdAt: new Date().toISOString(),
-      read: false,
+      createdAt: createdAt || new Date().toISOString(),
+      read,
     }
-    setNotifications((prev) => [notification, ...prev].slice(0, 50))
+    setNotifications((prev) => [notification, ...prev.filter(old => old.id !== notification.id)].slice(0, 50))
     return notification
   }
 
   function openNotificationCenter() {
     if (notificationPanelOpen) {
       setNotificationPanelOpen(false)
-      setNotifications((prev) => prev.filter((entry) => !entry.read))
       return
     }
-    setNotifications((prev) => prev.map((entry) => ({ ...entry, read: true })))
     setNotificationPanelOpen(true)
   }
 
   function openNotificationAction(notification) {
     setNotificationPanelOpen(false)
-    setNotifications((prev) => prev.filter((entry) => entry.id !== notification?.id && !entry.read))
+    setNotifications((prev) => prev.map(entry => entry.id === notification?.id ? { ...entry, read: true } : entry))
+    if (notification?.serverId) void markHistoryNotificationRead(notification.serverId).catch(() => {})
     if (notification?.actionTab) {
       navigateToTab(notification.actionTab)
       if (notification.actionTab === 'inbox') setOfferStatusFilter('active')
@@ -3372,6 +3379,10 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
         })
         if (cancelled) return
         const items = Array.isArray(payload?.items) ? payload.items : []
+        setNotifications(previous => previous.map(entry => {
+          const server = items.find(item => item.notification_id === entry.serverId)
+          return server ? { ...entry, read: Boolean(server.read_at) } : entry
+        }))
         items.slice().reverse().forEach((item) => {
           const id = String(item?.notification_id || item?.id || '')
           if (!id || seenServerNotificationIdsRef.current.has(id)) return
@@ -3382,13 +3393,10 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
             body: item?.body || '',
             actionTab: item?.action_tab === 'marketplace' ? 'market' : (item?.action_tab || 'inbox'),
             entityId: item?.entity_id || '',
+            serverId: id,
+            createdAt: item.created_at,
+            read: Boolean(item.read_at),
           })
-          deleteNotificationRemote({
-            apiBaseUrl,
-            apiKey: clerkEnabled ? '' : apiKey.trim(),
-            bearerToken,
-            notificationId: id,
-          }).catch(() => {})
         })
       } catch {}
     }
@@ -4697,11 +4705,10 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     const timer = window.setTimeout(async () => {
       try {
         const { client, authContext } = createWebApiClient({ apiBaseUrl, apiKey })
-        const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : ''
-        const result = await client.classifyImageRoles(
-          { images: selectedImages.map((file) => ({ file })) },
-          authContext(bearerToken),
-        )
+        const result = await withPhotoCheckTimeout(async signal => {
+          const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : ''
+          return client.classifyImageRoles({ images: selectedImages.map((file) => ({ file })), signal }, authContext(bearerToken))
+        })
         if (!cancelled) {
           setCreateImageRoleCheck(result)
           if (result?.category) {
@@ -4712,7 +4719,9 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
       } catch (err) {
         if (!cancelled) {
           setCreateImageRoleCheck(null)
-          setCreateImageRoleError(err.message || 'Could not check photo coverage. You may retry or continue.')
+          setCreateImageRoleError(err.message || 'Photo checking could not finish. Your photos are safe. Select a category to continue.')
+          setCategory('')
+          if (err.code === 'photo_check_timeout' || /timed out/i.test(err.message || '')) trackExperience('photo_check_timeout', { screen: 'create_listing', properties: { timeout_seconds: 30, image_count: selectedImages.length, scope: 'initial_photo_coverage_only' } })
         }
       } finally {
         if (!cancelled) setCreateImageRoleBusy(false)
@@ -4991,6 +5000,10 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     if (!zoomedListingImage) return
     function onKeyDown(e) {
       if (e.key === 'Escape') closeZoomedListingImage()
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+        e.preventDefault()
+        moveZoomedListingImage(e.key === 'ArrowLeft' ? -1 : 1)
+      }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
@@ -5523,7 +5536,12 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   }, [routeRevision, allListings, myListings, incomingOffers, proposalCandidatesByOffer])
 
   function openZoomedListingImage(image) {
-    setZoomedListingImage(image || null)
+    setZoomedListingImage(image ? createPhotoCarousel(image) : null)
+    setZoomedListingImageScale(0.5)
+  }
+
+  function moveZoomedListingImage(step) {
+    setZoomedListingImage(current => movePhotoCarousel(current, step))
     setZoomedListingImageScale(0.5)
   }
 
@@ -6403,6 +6421,39 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     }
   }
 
+  async function loadNotificationHistory(offset) {
+    const { client, authContext } = createWebApiClient({ apiBaseUrl, apiKey: clerkEnabled ? '' : apiKey.trim() })
+    return client.listNotifications(50, authContext(clerkEnabled && getBearerToken ? await getBearerToken() : null), offset)
+  }
+
+  async function markHistoryNotificationRead(id) {
+    const { client, authContext } = createWebApiClient({ apiBaseUrl, apiKey: clerkEnabled ? '' : apiKey.trim() })
+    await client.markNotificationRead(id, authContext(clerkEnabled && getBearerToken ? await getBearerToken() : null))
+    setNotifications(previous => previous.map(item => item.id === id ? { ...item, read: true } : item))
+  }
+
+  function renderManualPhotoCategory() {
+    return <><label>Select item category<select value={category} onChange={e => setCategory(e.target.value)}>
+      <option value="">Select category</option><option value="clothes">Clothes</option><option value="shoes">Shoes</option><option value="handbag">Bags</option><option value="accessories">Accessories</option>
+    </select></label>{category && (createListingMode === 'chat' || appAssistantListingFlow) && listingAssistantMessages.length === 0 && <div><p>How would you describe the item’s condition?</p>{[['NewWithTags', 'New with tags'], ['New', 'New'], ['LikeNew', 'Like new']].map(([value, label]) => <button key={value} type="button" className="ghost small" onClick={() => chooseListingAssistantCondition(value)}>{label}</button>)}</div>}</>
+  }
+
+  async function applyListingPhotoEdit(file) {
+    const target = photoEditTarget
+    if (target.index < editPreviewUrls.length) {
+      const uploaded = await uploadListingImages({ apiBaseUrl, apiKey: clerkEnabled ? '' : apiKey.trim(),
+        bearerToken: clerkEnabled && getBearerToken ? await getBearerToken() : null, images: [file] })
+      const url = uploaded?.uploaded_images?.[0]?.image_url
+      if (!url) throw new Error('Edited image upload failed')
+      setEditPreviewUrls(previous => previous.map((value, index) => index === target.index ? url : value))
+    } else {
+      const pendingIndex = target.index - editPreviewUrls.length
+      setImages(previous => previous.map((value, index) => index === pendingIndex ? file : value))
+    }
+    setAnalysisResult(null)
+    setPhotoEditTarget(null)
+  }
+
   async function saveListingEdits(listing) {
     if (!listing) return
     const finalStatus = String(listing.status || 'Review')
@@ -6636,9 +6687,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                   <div className="notification-panel" role="dialog" aria-label="Notifications">
                     <div className="notification-panel-head">
                       <strong>Notifications</strong>
-                      {notifications.length > 0 && (
-                        <button className="ghost small" type="button" onClick={() => setNotifications([])}>Clear</button>
-                      )}
+                      <button className="ghost small" type="button" onClick={() => navigateToTab('notifications')}>View all</button>
                     </div>
                     {notifications.length === 0 ? (
                       <p className="notification-empty">No notifications yet.</p>
@@ -6669,6 +6718,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                 </button>
                 {accountMenuOpen && <nav id="user-account-menu" className="account-menu-dropdown" aria-label="User account options">
                   <button type="button" onClick={() => { setProfileSection('general'); navigateToTab('profile') }}>My Profile</button>
+                  <button type="button" onClick={() => navigateToTab('notifications')}>Notifications</button>
                   <a href="mailto:admin@jouft.com?subject=Jouft%20account%20support" onClick={() => setAccountMenuOpen(false)}>Support</a>
                   <button type="button" className="account-sign-out" onClick={() => { setAccountMenuOpen(false); onLogout?.() }}>Sign Out</button>
                 </nav>}
@@ -7907,14 +7957,23 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                         e.target.value = ''
                       }}
                     />
+                    {modalPreviewUrls.length > 0 && <div className="listing-edit-photo-tools"><button className="ghost" type="button" onClick={() => {
+                        const index = Math.min(selectedEditImageIndex, modalPreviewUrls.length - 1)
+                        setPhotoEditTarget({ src: resolveListingImageUrl(modalPreviewUrls[index]), index })
+                      }}>Zoom / Crop / Rotate photo</button></div>}
                     <div className="listing-edit-gallery market-selected-gallery">
                       <div className="listing-edit-main-image market-selected-main-image">
                         {modalPreviewUrls.length > 0 ? (
                           <>
+                            <button type="button" className="listing-image-zoom-trigger"
+                              aria-label="Magnify selected closet photo"
+                              onClick={() => openZoomedListingImage({ src: modalPreviewUrls[Math.min(selectedEditImageIndex, modalPreviewUrls.length - 1)], images: modalPreviewUrls, alt: modalEditingListing?.title || 'Closet photo' })}>
                             <img
                               src={modalPreviewUrls[Math.min(selectedEditImageIndex, modalPreviewUrls.length - 1)]}
                               alt={`Listing image ${Math.min(selectedEditImageIndex, modalPreviewUrls.length - 1) + 1}`}
                             />
+                            <span className="listing-image-zoom-label">Magnify</span>
+                            </button>
                             {selectedEditHeroImageIndex === Math.min(selectedEditImageIndex, modalPreviewUrls.length - 1) && (
                               <span className="listing-hero-badge listing-edit-hero-badge">Hero</span>
                             )}
@@ -8172,7 +8231,11 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                       </div>
                     )}
                     {reviewListingGallery[selectedReviewImageIndex] ? (
-                      <img src={reviewListingGallery[selectedReviewImageIndex]} alt={`${reviewListing.title || 'Listing'} image ${selectedReviewImageIndex + 1}`} />
+                      <button type="button" className="listing-image-zoom-trigger" aria-label="Magnify selected review photo"
+                        onClick={() => openZoomedListingImage({ src: reviewListingGallery[selectedReviewImageIndex], images: reviewListingGallery, alt: reviewListing.title || 'Closet photo' })}>
+                        <img src={reviewListingGallery[selectedReviewImageIndex]} alt={`${reviewListing.title || 'Listing'} image ${selectedReviewImageIndex + 1}`} />
+                        <span className="listing-image-zoom-label">Magnify</span>
+                      </button>
                     ) : (
                       <div className="listing-image-fallback">Image unavailable</div>
                     )}
@@ -8494,6 +8557,8 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
             </section>
           )}
 
+          {activeTab === 'notifications' && <NotificationsPage load={loadNotificationHistory} markRead={markHistoryNotificationRead}
+            onBack={() => navigateBack('market')} onOpen={item => navigateToTab(item.action_tab === 'marketplace' ? 'market' : item.action_tab === 'closet' ? 'portfolio' : VALID_TABS.has(item.action_tab) ? item.action_tab : 'inbox')} />}
           {activeTab === 'market' && (
             <section className="panel">
               <div className="panel-header marketplace-panel-header">
@@ -8537,6 +8602,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                                   className="listing-image-zoom-trigger"
                                   onClick={() => openZoomedListingImage({
                                     src: selectedImage,
+                                    images: gallery,
                                     alt: `${item.title || 'Listing'} image ${selectedImageIdx + 1}`,
                                   })}
                                   aria-label={`Magnify ${item.title || 'listing'} image ${selectedImageIdx + 1}`}
@@ -9012,7 +9078,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                 return <figure key={`${url}-${index}`}><img src={url} alt={`Item photo ${index + 1}`} />{roles.length > 0 && <figcaption>{roles.map((role) => IMAGE_ROLE_LABELS[role] || role).join(' + ')}</figcaption>}</figure>
               })}</div>}
               {createImageRoleBusy && <div className="app-assistant-turn assistant"><span aria-hidden="true"><LogoJ small /></span><p>I'm reviewing the photos and identifying each view...</p></div>}
-              {createImageRoleError && <div className="app-assistant-turn assistant"><span aria-hidden="true"><LogoJ small /></span><div><p>{createImageRoleError}</p><button className="ghost small" type="button" onClick={() => setCreateImageRoleRetry((value) => value + 1)}>Retry photo check</button></div></div>}
+              {createImageRoleError && <div className="app-assistant-turn assistant"><span aria-hidden="true"><LogoJ small /></span><div><p>{createImageRoleError}</p>{renderManualPhotoCategory()}</div></div>}
               {!createImageRoleBusy && <PhotoAnalysisSummary result={createImageRoleCheck} />}
               {createImageRoleCheck?.missing_required?.length > 0 && <div className="app-assistant-turn assistant"><span aria-hidden="true"><LogoJ small /></span><div><p>Please add {createImageRoleCheck.missing_required.map((role) => IMAGE_ROLE_LABELS[role] || role).join(', ')} before we continue.</p></div></div>}
               {listingChatPhotoGateOpen && listingAssistantMessages.length === 0 && !createImageRoleBusy && createImageRoleCheck?.missing_required?.length === 0 && <div className="app-assistant-turn assistant"><span aria-hidden="true"><LogoJ small /></span><div><p>How would you describe the item’s condition?</p><div className="listing-chat-quick-replies"><button type="button" onClick={() => chooseListingAssistantCondition('NewWithTags')}>New with tags</button><button type="button" onClick={() => chooseListingAssistantCondition('New')}>New</button><button type="button" onClick={() => chooseListingAssistantCondition('LikeNew')}>Like new</button></div></div></div>}
@@ -9086,6 +9152,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                             className="listing-image-zoom-trigger"
                             onClick={() => openZoomedListingImage({
                               src: activeDetailImage,
+                              images: detailGallery,
                               alt: `${tradeDetailListing.title || 'Listing'} image ${activeDetailImageIndex + 1}`,
                             })}
                             aria-label={`Magnify ${tradeDetailListing.title || 'listing'} image ${activeDetailImageIndex + 1}`}
@@ -9141,6 +9208,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
         </div>
       )}
 
+      {photoEditTarget && <ListingPhotoEditor src={photoEditTarget.src} onCancel={() => setPhotoEditTarget(null)} onApply={applyListingPhotoEdit} />}
       {zoomedListingImage && (
         <div
           className="listing-image-zoom-backdrop"
@@ -9150,6 +9218,11 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
           onClick={closeZoomedListingImage}
         >
           <div className="listing-image-zoom-toolbar" onClick={(e) => e.stopPropagation()}>
+            {zoomedListingImage.images.length > 1 && <>
+              <button type="button" aria-label="Previous photo" onClick={() => moveZoomedListingImage(-1)}>‹</button>
+              <span aria-live="polite">{zoomedListingImage.index + 1} / {zoomedListingImage.images.length}</span>
+              <button type="button" aria-label="Next photo" onClick={() => moveZoomedListingImage(1)}>›</button>
+            </>}
             <button
               type="button"
               onClick={() => adjustZoomedListingImageScale(-0.25)}
@@ -9177,7 +9250,15 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
               Close
             </button>
           </div>
-          <div className="listing-image-zoom-stage" onClick={(e) => e.stopPropagation()}>
+          <div key={zoomedListingImage.index} className="listing-image-zoom-stage" onClick={(e) => e.stopPropagation()}
+            onTouchStart={e => { zoomSwipeStart.current = e.touches.length === 1 ? { x: e.touches[0].clientX, y: e.touches[0].clientY } : null }}
+            onTouchEnd={e => {
+              const start = zoomSwipeStart.current; zoomSwipeStart.current = null
+              if (!start || !e.changedTouches[0] || zoomedListingImageScale > .5) return
+              const dx = e.changedTouches[0].clientX - start.x
+              const dy = e.changedTouches[0].clientY - start.y
+              if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) moveZoomedListingImage(dx < 0 ? 1 : -1)
+            }}>
             <img
               src={zoomedListingImage.src}
               alt={zoomedListingImage.alt || 'Magnified listing image'}
@@ -9185,6 +9266,10 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
               onClick={() => adjustZoomedListingImageScale(0.25)}
             />
           </div>
+          {zoomedListingImage.images.length > 1 && <div className="listing-zoom-thumbnails" onClick={e => e.stopPropagation()} aria-label="Photo carousel thumbnails">
+            {zoomedListingImage.images.map((src, index) => <button key={`${src}-${index}`} type="button" aria-label={`Show photo ${index + 1}`} aria-current={index === zoomedListingImage.index ? 'true' : undefined}
+              onClick={() => { setZoomedListingImage(current => ({ ...current, index, src })); setZoomedListingImageScale(.5) }}><img src={src} alt="" /></button>)}
+          </div>}
         </div>
       )}
 
@@ -9421,7 +9506,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                 {createImageRoleError && (
                   <div className="listing-photo-missing warning">
                     <span>{createImageRoleError}</span>
-                    <button className="ghost small" type="button" onClick={() => setCreateImageRoleRetry((value) => value + 1)}>Retry check</button>
+                    {renderManualPhotoCategory()}
                   </div>
                 )}
               </div>
@@ -9429,6 +9514,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
             </div>}
 
             {createListingMode === 'chat' && <section className="listing-assistant is-open listing-chat-create">
+              {createImageRoleError && <div role="status"><p>{createImageRoleError}</p>{renderManualPhotoCategory()}</div>}
                 <div className="listing-chat-header">
                   <span className="listing-chat-avatar" aria-hidden="true"><LogoJ small /></span>
                   <div><strong>Jouft Listing Assistant</strong><small>Ready to create your listing</small></div>
@@ -9552,6 +9638,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                 type="button"
                 disabled={createImageRoleBusy || createImageSlots.filter(Boolean).length === 0}
                 onClick={() => {
+                  if (!createImageRoleCheck && !category) { setCreateImageRoleError('Select a category before continuing. Full item and pricing analysis will still run.'); return }
                   const missing = createImageRoleCheck?.missing_required || []
                   if (missing.length > 0) {
                     setAppAlert({
@@ -9904,12 +9991,7 @@ function ListingCard({ item, own = false, onEditDraft = null, onReviewListing = 
         {cardGallery.length > 1 ? (
           <div className="listing-image-grid" role="img" aria-label={`${item.title || 'Listing'} images`}>
             {cardGallery.map((src, idx) => (
-              <ListingImage
-                key={`${item.id}-gallery-${idx}`}
-                src={src}
-                alt={`${item.title || 'Listing'} image ${idx + 1}`}
-                onFailed={markImageFailed}
-              />
+              <ListingImage key={`${item.id}-gallery-${idx}`} src={src} alt={`${item.title || 'Listing'} image ${idx + 1}`} onFailed={markImageFailed} />
             ))}
           </div>
         ) : imageSrc ? (

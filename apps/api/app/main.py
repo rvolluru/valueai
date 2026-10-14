@@ -320,6 +320,37 @@ def _profile_size_preferences(profile: dict | None) -> dict[str, set[str]]:
     return {"clothes": clothes, "shoes": shoes}
 
 
+def _listing_matches_viewer_preferences(listing: dict, profile: dict | None) -> bool:
+    profile = profile or {}
+    category = str(listing.get("category") or "").casefold()
+    text = str(listing.get("title") or "").casefold()
+    subtype = None
+    size_field = None
+    if category == "clothes":
+        for pattern, name, field in (
+            (r"\b(dress|dresses|gown|gowns)\b", "dresses", "dresses_size"),
+            (r"\b(skirt|skirts)\b", "skirts", "bottoms_size"),
+            (r"\b(jacket|jackets|blazer|blazers|coat|coats|bomber)\b", "jackets", "tops_size"),
+            (r"\b(pants|trousers|jeans|shorts)\b", "bottoms", "bottoms_size"),
+            (r"\b(top|tops|shirt|shirts|blouse|sweater|t-shirt)\b", "tops", "tops_size"),
+        ):
+            if re.search(pattern, text):
+                subtype, size_field = name, field
+                break
+    preferred = {str(value).strip().casefold() for value in profile.get("category_preferences") or []}
+    aliases = {"handbag": {"handbag", "handbags", "bags"}, "shoes": {"shoes", "footwear"}, "accessories": {"accessories"}}
+    if preferred:
+        if category == "clothes":
+            if "clothes" not in preferred and "clothing" not in preferred and subtype not in preferred:
+                return False
+        elif not (aliases.get(category, {category}) & preferred):
+            return False
+    size_prefs = _profile_size_preferences(profile)
+    if size_field:
+        size_prefs["clothes"] = _split_size_tokens(profile.get(size_field))
+    return _listing_matches_viewer_size_preferences(listing, size_prefs)
+
+
 def _listing_matches_viewer_size_preferences(
     listing: dict,
     viewer_size_prefs: dict[str, set[str]],
@@ -2989,14 +3020,24 @@ def put_client_state(
 @app.get("/v1/me/notifications")
 def list_notifications(
     limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    include_read: bool = False,
     principal: AuthPrincipal = Depends(get_request_principal),
     db: Database = Depends(get_db),
 ):
-    items = db.list_user_notifications(principal.subject, limit=limit)
+    items = db.list_user_notifications(principal.subject, limit=limit, offset=offset, include_read=include_read)
     return {
         "count": len(items),
+        "has_more": len(items) == limit,
         "items": [UserNotificationResponse(**item).model_dump() for item in items],
     }
+
+
+@app.patch("/v1/me/notifications/{notification_id}/read")
+def mark_notification_read(notification_id: str, principal: AuthPrincipal = Depends(get_request_principal), db: Database = Depends(get_db)):
+    if not db.mark_user_notification_read(principal.subject, notification_id):
+        raise HTTPException(status_code=404, detail="Notification not found")
+    return {"read": True}
 
 
 @app.delete("/v1/me/notifications")
@@ -3004,8 +3045,11 @@ def clear_notifications(
     principal: AuthPrincipal = Depends(get_request_principal),
     db: Database = Depends(get_db),
 ):
-    deleted = db.delete_user_notifications(principal.subject)
-    return {"deleted": deleted}
+    # Legacy clients use DELETE as delivery acknowledgement. Retain history.
+    unread = db.fetchall(f"SELECT notification_id FROM user_notifications WHERE owner_subject = {db.param} AND read_at IS NULL", (principal.subject,))
+    for row in unread:
+        db.mark_user_notification_read(principal.subject, str(row[0]))
+    return {"deleted": len(unread)}
 
 
 @app.delete("/v1/me/notifications/{notification_id}")
@@ -3014,7 +3058,8 @@ def delete_notification(
     principal: AuthPrincipal = Depends(get_request_principal),
     db: Database = Depends(get_db),
 ):
-    db.delete_user_notification(principal.subject, notification_id)
+    # Preserve notifications acknowledged by older mobile/web clients.
+    db.mark_user_notification_read(principal.subject, notification_id)
     return {"deleted": True}
 
 
@@ -5679,7 +5724,7 @@ def list_recent_listings(
     records = [_normalize_listing_media(record) for record in records]
 
     if include_matches and mine:
-        viewer_size_prefs = _profile_size_preferences(db.get_user_profile_quiz(principal.subject))
+        viewer_profile = db.get_user_profile_quiz(principal.subject)
         sent_offer_pairs = _sent_offer_match_pairs(db, principal.subject)
         marketplace = db.list_recent_listings(
             limit=5000,
@@ -5703,7 +5748,7 @@ def list_recent_listings(
                         continue
                     if (target_id, candidate_id) in sent_offer_pairs:
                         continue
-                    if not _listing_matches_viewer_size_preferences(target, viewer_size_prefs):
+                    if not _listing_matches_viewer_preferences(target, viewer_profile):
                         continue
                     target_value = float(target.get("estimated_value") or 0)
                     if target_value <= 0:
@@ -5714,7 +5759,7 @@ def list_recent_listings(
             candidate["match_count"] = match_count
 
     if include_matches and not mine:
-        viewer_size_prefs = _profile_size_preferences(db.get_user_profile_quiz(principal.subject))
+        viewer_profile = db.get_user_profile_quiz(principal.subject)
         sent_offer_pairs = _sent_offer_match_pairs(db, principal.subject)
         my_active = [
             _normalize_listing_media(x)
@@ -5722,7 +5767,7 @@ def list_recent_listings(
             if str(x.get("status", "")).lower() == "active"
         ]
         for record in records:
-            if not _listing_matches_viewer_size_preferences(record, viewer_size_prefs):
+            if not _listing_matches_viewer_preferences(record, viewer_profile):
                 record["matches"] = []
                 record["match_count"] = 0
                 continue
@@ -5792,7 +5837,7 @@ def list_closet_listing_marketplace_matches(
 
     safe_limit = max(1, min(limit, 100))
     safe_offset = max(0, offset)
-    viewer_size_prefs = _profile_size_preferences(db.get_user_profile_quiz(principal.subject))
+    viewer_profile = db.get_user_profile_quiz(principal.subject)
     sent_offer_pairs = _sent_offer_match_pairs(db, principal.subject)
     candidate_value = float(candidate.get("estimated_value") or 0)
     matches: list[dict] = []
@@ -5811,7 +5856,7 @@ def list_closet_listing_marketplace_matches(
                 continue
             if (target_id, listing_id) in sent_offer_pairs:
                 continue
-            if not _listing_matches_viewer_size_preferences(target, viewer_size_prefs):
+            if not _listing_matches_viewer_preferences(target, viewer_profile):
                 continue
             target_value = float(target.get("estimated_value") or 0)
             if target_value <= 0:
@@ -5896,8 +5941,8 @@ def list_offer_candidates(
     target_value = float(target.get("estimated_value") or 0)
     if target_value <= 0:
         return {"count": 0, "items": []}
-    viewer_size_prefs = _profile_size_preferences(db.get_user_profile_quiz(principal.subject))
-    if not _listing_matches_viewer_size_preferences(target, viewer_size_prefs):
+    viewer_profile = db.get_user_profile_quiz(principal.subject)
+    if not _listing_matches_viewer_preferences(target, viewer_profile):
         return {"count": 0, "items": []}
 
     tolerance, _ = _trade_match_tolerance(target_value)
@@ -9616,7 +9661,7 @@ async def classify_image_roles(
     endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
     started = time.perf_counter()
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
+        async with httpx.AsyncClient(timeout=30) as client:
             response = await client.post(
                 endpoint,
                 params={"key": settings.gemini_api_key},
@@ -9634,10 +9679,13 @@ async def classify_image_roles(
         response_text = raw_response["candidates"][0]["content"]["parts"][0]["text"]
         parsed = json.loads(response_text)
     except (httpx.TimeoutException, asyncio.TimeoutError) as exc:
-        raise HTTPException(status_code=504, detail="Photo checking timed out. Retry or continue with your selected photos.") from exc
+        log_json("image_role_classification_timeout", actor=principal.subject, image_count=readable_count,
+                 duration_ms=round((time.perf_counter() - started) * 1000), timeout_seconds=30,
+                 scope="initial_photo_coverage_only")
+        raise HTTPException(status_code=504, detail="Photo check timed out. Your photos are safe. Select a category to continue; full item and pricing analysis will still run.") from exc
     except Exception as exc:
         log_json("image_role_classification_error", error=str(exc), image_count=readable_count)
-        raise HTTPException(status_code=503, detail="Photo checking failed. Retry or continue with your selected photos.") from exc
+        raise HTTPException(status_code=503, detail="Photo checking could not finish. Your photos are safe. Select a category to continue; full item and pricing analysis will still run.") from exc
 
     detected_category = normalize_category(parsed.get("category"))
     if detected_category not in IMAGE_ROLE_REQUIREMENTS:

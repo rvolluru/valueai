@@ -46,13 +46,14 @@ export async function requestJson({
   headers = {},
   fetchImpl = fetch,
   refreshBearerToken = null,
+  signal,
 }) {
   let requestHeaders = {
     ...buildAuthHeaders(auth),
     ...headers,
   };
   const url = resolveApiUrl(apiBaseUrl, path);
-  let resp = await fetchImpl(url, { method, headers: requestHeaders, body });
+  let resp = await fetchImpl(url, { method, headers: requestHeaders, body, signal });
   let payload = await parseJsonOrNull(resp);
   let refreshAttempted = false;
 
@@ -65,7 +66,7 @@ export async function requestJson({
           ...requestHeaders,
           Authorization: `Bearer ${refreshedToken.trim()}`,
         };
-        resp = await fetchImpl(url, { method, headers: requestHeaders, body });
+        resp = await fetchImpl(url, { method, headers: requestHeaders, body, signal });
         payload = await parseJsonOrNull(resp);
       }
     } catch {
@@ -99,6 +100,7 @@ export async function requestFormData({
   headers = {},
   fetchImpl = fetch,
   refreshBearerToken = null,
+  signal,
 }) {
   return requestJson({
     apiBaseUrl,
@@ -109,6 +111,7 @@ export async function requestFormData({
     headers,
     fetchImpl,
     refreshBearerToken,
+    signal,
   });
 }
 
@@ -215,7 +218,7 @@ export function createApiClient(options) {
     });
   }
 
-  async function classifyImageRoles({ images = [], category }, auth = {}) {
+  async function classifyImageRoles({ images = [], category, signal }, auth = {}) {
     const resolvedAuth = await resolveAuth(auth);
     const fd = new FormData();
     images.forEach((img, idx) => {
@@ -233,6 +236,7 @@ export function createApiClient(options) {
     return requestFormData({
       apiBaseUrl,
       path: "/v1/images/classify-roles",
+      signal,
       auth: resolvedAuth,
       formData: fd,
       ...requestOptions,
@@ -417,7 +421,8 @@ export function createApiClient(options) {
     saveProfileQuiz: (payload, auth = {}) => put("/v1/me/profile-quiz", payload, auth),
     clientState: (auth = {}) => get("/v1/me/client-state", auth),
     saveClientState: (payload, auth = {}) => put("/v1/me/client-state", payload, auth),
-    listNotifications: (limit = 50, auth = {}) => get(`/v1/me/notifications?limit=${limit}`, auth),
+    listNotifications: (limit = 50, auth = {}, offset = 0) => get(`/v1/me/notifications?limit=${limit}&offset=${offset}&include_read=true`, auth),
+    markNotificationRead: (id, auth = {}) => patch(`/v1/me/notifications/${encodeURIComponent(id)}/read`, {}, auth),
     clearNotifications: (auth = {}) => del("/v1/me/notifications", auth),
     deleteNotification: (notificationId, auth = {}) => del(`/v1/me/notifications/${encodeURIComponent(notificationId)}`, auth),
     likeListing: (listingId, auth = {}) => post(`/v1/listings/${encodeURIComponent(listingId)}/like`, {}, auth),

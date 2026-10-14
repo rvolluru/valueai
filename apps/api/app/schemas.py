@@ -291,6 +291,7 @@ class UserNotificationResponse(BaseModel):
     entity_id: str | None = None
     action_tab: str | None = None
     created_at: str
+    read_at: str | None = None
 
 
 class AdminSupportNoteCreateRequest(BaseModel):
@@ -327,6 +328,7 @@ class ExperienceEventCreateRequest(BaseModel):
         "listing_started",
         "listing_photos_added",
         "listing_photo_check_failed",
+        "photo_check_timeout",
         "listing_analysis_started",
         "listing_analysis_failed",
         "listing_created",

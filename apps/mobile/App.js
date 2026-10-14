@@ -22,6 +22,9 @@ import { useCameraPermissions } from 'expo-camera';
 import ListingCamera from './src/components/ListingCamera';
 import { appendListingPhotos, remainingPhotoSlots } from './src/lib/listingPhotos.mjs';
 import * as ImageManipulator from 'expo-image-manipulator';
+import ListingPhotoEditor from './src/components/ListingPhotoEditor';
+import NotificationsScreen from './src/components/NotificationsScreen';
+import { withPhotoCheckTimeout } from '../../packages/app-client/src/photoCheck';
 import * as Location from 'expo-location';
 import * as WebBrowser from 'expo-web-browser';
 import Constants from 'expo-constants';
@@ -1246,6 +1249,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
   const [profileSection, setProfileSection] = useState('account');
   const [images, setImages] = useState([]);
   const [editImageUrls, setEditImageUrls] = useState([]);
+  const [photoEditTarget, setPhotoEditTarget] = useState(null);
   const [category, setCategory] = useState('');
   const [itemTitle, setItemTitle] = useState('');
   const [itemDescription, setItemDescription] = useState('');
@@ -1273,7 +1277,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
   const [appAssistantError, setAppAssistantError] = useState('');
   const listingChatPhotoGateOpen = images.length > 0
     && !createImageRoleBusy
-    && Boolean(createImageRoleCheck)
+    && (Boolean(createImageRoleCheck) || Boolean(createImageRoleError && category))
     && (createImageRoleCheck?.missing_required || []).length === 0;
 
   const [loading, setLoading] = useState(false);
@@ -3369,10 +3373,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     setCreateImageRoleError('');
     const timer = setTimeout(async () => {
       try {
-        const result = await apiClient.classifyImageRoles(
-          { images },
-          await authContext(),
-        );
+        const result = await withPhotoCheckTimeout(async signal => apiClient.classifyImageRoles({ images, signal }, await authContext()));
         if (createImageRoleRequestRef.current === requestId) {
           setCreateImageRoleCheck(result);
           if (result?.category) {
@@ -3383,7 +3384,9 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
       } catch (e) {
         if (createImageRoleRequestRef.current === requestId) {
           setCreateImageRoleCheck(null);
-          setCreateImageRoleError(e.message || 'Could not check photo coverage. You may retry by adding or removing a photo.');
+          setCreateImageRoleError(e.message || 'Photo checking could not finish. Your photos are safe. Select a category to continue.');
+          setCategory('');
+          if (e.code === 'photo_check_timeout' || /timed out/i.test(e.message || '')) trackExperience('photo_check_timeout', { screen: 'create_listing', properties: { timeout_seconds: 30, image_count: images.length, scope: 'initial_photo_coverage_only' } });
         }
       } finally {
         if (createImageRoleRequestRef.current === requestId) setCreateImageRoleBusy(false);
@@ -3576,6 +3579,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
           const notificationId = String(notification?.notification_id || notification?.id || '');
           if (!notificationId || seenServerNotificationIdsRef.current.has(notificationId)) continue;
           seenServerNotificationIdsRef.current.add(notificationId);
+          if (notification.read_at) continue;
           const type = String(notification?.type || '');
           const category = type === 'listing-liked' ? 'likes' : type.includes('shipping') ? 'shipping' : 'trades';
           await sendCategoryAlert(
@@ -3583,7 +3587,6 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
             notification?.title || 'Jouft notification',
             notification?.body || '',
           );
-          apiClient.deleteNotification(notificationId, await authContext()).catch(() => {});
         }
       } catch (e) {
         // Background notification polling should not interrupt the current screen.
@@ -3700,6 +3703,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
   }
 
   function resetListingForm() {
+    setPhotoEditTarget(null);
     setWizardStep(1);
     setEditingListingId('');
     setEditingListing(null);
@@ -3741,6 +3745,21 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
 
   function orderedCreateImagesForSave() {
     return moveArrayItemToFront(images.slice(0, 6), selectedHeroImageIndex);
+  }
+
+  async function applyListingPhotoEdit(asset) {
+    const target = photoEditTarget;
+    if (target.existing) {
+      const uploaded = await uploadImagesWithDirectFallback({ apiClient, images: [asset], auth: await authContext() });
+      const url = uploadedImageUrlsFromPayload(uploaded)[0];
+      if (!url) throw new Error('Edited image upload failed');
+      setEditImageUrls(previous => previous.map((value, index) => index === target.index ? url : value));
+    } else {
+      setImages(previous => previous.map((value, index) => index === target.index ? asset : value));
+    }
+    setAnalysisResult(null);
+    setWizardStep(step => Math.min(step, 2));
+    setPhotoEditTarget(null);
   }
 
   function orderedEditExistingImagesForSave() {
@@ -3867,6 +3886,12 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     });
   }
 
+  function renderManualPhotoCategory() {
+    return <View><Text style={styles.helperText}>Select item category</Text><View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+      {[['clothes', 'Clothes'], ['shoes', 'Shoes'], ['handbag', 'Bags'], ['accessories', 'Accessories']].map(([value, label]) => <TouchableOpacity key={value} accessibilityRole="button" accessibilityState={{ selected: category === value }} style={category === value ? styles.primaryBtnCompact : styles.secondaryBtnCompact} onPress={() => setCategory(value)}><Text style={category === value ? styles.primaryBtnText : styles.secondaryBtnText}>{label}</Text></TouchableOpacity>)}
+    </View>{category && (createListingMode === 'chat' || appAssistantListingFlow) && listingAssistantMessages.length === 0 ? <View><Text style={styles.helperText}>How would you describe the item’s condition?</Text>{[['NewWithTags', 'New with tags'], ['New', 'New'], ['LikeNew', 'Like new']].map(([value, label]) => <TouchableOpacity key={value} style={styles.secondaryBtnCompact} onPress={() => chooseListingAssistantCondition(value)}><Text style={styles.secondaryBtnText}>{label}</Text></TouchableOpacity>)}</View> : null}</View>;
+  }
+
   function continueCreatePhotoStep() {
     if (createImageRoleBusy) {
       setAppAlert({
@@ -3877,16 +3902,8 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
       return;
     }
     if (!createImageRoleCheck) {
-      setAppAlert({
-        title: 'Photo Check Unavailable',
-        message: 'Gemini could not check these photos. You can retry or continue and select the category manually.',
-        primaryLabel: 'Continue Manually',
-        onPrimary: () => {
-          setAppAlert(null);
-          setWizardStep(2);
-        },
-        secondaryLabel: 'Add Photos',
-      });
+      if (!category) { setCreateImageRoleError('Select a category before continuing. Full item and pricing analysis will still run.'); return; }
+      setWizardStep(2);
       return;
     }
     const missing = createImageRoleCheck.missing_required || [];
@@ -4632,6 +4649,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                   {editImageUrls.map((imageUrl, index) => (
                     <View key={`${imageUrl}-${index}`} style={[styles.editImageTile, selectedEditHeroImageIndex === index && styles.editImageTileHero]}>
                       <Image source={{ uri: imageUrl }} style={styles.editImageThumb} resizeMode="cover" />
+                      <TouchableOpacity style={styles.editImageHeroButton} onPress={() => setPhotoEditTarget({ uri: imageUrl, index, existing: true })}><Text style={styles.editImageHeroButtonText}>Zoom / Crop / Rotate</Text></TouchableOpacity>
                       {selectedEditHeroImageIndex === index ? <Text style={styles.editImageHeroBadge}>Hero</Text> : null}
                       <TouchableOpacity style={styles.editImageHeroButton} onPress={() => setSelectedEditHeroImageIndex(index)}>
                         <Text style={styles.editImageHeroButtonText}>{selectedEditHeroImageIndex === index ? 'Hero Image' : 'Set Hero'}</Text>
@@ -4644,6 +4662,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                   {images.map((asset, index) => (
                     <View key={`${asset?.uri || 'pending'}-${index}`} style={[styles.editImageTile, selectedEditHeroImageIndex === editImageUrls.length + index && styles.editImageTileHero]}>
                       <Image source={{ uri: asset.uri }} style={styles.editImageThumb} resizeMode="cover" />
+                      <TouchableOpacity style={styles.editImageHeroButton} onPress={() => setPhotoEditTarget({ uri: asset.uri, index, existing: false })}><Text style={styles.editImageHeroButtonText}>Zoom / Crop / Rotate</Text></TouchableOpacity>
                       <Text style={styles.editImageBadge}>New</Text>
                       {selectedEditHeroImageIndex === editImageUrls.length + index ? <Text style={styles.editImageHeroBadge}>Hero</Text> : null}
                       <TouchableOpacity style={styles.editImageHeroButton} onPress={() => setSelectedEditHeroImageIndex(editImageUrls.length + index)}>
@@ -4751,9 +4770,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                     {createImageRoleError ? (
                       <View style={styles.createGuidanceBlock}>
                         <Text style={styles.helperText}>{createImageRoleError}</Text>
-                        <TouchableOpacity style={styles.secondaryBtnCompact} onPress={() => setCreateImageRoleRetry((value) => value + 1)}>
-                          <Text style={styles.secondaryBtnText}>Retry Check</Text>
-                        </TouchableOpacity>
+                        {renderManualPhotoCategory()}
                       </View>
                     ) : null}
                   </View>
@@ -4871,6 +4888,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                     </ScrollView>
                   ) : null}
                   {createImageRoleBusy ? <View style={styles.listingChatAssistantTurn}><View style={styles.listingChatAvatar}><LogoJ small /></View><View style={styles.listingChatAssistantBubble}><Text style={styles.helperText}>I’m reviewing the photos and identifying each view...</Text></View></View> : null}
+                  {createImageRoleError ? <View style={styles.createGuidanceBlock}><Text style={styles.helperText}>{createImageRoleError}</Text>{renderManualPhotoCategory()}</View> : null}
                   {createImageRoleCheck?.missing_required?.length ? (
                     <View style={styles.listingChatAssistantTurn} accessibilityRole="summary">
                       <View style={styles.listingChatAvatar}><LogoJ small /></View>
@@ -5229,9 +5247,16 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
           </View>
         )}
 
+        {activeTab === 'notifications' && <NotificationsScreen
+          load={async offset => apiClient.listNotifications(50, await authContext(), offset)}
+          markRead={async id => apiClient.markNotificationRead(id, await authContext())}
+          onBack={() => handleTabPress('profile')}
+          onOpen={item => handleTabPress(item.action_tab === 'market' ? 'marketplace' : ['marketplace', 'closet', 'inbox', 'profile'].includes(item.action_tab) ? item.action_tab : 'inbox')}
+        />}
         {activeTab === 'profile' && (
           <View style={styles.section}>
             <SectionHeader title="Profile" subtitle="SETTINGS" />
+            <TouchableOpacity style={styles.secondaryBtn} onPress={() => handleTabPress('notifications')}><Text style={styles.secondaryBtnText}>Notifications — View all activity</Text></TouchableOpacity>
 
             {clerkEnabled ? (
               <>
@@ -6337,6 +6362,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
           </View>
         </View>
       ) : null}
+      {photoEditTarget && <ListingPhotoEditor uri={photoEditTarget.uri} onCancel={() => setPhotoEditTarget(null)} onApply={applyListingPhotoEdit} />}
       {listingCameraOpen && <ListingCamera
         maxPhotos={remainingPhotoSlots(images.length + (editingListingId ? editImageUrls.length : 0))}
         onCancel={() => setListingCameraOpen(false)}
@@ -6465,6 +6491,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
               </View>
             </View>)}
             {appAssistantListingFlow ? <View style={styles.appAssistantListingFlow}>
+              {createImageRoleError ? <View style={styles.createGuidanceBlock}><Text style={styles.helperText}>{createImageRoleError}</Text>{renderManualPhotoCategory()}</View> : null}
               <View style={styles.appAssistantTurn}><View style={styles.listingChatAvatar}><LogoJ small /></View><View style={styles.appAssistantBubble}><Text style={styles.listingAssistantMessageText}>{images.length ? `${images.length}/6 photos added.` : 'Add clear photos of the item to begin.'}</Text><TouchableOpacity style={styles.secondaryBtnCompact} onPress={pickImages} disabled={images.length >= 6 || createImageRoleBusy}><Text style={styles.secondaryBtnText}>{images.length ? 'Add More Photos' : 'Choose Photos'}</Text></TouchableOpacity></View></View>
               {images.length > 0 ? <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.listingChatPhotoRow}>{images.map((asset, index) => <Image key={`${asset?.uri}-${index}`} source={{ uri: asset.uri }} style={styles.listingChatPhoto} />)}</ScrollView> : null}
               {createImageRoleCheck?.missing_required?.length > 0 ? <View style={styles.appAssistantTurn}><View style={styles.listingChatAvatar}><LogoJ small /></View><View style={styles.appAssistantBubble}><Text style={styles.listingAssistantMessageText}>Please add {createImageRoleCheck.missing_required.map((role) => IMAGE_ROLE_LABELS[role] || role).join(', ')} before we continue.</Text></View></View> : null}

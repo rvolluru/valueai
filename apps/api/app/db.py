@@ -648,6 +648,7 @@ class Database:
         # failure cannot roll back newly created tables.
         self.commit()
         for alter in (
+            "ALTER TABLE user_notifications ADD COLUMN read_at TEXT",
             "ALTER TABLE images ADD COLUMN content_hash TEXT",
             "ALTER TABLE listings ADD COLUMN images_json TEXT NOT NULL DEFAULT '[]'",
             "ALTER TABLE listings ADD COLUMN status TEXT NOT NULL DEFAULT 'Review'",
@@ -3806,11 +3807,11 @@ class Database:
             "created_at": now,
         }
 
-    def list_user_notifications(self, owner_subject: str, limit: int = 50) -> list[dict]:
+    def list_user_notifications(self, owner_subject: str, limit: int = 50, offset: int = 0, include_read: bool = True) -> list[dict]:
         safe_limit = max(1, min(int(limit or 50), 100))
         query = (
-            f"SELECT notification_id, owner_subject, actor_subject, type, title, body, entity_id, action_tab, created_at "
-            f"FROM user_notifications WHERE owner_subject = {self.param} ORDER BY created_at DESC LIMIT {safe_limit}"
+            f"SELECT notification_id, owner_subject, actor_subject, type, title, body, entity_id, action_tab, created_at, read_at "
+            f"FROM user_notifications WHERE owner_subject = {self.param} {'AND read_at IS NULL' if not include_read else ''} ORDER BY created_at DESC, notification_id DESC LIMIT {safe_limit} OFFSET {max(0, int(offset))}"
         )
         if self._sqlite_conn is not None:
             with self._sqlite_lock:
@@ -3820,7 +3821,7 @@ class Database:
             cur.execute(query, (owner_subject,))
             rows = cur.fetchall()
             cur.close()
-        keys = ["notification_id", "owner_subject", "actor_subject", "type", "title", "body", "entity_id", "action_tab", "created_at"]
+        keys = ["notification_id", "owner_subject", "actor_subject", "type", "title", "body", "entity_id", "action_tab", "created_at", "read_at"]
         out: list[dict] = []
         for row in rows:
             if isinstance(row, sqlite3.Row):
@@ -3828,6 +3829,14 @@ class Database:
             else:
                 out.append({key: row[idx] for idx, key in enumerate(keys)})
         return out
+
+    def mark_user_notification_read(self, owner_subject: str, notification_id: str) -> bool:
+        row = self.fetchone(f"SELECT notification_id FROM user_notifications WHERE owner_subject = {self.param} AND notification_id = {self.param}", (owner_subject, notification_id))
+        if not row:
+            return False
+        self.execute(f"UPDATE user_notifications SET read_at = COALESCE(read_at, {self.param}) WHERE owner_subject = {self.param} AND notification_id = {self.param}", (utc_now_iso(), owner_subject, notification_id))
+        self.commit()
+        return True
 
     def delete_user_notification(self, owner_subject: str, notification_id: str) -> bool:
         query = f"DELETE FROM user_notifications WHERE owner_subject = {self.param} AND notification_id = {self.param}"
