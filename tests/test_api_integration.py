@@ -1259,7 +1259,9 @@ def test_impersonation_token_rejects_signature_tampering():
         user_subject="target-user",
         settings=get_settings(),
     )
-    tampered = f"{token[:-1]}{'a' if token[-1] != 'a' else 'b'}"
+    # Mutate meaningful signature bits, not unused base64 padding bits.
+    prefix, signature = token.rsplit('.', 1)
+    tampered = f"{prefix}.{'a' if signature[0] != 'a' else 'b'}{signature[1:]}"
 
     try:
         get_request_principal(authorization=f"Bearer {tampered}", settings=get_settings())

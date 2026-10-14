@@ -1,4 +1,5 @@
 from app.db import Database
+import pytest
 
 
 class _FakePG:
@@ -33,6 +34,13 @@ class _TrackingDatabase(Database):
         self.commit_calls += 1
         self._events.append(("commit", ""))
 
+    def fetchall(self, sql: str, params: tuple = ()):
+        self._events.append(("verify", sql))
+        return []
+
+    def fetchone(self, sql: str, params: tuple = ()):
+        return None
+
 
 def test_initialize_commits_create_tables_before_optional_alters() -> None:
     db = _TrackingDatabase()
@@ -44,3 +52,31 @@ def test_initialize_commits_create_tables_before_optional_alters() -> None:
     # Failed ALTERs should be tolerated and rolled back without aborting initialize.
     assert db._pg.rollback_calls >= 1
     assert db.commit_calls >= 2
+
+
+def test_required_notification_migration_failure_is_not_swallowed():
+    db = _TrackingDatabase()
+    execute = db.execute
+    def fail(sql, params=()):
+        if sql.startswith("ALTER TABLE user_notifications"):
+            raise RuntimeError("migration lock timeout")
+        return execute(sql, params)
+    db.execute = fail
+    with pytest.raises(RuntimeError, match="migration lock timeout"):
+        db.initialize()
+
+
+@pytest.mark.parametrize('method,args', [('fetchone', ('SELECT 1',)), ('fetchall', ('SELECT 1',)), ('_fetch_dicts', ('SELECT 1',)), ('list_user_notifications', ('owner',))])
+def test_failed_pg_reads_rollback_transaction(method, args):
+    db = _TrackingDatabase()
+    class Cursor:
+        closed = False
+        def execute(self, *args): raise RuntimeError('query failed')
+        def close(self): self.closed = True
+    cursor = Cursor()
+    db._pg_cursor = lambda: cursor
+    # Use the actual implementation rather than the initializer test double.
+    with pytest.raises(RuntimeError, match='query failed'):
+        getattr(Database, method)(db, *args)
+    assert db._pg.rollback_calls == 1
+    assert cursor.closed

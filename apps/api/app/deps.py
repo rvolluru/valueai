@@ -22,6 +22,10 @@ def get_db() -> Database:
         db.initialize()
     except Exception as exc:
         logger.warning("Database initialization skipped after failure: %s", exc)
+        if db._pg is not None:
+            db._pg.rollback()
+        # Do not cache a database that cannot satisfy required notification queries.
+        db.ensure_notification_history_schema()
     return db
 
 

@@ -195,6 +195,21 @@ class Database:
             self._connect_pg()
             return self._pg.cursor()
 
+    def ensure_notification_history_schema(self) -> None:
+        # This is required by live queries, not a best-effort optional migration.
+        if self._sqlite_conn is not None:
+            columns = self.fetchall("PRAGMA table_info(user_notifications)")
+            if "read_at" not in {row[1] for row in columns}:
+                self.execute("ALTER TABLE user_notifications ADD COLUMN read_at TEXT")
+        else:
+            present = self.fetchone("SELECT column_name FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'user_notifications' AND column_name = 'read_at'")
+            self.commit()
+            if not present:
+                self.execute("ALTER TABLE user_notifications ADD COLUMN IF NOT EXISTS read_at TEXT")
+        self.commit()
+        self.fetchall("SELECT read_at FROM user_notifications LIMIT 0")
+        self.commit()
+
     def initialize(self) -> None:
         statements = [
             """
@@ -445,7 +460,8 @@ class Database:
               body TEXT NOT NULL,
               entity_id TEXT,
               action_tab TEXT,
-              created_at TEXT NOT NULL
+              created_at TEXT NOT NULL,
+              read_at TEXT
             )
             """,
             """
@@ -647,8 +663,8 @@ class Database:
         # Commit base CREATE TABLE statements first so a later optional ALTER
         # failure cannot roll back newly created tables.
         self.commit()
+        self.ensure_notification_history_schema()
         for alter in (
-            "ALTER TABLE user_notifications ADD COLUMN read_at TEXT",
             "ALTER TABLE images ADD COLUMN content_hash TEXT",
             "ALTER TABLE listings ADD COLUMN images_json TEXT NOT NULL DEFAULT '[]'",
             "ALTER TABLE listings ADD COLUMN status TEXT NOT NULL DEFAULT 'Review'",
@@ -1532,6 +1548,9 @@ class Database:
         cur = self._pg_cursor()
         try:
             return cur.execute(sql, params).fetchone()
+        except Exception:
+            self._pg.rollback()
+            raise
         finally:
             cur.close()
 
@@ -1542,6 +1561,9 @@ class Database:
         cur = self._pg_cursor()
         try:
             return cur.execute(sql, params).fetchall()
+        except Exception:
+            self._pg.rollback()
+            raise
         finally:
             cur.close()
 
@@ -1554,6 +1576,9 @@ class Database:
             cur.execute(sql, params)
             columns = [item.name for item in cur.description]
             return [dict(zip(columns, row)) for row in cur.fetchall()]
+        except Exception:
+            self._pg.rollback()
+            raise
         finally:
             cur.close()
 
@@ -3818,9 +3843,14 @@ class Database:
                 rows = self._sqlite_conn.execute(query, (owner_subject,)).fetchall()
         else:
             cur = self._pg_cursor()
-            cur.execute(query, (owner_subject,))
-            rows = cur.fetchall()
-            cur.close()
+            try:
+                cur.execute(query, (owner_subject,))
+                rows = cur.fetchall()
+            except Exception:
+                self._pg.rollback()
+                raise
+            finally:
+                cur.close()
         keys = ["notification_id", "owner_subject", "actor_subject", "type", "title", "body", "entity_id", "action_tab", "created_at", "read_at"]
         out: list[dict] = []
         for row in rows:

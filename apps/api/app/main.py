@@ -2341,7 +2341,17 @@ def enrich_analysis_with_firecrawl_agent(
 
 
 @app.get("/v1/health", response_model=HealthResponse)
-def health() -> HealthResponse:
+def health(db: Database = Depends(get_db)) -> HealthResponse:
+    try:
+        if db._pg is not None:
+            ready = db.fetchone("SELECT column_name FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'user_notifications' AND column_name = 'read_at'")
+            if not ready:
+                raise RuntimeError("notification_schema_not_ready")
+        else:
+            db.fetchall("SELECT read_at FROM user_notifications LIMIT 0")
+    except Exception as exc:
+        log_json("health_database_schema_failed", error_type=type(exc).__name__)
+        raise HTTPException(status_code=503, detail="Database unavailable or schema not ready") from exc
     return HealthResponse(status="ok")
 
 
