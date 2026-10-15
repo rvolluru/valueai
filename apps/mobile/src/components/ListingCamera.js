@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, AppState, Image, Modal, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { CameraView } from 'expo-camera';
 import { Ionicons } from '@expo/vector-icons';
 
@@ -61,12 +61,12 @@ export default function ListingCamera({ maxPhotos, onUsePhotos, onCancel }) {
   }
 
   const full = photos.length >= maxPhotos;
-  return <Modal visible animationType="slide" presentationStyle="fullScreen" onRequestClose={cancel}><SafeAreaView style={styles.screen} edges={['top', 'bottom', 'left', 'right']}>
+  return <Modal visible animationType="slide" presentationStyle="fullScreen" onRequestClose={cancel}><SafeAreaProvider><SafeAreaView style={styles.screen} edges={['top', 'bottom', 'left', 'right']}>
     <View style={styles.header}>
-      <TouchableOpacity onPress={cancel} disabled={busy} accessibilityRole="button" style={styles.headerButton}>
+      <TouchableOpacity onPress={cancel} disabled={busy} accessibilityRole="button" accessibilityLabel="Cancel taking photos" hitSlop={8} style={styles.headerButton}>
         <Text style={styles.actionText}>Cancel</Text>
       </TouchableOpacity>
-      <Text style={styles.title}>Take listing photos</Text>
+      <Text style={styles.title} numberOfLines={1}>Take listing photos</Text>
       <Text style={styles.count}>{photos.length}/{maxPhotos}</Text>
     </View>
     <View style={styles.preview}>
@@ -101,16 +101,16 @@ export default function ListingCamera({ maxPhotos, onUsePhotos, onCancel }) {
         </TouchableOpacity>
       </View>
     </View>
-  </SafeAreaView></Modal>;
+  </SafeAreaView></SafeAreaProvider></Modal>;
 }
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: '#fbf8f2' },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16 },
-  headerButton: { minHeight: 44, justifyContent: 'center', paddingRight: 12 },
-  title: { fontFamily: 'PlusJakartaSans_600SemiBold', fontSize: 15, color: '#18181b' },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 8, minHeight: 60 },
+  headerButton: { minHeight: 44, minWidth: 72, justifyContent: 'center', paddingHorizontal: 8 },
+  title: { flex: 1, textAlign: 'center', marginHorizontal: 8, fontFamily: 'PlusJakartaSans_600SemiBold', fontSize: 15, color: '#18181b' },
   actionText: { fontFamily: 'PlusJakartaSans_600SemiBold', fontSize: 12, textTransform: 'uppercase', letterSpacing: 1, color: '#4a161b' },
-  count: { fontFamily: 'PlusJakartaSans_600SemiBold', color: '#4a161b' },
+  count: { minWidth: 48, textAlign: 'right', fontFamily: 'PlusJakartaSans_600SemiBold', color: '#4a161b' },
   preview: { flex: 1, backgroundColor: '#18181b' },
   footer: { padding: 16, gap: 12 },
   guidance: { fontFamily: 'PlusJakartaSans_400Regular', fontSize: 12, color: '#4f5560' },

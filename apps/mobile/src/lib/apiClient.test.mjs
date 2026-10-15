@@ -2,6 +2,21 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createMobileApiClient } from './apiClient.js';
 
+test('marketplace and closet search carry encoded query through pagination', async () => {
+  const original = global.fetch;
+  const urls = [];
+  try {
+    global.fetch = async url => { urls.push(new URL(url)); return { ok: true, json: async () => ({ items: [] }) }; };
+    const client = createMobileApiClient({ apiBaseUrl: 'https://example.test' });
+    await client.listMarketplace(24, {}, { offset: 24, q: 'Prada & bags' });
+    await client.listMyListings(24, {}, { offset: 48, q: 'Prada & bags' });
+    for (const url of urls) assert.equal(url.searchParams.get('q'), 'Prada & bags');
+    assert.equal(urls[0].searchParams.get('offset'), '24');
+    assert.equal(urls[1].searchParams.get('offset'), '48');
+    assert.equal(urls[1].searchParams.get('mine'), 'true');
+  } finally { global.fetch = original; }
+});
+
 test('mobile loads eligible-item pages and submits the receiver selection', async () => {
   const original = global.fetch;
   try {

@@ -1,6 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { shareSocialListing, socialWebUrl } from './src/lib/socialSharing.mjs';
+import { MANNEQUIN_DISCLAIMER, hasMannequinPreview } from '../../packages/app-client/src/mannequinDisclosure';
 import {
   ActivityIndicator,
+  BackHandler,
   Alert,
   Image,
   Linking,
@@ -22,10 +25,9 @@ import { useCameraPermissions } from 'expo-camera';
 import ListingCamera from './src/components/ListingCamera';
 import { appendListingPhotos, remainingPhotoSlots } from './src/lib/listingPhotos.mjs';
 import * as ImageManipulator from 'expo-image-manipulator';
-import ListingPhotoEditor from './src/components/ListingPhotoEditor';
 import NotificationsScreen from './src/components/NotificationsScreen';
+import { nextGalleryIndex } from './src/lib/galleryPaging.mjs';
 import { withPhotoCheckTimeout } from '../../packages/app-client/src/photoCheck';
-import * as Location from 'expo-location';
 import * as WebBrowser from 'expo-web-browser';
 import Constants from 'expo-constants';
 import { useFonts } from 'expo-font';
@@ -905,6 +907,11 @@ function ListingCard({
   matchCount = null,
 }) {
   const rawImageUrl = item?.image || item?.images?.[0];
+  const moreButtonRef = useRef(null);
+  const pendingMenuDelete = useRef(false);
+  const [moreMenuAnchor, setMoreMenuAnchor] = useState(null);
+  const { width: menuScreenWidth, height: menuScreenHeight } = useWindowDimensions();
+  useEffect(() => { setMoreMenuAnchor(null); }, [menuScreenWidth, menuScreenHeight, item?.listing_id]);
   const [imageFailed, setImageFailed] = useState(false);
   const imageUrl = imageFailed ? null : normalizeImageUrl(rawImageUrl, apiBaseUrl);
   useEffect(() => {
@@ -954,12 +961,12 @@ function ListingCard({
   const brandLabel = item?.brand || 'Unknown';
   const conditionLabel = displayConditionLabel(item?.condition || 'unknown');
   const sizeLabel = item?.size || 'N/A';
-  const CardContainer = onOpenDetails ? TouchableOpacity : View;
+  const CardContainer = onOpenDetails && !closet ? TouchableOpacity : View;
   const runCardAction = (event, action) => {
     event?.stopPropagation?.();
     action?.();
   };
-  const cardContainerProps = onOpenDetails ? {
+  const cardContainerProps = onOpenDetails && !closet ? {
     onPress: () => onOpenDetails(item),
     disabled: closetCardDisabled,
     activeOpacity: 0.88,
@@ -971,6 +978,10 @@ function ListingCard({
       style={[styles.listingCard, closetCardDisabled && styles.listingCardDisabled]}
       {...cardContainerProps}
     >
+      <View style={styles.listingPhotoArea}>
+      <TouchableOpacity disabled={!onOpenDetails || closetCardDisabled} activeOpacity={0.88}
+        accessibilityRole="button" accessibilityLabel={`View details for ${item?.title || 'listing'}`}
+        onPress={event => runCardAction(event, () => onOpenDetails?.(item))}>
       {imageUrl ? (
         <Image
           source={{ uri: imageUrl }}
@@ -982,6 +993,23 @@ function ListingCard({
           <Text style={styles.emptyText}>Image unavailable</Text>
         </View>
       )}
+      </TouchableOpacity>
+      {closetCardDisabled ? (
+        <View pointerEvents="none" style={styles.pendingReviewOverlay}>
+          <Text style={styles.pendingReviewText}>Pending Review</Text>
+        </View>
+      ) : null}
+      {canReviewAndPublish ? (
+        <TouchableOpacity
+          style={styles.pendingReviewOverlay}
+          onPress={(event) => runCardAction(event, () => onReviewListing(item))}
+          accessibilityRole="button"
+          accessibilityLabel="Review and publish listing"
+        >
+          <Text style={styles.pendingReviewText}>Review and Publish</Text>
+        </TouchableOpacity>
+      ) : null}
+      </View>
       {closet && Number.isFinite(matchCount) && matchCount > 0 ? (
         <View style={styles.closetMatchCount} pointerEvents="none">
           <Text style={styles.closetMatchCountText}>{matchCount} {matchCount === 1 ? 'MATCH' : 'MATCHES'}</Text>
@@ -1071,14 +1099,13 @@ function ListingCard({
             </View>
             {onRemoveListing ? (
               <TouchableOpacity
+                ref={moreButtonRef}
                 style={[styles.secondaryBtnCompact, styles.shareIconButton, closetCardDisabled && styles.primaryBtnDisabled]}
-                onPress={(event) => runCardAction(event, () => Alert.alert('More options', undefined, [
-                  { text: 'Delete listing', style: 'destructive', onPress: () => onRemoveListing(item) },
-                  { text: 'Cancel', style: 'cancel' },
-                ]))}
+                onPress={(event) => runCardAction(event, () => moreButtonRef.current?.measureInWindow((x, y, width, height) => setMoreMenuAnchor({ x, y, width, height })))}
                 disabled={closetCardDisabled}
                 accessibilityRole="button"
                 accessibilityLabel="More listing options"
+                accessibilityState={{ expanded: Boolean(moreMenuAnchor) }}
               >
                 <FontAwesome name="ellipsis-h" size={18} color="#4b433a" />
               </TouchableOpacity>
@@ -1086,21 +1113,26 @@ function ListingCard({
           </View>
         ) : null}
       </View>
-      {closetCardDisabled ? (
-        <View pointerEvents="none" style={styles.pendingReviewOverlay}>
-          <Text style={styles.pendingReviewText}>Pending Review</Text>
+      <Modal transparent visible={Boolean(moreMenuAnchor)} animationType="fade" onRequestClose={() => setMoreMenuAnchor(null)} statusBarTranslucent
+        onDismiss={() => { if (pendingMenuDelete.current) { pendingMenuDelete.current = false; onRemoveListing?.(item); } }}>
+        <View style={{ flex: 1 }}>
+          <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setMoreMenuAnchor(null)} accessibilityRole="button" accessibilityLabel="Close listing options" />
+          <View accessibilityViewIsModal style={[styles.listingMoreDropdown, {
+            left: Math.max(16, Math.min(menuScreenWidth - 216, (moreMenuAnchor?.x || 0) + (moreMenuAnchor?.width || 0) - 200)),
+            top: (moreMenuAnchor?.y || 0) + (moreMenuAnchor?.height || 0) + 78 < menuScreenHeight
+              ? (moreMenuAnchor?.y || 0) + (moreMenuAnchor?.height || 0) + 6 : Math.max(16, (moreMenuAnchor?.y || 0) - 70),
+          }]}>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel="Delete listing" style={styles.listingMoreDropdownItem}
+              onPress={() => {
+                pendingMenuDelete.current = Platform.OS === 'ios';
+                setMoreMenuAnchor(null);
+                if (Platform.OS !== 'ios') onRemoveListing(item);
+              }}>
+              <FontAwesome name="trash-o" size={18} color="#a82222" /><Text style={styles.listingMoreDropdownText}>Delete listing</Text>
+            </TouchableOpacity>
+          </View>
         </View>
-      ) : null}
-      {canReviewAndPublish ? (
-        <TouchableOpacity
-          style={styles.pendingReviewOverlay}
-          onPress={(event) => runCardAction(event, () => onReviewListing(item))}
-          accessibilityRole="button"
-          accessibilityLabel="Review and publish listing"
-        >
-          <Text style={styles.pendingReviewText}>Review and Publish</Text>
-        </TouchableOpacity>
-      ) : null}
+      </Modal>
     </CardContainer>
   );
 }
@@ -1179,6 +1211,9 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
   const [closetMarketplaceMatchesLoading, setClosetMarketplaceMatchesLoading] = useState(false);
   const [selectedGalleryImage, setSelectedGalleryImage] = useState(null);
   const [selectedGalleryImages, setSelectedGalleryImages] = useState([]);
+  const expandedGalleryRef = useRef(null);
+  const expandedGalleryNeedsPosition = useRef(false);
+  const [expandedGalleryWidth, setExpandedGalleryWidth] = useState(viewportWidth);
   const [selectedGalleryIndex, setSelectedGalleryIndex] = useState(0);
   const [failedDetailImages, setFailedDetailImages] = useState({});
   const [tradeComposerTarget, setTradeComposerTarget] = useState(null);
@@ -1228,8 +1263,6 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
   const [shippingBusyByOffer, setShippingBusyByOffer] = useState({});
   const [addressSuggestionsById, setAddressSuggestionsById] = useState({});
   const [addressSuggestBusyById, setAddressSuggestBusyById] = useState({});
-  const [addressLocationBiasById, setAddressLocationBiasById] = useState({});
-  const [addressLocationBusyById, setAddressLocationBusyById] = useState({});
   const [pushEnabled, setPushEnabled] = useState(true);
   const [alertPrefs, setAlertPrefs] = useState(DEFAULT_ALERT_PREFS);
   const [alertStateHydrated, setAlertStateHydrated] = useState(false);
@@ -1237,6 +1270,21 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
   const [pushToken, setPushToken] = useState('');
   const [likedListingIds, setLikedListingIds] = useState([]);
   const [marketplaceFilter, setMarketplaceFilter] = useState('all');
+  const [marketplaceSearch, setMarketplaceSearch] = useState('');
+  const [closetSearch, setClosetSearch] = useState('');
+  const marketplaceSearchRef = useRef('');
+  const closetSearchRef = useRef('');
+  const marketplaceSearchRequest = useRef(0);
+  const closetSearchRequest = useRef(0);
+
+  useEffect(() => {
+    if (!authReady()) return;
+    const timer = setTimeout(() => {
+      if (activeTab === 'marketplace') void loadMarketplace();
+      if (activeTab === 'closet') void loadCloset();
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [marketplaceSearch, closetSearch, activeTab]);
 
   const [wizardStep, setWizardStep] = useState(1);
   const [editingListingId, setEditingListingId] = useState('');
@@ -1249,7 +1297,6 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
   const [profileSection, setProfileSection] = useState('account');
   const [images, setImages] = useState([]);
   const [editImageUrls, setEditImageUrls] = useState([]);
-  const [photoEditTarget, setPhotoEditTarget] = useState(null);
   const [category, setCategory] = useState('');
   const [itemTitle, setItemTitle] = useState('');
   const [itemDescription, setItemDescription] = useState('');
@@ -1647,6 +1694,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     const gallery = Array.isArray(images) ? images.filter(Boolean) : [];
     if (gallery.length === 0) return;
     const safeIndex = Math.max(0, Math.min(index, gallery.length - 1));
+    expandedGalleryNeedsPosition.current = true;
     setSelectedGalleryImages(gallery);
     setSelectedGalleryIndex(safeIndex);
     setSelectedGalleryImage(gallery[safeIndex]);
@@ -1656,6 +1704,13 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     setSelectedGalleryImage(null);
     setSelectedGalleryImages([]);
     setSelectedGalleryIndex(0);
+  }
+
+  function moveExpandedGallery(step) {
+    const index = nextGalleryIndex(selectedGalleryIndex, step, selectedGalleryImages.length);
+    expandedGalleryRef.current?.scrollTo({ x: index * expandedGalleryWidth, y: 0, animated: true });
+    setSelectedGalleryIndex(index);
+    setSelectedGalleryImage(selectedGalleryImages[index]);
   }
 
   function openOfferDetails(offerId) {
@@ -1763,11 +1818,13 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
   }
 
   async function loadMarketplace() {
+    const request = ++marketplaceSearchRequest.current;
     setLoading(true);
     setMarketplaceLoading(true);
     setError('');
     try {
-      const payload = await apiClient.listMarketplace(LISTINGS_PAGE_SIZE, await authContext(), { offset: 0 });
+      const payload = await apiClient.listMarketplace(LISTINGS_PAGE_SIZE, await authContext(), { offset: 0, q: marketplaceSearchRef.current });
+      if (request !== marketplaceSearchRequest.current) return;
       setMarketplaceListings(Array.isArray(payload?.items) ? payload.items : []);
       setMarketplaceActorSubject(String(payload?.actor?.subject || ''));
       setMarketplaceHasMore(Boolean(payload?.has_more));
@@ -1784,8 +1841,10 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
         // Marketplace listings should remain available if request-state hydration fails.
       }
     } catch (e) {
+      if (request !== marketplaceSearchRequest.current) return;
       setError(e.message || String(e));
     } finally {
+      if (request !== marketplaceSearchRequest.current) return;
       setLoading(false);
       setMarketplaceLoading(false);
     }
@@ -1797,17 +1856,21 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
   }
 
   async function loadCloset() {
+    const request = ++closetSearchRequest.current;
     setLoading(true);
     setClosetLoading(true);
     setError('');
     try {
-      const payload = await apiClient.listMyListings(LISTINGS_PAGE_SIZE, await authContext(), { offset: 0 });
+      const payload = await apiClient.listMyListings(LISTINGS_PAGE_SIZE, await authContext(), { offset: 0, q: closetSearchRef.current });
+      if (request !== closetSearchRequest.current) return;
       setMyListings(Array.isArray(payload?.items) ? payload.items : []);
       setClosetHasMore(Boolean(payload?.has_more));
       setClosetNextOffset(Number.isFinite(Number(payload?.next_offset)) ? Number(payload.next_offset) : 0);
     } catch (e) {
+      if (request !== closetSearchRequest.current) return;
       setError(e.message || String(e));
     } finally {
+      if (request !== closetSearchRequest.current) return;
       setLoading(false);
       setClosetLoading(false);
     }
@@ -1940,8 +2003,10 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     if (marketplaceLoading || marketplacePageLoading || marketplacePageRequestRef.current || !marketplaceHasMore) return;
     marketplacePageRequestRef.current = true;
     setMarketplacePageLoading(true);
+    const request = marketplaceSearchRequest.current;
     try {
-      const payload = await apiClient.listMarketplace(LISTINGS_PAGE_SIZE, await authContext(), { offset: marketplaceNextOffset });
+      const payload = await apiClient.listMarketplace(LISTINGS_PAGE_SIZE, await authContext(), { offset: marketplaceNextOffset, q: marketplaceSearchRef.current });
+      if (request !== marketplaceSearchRequest.current) return;
       const nextItems = Array.isArray(payload?.items) ? payload.items : [];
       setMarketplaceListings((prev) => {
         const seen = new Set(prev.map((item) => String(item?.listing_id || item?.id || '')));
@@ -1966,8 +2031,10 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     if (closetLoading || closetPageLoading || closetPageRequestRef.current || !closetHasMore) return;
     closetPageRequestRef.current = true;
     setClosetPageLoading(true);
+    const request = closetSearchRequest.current;
     try {
-      const payload = await apiClient.listMyListings(LISTINGS_PAGE_SIZE, await authContext(), { offset: closetNextOffset });
+      const payload = await apiClient.listMyListings(LISTINGS_PAGE_SIZE, await authContext(), { offset: closetNextOffset, q: closetSearchRef.current });
+      if (request !== closetSearchRequest.current) return;
       const nextItems = Array.isArray(payload?.items) ? payload.items : [];
       setMyListings((prev) => {
         const seen = new Set(prev.map((item) => String(item?.listing_id || item?.id || '')));
@@ -2152,6 +2219,11 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
       return;
     }
     try {
+      if (Platform.OS === 'android') {
+        await NotificationsModule.setNotificationChannelAsync('default', {
+          name: 'Jouft notifications', importance: NotificationsModule.AndroidImportance.DEFAULT,
+        });
+      }
       const current = await NotificationsModule.getPermissionsAsync();
       let finalStatus = current.status;
       if (finalStatus !== 'granted') {
@@ -2291,59 +2363,6 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     addressSuggestionTimersRef.current.set(entry.id, timer);
   }
 
-  async function locateAddressSuggestions(entry) {
-    if (!entry?.id) return;
-    setAddressLocationBusyById((prev) => ({ ...prev, [entry.id]: true }));
-    setProfileSaveMsg('');
-    try {
-      const permission = await Location.requestForegroundPermissionsAsync();
-      if (permission.status !== 'granted') {
-        setProfileSaveMsg('Location permission was not granted. Address suggestions will continue without location.');
-        return;
-      }
-      const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-      const bias = {
-        latitude: position.coords.latitude,
-        longitude: position.coords.longitude,
-      };
-      setAddressLocationBiasById((prev) => ({ ...prev, [entry.id]: bias }));
-      const nearbyAddresses = await Location.reverseGeocodeAsync(bias);
-      const nearby = nearbyAddresses?.[0];
-      if (nearby) {
-        const streetAddress = [nearby.streetNumber, nearby.street || nearby.name]
-          .filter(Boolean)
-          .join(' ')
-          .trim();
-        const currentLocationSuggestion = {
-          street_address: streetAddress,
-          city: nearby.city || nearby.subregion || '',
-          state: nearby.region || '',
-          postal_code: nearby.postalCode || '',
-          country: nearby.isoCountryCode || nearby.country || 'US',
-          formatted: [
-            streetAddress,
-            nearby.city || nearby.subregion,
-            nearby.region,
-            nearby.postalCode,
-          ].filter(Boolean).join(', '),
-          provider: 'device_location',
-        };
-        if (streetAddress) {
-          setAddressSuggestionsById((prev) => ({ ...prev, [entry.id]: [currentLocationSuggestion] }));
-        }
-      }
-      setProfileSaveMsg('Current location found. Select the suggested address or continue typing.');
-      const query = String(entry.address_line1 || '').trim();
-      if (query.length >= 3) {
-        await loadAddressSuggestionsFor(entry, query, bias);
-      }
-    } catch (e) {
-      setProfileSaveMsg('Current location is unavailable. Address suggestions will continue without location.');
-    } finally {
-      setAddressLocationBusyById((prev) => ({ ...prev, [entry.id]: false }));
-    }
-  }
-
   function removeProfileShippingAddress(addressId) {
     setProfileSaveMsg('');
     setProfileShippingAddresses((prev) => {
@@ -2400,7 +2419,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     });
   }
 
-  async function loadAddressSuggestionsFor(entry, queryOverride = null, locationOverride = null) {
+  async function loadAddressSuggestionsFor(entry, queryOverride = null) {
     if (!entry?.id) return;
     const query = String(queryOverride ?? entry.address_line1 ?? '').trim();
     if (!query) {
@@ -2417,7 +2436,6 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
           city: entry.city || '',
           state: entry.state || '',
           postalCode: entry.postal_code || '',
-          ...(locationOverride || addressLocationBiasById[entry.id] || {}),
         },
         await authContext(),
       );
@@ -3208,41 +3226,39 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     return { shareUrl, imageUrl, title, caption };
   }
 
-  async function shareListingPinterest(item) {
-    try {
-      const { shareUrl, imageUrl, caption } = buildSharePayload(item);
-      if (shareUrl || imageUrl) {
-        const targetUrl = shareUrl || imageUrl;
-        const pinterestUrl = `https://www.pinterest.com/pin/create/button/?url=${encodeURIComponent(targetUrl)}${imageUrl ? `&media=${encodeURIComponent(imageUrl)}` : ''}&description=${encodeURIComponent(caption)}`;
-        await WebBrowser.openBrowserAsync(pinterestUrl, {
-          presentationStyle: WebBrowser.WebBrowserPresentationStyle.PAGE_SHEET,
-        });
-        return;
+  async function shareListingToSocial(item, target) {
+    const payload = buildSharePayload(item);
+    let nativeShare = null;
+    if (Platform.OS === 'android') {
+      try { nativeShare = require('react-native-share').default; } catch {
+        // Older installed binaries can still use the OS sharesheet until rebuilt.
       }
-      await Share.share(
-        { message: shareUrl ? `${caption}\n${shareUrl}` : imageUrl ? `${caption}\n${imageUrl}` : caption },
-        { dialogTitle: 'Share to Pinterest' },
-      );
-    } catch (e) {
-      setError(e.message || 'Unable to share to Pinterest.');
     }
+    const browserFallback = () => new Promise(resolve => {
+      const url = socialWebUrl(target, payload);
+      if (!url) { resolve(); return; }
+      Alert.alert('Share listing', 'Native sharing is unavailable. Open the website instead?', [
+        { text: 'Cancel', style: 'cancel', onPress: resolve },
+        { text: 'Open website', onPress: async () => {
+          try { await WebBrowser.openBrowserAsync(url); }
+          catch (error) { setError(error.message || 'Unable to open sharing website.'); }
+          finally { resolve(); }
+        } },
+      ], { cancelable: true, onDismiss: resolve });
+    });
+    await shareSocialListing({
+      target, payload, platform: Platform.OS, nativeShare,
+      systemShare: (content, options) => Share.share(content, options),
+      browserFallback,
+    });
+  }
+
+  async function shareListingPinterest(item) {
+    await shareListingToSocial(item, 'pinterest');
   }
 
   async function shareListingFacebook(item) {
-    try {
-      const { shareUrl, imageUrl, caption } = buildSharePayload(item);
-      if (shareUrl || imageUrl) {
-        const targetUrl = shareUrl || imageUrl;
-        const sharerUrl = `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(targetUrl)}&quote=${encodeURIComponent(caption)}`;
-        await WebBrowser.openBrowserAsync(sharerUrl, {
-          presentationStyle: WebBrowser.WebBrowserPresentationStyle.PAGE_SHEET,
-        });
-        return;
-      }
-      await Share.share({ message: shareUrl ? `${caption}\n${shareUrl}` : imageUrl ? `${caption}\n${imageUrl}` : caption }, { dialogTitle: 'Share to Facebook' });
-    } catch (e) {
-      setError(e.message || 'Unable to share to Facebook.');
-    }
+    await shareListingToSocial(item, 'facebook');
   }
 
   async function refreshActiveTab() {
@@ -3703,7 +3719,6 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
   }
 
   function resetListingForm() {
-    setPhotoEditTarget(null);
     setWizardStep(1);
     setEditingListingId('');
     setEditingListing(null);
@@ -3745,21 +3760,6 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
 
   function orderedCreateImagesForSave() {
     return moveArrayItemToFront(images.slice(0, 6), selectedHeroImageIndex);
-  }
-
-  async function applyListingPhotoEdit(asset) {
-    const target = photoEditTarget;
-    if (target.existing) {
-      const uploaded = await uploadImagesWithDirectFallback({ apiClient, images: [asset], auth: await authContext() });
-      const url = uploadedImageUrlsFromPayload(uploaded)[0];
-      if (!url) throw new Error('Edited image upload failed');
-      setEditImageUrls(previous => previous.map((value, index) => index === target.index ? url : value));
-    } else {
-      setImages(previous => previous.map((value, index) => index === target.index ? asset : value));
-    }
-    setAnalysisResult(null);
-    setWizardStep(step => Math.min(step, 2));
-    setPhotoEditTarget(null);
   }
 
   function orderedEditExistingImagesForSave() {
@@ -3825,6 +3825,26 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     setNotice('Editing listing draft.');
     setActiveTab('editListing');
   }
+
+  useEffect(() => {
+    if (Platform.OS !== 'android') return undefined;
+    const listener = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (isListingDetailOpen) { closeListingDetails(); return true; }
+      if (activeTab === 'offerDetail') { closeOfferDetails(); return true; }
+      if (activeTab === 'tradeComposer') { setTradeComposerTarget(null); setActiveTab(tradeComposerReturnTab); return true; }
+      if (activeTab === 'notifications') { setActiveTab('profile'); return true; }
+      if (activeTab === 'editListing' || activeTab === 'create') {
+        Alert.alert('Leave listing?', 'Unsaved changes will be discarded.', [
+          { text: 'Keep editing', style: 'cancel' },
+          { text: 'Discard changes', style: 'destructive', onPress: () => { resetListingForm(); setActiveTab('closet'); } },
+        ]);
+        return true;
+      }
+      if (activeTab !== 'marketplace') { setActiveTab('marketplace'); return true; }
+      return false;
+    });
+    return () => listener.remove();
+  }, [activeTab, isListingDetailOpen, tradeComposerReturnTab]);
 
   function handleTabPress(tab) {
     closeListingDetails();
@@ -4218,6 +4238,8 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     const body = (
       <>
         <View style={styles.offerDetailPanel}>
+          <View style={styles.listingDetailSummaryRow}>
+          <View style={styles.listingDetailSummaryCopy}>
           <Text style={styles.offerLaneLabel}>Details</Text>
           <Text style={styles.offerDetailItemMeta}>
             {selectedListing?.brand || 'Unknown'} • {displayConditionLabel(selectedListing?.condition || 'unknown')} • {titleCase(selectedListing?.category || 'listing')}
@@ -4225,9 +4247,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
           <Text style={styles.offerDetailItemMeta}>
             {money(selectedListing?.estimated_value)}
           </Text>
-          {selectedListingAnalysisFailed ? (
-            <Text style={styles.analysisFailedText}>{ANALYSIS_FAILED_MESSAGE}</Text>
-          ) : null}
+          </View>
           {selectedListingSource === 'marketplace' && !isOwnListing ? (
             <TouchableOpacity
               style={[styles.secondaryBtnCompact, styles.likeDetailIconButton, selectedListingLiked && styles.likeDetailButtonActive]}
@@ -4241,6 +4261,10 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                 color={selectedListingLiked ? theme.brand : '#4b433a'}
               />
             </TouchableOpacity>
+          ) : null}
+          </View>
+          {selectedListingAnalysisFailed ? (
+            <Text style={styles.analysisFailedText}>{ANALYSIS_FAILED_MESSAGE}</Text>
           ) : null}
           {canReviewClosetListing ? (
             <View style={styles.listingDetailActionRow}>
@@ -4327,6 +4351,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
 
         <View style={styles.offerDetailPanel}>
           <Text style={styles.offerLaneLabel}>Gallery</Text>
+          {hasMannequinPreview(selectedListing) && <Text style={styles.helperText}>{MANNEQUIN_DISCLAIMER}</Text>}
           {gallery.length > 0 ? (
             <View style={styles.listingDetailGalleryStack}>
               {gallery.map((src, idx) => {
@@ -4454,13 +4479,14 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     && Boolean(itemSize);
 
   return (
-    <SafeAreaView style={styles.root} edges={['top', 'right', 'bottom', 'left']}>
+    <SafeAreaView style={[styles.root, activeTab === 'create' && styles.createScreenRoot]} edges={['top', 'right', 'bottom', 'left']}>
       <StatusBar style="dark" />
 	      <ScrollView
 	        ref={mainScrollRef}
 	        style={styles.mainScroll}
 	        contentContainerStyle={[
             styles.content,
+            activeTab === 'create' && styles.createScreenContent,
             (tradeComposerTarget || selectedOffer) && styles.tradeComposerContent,
             activeTab === 'profile' && styles.profileContentWithFooter,
           ]}
@@ -4499,6 +4525,20 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
             ) : (
               <>
                 <SectionHeader title="Marketplace" subtitle="CURATED MATCHES" rightText="Refresh" onRightPress={refreshActiveTab} />
+                <TextInput
+                  style={styles.input} value={marketplaceSearch} maxLength={120}
+                  placeholder="Search title, brand, or category" accessibilityLabel="Search marketplace"
+                  autoCapitalize="none" autoCorrect={false} returnKeyType="search" clearButtonMode="while-editing"
+                  onChangeText={value => {
+                    marketplaceSearchRef.current = value.trim();
+                    marketplaceSearchRequest.current += 1;
+                    setMarketplaceLoading(true);
+                    setMarketplaceSearch(value);
+                  }}
+                />
+                {!!marketplaceSearch && <TouchableOpacity style={styles.secondaryBtnCompact} accessibilityLabel="Clear marketplace search" onPress={() => {
+                  marketplaceSearchRef.current = ''; marketplaceSearchRequest.current += 1; setMarketplaceSearch('');
+                }}><Text style={styles.secondaryBtnText}>Clear search</Text></TouchableOpacity>}
 	                <View style={styles.marketplaceFilterRow} accessibilityRole="tablist">
 	                  <TouchableOpacity
 	                    accessibilityRole="tab"
@@ -4524,12 +4564,14 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                   </View>
                 ) : matchedMarketplaceListings.length === 0 && !marketplaceHasMore ? (
                   <View style={styles.emptyState}>
-                    <Text style={styles.emptyTitle}>{marketplaceFilter === 'liked' ? 'No liked marketplace listings' : 'No matched marketplace listings yet'}</Text>
-                    <Text style={styles.emptyText}>{marketplaceFilter === 'liked' ? 'Use the heart on a marketplace listing to save it here.' : 'Create or publish a closet listing to see marketplace items that match your closet.'}</Text>
+                    <Text style={styles.emptyTitle}>{marketplaceSearch.trim() ? 'No matching search results' : marketplaceFilter === 'liked' ? 'No liked marketplace listings' : 'No matched marketplace listings yet'}</Text>
+                    <Text style={styles.emptyText}>{marketplaceSearch.trim() ? 'Try another title, brand, or category, or clear your search.' : marketplaceFilter === 'liked' ? 'Use the heart on a marketplace listing to save it here.' : 'Create or publish a closet listing to see marketplace items that match your closet.'}</Text>
                     <TouchableOpacity
                       style={styles.primaryBtn}
                       onPress={() => {
-                        if (marketplaceFilter === 'liked') {
+                        if (marketplaceSearch.trim()) {
+                          marketplaceSearchRef.current = ''; marketplaceSearchRequest.current += 1; setMarketplaceSearch('');
+                        } else if (marketplaceFilter === 'liked') {
                           setMarketplaceFilter('all');
                         } else {
                           resetListingForm();
@@ -4537,7 +4579,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                         }
                       }}
                     >
-                      <Text style={styles.primaryBtnText}>{marketplaceFilter === 'liked' ? 'Show All Listings' : 'Create Listing'}</Text>
+                      <Text style={styles.primaryBtnText}>{marketplaceSearch.trim() ? 'Clear Search' : marketplaceFilter === 'liked' ? 'Show All Listings' : 'Create Listing'}</Text>
                     </TouchableOpacity>
                   </View>
 	                ) : matchedMarketplaceListings.length === 0 ? (
@@ -4587,13 +4629,25 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
             ) : (
               <>
                 <SectionHeader title="My Closet" subtitle="YOUR LISTINGS" rightText="Refresh" onRightPress={refreshActiveTab} />
+                <TextInput
+                  style={styles.input} value={closetSearch} maxLength={120}
+                  placeholder="Search title, brand, or category" accessibilityLabel="Search my closet"
+                  autoCapitalize="none" autoCorrect={false} returnKeyType="search" clearButtonMode="while-editing"
+                  onChangeText={value => {
+                    closetSearchRef.current = value.trim(); closetSearchRequest.current += 1;
+                    setClosetLoading(true); setClosetSearch(value);
+                  }}
+                />
+                {!!closetSearch && <TouchableOpacity style={styles.secondaryBtnCompact} accessibilityLabel="Clear closet search" onPress={() => {
+                  closetSearchRef.current = ''; closetSearchRequest.current += 1; setClosetSearch('');
+                }}><Text style={styles.secondaryBtnText}>Clear search</Text></TouchableOpacity>}
 	                {closetLoading && myListings.length === 0 ? (
                   <View style={styles.loadingState}>
                     <ActivityIndicator color={theme.brand} />
                     <Text style={styles.loadingText}>Loading your closet...</Text>
                   </View>
                 ) : myListings.length === 0 ? (
-                  <Text style={styles.emptyText}>No closet listings yet.</Text>
+                  <Text style={styles.emptyText}>{closetSearch.trim() ? 'No matching closet listings. Try another title, brand, or category.' : 'No closet listings yet.'}</Text>
 	                ) : (
 	                  <>
 	                  {myListings.map((item) => {
@@ -4628,12 +4682,19 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
         )}
 
         {(activeTab === 'create' || activeTab === 'editListing') && (
-          <View style={styles.section}>
+          <View style={[styles.section, activeTab === 'create' && styles.createScreenSection]}>
             <SectionHeader
               title={editingListingId ? 'Edit Listing' : 'Create Listing'}
               subtitle={editingListingId ? 'UPDATE • REVIEW • SAVE' : wizardStep === 1 ? 'UPLOAD • IDENTIFY' : 'CONDITION • SIZE • CREATE'}
-              rightText={editingListingId ? 'Cancel Edit' : createListingMode === 'standard' && wizardStep === 2 ? 'Back' : null}
-              onRightPress={editingListingId ? cancelEditListing : createListingMode === 'standard' && wizardStep === 2 ? () => setWizardStep(1) : null}
+              rightText={editingListingId ? 'Cancel Edit' : createListingMode === 'standard' && wizardStep === 2 ? 'Back' : 'Close'}
+              onRightPress={editingListingId ? cancelEditListing : createListingMode === 'standard' && wizardStep === 2 ? () => setWizardStep(1) : () => {
+                if (images.length || itemTitle || category) {
+                  Alert.alert('Leave listing?', 'Your unsaved listing will be discarded.', [
+                    { text: 'Keep editing', style: 'cancel' },
+                    { text: 'Discard', style: 'destructive', onPress: () => { resetListingForm(); handleTabPress('closet'); } },
+                  ]);
+                } else { resetListingForm(); handleTabPress('closet'); }
+              }}
             />
             {(editingListingId || createListingMode === 'standard') ? <View style={styles.stepRow}>
               {(editingListingId ? [1, 2, 3] : [1, 2]).map((step) => (
@@ -4645,11 +4706,11 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
             {editingListingId ? (
               <View style={styles.editImagePanel}>
                 <Text style={styles.label}>Listing Images ({editImageUrls.length + images.length}/6)</Text>
+                {hasMannequinPreview(editingListing) && <Text style={styles.helperText}>{MANNEQUIN_DISCLAIMER}</Text>}
                 <View style={styles.editImageGrid}>
                   {editImageUrls.map((imageUrl, index) => (
                     <View key={`${imageUrl}-${index}`} style={[styles.editImageTile, selectedEditHeroImageIndex === index && styles.editImageTileHero]}>
                       <Image source={{ uri: imageUrl }} style={styles.editImageThumb} resizeMode="cover" />
-                      <TouchableOpacity style={styles.editImageHeroButton} onPress={() => setPhotoEditTarget({ uri: imageUrl, index, existing: true })}><Text style={styles.editImageHeroButtonText}>Zoom / Crop / Rotate</Text></TouchableOpacity>
                       {selectedEditHeroImageIndex === index ? <Text style={styles.editImageHeroBadge}>Hero</Text> : null}
                       <TouchableOpacity style={styles.editImageHeroButton} onPress={() => setSelectedEditHeroImageIndex(index)}>
                         <Text style={styles.editImageHeroButtonText}>{selectedEditHeroImageIndex === index ? 'Hero Image' : 'Set Hero'}</Text>
@@ -4662,7 +4723,6 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                   {images.map((asset, index) => (
                     <View key={`${asset?.uri || 'pending'}-${index}`} style={[styles.editImageTile, selectedEditHeroImageIndex === editImageUrls.length + index && styles.editImageTileHero]}>
                       <Image source={{ uri: asset.uri }} style={styles.editImageThumb} resizeMode="cover" />
-                      <TouchableOpacity style={styles.editImageHeroButton} onPress={() => setPhotoEditTarget({ uri: asset.uri, index, existing: false })}><Text style={styles.editImageHeroButtonText}>Zoom / Crop / Rotate</Text></TouchableOpacity>
                       <Text style={styles.editImageBadge}>New</Text>
                       {selectedEditHeroImageIndex === editImageUrls.length + index ? <Text style={styles.editImageHeroBadge}>Hero</Text> : null}
                       <TouchableOpacity style={styles.editImageHeroButton} onPress={() => setSelectedEditHeroImageIndex(editImageUrls.length + index)}>
@@ -4694,6 +4754,44 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                       <Text style={styles.helperText}>Use clear views of the full item, label, details, and wear.</Text>
                     </View>
                     <Text style={styles.createPhotoCount}>{images.length}/6</Text>
+                  </View>
+                  <View style={styles.createPhotoCheckPanel}>
+                    <View style={styles.createPhotoCheckHeader}>
+                      <Text style={styles.createPhotoCheckTitle}>Photo Coverage</Text>
+                      {createImageRoleBusy ? <ActivityIndicator size="small" color={theme.brand} /> : null}
+                    </View>
+                    {createImageRoleCheck?.category ? (
+                      <Text style={styles.createPhotoCheckCategory}>
+                        {createImageRoleCheck.category.charAt(0).toUpperCase() + createImageRoleCheck.category.slice(1)}
+                      </Text>
+                    ) : null}
+                    {category && images.length === 0 ? <Text style={styles.helperText}>Add photos and Gemini will assign each image to a view.</Text> : null}
+                    {createImageRoleBusy ? <Text style={styles.helperText}>Checking photo types with Gemini...</Text> : null}
+                    {createImageRoleCheck?.missing_required?.length > 0 ? (
+                      <View style={styles.createGuidanceBlock}>
+                        <Text style={styles.createGuidanceRequired}>Add these required photos</Text>
+                        <Text style={styles.createGuidanceText}>
+                          {createImageRoleCheck.missing_required.map((role) => IMAGE_ROLE_LABELS[role] || role).join(' • ')}
+                        </Text>
+                      </View>
+                    ) : null}
+                    {createImageRoleCheck && createImageRoleCheck.missing_required?.length === 0 ? (
+                      <Text style={styles.createPhotoCheckSuccess}>Required photo coverage is complete.</Text>
+                    ) : null}
+                    {createImageRoleCheck?.missing_recommended?.length > 0 ? (
+                      <View style={styles.createGuidanceBlock}>
+                        <Text style={styles.createGuidanceRecommended}>Recommended next</Text>
+                        <Text style={styles.createGuidanceText}>
+                          {createImageRoleCheck.missing_recommended.map((role) => IMAGE_ROLE_LABELS[role] || role).join(' • ')}
+                        </Text>
+                      </View>
+                    ) : null}
+                    {createImageRoleError ? (
+                      <View style={styles.createGuidanceBlock}>
+                        <Text style={styles.helperText}>{createImageRoleError}</Text>
+                        {renderManualPhotoCategory()}
+                      </View>
+                    ) : null}
                   </View>
                   {images.length > 0 ? (
                     <View style={styles.createImageGrid}>
@@ -4736,44 +4834,6 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                       <Text style={styles.primaryBtnText}>{images.length > 0 ? 'Add More Photos' : 'Choose Photos'}</Text>
                     </View>
                   </TouchableOpacity>
-                  <View style={styles.createPhotoCheckPanel}>
-                    <View style={styles.createPhotoCheckHeader}>
-                      <Text style={styles.createPhotoCheckTitle}>Photo Coverage</Text>
-                      {createImageRoleBusy ? <ActivityIndicator size="small" color={theme.brand} /> : null}
-                    </View>
-                    {createImageRoleCheck?.category ? (
-                      <Text style={styles.createPhotoCheckCategory}>
-                        {createImageRoleCheck.category.charAt(0).toUpperCase() + createImageRoleCheck.category.slice(1)}
-                      </Text>
-                    ) : null}
-                    {category && images.length === 0 ? <Text style={styles.helperText}>Add photos and Gemini will assign each image to a view.</Text> : null}
-                    {createImageRoleBusy ? <Text style={styles.helperText}>Checking photo types with Gemini...</Text> : null}
-                    {createImageRoleCheck?.missing_required?.length > 0 ? (
-                      <View style={styles.createGuidanceBlock}>
-                        <Text style={styles.createGuidanceRequired}>Add these required photos</Text>
-                        <Text style={styles.createGuidanceText}>
-                          {createImageRoleCheck.missing_required.map((role) => IMAGE_ROLE_LABELS[role] || role).join(' • ')}
-                        </Text>
-                      </View>
-                    ) : null}
-                    {createImageRoleCheck && createImageRoleCheck.missing_required?.length === 0 ? (
-                      <Text style={styles.createPhotoCheckSuccess}>Required photo coverage is complete.</Text>
-                    ) : null}
-                    {createImageRoleCheck?.missing_recommended?.length > 0 ? (
-                      <View style={styles.createGuidanceBlock}>
-                        <Text style={styles.createGuidanceRecommended}>Recommended next</Text>
-                        <Text style={styles.createGuidanceText}>
-                          {createImageRoleCheck.missing_recommended.map((role) => IMAGE_ROLE_LABELS[role] || role).join(' • ')}
-                        </Text>
-                      </View>
-                    ) : null}
-                    {createImageRoleError ? (
-                      <View style={styles.createGuidanceBlock}>
-                        <Text style={styles.helperText}>{createImageRoleError}</Text>
-                        {renderManualPhotoCategory()}
-                      </View>
-                    ) : null}
-                  </View>
                 </View>
             )}
             {!editingListingId && createListingMode === 'standard' && wizardStep === 2 && (
@@ -5415,14 +5475,6 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                   <Text style={styles.primaryBtnText}>{securityBusy ? 'Updating...' : 'Update Password'}</Text>
                 </TouchableOpacity>
                 {!!profileSaveMsg && <Text style={styles.notice}>{profileSaveMsg}</Text>}
-                <View style={styles.profileDivider} />
-                <Text style={styles.label}>Account Actions</Text>
-                <TouchableOpacity style={styles.secondaryBtn} onPress={onSignOut}>
-                  <Text style={styles.secondaryBtnText}>Sign Out</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.secondaryBtn} onPress={() => Linking.openURL(`mailto:${CONTACT_EMAIL}?subject=Jouft%20account%20support`)}>
-                  <Text style={styles.secondaryBtnText}>Contact Support</Text>
-                </TouchableOpacity>
               </>
             ) : null}
 
@@ -5615,17 +5667,6 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                       autoComplete="street-address"
                       textContentType="fullStreetAddress"
                     />
-                    <TouchableOpacity
-                      style={[styles.addressLocateButton, addressLocationBiasById[entry.id] && styles.addressLocateButtonActive]}
-                      onPress={() => locateAddressSuggestions(entry)}
-                      disabled={Boolean(addressLocationBusyById[entry.id])}
-                      accessibilityRole="button"
-                      accessibilityLabel="Use current location"
-                    >
-                      {addressLocationBusyById[entry.id]
-                        ? <ActivityIndicator size="small" color={theme.brand} />
-                        : <Ionicons name="locate-outline" size={21} color={addressLocationBiasById[entry.id] ? '#fff' : theme.brand} />}
-                    </TouchableOpacity>
                   </View>
                   <TouchableOpacity
                     style={styles.secondaryBtnCompact}
@@ -6362,7 +6403,6 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
           </View>
         </View>
       ) : null}
-      {photoEditTarget && <ListingPhotoEditor uri={photoEditTarget.uri} onCancel={() => setPhotoEditTarget(null)} onApply={applyListingPhotoEdit} />}
       {listingCameraOpen && <ListingCamera
         maxPhotos={remainingPhotoSlots(images.length + (editingListingId ? editImageUrls.length : 0))}
         onCancel={() => setListingCameraOpen(false)}
@@ -6468,11 +6508,11 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
           </View>
         </View>
       </Modal>
-      <TouchableOpacity style={styles.appAssistantLauncher} onPress={() => setAppAssistantOpen(true)} accessibilityRole="button" accessibilityLabel="Open Jouft assistant">
+      {activeTab !== 'create' && <TouchableOpacity style={styles.appAssistantLauncher} onPress={() => setAppAssistantOpen(true)} accessibilityRole="button" accessibilityLabel="Open Jouft assistant">
         <View style={styles.appAssistantLogoJ} pointerEvents="none" accessible={false}>
           <Image source={JOUFT_LOGO_IMAGE} style={styles.appAssistantLogoImage} resizeMode="stretch" accessible={false} />
         </View>
-      </TouchableOpacity>
+      </TouchableOpacity>}
       <Modal visible={appAssistantOpen} animationType="slide" onRequestClose={() => setAppAssistantOpen(false)}>
         <SafeAreaView style={styles.appAssistantRoot}>
           <View style={styles.appAssistantHeader}>
@@ -6512,7 +6552,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
         transparent={false}
         onRequestClose={closeExpandedGallery}
       >
-        <SafeAreaView style={styles.galleryModalRoot}>
+        <SafeAreaProvider><SafeAreaView style={styles.galleryModalRoot}>
           <View style={styles.galleryModalHeader}>
             <Text style={styles.galleryModalCount}>
               {selectedGalleryImages.length > 0 ? `${selectedGalleryIndex + 1} / ${selectedGalleryImages.length}` : ''}
@@ -6527,15 +6567,27 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
           </View>
           {selectedGalleryImages.length > 0 ? (
             <ScrollView
-              key={`${selectedGalleryImages.join('|')}-${viewportWidth}`}
+              ref={expandedGalleryRef}
+              key={`${selectedGalleryImages.join('|')}-${expandedGalleryWidth}`}
               horizontal
               pagingEnabled
               showsHorizontalScrollIndicator={false}
-              contentOffset={{ x: selectedGalleryIndex * viewportWidth, y: 0 }}
               style={styles.galleryModalCarousel}
+              onLayout={({ nativeEvent }) => {
+                const width = nativeEvent.layout.width;
+                if (width > 0 && width !== expandedGalleryWidth) {
+                  expandedGalleryNeedsPosition.current = true;
+                  setExpandedGalleryWidth(width);
+                }
+              }}
+              onContentSizeChange={(width) => {
+                if (!expandedGalleryNeedsPosition.current || width < expandedGalleryWidth * selectedGalleryImages.length - 1) return;
+                expandedGalleryNeedsPosition.current = false;
+                expandedGalleryRef.current?.scrollTo({ x: selectedGalleryIndex * expandedGalleryWidth, y: 0, animated: false });
+              }}
               onMomentumScrollEnd={({ nativeEvent }) => {
                 const nextIndex = Math.max(0, Math.min(
-                  Math.round(nativeEvent.contentOffset.x / viewportWidth),
+                  Math.round(nativeEvent.contentOffset.x / expandedGalleryWidth),
                   selectedGalleryImages.length - 1,
                 ));
                 setSelectedGalleryIndex(nextIndex);
@@ -6543,15 +6595,21 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
               }}
             >
               {selectedGalleryImages.map((src, idx) => (
-                <View key={`${src}-${idx}`} style={[styles.galleryModalSlide, { width: viewportWidth }]}>
+                <View key={`${src}-${idx}`} style={[styles.galleryModalSlide, { width: expandedGalleryWidth }]}>
                   <Image source={{ uri: src }} style={styles.galleryModalImage} resizeMode="contain" />
                 </View>
               ))}
             </ScrollView>
           ) : null}
-        </SafeAreaView>
+          {hasMannequinPreview(selectedListing) && <Text style={[styles.helperText, { color: '#fff', paddingHorizontal: 16, paddingVertical: 8 }]}>{MANNEQUIN_DISCLAIMER}</Text>}
+          {selectedGalleryImages.length > 1 && <View style={styles.galleryCarouselControls}>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel="Previous photo" disabled={selectedGalleryIndex === 0} style={[styles.galleryCarouselArrow, selectedGalleryIndex === 0 && styles.primaryBtnDisabled]} onPress={() => moveExpandedGallery(-1)}><Ionicons name="chevron-back" size={26} color="#fff" /></TouchableOpacity>
+            <Text style={styles.galleryModalCount}>Swipe to view all photos</Text>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel="Next photo" disabled={selectedGalleryIndex === selectedGalleryImages.length - 1} style={[styles.galleryCarouselArrow, selectedGalleryIndex === selectedGalleryImages.length - 1 && styles.primaryBtnDisabled]} onPress={() => moveExpandedGallery(1)}><Ionicons name="chevron-forward" size={26} color="#fff" /></TouchableOpacity>
+          </View>}
+        </SafeAreaView></SafeAreaProvider>
       </Modal>
-      {!tradeComposerTarget && !selectedOffer ? (
+      {!tradeComposerTarget && !selectedOffer && activeTab !== 'create' ? (
         <View style={styles.tabContainer}>
           {TABS.map((tab) => (
             <AppTabButton key={tab} tab={tab} activeTab={activeTab === 'editListing' ? 'closet' : activeTab} onPress={handleTabPress} />
@@ -7294,6 +7352,9 @@ export default function App() {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: theme.bg },
+  createScreenRoot: { backgroundColor: theme.surface },
+  createScreenContent: { flexGrow: 1, paddingBottom: 20 },
+  createScreenSection: { flex: 1, marginHorizontal: 0, marginBottom: 0, borderWidth: 0, padding: 16 },
   mainScroll: { flex: 1 },
   content: { paddingBottom: 18 },
   profileContentWithFooter: { paddingBottom: 104 },
@@ -8009,6 +8070,10 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
   },
   listingImage: { width: '100%', height: 220, backgroundColor: '#ddd4ca' },
+  listingPhotoArea: { position: 'relative' },
+  listingMoreDropdown: { position: 'absolute', width: 200, padding: 8, backgroundColor: '#fbf8f2', borderWidth: 1, borderColor: '#d8cec5', shadowColor: '#000', shadowOpacity: .15, shadowRadius: 12, shadowOffset: { width: 0, height: 4 }, elevation: 6 },
+  listingMoreDropdownItem: { minHeight: 48, padding: 10, flexDirection: 'row', alignItems: 'center', gap: 12 },
+  listingMoreDropdownText: { color: '#a82222', fontFamily: fonts.body, fontSize: 12, textTransform: 'uppercase', letterSpacing: 1 },
   listingImageFallback: { alignItems: 'center', justifyContent: 'center' },
   listingBody: { padding: 12, gap: 8 },
   closetMatchCount: {
@@ -8090,7 +8155,8 @@ const styles = StyleSheet.create({
     minWidth: 54,
     height: 44,
     paddingHorizontal: 0,
-    alignSelf: 'flex-start',
+    alignSelf: 'center',
+    flexShrink: 0,
   },
   listingIconButton: {
     width: 44,
@@ -8673,6 +8739,16 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: 10,
   },
+  listingDetailSummaryRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  listingDetailSummaryCopy: {
+    flex: 1,
+    minWidth: 0,
+    gap: 8,
+  },
   listingDetailActionRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -8695,7 +8771,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 12,
-    paddingTop: 56,
+    paddingTop: 12,
     paddingBottom: 10,
     zIndex: 2,
   },
@@ -8714,7 +8790,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   galleryModalSlide: {
-    flex: 1,
+    flexShrink: 0,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -8723,6 +8799,8 @@ const styles = StyleSheet.create({
     width: '100%',
     height: '100%',
   },
+  galleryCarouselControls: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 12 },
+  galleryCarouselArrow: { minWidth: 48, minHeight: 48, alignItems: 'center', justifyContent: 'center' },
   offerDetailThumbRow: {
     gap: 8,
   },

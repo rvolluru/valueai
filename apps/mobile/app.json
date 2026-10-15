@@ -1,9 +1,10 @@
 {
   "expo": {
-    "name": "Jouft Testing",
+    "name": "JOUFT",
     "slug": "valueai-mobile",
     "scheme": "com.jouft.app.dev",
     "version": "0.1.0",
+    "icon": "./assets/app-icon.png",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
     "assetBundlePatterns": [
@@ -18,7 +19,6 @@
         ]
       },
       "infoPlist": {
-        "NSLocationWhenInUseUsageDescription": "Allow Jouft to use your location to prioritize nearby address suggestions.",
         "LSApplicationQueriesSchemes": [
           "fb",
           "fbapi",
@@ -28,14 +28,24 @@
       }
     },
     "android": {
+      "package": "com.jouft.app",
       "adaptiveIcon": {
-        "backgroundColor": "#ffffff"
+        "foregroundImage": "./assets/app-icon-adaptive.png",
+        "monochromeImage": "./assets/app-icon-monochrome.png",
+        "backgroundColor": "#4a161b"
       },
       "permissions": [
-        "android.permission.RECORD_AUDIO"
+        "android.permission.CAMERA"
+      ],
+      "blockedPermissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_BACKGROUND_LOCATION"
       ]
     },
     "plugins": [
+      ["react-native-share", { "ios": ["fb"], "android": ["com.facebook.katana", "com.pinterest"] }],
       [
         "expo-camera",
         {
@@ -49,12 +59,6 @@
           "cameraPermission": "Allow Jouft to take photos of items for your listings.",
           "photosPermission": "Allow Jouft to select product photos for your listings.",
           "microphonePermission": false
-        }
-      ],
-      [
-        "expo-location",
-        {
-          "locationWhenInUsePermission": "Allow Jouft to use your location to prioritize nearby address suggestions."
         }
       ],
       "expo-web-browser",

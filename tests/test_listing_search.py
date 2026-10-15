@@ -30,3 +30,19 @@ def test_listing_search_filters_before_pagination_and_preserves_owner_scope():
     assert len(search(q="%")['items']) == 1
     assert search(q="not found")['items'] == []
     assert len(search(q="")['items']) == 4
+
+
+def test_lightweight_marketplace_retains_ai_disclosure_metadata():
+    _build_client()
+    from app import deps
+    db = deps.get_db()
+    db.insert_listing(listing_id="ai-preview", owner_subject="other", owner_name="Member", title="Shorts",
+        mode="trade", category="clothes", brand="Brand", condition="New", size="M", estimated_value=100,
+        city="New York", image="/v1/images/original", images=["/v1/images/original", "/v1/images/generated"],
+        description="", wants="", tags=[], source_item_id=None, status="Active",
+        analysis={"private_pricing_payload": "not needed by gallery", "generated_assets": [
+            {"image_url": "/v1/images/generated", "synthetic": True, "review_decision": "include"}]})
+    item = db.list_recent_listings(include_analysis=False, include_media=True, active_only=True)[0]
+    assert "private_pricing_payload" not in item['analysis']
+    assert item['analysis']['generated_assets'][0]['synthetic'] is True
+    assert next(image for image in item['listed_images'] if image['d_img'] == '/v1/images/generated')['role_hint'] == 'ai_mannequin'

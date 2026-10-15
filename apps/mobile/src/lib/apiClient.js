@@ -270,7 +270,7 @@ export function createMobileApiClient({ apiBaseUrl }) {
       const offset = Math.max(0, Number(options.offset || 0));
       return requestJson({
         apiBaseUrl,
-        path: `/v1/listings?limit=${limit}&offset=${offset}&include_matches=true`,
+        path: `/v1/listings?limit=${limit}&offset=${offset}&include_matches=true&q=${encodeURIComponent(options.q || '')}`,
         method: 'GET',
         auth,
       });
@@ -279,7 +279,7 @@ export function createMobileApiClient({ apiBaseUrl }) {
       const offset = Math.max(0, Number(options.offset || 0));
       return requestJson({
         apiBaseUrl,
-        path: `/v1/listings?mine=true&limit=${limit}&offset=${offset}&include_matches=true`,
+        path: `/v1/listings?mine=true&limit=${limit}&offset=${offset}&include_matches=true&q=${encodeURIComponent(options.q || '')}`,
         method: 'GET',
         auth,
       });

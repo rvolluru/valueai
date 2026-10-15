@@ -4271,7 +4271,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
 	        const display = resolveUrl(entry.d_img || entry.display_image || entry.image || entry.p_img)
 	        const original = resolveUrl(entry.p_img || entry.original_image || entry.source_image) || display
 	        if (!display) return null
-	        return { p_img: original, d_img: display, is_hero: Boolean(entry.is_hero) || display === listedCover || idx === 0 }
+	        return { p_img: original, d_img: display, synthetic: Boolean(entry.synthetic), role_hint: entry.role_hint, is_hero: Boolean(entry.is_hero) || display === listedCover || idx === 0 }
 	      }).filter(Boolean)
 	      : []
 	    let normalizedImages = normalizedListedImages.length > 0
@@ -8607,6 +8607,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                                   onClick={() => openZoomedListingImage({
                                     src: selectedImage,
                                     images: gallery,
+                                    mannequinDisclaimer: hasMannequinPreview(item),
                                     alt: `${item.title || 'Listing'} image ${selectedImageIdx + 1}`,
                                   })}
                                   aria-label={`Magnify ${item.title || 'listing'} image ${selectedImageIdx + 1}`}
@@ -9223,6 +9224,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
           onClick={closeZoomedListingImage}
         >
           <div className="listing-image-zoom-toolbar" onClick={(e) => e.stopPropagation()}>
+            {zoomedListingImage.mannequinDisclaimer && <p className="mannequin-disclaimer">{MANNEQUIN_DISCLAIMER}</p>}
             {zoomedListingImage.images.length > 1 && <>
               <button type="button" aria-label="Previous photo" onClick={() => moveZoomedListingImage(-1)}>‹</button>
               <span aria-live="polite">{zoomedListingImage.index + 1} / {zoomedListingImage.images.length}</span>

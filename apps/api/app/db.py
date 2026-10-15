@@ -2652,6 +2652,13 @@ class Database:
         search: str = "",
     ) -> list[dict]:
         analysis_select = "analysis_json" if include_analysis else "NULL AS analysis_json"
+        if not include_analysis and include_media:
+            # Keep AI-image disclosure available in lightweight marketplace responses.
+            analysis_select = (
+                "json_object('generated_assets', json_extract(analysis_json, '$.generated_assets')) AS analysis_json"
+                if self._sqlite_conn is not None else
+                "jsonb_build_object('generated_assets', analysis_json::jsonb -> 'generated_assets')::text AS analysis_json"
+            )
         image_select = "image" if include_media else "NULL AS image"
         images_select = "images_json" if include_media else "'[]' AS images_json"
         where_clause = "WHERE LOWER(status) = 'active'" if active_only else ""
@@ -3263,6 +3270,8 @@ class Database:
                         "p_img": original or display,
                         "d_img": display,
                         "is_hero": False,
+                        "synthetic": bool(value.get("synthetic")),
+                        "role_hint": value.get("role_hint"),
                     })
                     seen_image_keys.add(key)
                 continue
@@ -3307,10 +3316,13 @@ class Database:
         ] if isinstance(analysis, dict) else []
         for generated_url in generated_asset_urls:
             key = listing_image_dedupe_key(generated_url)
+            for entry in safe_listed_images:
+                if listing_image_dedupe_key(entry["d_img"]) == key:
+                    entry.update(synthetic=True, role_hint="ai_mannequin")
             if not generated_url or key in seen_image_keys:
                 continue
             safe_images.append(generated_url)
-            safe_listed_images.append({"p_img": generated_url, "d_img": generated_url, "is_hero": False})
+            safe_listed_images.append({"p_img": generated_url, "d_img": generated_url, "is_hero": False, "synthetic": True, "role_hint": "ai_mannequin"})
             seen_image_keys.add(key)
         if not safe_images and isinstance(source_item_id, str) and source_item_id.strip():
             safe_images = [f"/v1/images/{image_id}" for image_id in self.list_image_ids_for_item(source_item_id, limit=20)]
