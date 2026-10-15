@@ -40,7 +40,7 @@ def test_lightweight_marketplace_retains_ai_disclosure_metadata():
         mode="trade", category="clothes", brand="Brand", condition="New", size="M", estimated_value=100,
         city="New York", image="/v1/images/original", images=["/v1/images/original", "/v1/images/generated"],
         description="", wants="", tags=[], source_item_id=None, status="Active",
-        analysis={"private_pricing_payload": "not needed by gallery", "generated_assets": [
+        analysis={"private_pricing_payload": "Legacy Herv\u0000 label output", "generated_assets": [
             {"image_url": "/v1/images/generated", "synthetic": True, "review_decision": "include"}]})
     item = db.list_recent_listings(include_analysis=False, include_media=True, active_only=True)[0]
     assert "private_pricing_payload" not in item['analysis']

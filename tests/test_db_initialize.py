@@ -85,7 +85,7 @@ def test_production_dependency_does_not_run_optional_migrations(monkeypatch):
         deps.get_db.cache_clear()
 
 
-@pytest.mark.parametrize('method,args', [('fetchone', ('SELECT 1',)), ('fetchall', ('SELECT 1',)), ('_fetch_dicts', ('SELECT 1',)), ('list_user_notifications', ('owner',))])
+@pytest.mark.parametrize('method,args', [('fetchone', ('SELECT 1',)), ('fetchall', ('SELECT 1',)), ('_fetch_dicts', ('SELECT 1',)), ('list_user_notifications', ('owner',)), ('list_recent_listings', ()), ('list_owner_listings', ('owner',))])
 def test_failed_pg_reads_rollback_transaction(method, args):
     db = _TrackingDatabase()
     class Cursor:
@@ -94,6 +94,8 @@ def test_failed_pg_reads_rollback_transaction(method, args):
         def close(self): self.closed = True
     cursor = Cursor()
     db._pg_cursor = lambda: cursor
+    if method in {'list_recent_listings', 'list_owner_listings'}:
+        db.fetchall = lambda *arguments: Database.fetchall(db, *arguments)
     # Use the actual implementation rather than the initializer test double.
     with pytest.raises(RuntimeError, match='query failed'):
         getattr(Database, method)(db, *args)

@@ -2651,14 +2651,9 @@ class Database:
         active_only: bool = False,
         search: str = "",
     ) -> list[dict]:
-        analysis_select = "analysis_json" if include_analysis else "NULL AS analysis_json"
-        if not include_analysis and include_media:
-            # Keep AI-image disclosure available in lightweight marketplace responses.
-            analysis_select = (
-                "json_object('generated_assets', json_extract(analysis_json, '$.generated_assets')) AS analysis_json"
-                if self._sqlite_conn is not None else
-                "jsonb_build_object('generated_assets', analysis_json::jsonb -> 'generated_assets')::text AS analysis_json"
-            )
+        # Parse legacy model output in Python, not PostgreSQL JSONB: valid JSON can
+        # contain escaped null characters that PostgreSQL JSONB rejects.
+        analysis_select = "analysis_json" if include_analysis or include_media else "NULL AS analysis_json"
         image_select = "image" if include_media else "NULL AS image"
         images_select = "images_json" if include_media else "'[]' AS images_json"
         where_clause = "WHERE LOWER(status) = 'active'" if active_only else ""
@@ -2672,15 +2667,13 @@ class Database:
             f"size, estimated_value, city, {image_select}, {images_select}, description, wants, tags_json, source_item_id, {analysis_select}, status, created_at, COALESCE(updated_at, created_at) AS updated_at "
             f"FROM listings {where_clause} ORDER BY created_at DESC LIMIT {self.param} OFFSET {self.param}"
         )
-        if self._sqlite_conn is not None:
-            with self._sqlite_lock:
-                rows = self._sqlite_conn.execute(query, tuple(params)).fetchall()
-            return [self._listing_row_to_dict(row) for row in rows]
-        cur = self._pg_cursor()
-        cur.execute(query, tuple(params))
-        rows = cur.fetchall()
-        cur.close()
-        return [self._listing_row_to_dict(row) for row in rows]
+        rows = self.fetchall(query, tuple(params))
+        items = [self._listing_row_to_dict(row) for row in rows]
+        if not include_analysis:
+            for item in items:
+                assets = (item.get("analysis") or {}).get("generated_assets")
+                item["analysis"] = {"generated_assets": assets} if assets else None
+        return items
 
     def list_owner_listings(self, owner_subject: str, limit: int = 50, offset: int = 0, search: str = "") -> list[dict]:
         search_clause = ""
@@ -2694,14 +2687,7 @@ class Database:
             f"size, estimated_value, city, image, images_json, description, wants, tags_json, source_item_id, analysis_json, status, created_at, COALESCE(updated_at, created_at) AS updated_at "
             f"FROM listings WHERE owner_subject = {self.param}{search_clause} ORDER BY created_at DESC LIMIT {self.param} OFFSET {self.param}"
         )
-        if self._sqlite_conn is not None:
-            with self._sqlite_lock:
-                rows = self._sqlite_conn.execute(query, tuple(params)).fetchall()
-            return [self._listing_row_to_dict(row) for row in rows]
-        cur = self._pg_cursor()
-        cur.execute(query, tuple(params))
-        rows = cur.fetchall()
-        cur.close()
+        rows = self.fetchall(query, tuple(params))
         return [self._listing_row_to_dict(row) for row in rows]
 
     def update_listing(
