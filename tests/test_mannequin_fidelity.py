@@ -116,7 +116,7 @@ def test_pipeline_generates_from_front_only_but_keeps_all_originals_for_review(m
     assert result["review_decision"] == "pending"
 
 
-@pytest.mark.parametrize("outcome", ["changed", "uncertain", "unavailable"])
+@pytest.mark.parametrize("outcome", ["changed", "uncertain", "unavailable", "underdressed", "bottom_fallback"])
 def test_flagged_candidate_is_saved_only_as_pending_owner_preview(monkeypatch, outcome):
     from app import main, mannequin_fidelity
     from app.settings import Settings
@@ -142,6 +142,7 @@ def test_flagged_candidate_is_saved_only_as_pending_owner_preview(monkeypatch, o
 
     class Storage:
         def save_upload(self, **kwargs):
+            assert outcome not in {"unavailable", "underdressed"}, "Unsafe preview must not be persisted"
             return "test-preview.png"
 
         def save_debug_artifact(self, **kwargs):
@@ -151,21 +152,34 @@ def test_flagged_candidate_is_saved_only_as_pending_owner_preview(monkeypatch, o
         def insert_image(self, image):
             assert image.role_hint == "ai_mannequin"
 
+    review_modes = []
     async def inspect(**kwargs):
+        review_modes.append(kwargs["display_mode"])
         if outcome == "unavailable":
             raise TimeoutError("Diagnostic review timed out")
         result = review()
-        result["checks"][1]["result"] = outcome
+        rejected = outcome == "underdressed" or (outcome == "bottom_fallback" and kwargs["display_mode"] != "lower_body")
+        result["clothing_coverage"] = {"verdict": "failed" if rejected else "passed",
+                                       "evidence": "Visible clothing coverage inspected"}
+        result["checks"][1]["result"] = "matched" if outcome in {"underdressed", "bottom_fallback"} else outcome
         return result
 
     monkeypatch.setattr(mannequin_fidelity, "review_candidate", inspect)
     result = asyncio.run(main._generate_verified_mannequin_asset(
         client=Client(), reference_files=[{"data": b"original"}], all_files=[{"data": b"original"}],
         plan={**plan(), "reference_indices": [0]}, prompt="preserve", model="generator", fidelity_model="reviewer",
-        endpoint="https://example.test", asset_kind="mannequin_dress", category="clothes", item_id="test",
+        endpoint="https://example.test", asset_kind="mannequin_bottom" if outcome == "bottom_fallback" else "mannequin_dress", category="clothes", item_id="test",
         settings=Settings(gemini_api_key="test"), db=Database(), storage=Storage(),
     ))
+    if outcome in {"unavailable", "underdressed"}:
+        assert result is None
+        return
     assert result["review_decision"] == "pending"
+    if outcome == "bottom_fallback":
+        assert review_modes == ["full", "full", "lower_body"]
+        assert result["display_mode"] == "lower_body"
+        assert result["clothing_attempt"] == 3
+        return
     assert result["fidelity_passed"] is False
 
 
@@ -175,6 +189,8 @@ def test_flagged_candidate_is_saved_only_as_pending_owner_preview(monkeypatch, o
     ("One-shoulder dress", "Do not add unnecessary layers", "Dress the lower body"),
     ("Utility jumpsuit", "Do not add unnecessary layers", "Dress the lower body"),
     ("Pleated skirt", "neutral top covering", "Dress the lower body"),
+    ("Tous Les Jours Rayla Shorts", "Never show a bare upper torso", "Dress the lower body"),
+    ("Tweed shorts", "covers the chest", "Dress the lower body"),
     ("Halter top", "Dress the lower body", "Do not add unnecessary layers"),
 ])
 def test_category_specific_supporting_clothing(title, required, forbidden):
@@ -182,7 +198,8 @@ def test_category_specific_supporting_clothing(title, required, forbidden):
     _, prompt = _mannequin_generation_prompt(category="clothes", title=title, description="Pairs with a dress")
     assert required in prompt
     assert forbidden not in prompt
-    assert "Preserve intentional bare shoulders" in prompt
+    if "shorts" not in title.lower() and "skirt" not in title.lower():
+        assert "Preserve intentional bare shoulders" in prompt
     assert "must not obscure, extend or alter" in prompt
 
 
@@ -195,3 +212,25 @@ def test_bag_is_fully_dressed_in_contrast_without_inventing_straps():
     assert "light neutral clothing for dark bags" in prompt
     assert "dark neutral clothing for light bags" in prompt
     assert "do not invent a shoulder strap" in prompt
+
+
+@pytest.mark.parametrize("coverage", [None, {}, {"verdict": "passed"},
+    {"verdict": "failed", "evidence": "Bare chest"}, {"verdict": "uncertain", "evidence": "Obscured"}])
+def test_clothing_coverage_requires_explicit_verified_evidence(coverage):
+    from app.mannequin_fidelity import coverage_passes
+    assert not coverage_passes({"clothing_coverage": coverage})
+
+
+def test_bottom_attempts_prioritize_a_top_then_fall_back_to_lower_body():
+    from app.main import _mannequin_generation_prompt
+    from app.mannequin_fidelity import clothing_attempts
+    kind, prompt = _mannequin_generation_prompt(category="clothes", title="Rayla Shorts", description="")
+    attempts = clothing_attempts(prompt, kind)
+    assert kind == "mannequin_bottom"
+    assert [mode for _, mode, _ in attempts] == ["full", "full", "lower_body"]
+    assert prompt.startswith("Create a TWO-PIECE dressed outfit")
+    assert "Preserve intentional bare shoulders" not in prompt
+    assert "CORRECTIVE RETRY" in attempts[1][2]
+    assert "no upper torso" in attempts[2][2]
+    assert "entire waistband" in attempts[2][2]
+    assert len(clothing_attempts("dress", "mannequin_dress")) == 1

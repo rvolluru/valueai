@@ -9996,17 +9996,24 @@ def _mannequin_generation_prompt(*, category: str, title: str, description: str)
         supporting_clothing = (
             "Do not add unnecessary layers to this dress or jumpsuit. " if garment in {"dress", "jumpsuit"} else
             "Add a simple fitted neutral top covering the mannequin's upper torso, without obscuring the listed bottom. "
+            "MANDATORY: for shorts, skirts, trousers and all bottoms, add an opaque plain crew-neck top that covers "
+            "the chest, breasts and abdomen down to the waistband. Never show a bare upper torso, bra-only styling, "
+            "transparent top or exposed breast forms. Keep the waistband, pockets, belt and hem fully visible. "
             if garment == "bottom" else
             "Dress the lower body in simple neutral trousers or a skirt; it must not appear naked below the listed top. "
             "For an open jacket or blazer, add a simple neutral underlayer without obscuring its lapels or construction. "
         )
-        asset_kind = "mannequin_dress" if garment == "dress" else "mannequin_garment"
+        asset_kind = "mannequin_bottom" if garment == "bottom" else "mannequin_dress" if garment == "dress" else "mannequin_garment"
         product = garment if garment in {"dress", "jumpsuit"} else "garment"
         return asset_kind, (
+            ("Create a TWO-PIECE dressed outfit: the exact listed bottom from the source photo plus a plain opaque "
+             "neutral crew-neck T-shirt tucked in at the waistband. The T-shirt is required supporting styling, "
+             "not part of the listed product. Show the entire bottom, including waistband and hem. " if garment == "bottom" else "") +
             f"Put this exact {product} on a matte white headless mannequin for a front-view studio product photograph. "
             f"{fidelity_rules}{supporting_clothing}"
             "Supporting clothing must remain visually secondary and must not obscure, extend or alter the listed garment. "
-            "Preserve intentional bare shoulders, arms, cutouts and legs below a dress hem; never add straps or sleeves to fill them."
+            + ("Preserve intentional bare shoulders, arms, cutouts and legs below a dress hem; never add straps or sleeves to fill them."
+             if garment in {"dress", "jumpsuit", "top"} else "Keep the listed bottom unchanged; the supporting top must cover the entire chest and abdomen.")
         )
     return None
 
@@ -10072,21 +10079,30 @@ async def _generate_verified_mannequin_asset(*, client, reference_files, all_fil
                                             fidelity_model, endpoint, asset_kind, category, item_id, settings, db, storage):
     from .mannequin_fidelity import generate_candidate, review_candidate, review_passes
     try:
-        candidate = await generate_candidate(client=client, api_key=settings.gemini_api_key, model=model,
-                                             files=reference_files, prompt=prompt)
-        if candidate is None:
-            log_json("mannequin_image_generation_empty", item_id=item_id, category=category, model=model)
+        from .mannequin_fidelity import coverage_passes, clothing_attempts
+        for attempt, display_mode, attempt_prompt in clothing_attempts(prompt, asset_kind):
+            candidate = await generate_candidate(client=client, api_key=settings.gemini_api_key, model=model,
+                                                 files=reference_files, prompt=attempt_prompt)
+            if candidate is None:
+                log_json("mannequin_image_generation_empty", item_id=item_id, category=category, model=model)
+                continue
+            generated_raw, generated_content_type = candidate
+            with Image.open(BytesIO(generated_raw)) as generated_image:
+                generated_image.verify()
+            try:
+                review = await review_candidate(client=client, api_key=settings.gemini_api_key, model=fidelity_model,
+                                                files=all_files, plan=plan, generated_raw=generated_raw,
+                                                generated_content_type=generated_content_type, display_mode=display_mode)
+            except Exception as exc:
+                review = {"verdict": "unavailable", "checks": [], "additional_changes": [], "error": str(exc)[:500]}
+                log_json("mannequin_fidelity_review_unavailable", item_id=item_id, category=category)
+            if coverage_passes(review):
+                prompt = attempt_prompt
+                break
+            log_json("mannequin_clothing_coverage_rejected", item_id=item_id, category=category,
+                     attempt=attempt, display_mode=display_mode, coverage=review.get("clothing_coverage"))
+        else:
             return None
-        generated_raw, generated_content_type = candidate
-        with Image.open(BytesIO(generated_raw)) as generated_image:
-            generated_image.verify()
-        try:
-            review = await review_candidate(client=client, api_key=settings.gemini_api_key, model=fidelity_model,
-                                            files=all_files, plan=plan, generated_raw=generated_raw,
-                                            generated_content_type=generated_content_type)
-        except Exception as exc:
-            review = {"verdict": "unavailable", "checks": [], "additional_changes": [], "error": str(exc)[:500]}
-            log_json("mannequin_fidelity_review_unavailable", item_id=item_id, category=category)
         if not review_passes(review, len(plan["constraints"])):
             log_json("mannequin_image_generation_flagged", item_id=item_id, category=category, review=review)
         image_uuid = str(uuid.uuid4())
@@ -10110,8 +10126,10 @@ async def _generate_verified_mannequin_asset(*, client, reference_files, all_fil
             "model": model,
             "reference_image_count": len(reference_files),
             "prompt": prompt,
-            "fidelity_version": 2,
+            "fidelity_version": 3,
             "generation_strategy": "front_only_minimal",
+            "clothing_attempt": attempt,
+            "display_mode": display_mode,
             "review_decision": "pending",
             "fidelity_passed": review_passes(review, len(plan["constraints"])),
             "construction_plan": plan,

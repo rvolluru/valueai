@@ -1034,21 +1034,19 @@ h1, h2, h3, h4 {
   gap: 12px;
 }
 .listing-image-role-badge {
-  position: absolute;
-  left: 5px;
-  right: 5px;
-  bottom: 32px;
-  overflow: hidden;
-  padding: 3px 5px;
+  display: block;
+  position: static;
+  padding: 6px 5px;
   background: rgba(37, 25, 25, 0.82);
   color: #fff;
   font-size: 0.58rem;
   font-weight: 800;
   letter-spacing: 0.04em;
   text-align: center;
-  text-overflow: ellipsis;
   text-transform: uppercase;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  line-height: 1.4;
+  pointer-events: none;
 }
 .listing-modal-remove-photo {
   border: 0;
@@ -2471,6 +2469,7 @@ textarea:focus-visible,
   display: grid;
   gap: 8px;
 }
+.profile-settings-layout { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 16px; }
 .profile-nav .nav-item {
   width: 100%;
   display: block;
@@ -4929,7 +4928,7 @@ textarea:focus-visible,
   }
   .auth-hero-topbar {
     padding: 14px 16px;
-    flex-direction: column;
+    grid-template-columns: minmax(0, 1fr);
     align-items: flex-start;
     gap: 10px;
   }
@@ -5177,6 +5176,32 @@ textarea:focus-visible,
   }
 }
 
+/* Mobile content must shrink to the viewport, not its desktop intrinsic width. */
+@media (max-width: 700px) {
+  .shell { padding: 8px; }
+  .auth-hero-topbar > *, .auth-hero-copy, .auth-hero-feature > *,
+  .brand-logo-lockup, .topbar > *, .app-grid > * { min-width: 0; max-width: 100%; }
+  .auth-brandmark { width: 100%; }
+  .auth-brand-logo { width: min(260px, 100%); }
+  .brand-logo-caption { font-size: .55rem; letter-spacing: .24em; white-space: normal; line-height: 1.5; }
+  .auth-marquee { gap: 4px 16px; font-size: .7rem; }
+  .auth-marquee a, .auth-marquee span { display: inline-flex; align-items: center; min-height: 44px; }
+  .auth-announce-bar { line-height: 1.6; padding: 10px 12px; overflow-wrap: anywhere; }
+  .auth-cta-actions, .auth-cta-actions-fixed { flex-wrap: wrap; gap: 8px; }
+  .auth-cta-actions > *, .auth-hero-actions > * { min-width: 0; min-height: 44px; }
+  .auth-hero-title { max-width: 100%; }
+  .auth-hero-title span { font-size: clamp(2rem, 8vw, 2.8rem); line-height: 1.08; }
+  .auth-hero-copy .lede { font-size: 1.05rem; line-height: 1.6; }
+  .auth-hero-copy p { overflow-wrap: anywhere; }
+  .auth-hero-meta.auth-value-strip { grid-template-columns: minmax(0, 1fr); }
+  .auth-hero-meta.auth-value-strip span { border-right: 0; border-bottom: 1px solid var(--line); }
+  .auth-members-card { right: 12px; bottom: 12px; width: min(240px, calc(100% - 24px)); padding: 14px; }
+  .auth-closet-card img { max-width: 100%; }
+  .auth-section-head, .auth-contact-grid > *, .auth-site-footer > * { min-width: 0; overflow-wrap: anywhere; }
+  .closet-listing-grid { grid-template-columns: minmax(0, 1fr); }
+  .market-editorial-title, .inbox-editorial-title { overflow-wrap: anywhere; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   * { scroll-behavior: auto !important; transition: none !important; animation: none !important; }
 }
@@ -5309,3 +5334,43 @@ textarea:focus-visible,
 .notification-history-item time { color: #746c64; font-size: 13px; }
 .notification-history-item p { white-space: pre-wrap; }
 .notification-unread-label { color: #64141f; font-size: 12px; margin-left: 12px; text-transform: uppercase; letter-spacing: 1px; }
+.mannequin-disclaimer { grid-column: 1 / -1; margin: 8px 0; font-size: .8rem; line-height: 1.5; color: #655f59; }
+
+/* Signed-in mobile web: keep controls reachable without horizontal page scrolling. */
+@media (max-width: 760px) {
+  .topbar { flex-wrap: wrap; padding: 16px 12px; gap: 12px; }
+  .topbar-copy, .app-brand-row { min-width: 0; width: 100%; }
+  .app-brand-row { flex-direction: column; align-items: flex-start; gap: 12px; }
+  .app-brand-logo { width: min(220px, 100%); }
+  .app-brand-links { width: 100%; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 12px; }
+  .app-brand-link { min-height: 44px; display: flex; align-items: center; font-size: .72rem; letter-spacing: .08em; }
+  .topbar-actions { justify-content: flex-end; flex-wrap: wrap; }
+  .notification-panel { position: fixed; top: auto; right: 12px; left: 12px; width: auto; max-height: min(420px, 65dvh); }
+  .account-menu-dropdown { max-width: calc(100vw - 24px); }
+  .panel { padding: 16px 12px; min-width: 0; }
+  .panel-header, .market-selected-head, .market-matches-head { flex-wrap: wrap; gap: 12px; }
+  .panel-header > *, .market-selected-head > *, .profile-settings-layout > *, .inbox-editorial-content { min-width: 0; }
+  .panel-header h2, .profile-tab-heading { font-size: clamp(1.8rem, 8vw, 2.4rem); line-height: 1.1; overflow-wrap: anywhere; }
+  .profile-settings-layout, .field-grid.two, .field-grid.three, .subscription-plan-grid,
+  .listing-review-layout, .listing-edit-layout { grid-template-columns: minmax(0, 1fr); }
+  .profile-nav { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .profile-nav .nav-item { padding: 12px 8px; min-height: 44px; white-space: normal; }
+  .listing-review-details, .listing-edit-details { position: static; }
+  .listing-review-gallery { min-height: 0; grid-template-columns: minmax(0, 1fr); }
+  .listing-review-gallery > img, .listing-review-gallery > .listing-image-zoom-trigger img { height: auto; max-height: 65dvh; }
+  .listing-review-thumbnails { display: flex; overflow-x: auto; order: -1; }
+  .listing-review-thumbnails button { flex: 0 0 64px; }
+  .listing-edit-gallery-panel, .listing-edit-analysis, .trade-picker-item { padding: 12px; }
+  .inbox-editorial-frame { padding: 12px; gap: 16px; }
+  .inbox-editorial-actions { flex-direction: column; align-items: stretch; }
+  .inbox-editorial-actions .inbox-address-select { flex: auto; width: 100%; }
+  .inbox-editorial-actions button.primary, .inbox-editorial-actions button.ghost { align-self: stretch; width: 100%; }
+  .button-row > button, .market-selected-actions > button { min-height: 44px; max-width: 100%; white-space: normal; }
+  .market-controls { grid-template-columns: minmax(0, 1fr); }
+  .market-controls > * { min-width: 0; max-width: 100%; }
+  .market-matches-drawer { width: 100%; max-width: 100%; padding: 16px 12px; }
+  .notification-history-item { padding: 14px; overflow-wrap: anywhere; }
+  .app-assistant-panel { max-height: calc(100dvh - 100px); grid-template-rows: auto minmax(0, 1fr) auto; }
+  .app-assistant-turn > div, .app-assistant-turn > p { min-width: 0; overflow-wrap: anywhere; }
+  .impersonation-banner, .trade-notification-banner { flex-wrap: wrap; }
+}

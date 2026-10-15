@@ -1,4 +1,5 @@
 import { Fragment, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
+import { MANNEQUIN_DISCLAIMER, hasMannequinPreview } from '../../../packages/app-client/src/mannequinDisclosure'
 import {
   useAuth,
   useClerk,
@@ -7281,7 +7282,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                 </div>
               ) : (
               <>
-              <div style={{ display: 'grid', gridTemplateColumns: '220px 1fr', gap: 16 }}>
+              <div className="profile-settings-layout">
                 <aside className="profile-nav" style={{ border: '1px solid var(--line)', borderRadius: 12, padding: 10, alignSelf: 'start' }}>
                   <button className={profileSection === 'general' ? 'nav-item active' : 'nav-item'} type="button" onClick={() => setProfileSection('general')}>General</button>
                   {clerkEnabled && <button className={profileSection === 'security' ? 'nav-item active' : 'nav-item'} type="button" onClick={() => setProfileSection('security')}>Login & Security</button>}
@@ -7962,6 +7963,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                         setPhotoEditTarget({ src: resolveListingImageUrl(modalPreviewUrls[index]), index })
                       }}>Zoom / Crop / Rotate photo</button></div>}
                     <div className="listing-edit-gallery market-selected-gallery">
+                      {hasMannequinPreview(modalEditingListing) && <p className="mannequin-disclaimer">{MANNEQUIN_DISCLAIMER}</p>}
                       <div className="listing-edit-main-image market-selected-main-image">
                         {modalPreviewUrls.length > 0 ? (
                           <>
@@ -8250,6 +8252,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                     {reviewListing.generatedImages?.length > 0 && (
                       <div className="mannequin-review">
                         <h3>AI mannequin preview</h3>
+                        <p className="mannequin-disclaimer">{MANNEQUIN_DISCLAIMER}</p>
                         <p>Check that the garment matches your photos. You can publish with or without this optional image.</p>
                         {reviewListing.generatedImages.map((src) => <img key={src} src={src} alt="Optional AI-generated mannequin preview" style={{ maxWidth: '100%', maxHeight: 360, objectFit: 'contain' }} />)}
                         <label>What looks wrong? (optional)<textarea value={mannequinFeedback} onChange={(event) => setMannequinFeedback(event.target.value)} maxLength={2000} rows={2} placeholder="For example: the sleeve or zipper is different" /></label>
@@ -8558,6 +8561,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
           )}
 
           {activeTab === 'notifications' && <NotificationsPage load={loadNotificationHistory} markRead={markHistoryNotificationRead}
+            localItems={notifications} markLocalRead={id => setNotifications(previous => previous.map(item => item.id === id ? { ...item, read: true } : item))}
             onBack={() => navigateBack('market')} onOpen={item => navigateToTab(item.action_tab === 'marketplace' ? 'market' : item.action_tab === 'closet' ? 'portfolio' : VALID_TABS.has(item.action_tab) ? item.action_tab : 'inbox')} />}
           {activeTab === 'market' && (
             <section className="panel">
@@ -8614,6 +8618,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                                 <div className="listing-image-fallback">Image unavailable</div>
                               )}
                             </div>
+                            {hasMannequinPreview(item) && <p className="mannequin-disclaimer">{MANNEQUIN_DISCLAIMER}</p>}
                             {gallery.length > 1 && (
                               <div className="market-selected-thumbnails" aria-label="Listing image thumbnails">
                                 {gallery.map((src, idx) => (
@@ -9106,7 +9111,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                 <span>{listingChatListing.category || category} · {listingChatListing.size || itemSize || 'Size not provided'} · {displayConditionLabel(listingChatListing.condition || userCondition)}</span>
                 {Number(listingChatListing.estimatedValue || 0) > 0 && <span>Estimated trade value: {money(listingChatListing.estimatedValue)}</span>}
                 {listingChatListing.description && <p>{listingChatListing.description}</p>}
-                {listingChatListing.generatedImages?.[0] && <figure className="app-assistant-generated-preview"><img src={listingChatListing.generatedImages[0]} alt={`AI-generated mannequin preview for ${listingChatListing.title || 'listing'}`} /><figcaption>AI-generated mannequin preview</figcaption></figure>}
+                {listingChatListing.generatedImages?.[0] && <figure className="app-assistant-generated-preview"><img src={listingChatListing.generatedImages[0]} alt={`AI-generated mannequin preview for ${listingChatListing.title || 'listing'}`} /><figcaption>{MANNEQUIN_DISCLAIMER}</figcaption></figure>}
                 <p>Tell me what you'd like to change, or say “publish it” when everything looks right.</p>
               </div></div>}
               {listingChatStage === 'published' && listingChatListing && <div className="app-assistant-turn assistant"><span aria-hidden="true"><LogoJ small /></span><div className="app-assistant-published-result"><strong>Your listing is live</strong><p>{listingChatMatches.length ? `I found ${listingChatMatches.length} potential ${listingChatMatches.length === 1 ? 'match' : 'matches'}. Tell me which one you want by number or title, and I'll help prepare the trade.` : 'No close matches are available yet. I’ll keep matching it as marketplace inventory changes.'}</p>{listingChatMatches.length > 0 && <div className="app-assistant-results">{listingChatMatches.map((match, matchIndex) => <article key={match.id || match.listing_id}>{getListingGallery(match)[0] && <img src={getListingGallery(match)[0]} alt={match.title || 'Matched listing'} />}<div><small>{matchIndex + 1} · {match.brand || 'Unknown brand'}</small><strong>{match.title || 'Matched listing'}</strong><span>{match.size || 'Size not provided'} · {displayConditionLabel(match.condition)}</span></div></article>)}</div>}</div></div>}
