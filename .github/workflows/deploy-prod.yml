@@ -217,6 +217,18 @@ jobs:
           echo "project_name=${project_name}" >> "$GITHUB_OUTPUT"
           echo "infra_changed=${infra_changed}" >> "$GITHUB_OUTPUT"
 
+      - name: Migrate database before application rollout
+        timeout-minutes: 18
+        env:
+          IMAGE_URI: ${{ steps.image.outputs.image_uri }}
+          PROJECT_NAME: ${{ steps.mode.outputs.project_name }}
+        run: |
+          set -euo pipefail
+          python scripts/run_ecs_migrations.py \
+            --cluster "${PROJECT_NAME}-cluster" \
+            --service "${PROJECT_NAME}-api" \
+            --image "${IMAGE_URI}"
+
       - name: Fast deploy API image via ECS (skip Terraform)
         if: steps.mode.outputs.use_terraform == 'false'
         env:

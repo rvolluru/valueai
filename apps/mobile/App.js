@@ -1878,7 +1878,8 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
   }
 
   const analyzingClosetListingIds = useMemo(() => myListings
-    .filter((listing) => String(listing?.status || '').toLowerCase() === 'analyzing')
+    .filter((listing) => String(listing?.status || '').toLowerCase() === 'analyzing'
+      || listing?.analysis?.debug?.pipeline_components?.some((part) => ['queued', 'running', 'retrying'].includes(part.status)))
     .map((listing) => listingIdOf(listing))
     .filter(Boolean)
     .sort()

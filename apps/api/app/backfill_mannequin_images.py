@@ -67,7 +67,7 @@ def _reference_files(db: Database, listing: dict, settings) -> list[dict[str, ob
 async def backfill(limit: int, scan_limit: int, dry_run: bool) -> int:
     settings = get_settings()
     db = Database(settings.database_url)
-    db.initialize()
+    db.verify_schema()
     storage = build_storage(settings)
     candidates = [listing for listing in db.list_recent_listings(limit=scan_limit) if _eligible(listing)][:limit]
     print(json.dumps({"event": "backfill_selected", "requested": limit, "selected": len(candidates), "dry_run": dry_run}))

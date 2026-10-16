@@ -4414,7 +4414,8 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   }, [apiBaseUrl, apiKey, clerkEnabled, getBearerToken])
 
   const analyzingClosetListingIds = useMemo(() => myListings
-    .filter((listing) => String(listing?.status || '').toLowerCase() === 'analyzing')
+    .filter((listing) => String(listing?.status || '').toLowerCase() === 'analyzing'
+      || listing?.analysis?.debug?.pipeline_components?.some((part) => ['queued', 'running', 'retrying'].includes(part.status)))
     .map((listing) => String(listing?.id || ''))
     .filter(Boolean)
     .sort()

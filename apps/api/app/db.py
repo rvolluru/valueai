@@ -4,6 +4,10 @@ import json
 import sqlite3
 import threading
 import uuid
+import hashlib
+import tempfile
+from contextlib import contextmanager
+from pathlib import Path
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import PurePosixPath
@@ -147,6 +151,46 @@ class PersistedImage:
 
 
 class Database:
+    def close(self) -> None:
+        if self._sqlite_conn is not None:
+            self._sqlite_conn.close()
+        elif self._pg is not None:
+            self._pg.close()
+
+    @contextmanager
+    def analysis_execution_lock(self, job_id: str):
+        # PostgreSQL advisory locks are already database-scoped. Do not include
+        # credentials: two users connecting to the same DB must share the lock.
+        digest = hashlib.sha256(f"analysis-job:{job_id}".encode()).digest()
+        if self._sqlite_conn is not None:
+            digest = hashlib.sha256(self.url.encode() + digest).digest()
+            # Local SQLite development also needs cross-process exclusion.
+            import fcntl
+            path = Path(tempfile.gettempdir()) / f"jouft-analysis-{digest.hex()}.lock"
+            with path.open("a") as handle:
+                try:
+                    fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    yield False
+                    return
+                try:
+                    yield True
+                finally:
+                    fcntl.flock(handle, fcntl.LOCK_UN)
+            return
+        # Session-scoped lock: crash/disconnect releases it automatically. Keep
+        # this dedicated connection alive until the whole job (incl. retries) ends.
+        lock_key = int.from_bytes(digest[:8], "big", signed=True)
+        acquired = bool(self.fetchone("SELECT pg_try_advisory_lock(%s)", (lock_key,))[0])
+        self.commit()
+        try:
+            yield acquired
+        finally:
+            if acquired and self._pg is not None and not self._pg.closed:
+                with self._pg.cursor() as cursor:
+                    cursor.execute("SELECT pg_advisory_unlock(%s)", (lock_key,))
+                self._pg.commit()
+
     def __init__(self, url: str):
         self.url = url
         self._sqlite_conn: sqlite3.Connection | None = None
@@ -211,6 +255,36 @@ class Database:
         self.commit()
 
     def initialize(self) -> None:
+        """Explicit test/dev migration helper. Never call from request/job code."""
+        from .migrations import migrate
+        migrate(self)
+
+    def verify_schema(self) -> None:
+        """Read-only readiness check; never creates or repairs schema."""
+        from .migrations import MIGRATIONS
+        try:
+            applied = {row[0] for row in self.fetchall("SELECT version FROM schema_migrations")}
+            self.commit()
+        except Exception as exc:
+            raise RuntimeError("Database schema is not ready. Run python -m app.migrations before starting the app.") from exc
+        missing = [version for version, _ in MIGRATIONS if version not in applied]
+        if missing:
+            raise RuntimeError(f"Database migrations required: {', '.join(missing)}. Run python -m app.migrations.")
+
+    def _schema_columns(self) -> dict[str, set[str]]:
+        if self._sqlite_conn is not None:
+            tables = self.fetchall("SELECT name FROM sqlite_master WHERE type='table'")
+            return {row[0]: {col[1] for col in self.fetchall(f'PRAGMA table_info("{row[0]}")')}
+                    for row in tables if row[0].replace('_', '').isalnum()}
+        rows = self.fetchall("SELECT table_name, column_name FROM information_schema.columns WHERE table_schema=current_schema()")
+        result: dict[str, set[str]] = {}
+        for table, column in rows:
+            result.setdefault(table, set()).add(column)
+        self.commit()
+        return result
+
+    def _bootstrap_schema(self) -> None:
+        """Migration 0001 only: idempotent bootstrap of pre-versioned databases."""
         statements = [
             """
             CREATE TABLE IF NOT EXISTS items (
@@ -664,6 +738,7 @@ class Database:
         # failure cannot roll back newly created tables.
         self.commit()
         self.ensure_notification_history_schema()
+        columns = self._schema_columns()
         for alter in (
             "ALTER TABLE images ADD COLUMN content_hash TEXT",
             "ALTER TABLE listings ADD COLUMN images_json TEXT NOT NULL DEFAULT '[]'",
@@ -719,13 +794,17 @@ class Database:
             "ALTER TABLE user_push_tokens ADD COLUMN platform TEXT",
             "ALTER TABLE user_push_tokens ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1",
         ):
+            tokens = alter.split()
+            table, column = tokens[2], tokens[5]
+            if column in columns.get(table, set()):
+                continue
             try:
                 self.execute(alter)
                 self.commit()
             except Exception:
                 if self._pg is not None:
                     self._pg.rollback()
-                pass
+                raise
         # Older seed/import paths allowed resale condition labels that are not
         # valid listing conditions. Keep persisted listings within the public
         # API contract so one legacy record cannot invalidate an entire feed.
@@ -1925,7 +2004,24 @@ class Database:
             f"SELECT listing_id, owner_subject, owner_name, title, mode, category, brand, condition, size, estimated_value, city, image, images_json, description, wants, tags_json, source_item_id, analysis_json, status, created_at, COALESCE(updated_at, created_at) AS updated_at FROM listings WHERE source_item_id = {self.param} ORDER BY updated_at DESC LIMIT 1",
             (item_id,),
         )
-        return self._listing_row_to_dict(row) if row else None
+        if row:
+            return self._listing_row_to_dict(row)
+        link = self.fetchone(
+            f"SELECT l.listing_id FROM analysis_listing_links a JOIN listings l ON l.listing_id = a.listing_id "
+            f"AND l.owner_subject = a.owner_subject WHERE a.item_id = {self.param} ORDER BY a.created_at DESC LIMIT 1",
+            (item_id,),
+        )
+        return self.get_listing_by_id(link[0]) if link else None
+
+    def link_analysis_item(self, item_id: str, listing_id: str, owner_subject: str, job_id: str | None = None) -> None:
+        self.execute(
+            f"INSERT INTO analysis_listing_links (item_id, listing_id, owner_subject, job_id, created_at) "
+            f"SELECT {self.param}, listing_id, owner_subject, {self.param}, {self.param} FROM listings "
+            f"WHERE listing_id = {self.param} AND owner_subject = {self.param} "
+            "ON CONFLICT (item_id, listing_id) DO NOTHING",
+            (item_id, job_id, utc_now_iso(), listing_id, owner_subject),
+        )
+        self.commit()
 
     def list_all_trade_offers(self, limit: int = 50, status: str | None = None) -> list[dict]:
         safe_limit = max(1, min(int(limit or 50), 200))
@@ -2647,6 +2743,8 @@ class Database:
             ),
         )
         self.commit()
+        if source_item_id:
+            self.link_analysis_item(source_item_id, listing_id, owner_subject)
         return created_at
 
     def list_recent_listings(
@@ -2782,6 +2880,8 @@ class Database:
             finally:
                 cur.close()
         self.commit()
+        if changed and source_item_id:
+            self.link_analysis_item(source_item_id, listing_id, owner_subject)
         return changed
 
     def create_listing_analysis_job(
@@ -2827,6 +2927,87 @@ class Database:
             "updated_at": now,
         }
 
+    def create_pipeline_components(self, job_id: str, inputs: dict) -> dict:
+        for component in ("pricing", "mannequin", "staging"):
+            self.execute(
+                f"INSERT INTO listing_pipeline_components (job_id, component, inputs_json, status, attempts, updated_at) "
+                f"VALUES ({self.param}, {self.param}, {self.param}, 'queued', 0, {self.param}) "
+                "ON CONFLICT (job_id, component) DO NOTHING",
+                (job_id, component, json.dumps(inputs), utc_now_iso()),
+            )
+        self.commit()
+        return self.get_pipeline_inputs(job_id)
+
+    def get_pipeline_inputs(self, job_id: str) -> dict | None:
+        row = self.fetchone(f"SELECT inputs_json FROM listing_pipeline_components WHERE job_id={self.param} AND component='pricing'", (job_id,))
+        self.commit()
+        return json.loads(row[0]) if row else None
+
+    def list_pipeline_components(self, job_id: str) -> list[dict]:
+        rows = self._fetch_dicts(
+            f"SELECT component, status, attempts, error, updated_at FROM listing_pipeline_components WHERE job_id={self.param} ORDER BY component", (job_id,))
+        self.commit()
+        return rows
+
+    def listing_pipeline_states(self, listing_ids: list[str], owner_subject: str) -> dict:
+        if not listing_ids:
+            return {}
+        placeholders = ','.join(self.param for _ in listing_ids)
+        rows = self._fetch_dicts(
+            "SELECT j.listing_id, c.component, c.status, c.attempts FROM listing_analysis_jobs j "
+            "JOIN listing_pipeline_components c ON c.job_id=j.job_id "
+            f"WHERE j.owner_subject={self.param} AND j.listing_id IN ({placeholders}) "
+            "AND j.job_id=(SELECT latest.job_id FROM listing_analysis_jobs latest "
+            "WHERE latest.listing_id=j.listing_id AND latest.owner_subject=j.owner_subject "
+            "ORDER BY latest.created_at DESC LIMIT 1)", (owner_subject, *listing_ids))
+        self.commit()
+        result = {}
+        for row in rows:
+            result.setdefault(row.pop('listing_id'), []).append(row)
+        return result
+
+    def set_pipeline_component(self, job_id: str, component: str, status: str, attempts: int, error: str = "") -> None:
+        self.execute(
+            f"UPDATE listing_pipeline_components SET status={self.param}, attempts={self.param}, error={self.param}, updated_at={self.param} "
+            f"WHERE job_id={self.param} AND component={self.param}",
+            (status, attempts, error[:1000], utc_now_iso(), job_id, component),
+        )
+        self.commit()
+
+    def mutate_pipeline_listing(self, listing_id: str, owner_subject: str, transform) -> bool:
+        """Serialize narrow result merges; model/network work must happen before this call."""
+        try:
+            if self._sqlite_conn is not None:
+                self.execute("BEGIN IMMEDIATE")
+            columns = ("listing_id, owner_subject, owner_name, title, mode, category, brand, condition, size, estimated_value, "
+                       "city, image, images_json, description, wants, tags_json, source_item_id, analysis_json, status, created_at, updated_at")
+            row = self.fetchone(f"SELECT {columns} FROM listings WHERE listing_id={self.param} AND owner_subject={self.param}" +
+                                (" FOR UPDATE" if self._pg is not None else ""), (listing_id, owner_subject))
+            if not row:
+                self.commit()
+                return False
+            current = self._listing_row_to_dict(row)
+            fields = transform(current)
+            if not fields:
+                self.commit()
+                return False
+            allowed = {"title", "brand", "category", "condition", "size", "estimated_value", "source_item_id",
+                       "description", "status", "analysis_json", "images_json", "image", "tags_json"}
+            if not set(fields) <= allowed:
+                raise ValueError("Invalid pipeline result field")
+            fields["updated_at"] = utc_now_iso()
+            assignments = ', '.join(f'{key}={self.param}' for key in fields)
+            self.execute(f"UPDATE listings SET {assignments} WHERE listing_id={self.param} AND owner_subject={self.param}",
+                         (*fields.values(), listing_id, owner_subject))
+            self.commit()
+            return True
+        except Exception:
+            if self._pg is not None:
+                self._pg.rollback()
+            elif self._sqlite_conn is not None:
+                self._sqlite_conn.rollback()
+            raise
+
     def update_listing_analysis_job(
         self,
         *,
@@ -2843,6 +3024,9 @@ class Database:
         existing = self.get_listing_analysis_job(job_id, owner_subject)
         if existing is None:
             return None
+        if existing.get("status") == "succeeded":
+            # A timeout, late delivery or retry must not replace committed success.
+            return existing
         now = utc_now_iso()
         next_status = status if status is not None else existing.get("status")
         next_stage = stage if stage is not None else existing.get("stage")
@@ -2860,7 +3044,7 @@ class Database:
                 updated_at = {self.param},
                 started_at = {self.param},
                 completed_at = {self.param}
-            WHERE job_id = {self.param} AND owner_subject = {self.param}"""
+            WHERE job_id = {self.param} AND owner_subject = {self.param} AND status <> 'succeeded'"""
         self.execute(
             sql,
             (

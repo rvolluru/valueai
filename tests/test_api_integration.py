@@ -59,6 +59,12 @@ def _build_client():
     deps.get_brand_analyzer.cache_clear()
     deps.get_condition_analyzer.cache_clear()
 
+    # Tests provision schema explicitly, just as deployment does before rollout.
+    from app.db import Database
+    migration_db = Database(settings.get_settings().database_url)
+    migration_db.initialize()
+    migration_db.close()
+
     from app.main import app
 
     app.dependency_overrides.clear()
@@ -345,7 +351,7 @@ def test_first_accepted_trade_retires_listings_and_competing_offers():
         raise AssertionError("A listing was accepted into two trades")
 
 
-def test_database_normalizes_legacy_listing_conditions():
+def test_schema_migration_normalizes_legacy_listing_conditions():
     _build_client()
     from app import deps
 
@@ -377,6 +383,9 @@ def test_database_normalizes_legacy_listing_conditions():
     )
     db.commit()
 
+    # Simulate upgrading a pre-versioned database, rather than repairing data at runtime.
+    db.execute("DELETE FROM schema_migrations WHERE version = ?", ("0001_application_schema",))
+    db.commit()
     db.initialize()
 
     assert db.get_listing_by_id("legacy-good-condition")["condition"] == "LikeNew"

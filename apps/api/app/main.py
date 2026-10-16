@@ -36,6 +36,8 @@ from valuation import ValuationConfig, ValuationService
 from valuation.types import ValuationRequest
 
 from .auth import AuthPrincipal, create_impersonation_token, get_request_principal, principal_has_admin_role, require_admin_or_api_key, require_admin_user, require_clerk_user
+from .analysis_execution import guard_analysis_job, recover_analysis_success
+from .pipeline_results import StalePipelineResult, merge_result, mark_pricing_failure
 from .analysis_queue import enqueue_listing_analysis
 from .db import Database, PersistedImage, TradeListingUnavailableError, utc_now_iso
 from .deps import (
@@ -948,6 +950,7 @@ def _reuse_recent_analysis_for_listing(
     listing_id: str,
     owner_subject: str,
     current: dict,
+    persist: bool = True,
 ) -> dict | None:
     source_item_id = str(current.get("source_item_id") or "").strip()
     if not source_item_id:
@@ -1007,6 +1010,8 @@ def _reuse_recent_analysis_for_listing(
         # Older cache entries must not bypass the new condition-specific retry.
         return None
     response_payload["valuation"] = aligned_valuation
+    # Reused model evidence does not transfer ownership of its original item.
+    db.link_analysis_item(source_item_id, listing_id, owner_subject)
     response_payload["item_id"] = source_item_id
     uploaded_images = _uploaded_images_for_item(db, source_item_id)
     if uploaded_images:
@@ -1049,7 +1054,8 @@ def _reuse_recent_analysis_for_listing(
         model_name=model_name,
         profile_description=profile_description,
     )
-    db.update_listing(
+    if persist:
+        db.update_listing(
         listing_id=listing_id,
         owner_subject=owner_subject,
         title=title or "New listing",
@@ -1316,11 +1322,12 @@ def _with_latest_analysis_job(db: Database, listing: dict, owner_subject: str) -
     return out
 
 
-def _analysis_job_public_payload(job: dict | None) -> dict:
+def _analysis_job_public_payload(job: dict | None, db: Database | None = None) -> dict:
     if not job:
         return {"status": "not_found"}
     return {
         "job_id": job.get("job_id"),
+        "components": db.list_pipeline_components(job['job_id']) if db else [],
         "listing_id": job.get("listing_id"),
         "status": job.get("status"),
         "stage": job.get("stage"),
@@ -5762,6 +5769,14 @@ def list_recent_listings(
     records = records[:safe_limit]
     records = [_normalize_listing_media(record) for record in records]
 
+    if mine:
+        states = db.listing_pipeline_states([record['listing_id'] for record in records], principal.subject)
+        for record in records:
+            if record['listing_id'] in states:
+                record['analysis'] = record.get('analysis') or {}
+                record['analysis']['debug'] = record['analysis'].get('debug') or {}
+                record['analysis']['debug']['pipeline_components'] = states[record['listing_id']]
+
     if include_matches and mine:
         viewer_profile = db.get_user_profile_quiz(principal.subject)
         sent_offer_pairs = _sent_offer_match_pairs(db, principal.subject)
@@ -7285,7 +7300,6 @@ def _send_listing_published_email_if_configured(
 ) -> str:
     notification_from_email = str(settings.notification_from_email or "").strip()
     profile_db = Database(settings.database_url)
-    profile_db.initialize()
     profile = profile_db.get_user_profile_quiz(owner_subject) or {}
     recipient = str(profile.get("email") or profile.get("shipping_email") or "").strip()
     if not recipient:
@@ -8030,7 +8044,6 @@ def _process_shipping_reminders_once(*, settings: Settings) -> None:
     if not settings.shipping_reminder_enabled:
         return
     db = Database(settings.database_url)
-    db.initialize()
     now = datetime.now(timezone.utc)
     interval = timedelta(hours=max(1, int(settings.shipping_reminder_interval_hours)))
     pending = db.list_shipments_pending_reminder()
@@ -8085,21 +8098,10 @@ async def _shipping_reminder_worker() -> None:
         await asyncio.sleep(poll_seconds)
 
 
-def _repair_listing_media_gallery_once(*, settings: Settings) -> None:
-    try:
-        db = Database(settings.database_url)
-        db.initialize()
-        changed = db.migrate_listing_media_urls_to_http()
-        if changed:
-            log_json("listing_media_gallery_repaired", changed=changed)
-    except Exception as exc:
-        log_json("listing_media_gallery_repair_failed", error=str(exc))
-
-
 @app.on_event("startup")
 async def _start_shipping_reminder_worker() -> None:
     settings = get_settings()
-    await asyncio.to_thread(_repair_listing_media_gallery_once, settings=settings)
+    await asyncio.to_thread(get_db)  # Read-only readiness check; migrations run before rollout.
     if not settings.shipping_reminder_enabled:
         return
     app.state.shipping_reminder_task = asyncio.create_task(_shipping_reminder_worker())
@@ -10044,6 +10046,7 @@ async def _generate_mannequin_listing_asset(
     settings: Settings,
     db: Database,
     storage: Storage,
+    raise_on_error: bool = False,
 ) -> dict[str, object] | None:
     prompt_spec = _mannequin_generation_prompt(category=category, title=title, description=description)
     if not prompt_spec or not settings.mannequin_image_generation_enabled or not settings.gemini_api_key:
@@ -10074,6 +10077,14 @@ async def _generate_mannequin_listing_asset(
             fidelity_model = settings.gpt_item_profile_gemini_model
             plan = await plan_references(client=client, api_key=settings.gemini_api_key,
                                          model=fidelity_model, files=reference_files)
+            # The independent visual planner identifies the garment type. Do not
+            # wait for the pricing model's title/description to choose styling.
+            visual_type = plan.get('product_type')
+            if isinstance(visual_type, str) and visual_type.strip():
+                prompt_spec = _mannequin_generation_prompt(category=category, title=visual_type, description='')
+                if not prompt_spec:
+                    return None
+                asset_kind, prompt = prompt_spec
             # Other original views inform planning and diagnostics, not image synthesis.
             front_index = plan["reference_indices"][0]
             selected_files = [{**reference_files[front_index], "_fidelity_view": "front"}]
@@ -10084,6 +10095,8 @@ async def _generate_mannequin_listing_asset(
             )
     except Exception as exc:
         log_json("mannequin_image_generation_error", item_id=item_id, category=category, model=model, error=str(exc)[:500])
+        if raise_on_error:
+            raise
         return None
 
 
@@ -10155,6 +10168,8 @@ async def _generate_verified_mannequin_asset(*, client, reference_files, all_fil
         return metadata
     except Exception as exc:
         log_json("mannequin_image_generation_error", item_id=item_id, category=category, model=model, error=str(exc)[:500])
+        if raise_on_error:
+            raise
         return None
 
 
@@ -10164,15 +10179,17 @@ async def _run_listing_image_staging_job(
     owner_subject: str,
     files: list[dict[str, object]],
     settings: Settings,
-) -> None:
+    pipeline_snapshot: dict | None = None,
+) -> list[dict] | None:
     if not settings.image_staging_enabled:
         return
     job_db = Database(settings.database_url)
-    job_db.initialize()
     job_storage = build_storage(settings)
     current = next((r for r in job_db.list_owner_listings(owner_subject, limit=500) if r["listing_id"] == listing_id), None)
+    job_db.commit()  # Release read transactions before image-provider calls.
     if current is None:
         log_json("listing_image_staging_missing_listing", listing_id=listing_id, actor=owner_subject)
+        job_db.close()
         return
 
     source_item_id = str(current.get("source_item_id") or "").strip() or f"item-{listing_id}"
@@ -10181,6 +10198,7 @@ async def _run_listing_image_staging_job(
         if isinstance(entry.get("data"), bytes)
     ][: settings.max_images_per_request]
     if not stage_inputs:
+        job_db.close()
         return
 
     try:
@@ -10249,6 +10267,11 @@ async def _run_listing_image_staging_job(
             log_json("listing_image_staging_no_processed_images", listing_id=listing_id, actor=owner_subject)
             return
 
+        if pipeline_snapshot:
+            merge_result(job_db, pipeline_snapshot, 'staging', presentation_assets)
+            log_json("listing_image_staging_completed", listing_id=listing_id, actor=owner_subject, image_count=len(staged_urls))
+            return presentation_assets
+
         current = next((r for r in job_db.list_owner_listings(owner_subject, limit=500) if r["listing_id"] == listing_id), current)
         current_analysis = dict(current.get("analysis")) if isinstance(current.get("analysis"), dict) else {}
         current_analysis["presentation_assets"] = presentation_assets
@@ -10285,6 +10308,9 @@ async def _run_listing_image_staging_job(
         log_json("listing_image_staging_completed", listing_id=listing_id, actor=owner_subject, image_count=len(staged_urls))
     except Exception as exc:
         log_json("listing_image_staging_error", listing_id=listing_id, actor=owner_subject, error=str(exc))
+        raise
+    finally:
+        job_db.close()
 
 
 def _pricing_review_admin_recipients(settings):
@@ -10394,13 +10420,15 @@ async def _run_listing_analysis_job(
     job_id: str | None = None,
     attempt: int = 1,
     raise_on_error: bool = False,
+    pipeline_snapshot: dict | None = None,
 ) -> None:
     job_db = Database(settings.database_url)
-    job_db.initialize()
     job_storage = build_storage(settings)
     current = next((r for r in job_db.list_owner_listings(owner_subject, limit=500) if r["listing_id"] == listing_id), None)
+    job_db.commit()  # Do not keep a read transaction open during model calls.
     if current is None:
         log_json("listing_analysis_job_missing_listing", listing_id=listing_id, actor=owner_subject)
+        job_db.close()
         return
     upload_files: list[UploadFile] = []
     for entry in files:
@@ -10438,6 +10466,7 @@ async def _run_listing_analysis_job(
             error="No readable images uploaded",
             attempt=attempt,
         )
+        job_db.close()
         return
 
     try:
@@ -10476,6 +10505,12 @@ async def _run_listing_analysis_job(
             gpt_item_profiler=gpt_item_profiler,
         )
         response_payload = payload.model_dump()
+        if job_id:
+            debug_payload = response_payload.get("debug") if isinstance(response_payload.get("debug"), dict) else {}
+            response_payload["debug"] = {**debug_payload, "analysis_execution": {"job_id": job_id, "listing_id": listing_id}}
+        job_db.link_analysis_item(str(response_payload["item_id"]), listing_id, owner_subject, job_id)
+        if current.get("source_item_id"):
+            job_db.link_analysis_item(str(current["source_item_id"]), listing_id, owner_subject, job_id)
         profile = response_payload.get("item_profile") if isinstance(response_payload.get("item_profile"), dict) else {}
         model_name, profile_description = _profile_description_from_analysis(response_payload)
         brand = str(brand_override or response_payload.get("brand", {}).get("name") or current.get("brand") or "unknown")
@@ -10520,21 +10555,7 @@ async def _run_listing_analysis_job(
         image_urls = [url for url in image_urls if url not in previous_generated_urls]
         source_item_id = str(response_payload.get("item_id") or current.get("source_item_id") or "").strip() or f"item-{listing_id}"
         job_db.insert_item(source_item_id)
-        generated_asset = await _generate_mannequin_listing_asset(
-            files=files,
-            category=resolved_category,
-            title=title or model_name,
-            description=description,
-            item_id=source_item_id,
-            settings=settings,
-            db=job_db,
-            storage=job_storage,
-        )
-        if generated_asset:
-            if str(current.get("status") or "").lower() != "active":
-                image_urls.append(str(generated_asset["image_url"]))
-            response_payload["generated_assets"] = [generated_asset]
-        job_db.update_listing(
+        listing_updates = dict(
             listing_id=listing_id,
             owner_subject=owner_subject,
             title=title or "New listing",
@@ -10554,6 +10575,10 @@ async def _run_listing_analysis_job(
             analysis=response_payload,
             status="Review" if estimated_value <= 0 else _listing_status_after_analysis(current.get("status")),
         )
+        if pipeline_snapshot:
+            merge_result(job_db, pipeline_snapshot, 'pricing', listing_updates)
+        else:
+            job_db.update_listing(**listing_updates)
         log_json(
             "listing_analysis_job_completed",
             listing_id=listing_id,
@@ -10576,15 +10601,6 @@ async def _run_listing_analysis_job(
                 result_item_id=str(response_payload.get("item_id") or ""),
                 completed=True,
             )
-        if stage_images_after_analysis:
-            await _run_listing_image_staging_job(
-                listing_id=listing_id,
-                owner_subject=owner_subject,
-                files=files,
-                settings=settings,
-            )
-        else:
-            log_json("listing_image_staging_skipped", listing_id=listing_id, actor=owner_subject, reason="not_new_upload")
     except Exception as exc:
         current = next((r for r in job_db.list_owner_listings(owner_subject, limit=500) if r["listing_id"] == listing_id), None)
         log_json("listing_analysis_job_error", listing_id=listing_id, actor=owner_subject, job_id=job_id, attempt=attempt, error=str(exc))
@@ -10609,8 +10625,11 @@ async def _run_listing_analysis_job(
             error=str(exc),
             attempt=attempt,
         )
+    finally:
+        job_db.close()
 
 
+@guard_analysis_job
 def _run_listing_analysis_job_threaded(
     *,
     listing_id: str,
@@ -10629,6 +10648,7 @@ def _run_listing_analysis_job_threaded(
     brand_override: str | None = None,
     max_attempts: int = ANALYSIS_JOB_MAX_ATTEMPTS,
     attempt_timeout_s: int = ANALYSIS_JOB_ATTEMPT_TIMEOUT_S,
+    pipeline_snapshot: dict | None = None,
 ) -> None:
     max_attempts = max(1, int(max_attempts or 1))
     last_error = ""
@@ -10653,10 +10673,20 @@ def _run_listing_analysis_job_threaded(
                         job_id=job_id,
                         attempt=attempt,
                         raise_on_error=True,
+                        pipeline_snapshot=pipeline_snapshot,
                     ),
                     timeout=max(30, int(attempt_timeout_s or ANALYSIS_JOB_ATTEMPT_TIMEOUT_S)),
                 )
             )
+            break
+        except StalePipelineResult as exc:
+            stale_db = Database(settings.database_url)
+            try:
+                if job_id:
+                    stale_db.update_listing_analysis_job(job_id=job_id, owner_subject=owner_subject,
+                        status='superseded', stage='superseded', error=str(exc), completed=True)
+            finally:
+                stale_db.close()
             return
         except asyncio.TimeoutError:
             last_error = f"Analysis timed out after {attempt_timeout_s}s"
@@ -10675,7 +10705,11 @@ def _run_listing_analysis_job_threaded(
             error=last_error,
         )
         job_db = Database(settings.database_url)
-        job_db.initialize()
+        if job_id:
+            completed_job = recover_analysis_success(job_db, job_id, owner_subject)
+            if completed_job and completed_job.get("status") == "succeeded":
+                log_json("listing_analysis_success_preserved", job_id=job_id, listing_id=listing_id, error=last_error)
+                break
         if job_id:
             job_db.update_listing_analysis_job(
                 job_id=job_id,
@@ -10690,7 +10724,10 @@ def _run_listing_analysis_job_threaded(
             time.sleep(min(2 * attempt, 6))
             continue
         current = next((r for r in job_db.list_owner_listings(owner_subject, limit=500) if r["listing_id"] == listing_id), None)
-        _mark_listing_analysis_failed(job_db, current, owner_subject)
+        if pipeline_snapshot:
+            mark_pricing_failure(job_db, pipeline_snapshot)
+        else:
+            _mark_listing_analysis_failed(job_db, current, owner_subject)
         _record_analysis_failure_incident(
             job_db,
             listing_id=listing_id,
@@ -10699,8 +10736,25 @@ def _run_listing_analysis_job_threaded(
             error=last_error,
             attempt=attempt,
         )
+        return
+
+    # Optional presentation work has its own timeout/retries. It must never
+    # turn committed pricing into a failed job or run item analysis again.
+    if not stage_images_after_analysis:
+        log_json("listing_image_staging_skipped", listing_id=listing_id, actor=owner_subject, reason="not_new_upload")
+        return
+    for stage_attempt in range(1, 3):
+        try:
+            asyncio.run(asyncio.wait_for(_run_listing_image_staging_job(
+                listing_id=listing_id, owner_subject=owner_subject, files=files, settings=settings,
+            ), timeout=max(30, int(attempt_timeout_s))))
+            return
+        except Exception as exc:
+            log_json("listing_image_staging_attempt_failed", listing_id=listing_id, job_id=job_id,
+                     attempt=stage_attempt, error=str(exc) or type(exc).__name__, analysis_preserved=True)
 
 
+@guard_analysis_job(resume_components=True)
 def _run_listing_analysis_for_existing_listing_job(
     *,
     listing_id: str,
@@ -10718,8 +10772,15 @@ def _run_listing_analysis_for_existing_listing_job(
     brand_override: str | None = None,
     force_fresh_analysis: bool = False,
 ) -> None:
+    if job_id:
+        from .listing_pipeline import run_listing_pipeline
+        return run_listing_pipeline(listing_id=listing_id, owner_subject=owner_subject,
+            category=category, item_size=item_size, user_condition=user_condition,
+            item_description=item_description, debug=debug, settings=settings,
+            valuation_service=valuation_service, gpt_item_profiler=gpt_item_profiler,
+            stage_images_after_analysis=stage_images_after_analysis, job_id=job_id,
+            brand_override=brand_override, force_fresh_analysis=force_fresh_analysis)
     job_db = Database(settings.database_url)
-    job_db.initialize()
     current = next((r for r in job_db.list_owner_listings(owner_subject, limit=500) if r["listing_id"] == listing_id), None)
     if current is None:
         log_json("listing_analysis_job_missing_listing", listing_id=listing_id, actor=owner_subject)
@@ -10876,8 +10937,9 @@ async def queue_listing_analysis(
         raise HTTPException(status_code=400, detail="No readable images uploaded")
 
     analysis_job = _create_listing_analysis_job(db, listing_id=listing_id, owner_subject=principal.subject)
+    from .listing_pipeline import run_listing_pipeline
     background_tasks.add_task(
-        _run_listing_analysis_job_threaded,
+        run_listing_pipeline,
         listing_id=listing_id,
         owner_subject=principal.subject,
         files=files,
@@ -10904,7 +10966,7 @@ def get_latest_listing_analysis_job(
     current = next((r for r in db.list_owner_listings(principal.subject, limit=500) if r["listing_id"] == listing_id), None)
     if current is None:
         raise HTTPException(status_code=404, detail="listing not found")
-    return _analysis_job_public_payload(db.get_latest_listing_analysis_job(listing_id, principal.subject))
+    return _analysis_job_public_payload(db.get_latest_listing_analysis_job(listing_id, principal.subject), db)
 
 
 @app.get("/v1/analysis-jobs/{job_id}")
@@ -10916,7 +10978,7 @@ def get_listing_analysis_job(
     job = db.get_listing_analysis_job(job_id, principal.subject)
     if not job:
         raise HTTPException(status_code=404, detail="analysis job not found")
-    return _analysis_job_public_payload(job)
+    return _analysis_job_public_payload(job, db)
 
 
 @app.post("/v1/analyze", response_model=AnalyzeResponse)

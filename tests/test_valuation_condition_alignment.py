@@ -144,6 +144,9 @@ def test_cached_analysis_revalidates_price_instead_of_copying_old_wrong_band():
         def update_listing(self, **kwargs):
             self.updated = kwargs
 
+        def link_analysis_item(self, *args):
+            pass
+
     db = FakeDb()
     result = _reuse_recent_analysis_for_listing(
         db=db, listing_id="listing", owner_subject="owner",

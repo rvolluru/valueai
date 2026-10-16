@@ -24,6 +24,11 @@ cp .env.example .env
 make run
 ```
 
+`make run` and the background dev launcher apply pending versioned database migrations
+before starting the server. To run them separately, use `make migrate`; use
+`make schema-check` for a read-only readiness check. API requests and background jobs
+never create or alter tables. See [database migrations](docs/DATABASE_MIGRATIONS.md).
+
 For background dev server with hot reload (no manual restart per code change):
 
 ```bash

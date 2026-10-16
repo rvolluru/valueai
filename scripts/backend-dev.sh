@@ -27,6 +27,9 @@ start() {
 
   cd "${ROOT_DIR}"
 
+  PYTHONPATH='apps/api:packages/brand/src:packages/condition/src:packages/valuation/src:src' \
+    .venv/bin/python -m app.migrations
+
   screen -S "${SCREEN_SESSION}" -X quit >/dev/null 2>&1 || true
   screen -dmS "${SCREEN_SESSION}" bash -lc "
     cd '${ROOT_DIR}' && \

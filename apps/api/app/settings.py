@@ -111,6 +111,8 @@ class Settings(BaseSettings):
     mannequin_image_generation_enabled: bool = True
     mannequin_image_generation_model: str = "gemini-3-pro-image"
     mannequin_image_generation_timeout_s: float = 90.0
+    listing_mannequin_timeout_s: float = Field(default=300, ge=30, le=900)
+    listing_staging_timeout_s: float = Field(default=120, ge=30, le=900)
     gcp_project_id: str | None = None
     gcp_location: str = "us-central1"
     condition_category_weights_path: str | None = None

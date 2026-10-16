@@ -42,15 +42,19 @@ class _TrackingDatabase(Database):
     def fetchone(self, sql: str, params: tuple = ()):
         return None
 
+    def _schema_columns(self):
+        return {}
 
-def test_initialize_commits_create_tables_before_optional_alters() -> None:
+
+def test_bootstrap_commits_create_tables_before_alters_and_fails_closed() -> None:
     db = _TrackingDatabase()
-    db.initialize()
+    with pytest.raises(RuntimeError, match="duplicate column"):
+        db._bootstrap_schema()
 
     first_alter_index = next(i for i, e in enumerate(db._events) if e == ("execute", "alter"))
     assert ("commit", "") in db._events[:first_alter_index], "expected commit before first ALTER"
 
-    # Failed ALTERs should be tolerated and rolled back without aborting initialize.
+    # Migration errors must block rollout rather than being silently swallowed.
     assert db._pg.rollback_calls >= 1
     assert db.commit_calls >= 2
 
@@ -64,7 +68,7 @@ def test_required_notification_migration_failure_is_not_swallowed():
         return execute(sql, params)
     db.execute = fail
     with pytest.raises(RuntimeError, match="migration lock timeout"):
-        db.initialize()
+        db._bootstrap_schema()
 
 
 def test_production_dependency_does_not_run_optional_migrations(monkeypatch):
@@ -74,7 +78,8 @@ def test_production_dependency_does_not_run_optional_migrations(monkeypatch):
         _pg = object()
         def __init__(self, url): pass
         def initialize(self): raise AssertionError('Optional migrations must not run on request startup')
-        def ensure_notification_history_schema(self): calls.append('ready')
+        def ensure_notification_history_schema(self): raise AssertionError('No runtime DDL, including notification repair')
+        def verify_schema(self): calls.append('ready')
     deps.get_db.cache_clear()
     monkeypatch.setattr(deps, 'Database', ProductionDatabase)
     monkeypatch.setattr(deps, 'get_settings', lambda: SimpleNamespace(database_url='postgresql://test'))

@@ -19,18 +19,10 @@ logger = logging.getLogger(__name__)
 def get_db() -> Database:
     db = Database(get_settings().database_url)
     try:
-        if db._pg is not None:
-            # Production schema is migrated before rollout. Repeating every optional
-            # ALTER on request startup can block for a minute under live traffic.
-            db.ensure_notification_history_schema()
-        else:
-            db.initialize()
-    except Exception as exc:
-        logger.warning("Database initialization skipped after failure: %s", exc)
-        if db._pg is not None:
-            db._pg.rollback()
-        # Do not cache a database that cannot satisfy required notification queries.
-        db.ensure_notification_history_schema()
+        db.verify_schema()
+    except Exception:
+        db.close()
+        raise
     return db
 
 
