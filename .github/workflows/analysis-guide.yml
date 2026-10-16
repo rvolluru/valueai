@@ -1,0 +1,28 @@
+name: Verify analysis guide
+
+on:
+  push:
+    paths:
+      - docs/LISTING_ANALYSIS_PROCESS.md
+      - docs/listing-analysis-guide.html
+      - scripts/build_analysis_guide.py
+      - .github/workflows/analysis-guide.yml
+  pull_request:
+    paths:
+      - docs/LISTING_ANALYSIS_PROCESS.md
+      - docs/listing-analysis-guide.html
+      - scripts/build_analysis_guide.py
+      - .github/workflows/analysis-guide.yml
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+      - run: python scripts/build_analysis_guide.py --check

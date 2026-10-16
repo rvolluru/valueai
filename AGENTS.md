@@ -19,5 +19,9 @@ photo cleanup, manual review, and analysis-related user actions/publication rule
   descriptions as necessary. Keep reliability investigations in separate documents.
 - Version the document through Git commits, not duplicate dated copies. Use clear
   commit messages so GitHub history explains how the process changed.
+- After editing the process document, run `python3 scripts/build_analysis_guide.py`
+  and commit `docs/listing-analysis-guide.html` alongside it. The HTML is the
+  standalone reader-friendly edition. Verify with the same command plus `--check`;
+  the analysis-guide GitHub workflow checks that both editions stay synchronized.
 - Documentation-only maintenance does not authorize deployment or unrelated code
   changes. Preserve unrelated worktree changes.

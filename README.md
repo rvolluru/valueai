@@ -11,6 +11,9 @@ Production-leaning AWS cloud MVP for fashion item analysis from user-uploaded im
 
 For the complete listing workflow, model handoffs, reuse decisions, pricing,
 mannequin generation and owner review, see [Listing analysis process](docs/LISTING_ANALYSIS_PROCESS.md).
+The [HTML reader edition](docs/listing-analysis-guide.html) can be downloaded and
+opened in any browser, shared as a single file, or printed/saved as PDF. Regenerate
+it from the Markdown with `python3 scripts/build_analysis_guide.py`.
 
 - `apps/api` FastAPI service (`/v1/analyze`, `/v1/health`, `/v1/version`)
 - `packages/brand` OCR/fuzzy brand pipeline + fusion thresholds
