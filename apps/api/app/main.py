@@ -5064,6 +5064,8 @@ def admin_recent_analyses(
             for asset in generated_assets
         }
         listing = db.get_listing_by_source_item_id(str(record.get("item_id") or ""))
+        owner_name = (_profile_owner_display_name(db, listing.get("owner_subject"), listing.get("owner_name"))
+                      if listing else None)
         listing_analysis = listing.get("analysis") if isinstance(listing, dict) else None
         for asset in (listing_analysis or {}).get("generated_assets") or []:
             if not isinstance(asset, dict) or "mannequin" not in str(asset.get("kind") or "").lower():
@@ -5076,6 +5078,10 @@ def admin_recent_analyses(
         response["generated_assets"] = generated_assets
         enriched_records.append({
             **record,
+            "listing_id": listing.get("listing_id") if listing else None,
+            "listing_title": listing.get("title") if listing else None,
+            "owner_name": owner_name,
+            "owner_subject": listing.get("owner_subject") if listing else None,
             "response": response,
             "correction": db.get_latest_structured_correction(str(record["analysis_id"])),
         })

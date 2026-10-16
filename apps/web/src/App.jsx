@@ -5100,6 +5100,9 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
       const response = entry.response || {}
       return JSON.stringify({
         item_id: entry.item_id,
+        owner_name: entry.owner_name,
+        owner_subject: entry.owner_subject,
+        listing_title: entry.listing_title,
         created_at: entry.created_at,
         brand: response.brand?.name,
         category: response.category,
@@ -10848,6 +10851,8 @@ function AdminAnalysisCard({ entry, busy = false, onReview }) {
         <div>
           <p className="eyebrow">Analysis</p>
           <h3>{response.brand?.name || 'unknown'} • {response.category || 'unknown'}</h3>
+          <p className="listing-meta">Owner: {entry.owner_name || entry.owner_subject || 'No linked listing'}</p>
+          {entry.owner_name && entry.owner_subject && <p className="listing-meta">User ID: {entry.owner_subject}</p>}
           <p className="listing-meta">{entry.item_id} • {new Date(entry.created_at).toLocaleString()}</p>
         </div>
         <div className="value-chip">{money(response.valuation?.estimated_value)}</div>

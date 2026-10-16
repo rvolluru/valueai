@@ -886,6 +886,10 @@ def test_admin_recent_analyses_includes_linked_listing_mannequin():
 
     assert response.status_code == 200, response.text
     record = next(item for item in response.json()["items"] if item["analysis_id"] == "analysis-debug-thumbnails")
+    assert record["owner_name"] == "Owner"
+    assert record["owner_subject"] == "owner-test"
+    assert record["listing_id"] == "listing-debug-thumbnails"
+    assert record["listing_title"] == "Test jacket"
     assert record["response"]["generated_assets"] == [
         {
             "kind": "mannequin_garment",
