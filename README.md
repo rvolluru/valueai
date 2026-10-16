@@ -9,6 +9,9 @@ Production-leaning AWS cloud MVP for fashion item analysis from user-uploaded im
 
 ## Repo layout
 
+For the complete listing workflow, model handoffs, reuse decisions, pricing,
+mannequin generation and owner review, see [Listing analysis process](docs/LISTING_ANALYSIS_PROCESS.md).
+
 - `apps/api` FastAPI service (`/v1/analyze`, `/v1/health`, `/v1/version`)
 - `packages/brand` OCR/fuzzy brand pipeline + fusion thresholds
 - `packages/condition` cropper + category/condition model interfaces/stubs
