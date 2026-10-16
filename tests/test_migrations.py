@@ -72,6 +72,24 @@ def test_runtime_code_has_no_implicit_migrations():
         assert not ({"initialize", "_bootstrap_schema", "ensure_notification_history_schema", "migrate_listing_media_urls_to_http"} & set(calls)), relative
 
 
+def test_runner_uses_private_seekable_json_and_removes_it(monkeypatch):
+    from types import SimpleNamespace
+    spec = importlib.util.spec_from_file_location('runner', Path(__file__).resolve().parents[1] / 'scripts/run_ecs_migrations.py')
+    runner = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(runner)
+    paths = []
+    def run(command, **kwargs):
+        path = Path(command[command.index('--cli-input-json') + 1].removeprefix('file://'))
+        paths.append(path)
+        assert path.read_text() == '{"family": "test"}'
+        assert path.stat().st_mode & 0o077 == 0
+        assert 'input' not in kwargs
+        return SimpleNamespace(returncode=0, stdout='{}')
+    monkeypatch.setattr(runner.subprocess, 'run', run)
+    assert runner.aws('register-task-definition', payload={'family': 'test'}) == {}
+    assert not paths[0].exists()
+
+
 def test_deployment_gate_precedes_both_rollout_modes_and_uses_new_image():
     root = Path(__file__).resolve().parents[1]
     workflow = (root / ".github/workflows/deploy-prod.yml").read_text()

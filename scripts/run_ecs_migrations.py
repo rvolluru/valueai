@@ -4,15 +4,21 @@ from __future__ import annotations
 import argparse
 import json
 import subprocess
+import tempfile
 import time
 
 
 def aws(*args, payload=None):
     command = ["aws", "ecs", *args, "--output", "json"]
-    if payload is not None:
-        command += ["--cli-input-json", "file:///dev/stdin"]
-    result = subprocess.run(command, input=json.dumps(payload) if payload is not None else None,
-                            text=True, capture_output=True, check=False, timeout=60)
+    # AWS CLI may read cli-input-json more than once; a stdin pipe is not
+    # seekable and was being rejected as invalid JSON. Use a private temporary
+    # file, removed even if the subprocess fails; never print its contents.
+    with tempfile.NamedTemporaryFile(mode="w+", suffix=".json") as config:
+        if payload is not None:
+            json.dump(payload, config)
+            config.flush()
+            command += ["--cli-input-json", "file://" + config.name]
+        result = subprocess.run(command, text=True, capture_output=True, check=False, timeout=60)
     if result.returncode:
         # Never echo task definitions: legacy environment variables can contain secrets.
         raise RuntimeError(f"AWS ECS {args[0]} failed (exit {result.returncode}); rollout must not proceed")
