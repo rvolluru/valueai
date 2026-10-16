@@ -1,8 +1,8 @@
-export function createPhotoCarousel({ src, alt, images = [], mannequinDisclaimer = false }) {
+export function createPhotoCarousel({ src, alt, images = [], disclosureListing = null }) {
   const photos = images.filter(value => typeof value === 'string' && value);
   if (!photos.includes(src)) photos.unshift(src);
   const index = Math.max(0, photos.indexOf(src));
-  return { src: photos[index], alt, images: photos, index, mannequinDisclaimer };
+  return { src: photos[index], alt, images: photos, index, disclosureListing };
 }
 
 export function movePhotoCarousel(current, step) {

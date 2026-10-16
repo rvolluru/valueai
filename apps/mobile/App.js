@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { shareSocialListing, socialWebUrl } from './src/lib/socialSharing.mjs';
-import { MANNEQUIN_DISCLAIMER, hasMannequinPreview } from '../../packages/app-client/src/mannequinDisclosure';
+import { MANNEQUIN_DISCLAIMER, isMannequinImage } from '../../packages/app-client/src/mannequinDisclosure';
 import {
   ActivityIndicator,
   BackHandler,
@@ -23,6 +23,7 @@ import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
 import { useCameraPermissions } from 'expo-camera';
 import ListingCamera from './src/components/ListingCamera';
+import InlinePhotoCarousel from './src/components/InlinePhotoCarousel';
 import { appendListingPhotos, remainingPhotoSlots } from './src/lib/listingPhotos.mjs';
 import * as ImageManipulator from 'expo-image-manipulator';
 import NotificationsScreen from './src/components/NotificationsScreen';
@@ -4351,33 +4352,8 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
 
         <View style={styles.offerDetailPanel}>
           <Text style={styles.offerLaneLabel}>Gallery</Text>
-          {hasMannequinPreview(selectedListing) && <Text style={styles.helperText}>{MANNEQUIN_DISCLAIMER}</Text>}
           {gallery.length > 0 ? (
-            <View style={styles.listingDetailGalleryStack}>
-              {gallery.map((src, idx) => {
-                const failed = Boolean(failedDetailImages[src]);
-                return (
-                  <TouchableOpacity
-                    key={`${selectedListing?.listing_id || 'listing'}-image-${idx}`}
-                    activeOpacity={0.88}
-                    onPress={() => openExpandedGallery(gallery, idx)}
-                    disabled={failed}
-                  >
-                    {failed ? (
-                      <View style={[styles.listingDetailGalleryImageFull, styles.offerImageFallback]}>
-                        <Text style={styles.emptyText}>Image unavailable</Text>
-                      </View>
-                    ) : (
-                      <Image
-                        source={{ uri: src }}
-                        style={styles.listingDetailGalleryImageFull}
-                        onError={() => setFailedDetailImages((prev) => ({ ...prev, [src]: true }))}
-                      />
-                    )}
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
+            <InlinePhotoCarousel key={`${listingIdOf(selectedListing)}-${gallery.join('|')}`} images={gallery} listing={selectedListing} onOpen={(idx) => openExpandedGallery(gallery, idx)} />
           ) : (
             <View style={[styles.offerDetailHero, styles.offerImageFallback]}>
               <Text style={styles.emptyText}>No image</Text>
@@ -4706,11 +4682,11 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
             {editingListingId ? (
               <View style={styles.editImagePanel}>
                 <Text style={styles.label}>Listing Images ({editImageUrls.length + images.length}/6)</Text>
-                {hasMannequinPreview(editingListing) && <Text style={styles.helperText}>{MANNEQUIN_DISCLAIMER}</Text>}
                 <View style={styles.editImageGrid}>
                   {editImageUrls.map((imageUrl, index) => (
                     <View key={`${imageUrl}-${index}`} style={[styles.editImageTile, selectedEditHeroImageIndex === index && styles.editImageTileHero]}>
                       <Image source={{ uri: imageUrl }} style={styles.editImageThumb} resizeMode="cover" />
+                      {isMannequinImage(editingListing, imageUrl) && <Text style={styles.helperText}>{MANNEQUIN_DISCLAIMER}</Text>}
                       {selectedEditHeroImageIndex === index ? <Text style={styles.editImageHeroBadge}>Hero</Text> : null}
                       <TouchableOpacity style={styles.editImageHeroButton} onPress={() => setSelectedEditHeroImageIndex(index)}>
                         <Text style={styles.editImageHeroButtonText}>{selectedEditHeroImageIndex === index ? 'Hero Image' : 'Set Hero'}</Text>
@@ -6601,7 +6577,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
               ))}
             </ScrollView>
           ) : null}
-          {hasMannequinPreview(selectedListing) && <Text style={[styles.helperText, { color: '#fff', paddingHorizontal: 16, paddingVertical: 8 }]}>{MANNEQUIN_DISCLAIMER}</Text>}
+          {(isMannequinImage(selectedListing, selectedGalleryImage) || isMannequinImage(editingListing, selectedGalleryImage)) && <Text style={[styles.helperText, { color: '#fff', paddingHorizontal: 16, paddingVertical: 8 }]}>{MANNEQUIN_DISCLAIMER}</Text>}
           {selectedGalleryImages.length > 1 && <View style={styles.galleryCarouselControls}>
             <TouchableOpacity accessibilityRole="button" accessibilityLabel="Previous photo" disabled={selectedGalleryIndex === 0} style={[styles.galleryCarouselArrow, selectedGalleryIndex === 0 && styles.primaryBtnDisabled]} onPress={() => moveExpandedGallery(-1)}><Ionicons name="chevron-back" size={26} color="#fff" /></TouchableOpacity>
             <Text style={styles.galleryModalCount}>Swipe to view all photos</Text>

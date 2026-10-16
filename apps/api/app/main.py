@@ -634,7 +634,7 @@ def _canonicalize_analysis_file_entries(entries: list[dict[str, object]]) -> lis
         normalized["content_hash"] = str(entry.get("content_hash") or _image_content_hash(data))
         explicit_role = _normalized_analysis_image_role(entry.get("role_hint"))
         filename_role = _analysis_image_filename_role(entry.get("filename"))
-        normalized["role_hint"] = filename_role if filename_role != "other" else explicit_role
+        normalized["role_hint"] = explicit_role if entry.get("_persisted_photo_role") else filename_role if filename_role != "other" else explicit_role
         prepared.append(normalized)
 
     if prepared and not any(entry.get("role_hint") in _ANALYSIS_FULL_ITEM_ROLES for entry in prepared):
@@ -1201,12 +1201,18 @@ def _image_file_from_listing_url(
     if not storage_uri:
         return None
     data, content_type = _read_storage_uri_bytes(storage_uri, settings)
+    content_hash = _image_content_hash(data)
+    role_reader = getattr(db, "get_image_role_for_content", None)
+    stored_role = role_reader(image_id, content_hash) if role_reader else None
     ext = ".png" if "png" in content_type else ".webp" if "webp" in content_type else ".jpg"
     return {
         "filename": f"listing-image-{index + 1}{ext}",
         "content_type": content_type,
         "data": data,
         "source_url": f"/v1/images/{image_id}",
+        "role_hint": stored_role,
+        "_persisted_photo_role": stored_role,
+        "content_hash": content_hash,
     }
 
 

@@ -6,6 +6,7 @@ import pytest
 from PIL import Image
 
 from app.mannequin_fidelity import generation_parts, review_passes, select_product_views, validate_plan
+from app.mannequin_fidelity import apply_persisted_views, persisted_photo_views, plan_references
 
 
 def plan():
@@ -34,6 +35,80 @@ def test_live_gemini_label_selection_is_filtered_and_front_ordered():
     assert selected["model_reference_indices"] == [2, 1, 0]
     with pytest.raises(ValueError):
         select_product_views({**plan(), "reference_indices": [0]}, 3)
+
+
+def test_saved_upload_views_override_reclassification_and_restore_front_selection():
+    files = [{"_persisted_photo_role": role} for role in ["brand_label", "full_front", "full_back"]]
+    known = persisted_photo_views(files)
+    assert known == ["label", "front", "back"]
+    result = apply_persisted_views({**plan(), "views": [{"view": "label"}, "detail", "front"],
+                                  "reference_indices": [0]}, known)
+    assert result["views"] == known
+    assert result["reference_indices"] == [1, 2]
+    assert result["reused_photo_role_indices"] == [0, 1, 2]
+
+
+def test_generic_or_unbound_roles_are_not_reused_as_front_evidence():
+    assert persisted_photo_views([{"role_hint": "full_front"}, {"_persisted_photo_role": "full_item"},
+                                  {"_persisted_photo_role": "close_up"}]) == [None, None, None]
+
+
+def test_object_view_fails_with_validation_error_not_unhashable_dict():
+    for validate in [select_product_views, validate_plan]:
+        with pytest.raises(ValueError):
+            validate({**plan(), "views": [{"view": "label"}, "front", "back"]}, 3)
+
+
+def test_malformed_planning_response_retries_once(monkeypatch):
+    from app import mannequin_fidelity
+    calls = []
+    async def inspect(**kwargs):
+        calls.append(kwargs)
+        return {**plan(), "views": [{"view": "label"}, "front", "back"]} if len(calls) == 1 else plan()
+    monkeypatch.setattr(mannequin_fidelity, "inspect_json", inspect)
+    result = asyncio.run(plan_references(client=None, api_key="test", model="test",
+                                        files=[{"data": b"image"}] * 3))
+    assert len(calls) == 2
+    assert result["reference_indices"] == [1, 2]
+
+
+def test_planning_prompt_scopes_features_to_product_and_reports_missing_evidence(monkeypatch):
+    from app import mannequin_fidelity
+    async def inspect(**kwargs):
+        prompt = kwargs["parts"][-1]["text"]
+        assert "For shorts/trousers/jeans: waistband" in prompt
+        assert "NOT applicable to shorts" in prompt
+        assert "Do not put non-visible or not-applicable details in constraints" in prompt
+        assert "insufficient_evidence_reason" in prompt
+        assert "Ordinary flat-lay or hanger photos are valid" in prompt
+        return plan()
+    monkeypatch.setattr(mannequin_fidelity, "inspect_json", inspect)
+    asyncio.run(plan_references(client=None, api_key="test", model="test", files=[{"data": b"photo"}] * 3))
+    with pytest.raises(ValueError, match="Waistband is folded out of view"):
+        validate_plan({**plan(), "sufficient_evidence": False,
+                       "insufficient_evidence_reason": "Waistband is folded out of view"}, 3)
+
+
+def test_image_reload_reuses_role_only_for_identical_stored_content(monkeypatch):
+    from app import main
+    from app.db import Database, PersistedImage
+    from app.settings import Settings
+    db = Database("sqlite:///:memory:")
+    db.initialize()
+    db.insert_item("source")
+    raw = b"original-photo"
+    db.insert_image(PersistedImage(image_id="source-photo", item_id="source", storage_uri="test://photo",
+                                  filename="back.jpg", role_hint="full_front", content_hash=main._image_content_hash(raw)))
+    monkeypatch.setattr(main, "_read_storage_uri_bytes", lambda *args: (raw, "image/jpeg"))
+    entry = main._image_file_from_listing_url(db=db, settings=Settings(), url="/v1/images/source-photo", index=0)
+    assert entry["_persisted_photo_role"] == "full_front"
+    # Even a conflicting filename must not overwrite the saved upload classification.
+    entry["filename"] = "back.jpg"
+    assert main._canonicalize_analysis_file_entries([entry])[0]["role_hint"] == "full_front"
+    monkeypatch.setattr(main, "_read_storage_uri_bytes", lambda *args: (b"changed-photo", "image/jpeg"))
+    changed = main._image_file_from_listing_url(db=db, settings=Settings(), url="/v1/images/source-photo", index=0)
+    assert changed["_persisted_photo_role"] is None
+    assert persisted_photo_views([changed]) == [None]
 
 
 @pytest.mark.parametrize("change", [

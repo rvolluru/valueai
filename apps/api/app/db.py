@@ -2321,6 +2321,13 @@ class Database:
             cur.close()
         return [dict(row) if isinstance(row, sqlite3.Row) else {k: row[idx] for idx, k in enumerate(keys)} for row in rows]
 
+    def get_image_role_for_content(self, image_id: str, content_hash: str) -> str | None:
+        row = self.fetchone(
+            f"SELECT role_hint FROM images WHERE image_id = {self.param} AND content_hash = {self.param} LIMIT 1",
+            (image_id, content_hash),
+        )
+        return row[0] if row else None
+
     def get_image_storage_uri(self, image_id: str) -> str | None:
         query = f"SELECT storage_uri FROM images WHERE image_id = {self.param} LIMIT 1"
         if self._sqlite_conn is not None:

@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
-import { MANNEQUIN_DISCLAIMER, hasMannequinPreview } from '../../../packages/app-client/src/mannequinDisclosure'
+import { MANNEQUIN_DISCLAIMER, isMannequinImage } from '../../../packages/app-client/src/mannequinDisclosure'
 import {
   useAuth,
   useClerk,
@@ -17,6 +17,7 @@ import { withPhotoCheckTimeout } from '../../../packages/app-client/src/photoChe
 import { tradeOfferGroup } from '../../../packages/app-client/src/tradeOffers.js'
 import TradeItemPicker from './components/TradeItemPicker'
 import ListingPhotoEditor from './components/ListingPhotoEditor'
+import PhotoNavigation from './components/PhotoNavigation'
 import NotificationsPage from './components/NotificationsPage'
 import jouftLogo from './assets/jouft-logo.png'
 
@@ -7963,13 +7964,13 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                         setPhotoEditTarget({ src: resolveListingImageUrl(modalPreviewUrls[index]), index })
                       }}>Zoom / Crop / Rotate photo</button></div>}
                     <div className="listing-edit-gallery market-selected-gallery">
-                      {hasMannequinPreview(modalEditingListing) && <p className="mannequin-disclaimer">{MANNEQUIN_DISCLAIMER}</p>}
                       <div className="listing-edit-main-image market-selected-main-image">
+                        <PhotoNavigation index={Math.min(selectedEditImageIndex, modalPreviewUrls.length - 1)} count={modalPreviewUrls.length} onChange={setSelectedEditImageIndex} />
                         {modalPreviewUrls.length > 0 ? (
                           <>
                             <button type="button" className="listing-image-zoom-trigger"
                               aria-label="Magnify selected closet photo"
-                              onClick={() => openZoomedListingImage({ src: modalPreviewUrls[Math.min(selectedEditImageIndex, modalPreviewUrls.length - 1)], images: modalPreviewUrls, alt: modalEditingListing?.title || 'Closet photo' })}>
+                              onClick={() => openZoomedListingImage({ src: modalPreviewUrls[Math.min(selectedEditImageIndex, modalPreviewUrls.length - 1)], images: modalPreviewUrls, disclosureListing: modalEditingListing, alt: modalEditingListing?.title || 'Closet photo' })}>
                             <img
                               src={modalPreviewUrls[Math.min(selectedEditImageIndex, modalPreviewUrls.length - 1)]}
                               alt={`Listing image ${Math.min(selectedEditImageIndex, modalPreviewUrls.length - 1) + 1}`}
@@ -8006,6 +8007,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                         )}
                       </div>
 
+                      {isMannequinImage(modalEditingListing, modalPreviewUrls[selectedEditImageIndex]) && <p className="mannequin-disclaimer">{MANNEQUIN_DISCLAIMER}</p>}
                       <div className="market-selected-thumbnails listing-edit-thumbnails" aria-label="Listing image thumbnails">
                         {modalPreviewUrls.map((url, idx) => (
                           <button
@@ -8232,15 +8234,19 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                         ))}
                       </div>
                     )}
+                    <div className="listing-review-main-image">
+                    <PhotoNavigation index={selectedReviewImageIndex} count={reviewListingGallery.length} onChange={setSelectedReviewImageIndex} />
                     {reviewListingGallery[selectedReviewImageIndex] ? (
                       <button type="button" className="listing-image-zoom-trigger" aria-label="Magnify selected review photo"
-                        onClick={() => openZoomedListingImage({ src: reviewListingGallery[selectedReviewImageIndex], images: reviewListingGallery, alt: reviewListing.title || 'Closet photo' })}>
+                        onClick={() => openZoomedListingImage({ src: reviewListingGallery[selectedReviewImageIndex], images: reviewListingGallery, disclosureListing: reviewListing, alt: reviewListing.title || 'Closet photo' })}>
                         <img src={reviewListingGallery[selectedReviewImageIndex]} alt={`${reviewListing.title || 'Listing'} image ${selectedReviewImageIndex + 1}`} />
                         <span className="listing-image-zoom-label">Magnify</span>
                       </button>
                     ) : (
                       <div className="listing-image-fallback">Image unavailable</div>
                     )}
+                    </div>
+                    {isMannequinImage(reviewListing, reviewListingGallery[selectedReviewImageIndex]) && <p className="mannequin-disclaimer">{MANNEQUIN_DISCLAIMER}</p>}
                   </div>
                   <div className="listing-review-details">
                     <h2>{reviewListing.title || 'Untitled listing'}</h2>
@@ -8600,6 +8606,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                         <div className="market-selected-viewer">
                           <div className={`market-selected-gallery ${gallery.length <= 1 ? 'single-image' : ''}`} aria-label={`${item.title || 'Listing'} images`}>
                             <div className="market-selected-main-image">
+                              <PhotoNavigation index={selectedImageIdx} count={gallery.length} onChange={setSelectedMarketImageIndex} />
                               {selectedImage ? (
                                 <button
                                   type="button"
@@ -8607,7 +8614,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                                   onClick={() => openZoomedListingImage({
                                     src: selectedImage,
                                     images: gallery,
-                                    mannequinDisclaimer: hasMannequinPreview(item),
+                                  disclosureListing: item,
                                     alt: `${item.title || 'Listing'} image ${selectedImageIdx + 1}`,
                                   })}
                                   aria-label={`Magnify ${item.title || 'listing'} image ${selectedImageIdx + 1}`}
@@ -8619,7 +8626,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                                 <div className="listing-image-fallback">Image unavailable</div>
                               )}
                             </div>
-                            {hasMannequinPreview(item) && <p className="mannequin-disclaimer">{MANNEQUIN_DISCLAIMER}</p>}
+                            {isMannequinImage(item, selectedImage) && <p className="mannequin-disclaimer">{MANNEQUIN_DISCLAIMER}</p>}
                             {gallery.length > 1 && (
                               <div className="market-selected-thumbnails" aria-label="Listing image thumbnails">
                                 {gallery.map((src, idx) => (
@@ -9224,7 +9231,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
           onClick={closeZoomedListingImage}
         >
           <div className="listing-image-zoom-toolbar" onClick={(e) => e.stopPropagation()}>
-            {zoomedListingImage.mannequinDisclaimer && <p className="mannequin-disclaimer">{MANNEQUIN_DISCLAIMER}</p>}
+            {isMannequinImage(zoomedListingImage.disclosureListing, zoomedListingImage.src) && <p className="mannequin-disclaimer">{MANNEQUIN_DISCLAIMER}</p>}
             {zoomedListingImage.images.length > 1 && <>
               <button type="button" aria-label="Previous photo" onClick={() => moveZoomedListingImage(-1)}>‹</button>
               <span aria-live="polite">{zoomedListingImage.index + 1} / {zoomedListingImage.images.length}</span>

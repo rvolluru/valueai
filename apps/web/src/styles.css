@@ -5338,6 +5338,7 @@ textarea:focus-visible,
 
 /* Signed-in mobile web: keep controls reachable without horizontal page scrolling. */
 @media (max-width: 760px) {
+  .listing-review-gallery .listing-review-main-image img { height: auto; max-height: 65dvh; }
   .topbar { flex-wrap: wrap; padding: 16px 12px; gap: 12px; }
   .topbar-copy, .app-brand-row { min-width: 0; width: 100%; }
   .app-brand-row { flex-direction: column; align-items: flex-start; gap: 12px; }
@@ -5374,3 +5375,31 @@ textarea:focus-visible,
   .app-assistant-turn > div, .app-assistant-turn > p { min-width: 0; overflow-wrap: anywhere; }
   .impersonation-banner, .trade-notification-banner { flex-wrap: wrap; }
 }
+.market-selected-main-image, .listing-review-main-image { position: relative; min-width: 0; }
+.listing-review-main-image .listing-image-zoom-trigger { height: 100%; }
+.listing-review-main-image img { width: 100%; height: 100%; max-height: 680px; object-fit: contain; }
+.inline-photo-navigation {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 8px;
+}
+.inline-photo-navigation button {
+  pointer-events: auto;
+  min-width: 48px;
+  min-height: 48px;
+  font-size: 28px;
+  line-height: 1;
+  color: #4a161b;
+  background: rgba(255, 255, 255, .8);
+  border: 0;
+  padding: 0;
+}
+.inline-photo-count { position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); padding: 4px 8px; background: rgba(255, 255, 255, .85); border-radius: 12px; font-size: 12px; }
+.inline-photo-navigation button:focus-visible { outline: 2px solid #4a161b; outline-offset: 2px; }
+.inline-photo-navigation button:disabled { opacity: .35; cursor: default; }
