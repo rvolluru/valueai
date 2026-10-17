@@ -96,3 +96,52 @@ def test_app_controlled_evidence_payloads_have_no_tools_and_only_model_differs()
     a.pop("model")
     b.pop("model")
     assert a == b
+
+
+def test_retail_guidance_mode_preserves_production_rules_without_forced_retail_weight():
+    from app.gpt_item_profile import GptItemProfiler
+    evidence = dict(identity=IDENTITY, user_condition="NewWithTags", comparables=[])
+    profiler = GptItemProfiler.__new__(GptItemProfiler)
+    profiler.openai_model, profiler.reasoning_effort = "gpt-5", "low"
+    payload = module.valuation_payload(profiler, evidence, preserve_retail_guidance=True)
+    assert "must have zero resale weight" not in payload["instructions"]
+    assert "45%-60%" in payload["instructions"]
+    assert "must NOT be capped at 60% MSRP" in payload["instructions"]
+    assert "Never average raw retail sticker prices" in payload["instructions"]
+    assert "Contemporary Apparel (New With Tags)" in str(payload["input"])
+    assert "retail_guidance_assessment" in payload["text"]["format"]["schema"]["required"]
+    assert payload["tools"] == []
+    profiler.openai_model = "gpt-6.1-sol"
+    other = module.valuation_payload(profiler, evidence, preserve_retail_guidance=True)
+    payload.pop("model")
+    other.pop("model")
+    assert payload == other
+
+
+def test_retail_conversion_requires_used_resale_support_and_no_false_exact_msrp():
+    evidence = dict(comparables=[dict(id="C1", url="https://louisvuitton.com/item", source_role="retail",
+        variant_match="unconfirmed"), dict(id="C2", url="https://poshmark.com/item", source_role="resale")])
+    result = dict(status="returned", data=dict(
+        comparable_assessments=[dict(id="C1", used=True, weight=.5, adjusted_price=2000),
+            dict(id="C2", used=True, weight=.5, adjusted_price=2000)],
+        resale_price_estimate=dict(estimated_price=2000, references=[]),
+        retail_guidance_assessment=dict(retail_reference_ids=["C1"], retail_context_used=True, verified_exact_msrp_id=None),
+        retail_derived_resale_anchors=[dict(id="C1", supporting_resale_ids=["C2"], conversion_rationale="Supported conversion")]))
+    assert module.audit_valuation(result, evidence, True)["errors"] == []
+    assert "retail_has_resale_weight" in module.audit_valuation(result, evidence)["errors"]
+    result["data"]["retail_guidance_assessment"]["verified_exact_msrp_id"] = "C1"
+    result["data"]["retail_derived_resale_anchors"][0]["supporting_resale_ids"] = []
+    audit = module.audit_valuation(result, evidence, True)
+    assert "unsupported_exact_target_msrp_claim" in audit["errors"]
+    assert "unsupported_retail_to_resale_conversion" in audit["errors"]
+
+
+def test_retail_context_only_can_inform_guided_valuation_without_forced_weight():
+    evidence = dict(comparables=[dict(id="C1", url="https://louisvuitton.com/item", source_role="retail"),
+        dict(id="C2", url="https://poshmark.com/item", source_role="resale")])
+    result = dict(status="returned", data=dict(comparable_assessments=[
+        dict(id="C1", used=False, weight=0, adjusted_price=None),
+        dict(id="C2", used=True, weight=1, adjusted_price=2000)],
+        resale_price_estimate=dict(estimated_price=2000, references=[]), retail_derived_resale_anchors=[],
+        retail_guidance_assessment=dict(retail_reference_ids=["C1"], retail_context_used=True, verified_exact_msrp_id=None)))
+    assert module.audit_valuation(result, evidence, True)["status"] == "passed_experimental_controls"

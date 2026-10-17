@@ -1,6 +1,6 @@
 # Jouft listing analysis: complete process
 
-Updated October 16, 2026. This document explains the functional process: inputs,
+Updated October 17, 2026. This document explains the functional process: inputs,
 model calls, decisions, outputs and user review—not a reliability assessment.
 
 **Implementation status:** production release `635ec54` deployed successfully on
@@ -298,8 +298,20 @@ Hosted search can rewrite queries; the script records the requested plan and act
 provider tool calls. It checks URL retrieval provenance, source role, brand,
 product/material, positive USD price and a model-reported excerpt containing the
 price. It deduplicates and deterministically ranks candidates, records exclusions,
-and sends the identical saved pool to GPT-5 and Sol with no tools. Retail references
-have zero resale weight. Models still choose resale weights/condition adjustments;
+and sends the identical saved pool to GPT-5 and Sol with no tools. The original
+experiment gives retail references zero resale weight. An optional
+`--preserve-retail-guidance` mode instead preserves the production brand-tier
+rules: contemporary NWT apparel uses 45–60% of original MSRP unless sold evidence
+demonstrates lower, while luxury/heritage products anchor to supported secondary
+evidence without a 60% MSRP cap. It removes the experiment-only blanket zero-weight
+constraint, not the requirement for supported same-brand resale evidence. It records
+how retail context was used, rejects unsupported exact-target MSRP claims, and
+requires any weighted retail-to-resale conversion to identify supporting used
+resale sources and explain the conversion. Raw MSRP cannot simply be averaged
+into resale prices. Context-only retail references can still have zero weight;
+neither a fixed retail share nor equal weights are forced. Model names do not
+change, and this mode is evaluation-only, not deployed.
+Models still choose resale weights/condition adjustments;
 the application audits IDs, references and comparable price preservation. It
 calculates the weighted mean and nearest-USD-25 rounding using decimal arithmetic,
 and flags model estimates inconsistent with that calculation. Source
@@ -373,6 +385,9 @@ The pricing instructions establish the following basis:
 - Value the exact user condition. New is not Like New, and New does not receive an
   inferred tags/new-in-box/full-set premium.
 - Do not adjust price for size or season.
+- For contemporary NWT apparel, use 45–60% of original MSRP unless sold comparable
+  evidence demonstrates a lower value; the supported-resale-evidence policy still
+  prevents an unsupported MSRP-percentage fallback.
 - Do not apply a blanket 60%-of-retail cap to luxury/heritage products.
 - Return a primary condition-specific estimate, available condition-tier bands,
   confidence, rationale and sources.

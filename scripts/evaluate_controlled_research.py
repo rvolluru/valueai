@@ -31,6 +31,7 @@ from evaluate_fixed_comparables import build_payload
 
 VERSION = "application-controlled-research-eval-v1"
 VALUATION_POLICY = "shared-research-source-neutral-v2"
+RETAIL_VALUATION_POLICY = "shared-research-production-retail-guidance-v3"
 SITES = {
     "The RealReal": ("therealreal.com",),
     "Poshmark": ("poshmark.com", "poshmark.ca"),
@@ -187,7 +188,7 @@ def request(payload, key):
     return result
 
 
-def audit_valuation(result, evidence):
+def audit_valuation(result, evidence, preserve_retail_guidance=False):
     if result.get("status") != "returned":
         return dict(status="request_failed")
     data = result["data"]
@@ -207,8 +208,28 @@ def audit_valuation(result, evidence):
         if not original or any(row.get(k) != original.get(k) for k in ("price", "currency", "price_type")):
             errors.append("changed_or_invented_comparable_facts")
     used = [r for r in assessments if r.get("used")]
-    if any(expected.get(r.get("id"), {}).get("source_role") != "resale" and r.get("weight", 0) != 0 for r in assessments):
+    if not preserve_retail_guidance and any(expected.get(r.get("id"), {}).get("source_role") != "resale" and r.get("weight", 0) != 0 for r in assessments):
         errors.append("retail_has_resale_weight")
+    if preserve_retail_guidance:
+        retail_usage = data.get("retail_guidance_assessment") or {}
+        context_ids = retail_usage.get("retail_reference_ids") or []
+        if any(expected.get(key, {}).get("source_role") != "retail" for key in context_ids):
+            errors.append("invalid_retail_context_ids")
+        exact_id = retail_usage.get("verified_exact_msrp_id")
+        if exact_id and (exact_id not in context_ids or expected.get(exact_id, {}).get("variant_match") != "confirmed"):
+            errors.append("unsupported_exact_target_msrp_claim")
+        if retail_usage.get("retail_context_used") and not context_ids:
+            errors.append("retail_context_claim_without_references")
+        conversions = data.get("retail_derived_resale_anchors") or []
+        conversion_ids = [row.get("id") for row in conversions]
+        retail_used = {r.get("id") for r in used if expected.get(r.get("id"), {}).get("source_role") == "retail"}
+        if len(conversion_ids) != len(set(conversion_ids)) or set(conversion_ids) != retail_used:
+            errors.append("missing_or_unexpected_retail_conversion")
+        resale_used = {r.get("id") for r in used if expected.get(r.get("id"), {}).get("source_role") == "resale"}
+        for conversion in conversions:
+            support = conversion.get("supporting_resale_ids") or []
+            if not support or not set(support) <= resale_used or not str(conversion.get("conversion_rationale") or "").strip():
+                errors.append("unsupported_retail_to_resale_conversion")
     if any(not r.get("used") and (r.get("weight") != 0 or r.get("adjusted_price") is not None) for r in assessments):
         errors.append("unused_comparable_has_weight_or_price")
     valid_numbers = all(isinstance(r.get("weight"), (int, float)) and not isinstance(r.get("weight"), bool)
@@ -232,7 +253,7 @@ def audit_valuation(result, evidence):
                 approved_for_publication=False)
 
 
-def valuation_payload(profiler, evidence):
+def valuation_payload(profiler, evidence, preserve_retail_guidance=False):
     payload = build_payload(profiler, evidence)
     # The production prompt has an older eBay-sold-only sourcing rule. This
     # experiment must not treat the same price type differently by website.
@@ -248,6 +269,45 @@ def valuation_payload(profiler, evidence):
         "Original source prices must remain unchanged; adjustments are explicit model judgments."
     )
     payload["max_output_tokens"] = 10000
+    if preserve_retail_guidance:
+        # Preserve the production valuation rules already in the user prompt,
+        # removing only the fixed-evidence experiment's extra retail prohibition.
+        payload["instructions"] = payload["instructions"].replace(
+            "Retail prices are MSRP context only and must have zero resale weight.",
+            "Preserve the production retail/MSRP valuation guidance in the user prompt.")
+        payload["instructions"] += (
+            " PRODUCTION RETAIL GUIDANCE IS PRESERVED: Contemporary apparel NewWithTags uses 45%-60% of full original MSRP "
+            "unless sold comparables explicitly demonstrate lower. Luxury/heritage brands, including Louis Vuitton, "
+            "must NOT be capped at 60% MSRP: anchor to supported same-brand secondary-market evidence as required by "
+            "the production policy. These brand-tier rules override a generic percentage rule. "
+            "No unsupported MSRP-percentage fallback. Distinguish verified exact-target MSRP from related-model retail "
+            "context; current supplied official variants are unconfirmed, so do not claim exact target MSRP. "
+            "Do not suppress useful related retail context just because exact MSRP is unknown; explicitly report how "
+            "retail evidence affects or does not affect your judgment. No forced retail weight or fixed retail share. "
+            "A retail source may inform context, ranges or condition/variant interpretation without being a weighted "
+            "resale anchor. Never average raw retail sticker prices into resale prices. If a retail reference is used "
+            "as a weighted resale estimate, adjusted_price must be an explained retail-to-resale conversion supported "
+            "by supplied resale evidence; record its ID, supporting used resale IDs and conversion rationale in "
+            "retail_derived_resale_anchors. Otherwise that array is empty. For context-only retail assessments return "
+            "used=false, weight=0 and adjusted_price=null; record context usage separately in retail_guidance_assessment. "
+            "The weighted mean requirement applies to all used, explicitly adjusted resale-value anchors."
+        )
+        schema = payload["text"]["format"]["schema"]
+        guidance = {
+            "pricing_rule": {"type": "string", "enum": ["contemporary_nwt_msrp_range", "luxury_secondary_market", "other"]},
+            "retail_context_used": {"type": "boolean"},
+            "retail_reference_ids": {"type": "array", "items": {"type": "string"}},
+            "verified_exact_msrp_id": {"type": ["string", "null"]},
+            "explanation": {"type": "string"},
+        }
+        conversion = {"id": {"type": "string"},
+            "supporting_resale_ids": {"type": "array", "items": {"type": "string"}},
+            "conversion_rationale": {"type": "string"}}
+        schema["properties"]["retail_guidance_assessment"] = {"type": "object", "additionalProperties": False,
+            "properties": guidance, "required": list(guidance)}
+        schema["properties"]["retail_derived_resale_anchors"] = {"type": "array", "items": {
+            "type": "object", "additionalProperties": False, "properties": conversion, "required": list(conversion)}}
+        schema["required"].extend(["retail_guidance_assessment", "retail_derived_resale_anchors"])
     return payload
 
 
@@ -269,6 +329,7 @@ def main():
     parser.add_argument("--research-only", action="store_true")
     parser.add_argument("--reuse-research", action="store_true", help="Use saved research; only two new valuation calls")
     parser.add_argument("--audit-only", action="store_true", help="Recheck saved results offline; no keys or provider calls")
+    parser.add_argument("--preserve-retail-guidance", action="store_true", help="Use production brand-tier retail rules instead of the zero-retail-weight experiment")
     args = parser.parse_args()
     source, output = Path(args.input), Path(args.output)
     if output.exists() or source.resolve() == output.resolve():
@@ -281,7 +342,7 @@ def main():
             parser.error("Expected a controlled valuation artifact with saved evidence/results")
         artifact = copy.deepcopy(incoming)
         for result in artifact["results"]:
-            result["audit"] = audit_valuation(result, artifact["evidence"])
+            result["audit"] = audit_valuation(result, artifact["evidence"], artifact.get("preserve_retail_guidance", False))
         artifact.update(audited_at=datetime.now(timezone.utc).isoformat(), audit_version="decimal-arithmetic-v2",
                         audit_source=str(source), provider_calls_this_run=0)
         save(output, artifact)
@@ -300,7 +361,8 @@ def main():
             condition=run["condition"], research_model="gpt-5", research=[], results=[],
             research_complete=False, complete=False, approved_for_publication=False)
     artifact["created_at"] = datetime.now(timezone.utc).isoformat()
-    artifact["valuation_policy"] = VALUATION_POLICY
+    artifact["preserve_retail_guidance"] = args.preserve_retail_guidance
+    artifact["valuation_policy"] = RETAIL_VALUATION_POLICY if args.preserve_retail_guidance else VALUATION_POLICY
     plans = research_plan(artifact["identity"])
     print(json.dumps(dict(execute=args.execute, research_calls=0 if args.reuse_research else len(plans),
                          valuation_calls=0 if args.research_only else 2)), flush=True)
@@ -335,9 +397,9 @@ def main():
     def evaluate(model):
         profiler = GptItemProfiler.__new__(GptItemProfiler)
         profiler.openai_model, profiler.reasoning_effort = model, "low"
-        payload = valuation_payload(profiler, evidence)
+        payload = valuation_payload(profiler, evidence, args.preserve_retail_guidance)
         result = dict(model=model, evidence_sha256=artifact["evidence_sha256"], **request(payload, key))
-        result["audit"] = audit_valuation(result, evidence)
+        result["audit"] = audit_valuation(result, evidence, args.preserve_retail_guidance)
         return result
     with ThreadPoolExecutor(max_workers=2) as pool:
         for future in as_completed([pool.submit(evaluate, m) for m in ("gpt-5", "gpt-6.1-sol")]):
