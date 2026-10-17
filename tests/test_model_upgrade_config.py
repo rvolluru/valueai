@@ -38,7 +38,8 @@ def test_valuation_uses_supported_search_tool():
     profiler.openai_model = "gpt-6.1-sol"
     profiler.reasoning_effort = "low"
     payload = profiler._build_openai_valuation_payload(content=[], gemini_profile={}, condition_grade="New")
-    assert payload["tools"] == [{"type": "web_search"}]
+    from app.pricing_sources import RESALE_DOMAINS
+    assert payload["tools"] == [{"type": "web_search", "filters": {"allowed_domains": list(RESALE_DOMAINS)}}]
     assert payload["reasoning"] == {"effort": "low"}
 
 

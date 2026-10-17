@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi.testclient import TestClient
 from PIL import Image, ImageDraw
+from app.pricing_evidence import POLICY_VERSION
 
 
 def _make_image(text: str = "") -> bytes:
@@ -1831,7 +1832,7 @@ def _stub_item_profile(
 ) -> dict:
     resale_price = estimated_price
     return {
-        "pricing_evidence_policy": {"version": "same-brand-comparables-v4", "status": "qualified" if estimated_price else "needs_review"},
+        "pricing_evidence_policy": {"version": POLICY_VERSION, "status": "qualified" if estimated_price else "needs_review"},
         "category": category,
         "candidate_brand": brand,
         "candidate_model": model,

@@ -315,10 +315,10 @@ def test_gemini_grounded_search_prompt_uses_site_queries() -> None:
     assert payload["generationConfig"]["temperature"] == 1.0
     assert "site:therealreal.com" in prompt
     assert "site:vestiairecollective.com" in prompt
-    assert "site:fashionphile.com" in prompt
+    assert "site:fashionphile.com" not in prompt
     assert "site:rebag.com" in prompt
-    assert "site:bergdorfgoodman.com" in prompt
-    assert "bergdorfgoodman.com" in GptItemProfiler.TRUSTED_PRICING_DOMAINS
+    assert "site:bergdorfgoodman.com" not in prompt
+    assert "bergdorfgoodman.com" not in GptItemProfiler.TRUSTED_PRICING_DOMAINS
 
 
 def test_gemini_grounded_search_prompt_prioritizes_label_before_style_search() -> None:

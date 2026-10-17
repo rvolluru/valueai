@@ -13,6 +13,7 @@ import httpx
 from PIL import Image
 
 from brand.types import ImageInput
+from .pricing_sources import RESALE_DOMAINS, allowed_domains, source_prompt, url_in_domains
 
 
 @dataclass(slots=True)
@@ -24,17 +25,7 @@ class GptItemProfileResult:
 
 
 class GptItemProfiler:
-    TRUSTED_PRICING_DOMAINS = (
-        "rebag.com",
-        "poshmark.com",
-        "therealreal.com",
-        "vestiairecollective.com",
-        "fashionphile.com",
-        "bergdorfgoodman.com",
-        "1stdibs.com",
-        "theoutnet.com",
-        "net-a-porter.com",
-    )
+    TRUSTED_PRICING_DOMAINS = RESALE_DOMAINS
     def __init__(
         self,
         *,
@@ -377,12 +368,7 @@ class GptItemProfiler:
             for ref in refs:
                 if not isinstance(ref, dict):
                     continue
-                src = str(ref.get("source") or "").casefold()
-                url = str(ref.get("url") or "").casefold()
-                if any(
-                    d in src or d in url
-                    for d in GptItemProfiler.TRUSTED_PRICING_DOMAINS
-                ):
+                if url_in_domains(ref.get("url"), RESALE_DOMAINS):
                     trusted_refs += 1
 
         priced_rows = []
@@ -1041,7 +1027,7 @@ class GptItemProfiler:
         payload: dict[str, Any] = {
             "model": self.openai_model,
             "input": [{"role": "user", "content": content}],
-            "tools": [{"type": "web_search"}],
+            "tools": [{"type": "web_search", "filters": {"allowed_domains": list(RESALE_DOMAINS)}}],
             "text": {
                 "format": {
                     "type": "json_schema",
@@ -1103,14 +1089,11 @@ class GptItemProfiler:
             "1. ITEM IDENTITY: Treat the provided Gemini identification (Brand, Model, Material, Season) as fixed ground truth. "
             "Do not reclassify brand or model unless hard visual or text evidence proves Gemini's identification is strictly impossible.\n"
             "2. RESALE SOURCES (Primary): Priority order for comp gathering:\n"
-            "   - Luxury Handbags/Jewelry/Apparel: Fashionphile, Rebag, The RealReal, Vestiaire Collective.\n"
+            "   - Luxury Handbags/Jewelry/Apparel: Rebag, The RealReal, Vestiaire Collective.\n"
             "   - General Peer-to-Peer Resale: eBay (Sold listings ONLY), Poshmark, Depop, Vinted.\n\n"
             "3. MSRP / RETAIL SEARCH WATERFALL LOGIC:\n"
-            "   - Tier 1 (Ultra-Luxury & Runway): Primary reference is Bergdorf Goodman or Neiman Marcus.\n"
-            "   - Tier 2 (Contemporary & Premium Mall): Fall back to Saks Fifth Avenue, Net-A-Porter, Nordstrom, "
-            "or the Brand Direct Webstore (e.g., Reformation.com, Theory.com).\n"
-            "   - Tier 3 (Vintage / Archived Items): If current MSRP is not listed on active retail sites, retrieve "
-            "historical MSRP from press records, catalog archives, or vintage listing documentation.\n"
+            "   - Only use the registered official website for the identified brand.\n"
+            "   - If original MSRP is unavailable there, return null rather than using other retailers or guessing.\n"
             "   - Core MSRP Rule: ALWAYS use full, un-discounted original retail sticker price. NEVER use markdown, "
             "clearance, or outlet sale prices as the MSRP baseline.\n\n"
             "### VALUATION MODELING\n"
@@ -1164,7 +1147,7 @@ class GptItemProfiler:
             "only when no defensible supported same-brand resale estimate can be made. No unsupported MSRP-percentage fallback. "
             "Preserve the user's condition; do not invent premiums or evidence to fill the table.\n\n"
         )
-        valuation_prompt = strict_policy + (valuation_prompt_override or default_prompt).strip()
+        valuation_prompt = source_prompt(gemini_profile) + strict_policy + (valuation_prompt_override or default_prompt).strip()
         valuation_content = [
             *text_context,
             {
@@ -1179,7 +1162,7 @@ class GptItemProfiler:
             "model": self.openai_model,
             "input": [{"role": "user", "content": valuation_content}],
             "include": ["web_search_call.action.sources"],
-            "tools": [{"type": "web_search"}],
+            "tools": [{"type": "web_search", "filters": {"allowed_domains": allowed_domains(gemini_profile)}}],
             "text": {
                 "format": {
                     "type": "json_schema",
@@ -1284,12 +1267,11 @@ class GptItemProfiler:
                     "Derive visual condition and completeness from the image: pristine/unworn cues, visible wear, "
                     "original branded box, dust bags, and whether the item should be valued as new-in-box/pristine. "
                     "Use Google grounding and ONLY use these websites, in this strict priority order:\n"
-                    "Tier 1: 1) The RealReal, 2) Vestiaire Collective, 3) Fashionphile, 4) Rebag.\n"
-                    "Tier 2: 5) Bergdorf Goodman for retail/MSRP context, 6) eBay, 7) Poshmark.\n"
-                    "Tier 3: 8) Depop, 9) Vinted.\n"
+                    "Tier 1: The RealReal, Vestiaire Collective, Rebag.\n"
+                    "Tier 2: eBay, Poshmark, Depop, Vinted.\n"
                     "Search using explicit domain-limited queries such as: "
-                    "site:therealreal.com OR site:vestiairecollective.com OR site:fashionphile.com OR site:rebag.com OR "
-                    "site:bergdorfgoodman.com OR site:ebay.com OR site:poshmark.com OR site:depop.com OR site:vinted.com.\n"
+                    "site:therealreal.com OR site:vestiairecollective.com OR site:rebag.com OR "
+                    "site:ebay.com OR site:poshmark.com OR site:depop.com OR site:vinted.com.\n"
                     "Prefer higher tiers first; only use lower tiers when higher-tier evidence is insufficient.\n"
                     "Collect pricing evidence relevant to the identified model and current condition, including "
                     "median-like central value and condition-based ranges when available.\n"
@@ -1605,7 +1587,7 @@ class GptItemProfiler:
                 "text": (
                     "Stage 2/4 - High-Precision Grounded Search. "
                     f"Search for the item described by these visual signatures:\n{visual_signatures}\n\n"
-                    "Prioritize results from: Rebag, Poshmark, The RealReal, Vestiaire Collective, 1stdibs, Fashionphile. "
+                    "Use only these resale sources: Rebag, Poshmark, The RealReal, Vestiaire Collective, Depop, Vinted, eBay. "
                     "De-prioritize eBay unless no strong matches are found on the preferred domains. "
                     "Identify likely Maison (brand) and specific collection/model candidates with evidence and URLs. "
                     "Provide a breakdown including the median price and price ranges based on condition."
@@ -2495,15 +2477,7 @@ class GptItemProfiler:
         return cleaned[:8]
 
     def _is_trusted_pricing_ref(self, ref: dict[str, str | None]) -> bool:
-        source = (ref.get("source") or "").casefold()
-        url = (ref.get("url") or "").casefold()
-        domains = [self._extract_domain(url)] if url else []
-        domains.append(source)
-        for dom in domains:
-            for trusted in self.TRUSTED_PRICING_DOMAINS:
-                if trusted in dom:
-                    return True
-        return False
+        return url_in_domains(ref.get("url"), RESALE_DOMAINS)
 
     @staticmethod
     def _normalize_receipt_present(value: Any) -> str:

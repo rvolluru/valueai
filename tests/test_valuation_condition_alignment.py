@@ -128,7 +128,8 @@ def test_cached_analysis_revalidates_price_instead_of_copying_old_wrong_band():
 
     p = profile("LikeNew", rows=[{"label": "New without tags", "condition_grade": "New", "estimated_price": 300}])
     p["model_identification"] = {"name": "Dress"}
-    p["pricing_evidence_policy"] = {"version": "same-brand-comparables-v4", "status": "qualified"}
+    from app.pricing_evidence import POLICY_VERSION
+    p["pricing_evidence_policy"] = {"version": POLICY_VERSION, "status": "qualified"}
     cached = {"brand": {"name": "Known brand", "confidence": .95}, "category": "clothes",
               "user_condition": "New", "item_profile": p,
               "valuation": {"estimated_value": 999, "currency": "USD"}}

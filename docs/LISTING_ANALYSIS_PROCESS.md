@@ -8,6 +8,8 @@ October 16, 2026. Persistent listing identification, explicit pricing refresh,
 strengthened photo-content reuse checks and comparable policy v4 are deployed.
 Parallel pricing/mannequin/cleanup processing remains enabled. Existing listing
 values are not automatically recalculated by deployment.
+**Local, not deployed:** policy `same-brand-comparables-v5` adds enforced OpenAI
+search-domain restrictions and server-side source-role validation described below.
 Model names are repository defaults;
 environment configuration can override them.
 
@@ -181,7 +183,8 @@ There are two distinct reuse decisions.
 
 A previous analysis can be reused **across listings and owners** when:
 
-- Its pricing evidence has the current `same-brand-comparables-v4` qualified marker;
+- Its pricing evidence has the current policy's qualified marker (`same-brand-comparables-v4`
+  in production; local code requires `same-brand-comparables-v5`);
   older pricing must be researched again.
 
 - The complete original-photo content matches. Photo order does not matter; changed,
@@ -251,6 +254,44 @@ Authenticity screening is not certification. Missing supporting documents for an
 applicable brand can generate warnings or an authenticity-receipt photo request.
 
 ## 8. Research and estimate value with OpenAI
+
+### Approved sources (local implementation, not deployed)
+
+OpenAI Responses `web_search.filters.allowed_domains` limits pricing research to
+The RealReal, Poshmark, Vestiaire Collective, Rebag, Depop, Vinted and eBay, plus
+the official website registered for the brand identified by image analysis. These
+are the seven distinct websites supplied by the user. Explicit regional domains
+are included; see `apps/api/app/pricing_sources.py` for the complete versioned list.
+Subdomains are accepted, but lookalike domains, userinfo URLs, non-HTTPS URLs and
+nonstandard ports are rejected by server-side hostname validation. A claimed
+source label cannot authorize a URL. Prompt overrides cannot remove these checks.
+
+The maintained brand registry uses exact normalized brand names and explicit
+aliases. The model cannot invent a domain; unregistered brands get resale sources
+only. Collaborations do not automatically inherit a base brand's official site.
+Official sites provide identity/specifications/original retail evidence, never
+resale anchors. Resale anchors must use approved resale sites. Retail estimates
+without provider-retrieved references from the identified brand's registered site
+are cleared independently; this does not erase supported resale pricing.
+
+The API's combined-identification fallback is restricted to resale sites because
+it does not yet have a fixed image-analysis identity to select an official site.
+Gemini identification search prompts use the same resale-site names, but Google
+grounding has no equivalent enforced OpenAI domain filter here; identity research
+is not itself approved pricing evidence. Existing fallback/manual-review gates
+still prevent unqualified pricing from bypassing the comparable policy.
+
+The policy records its source-policy version, permitted resale domains, selected
+official brand domains and accepted/rejected evidence in the saved item profile.
+Old complete-analysis cache entries must be researched again under v5; scoped
+photo identity can still be reused. No existing listing is automatically repriced.
+
+Domain restrictions do not independently verify a price, condition or product
+image. Research and valuation are still one OpenAI call; a separately persisted
+research dataset, page-content verification, and search-disabled valuation are
+future work, not implemented by these source controls. No model names change.
+
+### Comparable matching and valuation
 
 The following policy is deployed in release `635ec54`. Exact brand/model/variant matches are
 preferred, but supported same-brand similar models are valid resale anchors. The

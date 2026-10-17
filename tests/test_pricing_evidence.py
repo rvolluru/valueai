@@ -3,7 +3,7 @@ from app.pricing_evidence import validate_valuation
 from app.pricing_evidence import source_title_supports, tokens
 from app.main import valuation_from_gpt_item_profile
 
-URL = "https://shop.example/items/1"
+URL = "https://www.therealreal.com/items/1"
 IDENTITY = {"candidate_brand": "John Varvatos", "candidate_model": "Alice Cooper Leather Biker"}
 
 

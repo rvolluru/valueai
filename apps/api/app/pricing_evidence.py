@@ -4,8 +4,9 @@ import math
 import re
 import unicodedata
 from urllib.parse import urlsplit, urlunsplit
+from .pricing_sources import RESALE_DOMAINS, SOURCE_POLICY_VERSION, official_domains, url_in_domains
 
-POLICY_VERSION = "same-brand-comparables-v4"
+POLICY_VERSION = "same-brand-comparables-v5"
 
 
 def tokens(value):
@@ -100,7 +101,9 @@ def validate_valuation(data, identity, raw):
         summary_support = (key in retrieved and not titles.get(key) and any(
             source_title_supports(brand, row.get("model"), f"{row.get('brand', '')} {summary}")
             for summary in summaries.get(key, [])))
-        if row.get("match_type") not in {"exact", "related"}:
+        if not url_in_domains(row.get("url"), RESALE_DOMAINS):
+            reason = "unapproved_resale_source"
+        elif row.get("match_type") not in {"exact", "related"}:
             reason = "not_a_comparable"
         elif not brand or tokens(row.get("brand")) != brand or not row_model:
             reason = "identity_mismatch_or_ambiguous_model"
@@ -126,10 +129,24 @@ def validate_valuation(data, identity, raw):
     # Reject the entire valuation if it also anchors to any unqualified comparable.
     passed = bool(allowed and refs and all(url_key(ref.get("url")) in allowed for ref in refs))
     result["pricing_evidence_policy"] = {"version": POLICY_VERSION,
+        "source_policy_version": SOURCE_POLICY_VERSION,
+        "approved_resale_domains": list(RESALE_DOMAINS),
+        "official_brand_domains": list(official_domains(identity)),
         "status": "qualified" if passed else "needs_review", "accepted": accepted, "rejected": rejected,
         "source_support": source_support,
         "basis": "same_brand_similar_model" if any(r.get("match_type") == "related" or r.get("variant_match") != "confirmed" for r in accepted) else "exact_model",
         "verification": "Native-title match, or model product-name/summary consistency for provider-retrieved URLs when titles are absent. Generated summaries, variants, conditions and prices are not independently verified."}
+    # MSRP is separate from resale: a missing/unapproved official reference must
+    # not erase otherwise supported resale evidence.
+    retail = result.get("retail_price_estimate")
+    if isinstance(retail, dict) and retail.get("estimated_price") is not None:
+        retail_refs = retail.get("references") or []
+        if not retail_refs or not all(
+            url_in_domains(ref.get("url"), official_domains(identity))
+            and url_key(ref.get("url")) in retrieved for ref in retail_refs
+        ):
+            retail.update(estimated_price=None, confidence=0,
+                          rationale="No provider-retrieved reference from the registered official brand website.")
     if not passed:
         for field in ("resale_price_estimate", "retail_price_estimate"):
             estimate = result.get(field)
