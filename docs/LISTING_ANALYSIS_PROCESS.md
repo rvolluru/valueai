@@ -10,11 +10,11 @@ Parallel pricing/mannequin/cleanup processing remains enabled. Existing listing
 values are not automatically recalculated by deployment.
 **Local, not deployed:** policy `same-brand-comparables-v5` adds enforced OpenAI
 search-domain restrictions and server-side source-role validation described below.
-**Local, not deployed:** matching policy `same-brand-model-flexible-v3` removes
+**Deployed October 17, 2026, release `fecdad2`:** matching policy `same-brand-model-flexible-v3` removes
 literal model-name and model-number equality requirements. Same-brand, same-product-family
 comparables may use different names. Nonliteral exact claims are downgraded to
 related/unconfirmed and require similarity and pricing-adjustment explanations.
-**Local, not deployed:** when primary-reference validation fails but accepted
+**Deployed in `fecdad2`:** when primary-reference validation fails but accepted
 comparables remain, OpenAI gets one pricing-only recalculation using only those
 unchanged accepted records. Search is disabled, rejected records and the previous
 price are excluded, and no currency conversion is performed. The retry preserves
@@ -64,7 +64,7 @@ and common condition/tag qualifiers. The hotfix normalizes Unicode hyphens,
 possessives, the LV abbreviation for an already established Louis Vuitton brand,
 and ZipThrough/Zip-Through spelling. It allows omitted descriptive color, trim,
 fabric and condition words without a 60% whole-description overlap requirement.
-In the local v3 matcher, model/collaboration names and model numbers need not
+In the deployed v3 matcher, model/collaboration names and model numbers need not
 match exactly. Brand support and either two shared product terms or a shared
 product family are required. Nonliteral exact claims (including different native
 source model names) are treated as related/unconfirmed, with similarity and
@@ -84,7 +84,7 @@ v5); provenance adds `matching_policy: source-identity-context-v2`. Previously q
 remain eligible because this is a matching relaxation, not a new pricing/source
 policy. Previously blocked listings are not automatically assigned a value; their
 cleared estimates require a normal analysis rerun. No rejected source is silently
-dropped to retain the original price: the local accepted-evidence repair instead
+dropped to retain the original price: the deployed accepted-evidence repair instead
 requests a new model estimate and validates it again.
 
 Without qualified evidence, the policy clears retail/resale prices and all bands;
