@@ -291,6 +291,28 @@ image. Research and valuation are still one OpenAI call; a separately persisted
 research dataset, page-content verification, and search-disabled valuation are
 future work, not implemented by these source controls. No model names change.
 
+An evaluation-only prototype, `scripts/evaluate_controlled_research.py`, schedules
+one separately domain-filtered GPT-5 research request for each approved resale
+website plus the registered official brand site, using application-supplied queries.
+Hosted search can rewrite queries; the script records the requested plan and actual
+provider tool calls. It checks URL retrieval provenance, source role, brand,
+product/material, positive USD price and a model-reported excerpt containing the
+price. It deduplicates and deterministically ranks candidates, records exclusions,
+and sends the identical saved pool to GPT-5 and Sol with no tools. Retail references
+have zero resale weight. Models still choose resale weights/condition adjustments;
+the application audits IDs, references and comparable price preservation. It
+calculates the weighted mean and nearest-USD-25 rounding using decimal arithmetic,
+and flags model estimates inconsistent with that calculation. Source
+facts remain model-extracted, not independently verified page or transaction facts.
+This prototype is not connected to runtime analysis, reuse or publication and does
+not replace the production comparable validator. Research can be reused locally
+with `--reuse-research` without paying for another search run.
+Its source-neutral valuation policy removes the older eBay-sold-only instruction
+from the experimental request: supplied resale asking and sold-displayed prices
+are eligible on the same terms across websites. This does not modify the runtime
+prompt; original prices remain fixed and any asking-to-clearing adjustment must
+be explicit.
+
 ### Comparable matching and valuation
 
 The following policy is deployed in release `635ec54`. Exact brand/model/variant matches are
