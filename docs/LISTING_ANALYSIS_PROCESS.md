@@ -3,15 +3,15 @@
 Updated October 16, 2026. This document explains the functional process: inputs,
 model calls, decisions, outputs and user review—not a reliability assessment.
 
-**Implementation status:** parallel pricing/mannequin/cleanup processing is deployed
-in production release `51bb1bd`. Persistent listing identification, explicit pricing
-refresh and strengthened photo-content reuse checks described below are in the
-release candidate and **not yet deployed**. This release is being prepared for
-production on October 16; deployment status will be updated after verification.
+**Implementation status:** production release `635ec54` deployed successfully on
+October 16, 2026. Persistent listing identification, explicit pricing refresh,
+strengthened photo-content reuse checks and comparable policy v4 are deployed.
+Parallel pricing/mannequin/cleanup processing remains enabled. Existing listing
+values are not automatically recalculated by deployment.
 Model names are repository defaults;
 environment configuration can override them.
 
-Local upgrade preparation also replaces OpenAI's legacy `web_search_preview` tool
+This release also replaces OpenAI's legacy `web_search_preview` tool
 with `web_search` and explicitly sets configurable chat reasoning effort (default
 `low`). Candidate pricing/chat models are isolated in
 `config/ai-model-candidates.env`, not activated automatically. See
@@ -19,7 +19,7 @@ with `web_search` and explicitly sets configurable chat reasoning effort (defaul
 comparison procedure, weekly retirement reviews and promotion/rollback gates.
 Production model names remain unchanged until evaluation and an approved deployment.
 
-**Local, not deployed: comparable policy `same-brand-comparables-v4`.** OpenAI pricing
+**Deployed comparable policy `same-brand-comparables-v4`.** OpenAI pricing
 returns structured comparable brand/model, variant, condition, price type, price,
 currency, URL and matching evidence. Exact brand/model/variant matches are preferred.
 Similar models and unconfirmed variants from the same brand can also anchor resale
@@ -181,8 +181,8 @@ There are two distinct reuse decisions.
 
 A previous analysis can be reused **across listings and owners** when:
 
-- Its pricing evidence has the current `same-brand-comparables-v4` qualified marker (local,
-  not deployed); older pricing must be researched again.
+- Its pricing evidence has the current `same-brand-comparables-v4` qualified marker;
+  older pricing must be researched again.
 
 - The complete original-photo content matches. Photo order does not matter; changed,
   added or missing photo content does not qualify.
@@ -252,7 +252,7 @@ applicable brand can generate warnings or an authenticity-receipt photo request.
 
 ## 8. Research and estimate value with OpenAI
 
-Local policy changes below are not deployed. Exact brand/model/variant matches are
+The following policy is deployed in release `635ec54`. Exact brand/model/variant matches are
 preferred, but supported same-brand similar models are valid resale anchors. The
 model compares product type, material, construction, quality tier, collaboration and
 edition, explains differences and their price adjustment (or why none is justified),
