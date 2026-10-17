@@ -16,7 +16,10 @@ TERMINAL = {'succeeded', 'failed', 'skipped', 'superseded'}
 
 def _prepare_inputs(db, current, files, settings, job_id, inputs):
     from . import main
-    files = files if files is not None else main._collect_listing_analysis_files(db=db, settings=settings, listing=current)
+    if files is None:
+        files = main._collect_listing_analysis_files(db=db, settings=settings, listing=current)
+        if sorted(photo_key(entry.get('source_url')) for entry in files) != photo_signature(current):
+            raise ValueError('Not all current original photos could be read; refusing partial analysis')
     if not files:
         raise ValueError('No readable original photos for pipeline')
     storage = main.build_storage(settings)
@@ -78,10 +81,47 @@ def _pricing(db, snapshot, files, settings, valuation_service, gpt_item_profiler
     job = recover_analysis_success(db, snapshot['job_id'], snapshot['owner_subject'])
     if job['status'] == 'succeeded':
         return 'succeeded', job['attempts']
+    # Seed unchanged, previously linked evidence on upgrade. Hashes must match
+    # the actual originals, not merely the listing's current source-item pointer.
+    previous = snapshot['listing'].get('analysis') or {}
+    correction = args.get('brand_override') or (previous.get('user_corrections') or {}).get('brand')
+    canonical = None
+    identity_images = []
+    if hasattr(gpt_item_profiler, 'seed_saved_identity'):
+        from brand.types import ImageInput
+        identity_images = [ImageInput(image_id=str(i), filename=entry.get('filename') or 'photo.jpg',
+            content_type=entry.get('content_type') or 'image/jpeg', bytes_data=entry['data'], role_hint='full_item')
+            for i, entry in enumerate(files)]
+    if (hasattr(gpt_item_profiler, 'seed_saved_identity') and previous.get('item_id')
+            and db.item_is_linked_to_listing(previous['item_id'], snapshot['listing_id'], snapshot['owner_subject'])):
+        records = db.list_image_records_for_item(previous['item_id'], limit=20)
+        old_hashes = sorted(record.get('content_hash') or '' for record in records
+                            if not str(record.get('role_hint') or '').startswith('ai_'))
+        hashes = sorted(hashlib.sha256(entry['data']).hexdigest() for entry in files)
+        old_correction = (previous.get('user_corrections') or {}).get('brand')
+        if (hashes and hashes == old_hashes and args['category'] == previous.get('category')
+                and (not args.get('brand_override') or args['brand_override'] == old_correction)):
+            db.commit()
+            canonical = gpt_item_profiler.seed_saved_identity(
+                images=identity_images, category=args['category'], brand_name=correction or 'unknown',
+                profile=previous.get('item_profile') or {},
+                listing_id=snapshot['listing_id'], owner_subject=snapshot['owner_subject'])
     cached = None
     if not args.get('force_fresh_analysis') and not args.get('brand_override'):
         cached = main._reuse_recent_analysis_for_listing(db=db, listing_id=snapshot['listing_id'],
-            owner_subject=snapshot['owner_subject'], current=snapshot['listing'], persist=False)
+            owner_subject=snapshot['owner_subject'], current=snapshot['listing'], persist=False, files=files)
+    if cached and not canonical and identity_images:
+        canonical = gpt_item_profiler.seed_saved_identity(images=identity_images,
+            category=args['category'], brand_name=correction or 'unknown',
+            profile=cached['analysis'].get('item_profile') or {},
+            listing_id=snapshot['listing_id'], owner_subject=snapshot['owner_subject'])
+    if cached and canonical:
+        profile = cached['analysis'].get('item_profile') or {}
+        def identity_name(value):
+            return (str(value.get('candidate_brand') or '').strip().casefold(),
+                    str((value.get('model_identification') or {}).get('name') or '').strip().casefold())
+        if identity_name(profile) != identity_name(canonical):
+            cached = None
     if cached:
         cached['analysis'].setdefault('debug', {})['analysis_execution'] = {
             'job_id': snapshot['job_id'], 'listing_id': snapshot['listing_id']}
@@ -93,7 +133,7 @@ def _pricing(db, snapshot, files, settings, valuation_service, gpt_item_profiler
     main._run_listing_analysis_job_threaded(
         listing_id=snapshot['listing_id'], owner_subject=snapshot['owner_subject'], files=files,
         category=args['category'], item_size=args.get('item_size'), user_condition=args.get('user_condition'),
-        item_description=args.get('item_description'), brand_override=args.get('brand_override'), debug=args['debug'],
+        item_description=args.get('item_description'), brand_override=correction, debug=args['debug'],
         settings=settings, valuation_service=valuation_service, gpt_item_profiler=gpt_item_profiler,
         job_id=snapshot['job_id'], pipeline_snapshot=snapshot, stage_images_after_analysis=False,
     )

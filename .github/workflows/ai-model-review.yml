@@ -1,0 +1,15 @@
+name: Weekly AI model review reminder
+on:
+  schedule:
+    - cron: '0 14 * * 5'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  reminder:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo '::warning::Review OpenAI/Google retirement notices and account alerts; update docs/AI_MODEL_LIFECYCLE.md with findings. Do not auto-upgrade models.'
+          echo '## Weekly model review' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Follow docs/AI_MODEL_LIFECYCLE.md. Check official deprecation pages, record findings in a PR, and evaluate replacements before promotion.' >> "$GITHUB_STEP_SUMMARY"

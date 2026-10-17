@@ -164,3 +164,51 @@ def test_pricing_completes_while_optional_images_are_still_running(tmp_path, mon
         thread.join(5)
     assert not failures
     assert not thread.is_alive()
+
+
+def test_old_full_result_cache_cannot_override_shared_identity(tmp_path, monkeypatch):
+    settings, db, snapshot = setup_pipeline(tmp_path)
+    from app import main
+    canonical = {'candidate_brand': 'RHODE', 'model_identification': {'name': 'Paolo Dress'}}
+    cached = {'analysis': {'item_profile': {'candidate_brand': 'RHODE', 'model_identification': {'name': 'Generic dress'}}}}
+    monkeypatch.setattr(main, '_reuse_recent_analysis_for_listing', lambda **kwargs: cached)
+    called = []
+    def price(**kwargs):
+        called.append('fresh pricing')
+        db.update_listing_analysis_job(job_id='job', owner_subject='owner', status='succeeded',
+            result_item_id='priced', completed=True)
+    monkeypatch.setattr(main, '_run_listing_analysis_job_threaded', price)
+    model = SimpleNamespace(seed_saved_identity=lambda **kwargs: canonical)
+    assert pipeline._pricing(db, snapshot, [{'data': b'original'}], settings, None, model)[0] == 'succeeded'
+    assert called == ['fresh pricing']
+
+
+def test_pipeline_rejects_partial_photo_resolution_before_cache_or_models(tmp_path, monkeypatch):
+    settings, db, snapshot = setup_pipeline(tmp_path)
+    from app import main
+    monkeypatch.setattr(main, '_collect_listing_analysis_files', lambda **kwargs: [])
+    with pytest.raises(ValueError, match='Not all current'):
+        pipeline._prepare_inputs(db, snapshot['listing'], None, settings, 'job', {})
+
+
+def test_current_bytes_not_stale_source_item_are_used_for_reuse(tmp_path, monkeypatch):
+    settings, db, snapshot = setup_pipeline(tmp_path)
+    from app import main
+    captured = []
+    def lookup(hashes, **kwargs):
+        captured.extend(hashes)
+        return None
+    monkeypatch.setattr(db, 'find_recent_analysis_by_image_hashes', lookup)
+    import hashlib
+    assert main._reuse_recent_analysis_for_listing(db=db, listing_id='listing', owner_subject='owner',
+        current=snapshot['listing'], persist=False, files=[{'data': b'new-photo'}]) is None
+    assert captured == [hashlib.sha256(b'new-photo').hexdigest()]
+
+
+def test_same_filename_and_size_do_not_drop_different_photos(monkeypatch):
+    from app import main
+    files = iter([{'data': b'aaa', 'filename': 'same.jpg'}, {'data': b'bbb', 'filename': 'same.jpg'}])
+    monkeypatch.setattr(main, '_image_file_from_listing_url', lambda **kwargs: next(files))
+    result = main._collect_listing_analysis_files(db=None, settings=SimpleNamespace(max_images_per_request=6),
+        listing={'images': ['/v1/images/a', '/v1/images/b']})
+    assert len(result) == 2

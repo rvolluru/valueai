@@ -8,6 +8,7 @@ import mimetypes
 import os
 import re
 import sys
+import time
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
@@ -45,14 +46,15 @@ def parse_args() -> argparse.Namespace:
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--sheet-url", help="Google Sheets URL. The sheet must be accessible to this process.")
     source.add_argument("--csv", help="Local CSV path.")
-    parser.add_argument("--prompt-b-file", required=True, help="Text file containing the candidate valuation prompt.")
+    parser.add_argument("--prompt-b-file", help="Optional candidate prompt; omit to compare models with the same prompt.")
+    parser.add_argument("--model-b", help="Candidate OpenAI model. Does not change application configuration.")
     parser.add_argument("--out-csv", default="tmp/openai_valuation_ab_results.csv")
     parser.add_argument("--out-jsonl", default="tmp/openai_valuation_ab_results.jsonl")
     parser.add_argument("--limit", type=int, default=0, help="Maximum rows to run. 0 means all rows.")
     parser.add_argument("--max-images", type=int, default=6)
     parser.add_argument("--timeout-s", type=float, default=float(os.getenv("GPT_ITEM_PROFILE_TIMEOUT_S", "120")))
     parser.add_argument("--openai-model", default=os.getenv("GPT_ITEM_PROFILE_MODEL", "gpt-5"))
-    parser.add_argument("--gemini-model", default=os.getenv("GPT_ITEM_PROFILE_GEMINI_MODEL", "gemini-2.5-flash"))
+    parser.add_argument("--gemini-model", default=os.getenv("GPT_ITEM_PROFILE_GEMINI_MODEL", "gemini-3.8-flash"))
     parser.add_argument("--reasoning-effort", default=os.getenv("GPT_ITEM_PROFILE_REASONING_EFFORT", "low"))
     parser.add_argument("--image-detail", default=os.getenv("GPT_ITEM_PROFILE_IMAGE_DETAIL", "auto"))
     parser.add_argument("--skip-image-errors", action="store_true", help="Continue rows that have some failed image downloads.")
@@ -186,14 +188,23 @@ def main() -> int:
     if not os.getenv("GEMINI_API_KEY"):
         raise SystemExit("GEMINI_API_KEY is required.")
 
-    prompt_b = Path(args.prompt_b_file).read_text(encoding="utf-8").strip()
-    if not prompt_b:
+    prompt_b = Path(args.prompt_b_file).read_text(encoding="utf-8").strip() if args.prompt_b_file else None
+    if args.prompt_b_file and not prompt_b:
         raise SystemExit("--prompt-b-file is empty.")
+    if not prompt_b and not args.model_b:
+        raise SystemExit("Supply --model-b or --prompt-b-file.")
+    if args.model_b and (args.limit <= 0 or args.limit > 50 or args.skip_image_errors):
+        raise SystemExit("Model comparisons require --limit 1..50 and complete image evidence.")
 
     rows = read_rows(args)
     if args.limit > 0:
         rows = rows[: args.limit]
     profiler = make_profiler(args)
+    candidate = make_profiler(args)
+    candidate.openai_model = args.model_b or args.openai_model
+    if not rows:
+        raise SystemExit("No evaluation cases found.")
+    failures = 0
 
     out_csv = ROOT / args.out_csv
     out_jsonl = ROOT / args.out_jsonl
@@ -246,7 +257,9 @@ def main() -> int:
                 "input_size": size,
                 "error": "",
             }
-            detail: dict[str, Any] = {"row": raw_row, "summary": summary}
+            detail: dict[str, Any] = {"row": raw_row, "summary": summary,
+                                      "model_a": profiler.openai_model, "model_b": candidate.openai_model,
+                                      "reasoning_effort": args.reasoning_effort}
             try:
                 image_urls = extract_image_urls(row)
                 if not image_urls:
@@ -281,12 +294,19 @@ def main() -> int:
                 if not isinstance(gemini_profile, dict):
                     raise RuntimeError("Gemini returned no profile.")
 
-                valuation_a = profiler._call_openai_valuation(content=content, gemini_profile=gemini_profile)
-                valuation_b = profiler._call_openai_valuation(
+                started = time.monotonic()
+                valuation_a = profiler._call_openai_valuation(content=content, gemini_profile=gemini_profile, condition_grade=condition)
+                detail["a_elapsed_seconds"] = round(time.monotonic() - started, 3)
+                started = time.monotonic()
+                valuation_b = candidate._call_openai_valuation(
                     content=content,
                     gemini_profile=gemini_profile,
                     valuation_prompt_override=prompt_b,
+                    condition_grade=condition,
                 )
+                detail["b_elapsed_seconds"] = round(time.monotonic() - started, 3)
+                if not isinstance(valuation_a, dict) or not isinstance(valuation_b, dict):
+                    raise RuntimeError("A model returned no valid valuation; comparison failed.")
                 estimate_a = estimate_from_valuation(valuation_a)
                 estimate_b = estimate_from_valuation(valuation_b)
                 price_a = estimate_a.get("estimated_price")
@@ -323,6 +343,7 @@ def main() -> int:
                     }
                 )
             except Exception as exc:
+                failures += 1
                 summary["error"] = str(exc)
                 detail["error"] = str(exc)
 
@@ -334,7 +355,7 @@ def main() -> int:
 
     print(f"Wrote {out_csv}")
     print(f"Wrote {out_jsonl}")
-    return 0
+    return 1 if failures else 0
 
 
 if __name__ == "__main__":

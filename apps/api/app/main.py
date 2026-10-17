@@ -37,7 +37,7 @@ from valuation.types import ValuationRequest
 
 from .auth import AuthPrincipal, create_impersonation_token, get_request_principal, principal_has_admin_role, require_admin_or_api_key, require_admin_user, require_clerk_user
 from .analysis_execution import guard_analysis_job, recover_analysis_success
-from .pipeline_results import StalePipelineResult, merge_result, mark_pricing_failure
+from .pipeline_results import StalePipelineResult, merge_result, mark_pricing_failure, original_urls, photo_key
 from .analysis_queue import enqueue_listing_analysis
 from .db import Database, PersistedImage, TradeListingUnavailableError, utc_now_iso
 from .deps import (
@@ -930,6 +930,10 @@ def _normalize_condition_for_analysis_reuse(value: object) -> str:
 
 
 def _cached_analysis_is_strong_enough_for_reuse(response_payload: dict) -> bool:
+    from .pricing_evidence import POLICY_VERSION
+    policy = (response_payload.get("item_profile") or {}).get("pricing_evidence_policy") or {}
+    if policy.get("version") != POLICY_VERSION or policy.get("status") != "qualified":
+        return False
     brand = response_payload.get("brand") if isinstance(response_payload.get("brand"), dict) else {}
     brand_name = str(brand.get("name") or "").strip()
     brand_confidence = float(brand.get("confidence") or 0)
@@ -951,21 +955,36 @@ def _reuse_recent_analysis_for_listing(
     owner_subject: str,
     current: dict,
     persist: bool = True,
+    files: list[dict] | None = None,
 ) -> dict | None:
     source_item_id = str(current.get("source_item_id") or "").strip()
     if not source_item_id:
         return None
-    image_hashes = [
-        str(record.get("content_hash") or "").strip()
-        for record in db.list_image_records_for_item(source_item_id, limit=20)
-        if not str(record.get("role_hint") or "").strip().startswith("ai_")
-        and str(record.get("content_hash") or "").strip()
-    ]
+    # A listing can still point at its old source item after its gallery changes.
+    # Only current resolved bytes (or the pipeline's verified frozen originals)
+    # are valid reuse evidence. Missing photos must not become a subset match.
+    if files is None:
+        files = _collect_listing_analysis_files(db=db, settings=get_settings(), listing=current)
+        expected = sorted(photo_key(url) for url in original_urls(current))
+        resolved = sorted(photo_key(entry.get('source_url')) for entry in files)
+        if not expected or resolved != expected:
+            return None
+    if not files or any(not isinstance(entry.get('data'), bytes) or not entry['data'] for entry in files):
+        return None
+    image_hashes = [_image_content_hash(entry['data']) for entry in files]
     if not image_hashes:
         return None
+    description_hint = str(current.get('description') or '')
+    previous_analysis = current.get('analysis') or {}
+    if previous_analysis and description_hint == _profile_description_from_analysis(previous_analysis)[1]:
+        description_hint = str(((previous_analysis.get('debug') or {}).get('input_hints') or {}).get('item_description') or '')
     cached = db.find_recent_analysis_by_image_hashes(
         image_hashes,
         limit=50,
+        condition_grade=current.get('condition'),
+        category=current.get('category'),
+        brand_name=((current.get('analysis') or {}).get('user_corrections') or {}).get('brand'),
+        item_description=description_hint,
     )
     if not cached or not isinstance(cached.get("response"), dict):
         return None
@@ -997,6 +1016,14 @@ def _reuse_recent_analysis_for_listing(
         )
         return None
     response_payload = copy.deepcopy(cached["response"])
+    # Reuse model evidence, not another listing's review state, gallery, owner
+    # context or component checkpoints.
+    for key in ('generated_assets', 'presentation_assets', 'pricing_review', 'user_corrections'):
+        response_payload.pop(key, None)
+    corrections = (current.get('analysis') or {}).get('user_corrections')
+    if corrections:
+        response_payload['user_corrections'] = copy.deepcopy(corrections)
+    response_payload['_original_photo_hashes'] = sorted(image_hashes)
     # Cached prices may have been selected by older, permissive band logic.
     # Revalidate condition alignment instead of copying that price unchanged.
     aligned_valuation = valuation_from_gpt_item_profile(
@@ -1014,9 +1041,26 @@ def _reuse_recent_analysis_for_listing(
     db.link_analysis_item(source_item_id, listing_id, owner_subject)
     response_payload["item_id"] = source_item_id
     uploaded_images = _uploaded_images_for_item(db, source_item_id)
+    if all(entry.get('source_url') for entry in files):
+        uploaded_images = []
+        for index, entry in enumerate(files):
+            image_id = db.get_image_id_by_public_url(entry['source_url'])
+            if not image_id:
+                return None
+            uploaded_images.append({'image_id': image_id, 'image_url': f'/v1/images/{image_id}',
+                'storage_uri': db.get_image_storage_uri(image_id),
+                'role_hint': entry.get('role_hint') or ('full_item' if index == 0 else 'close_up')})
     if uploaded_images:
         response_payload["uploaded_images"] = uploaded_images
     debug_payload = response_payload.get("debug") if isinstance(response_payload.get("debug"), dict) else {}
+    for key in ('analysis_job', 'analysis_execution', 'pipeline_results', 'pipeline_components', 'uploads'):
+        debug_payload.pop(key, None)
+    workflow = (((debug_payload.get('enrichment') or {}).get('gpt_item_profile') or {}).get('workflow') or {})
+    workflow.pop('identity_reuse', None)
+    profile_workflow = (response_payload.get('item_profile') or {}).get('_workflow') or {}
+    profile_workflow.pop('identity_reuse', None)
+    debug_payload['input_hints'] = {'user_condition': current_condition, 'item_size': current.get('size'),
+                                   'item_description': current.get('description')}
     debug_payload["analysis_reuse"] = {
         "reused": True,
         "source_analysis_id": cached.get("analysis_id"),
@@ -1392,12 +1436,12 @@ def _collect_listing_analysis_files(
         if resolved:
             files.append(resolved)
     deduped_files: list[dict[str, object]] = []
-    seen_signatures: set[tuple[str, int]] = set()
+    seen_signatures: set[tuple[str, str]] = set()
     for entry in files:
         data = entry.get("data")
         if not isinstance(data, bytes):
             continue
-        signature = (str(entry.get("filename") or ""), len(data))
+        signature = (str(entry.get('source_url') or entry.get('filename') or ''), _image_content_hash(data))
         if signature in seen_signatures:
             continue
         seen_signatures.add(signature)
@@ -2039,6 +2083,8 @@ async def retry_new_condition_pricing(item_profile, profiler, debug):
     """Retry only missing New pricing, retaining the original identification and bands."""
     if not isinstance(item_profile, dict):
         return
+    if (item_profile.get("pricing_evidence_policy") or {}).get("status") == "needs_review":
+        return
     primary = item_profile.get("resale_price_estimate")
     rows = item_profile.get("resale_price_breakdown") or []
     if isinstance(primary, dict) and _pricing_row_condition(primary, primary=True) == "New" and _coerce_positive_float(primary.get("estimated_price")):
@@ -2077,6 +2123,8 @@ def valuation_from_gpt_item_profile(
 ) -> dict[str, object] | None:
     if not isinstance(item_profile, dict):
         return None
+    if (item_profile.get("pricing_evidence_policy") or {}).get("status") == "needs_review":
+        return None
 
     resale = item_profile.get("resale_price_estimate")
     retail = item_profile.get("retail_price_estimate")
@@ -2104,7 +2152,7 @@ def valuation_from_gpt_item_profile(
     retail_reference = _coerce_positive_float(retail.get("estimated_price")) if isinstance(retail, dict) else None
     retail_derived = False
     visual_condition_adjustment: dict[str, object] = {"applied": False}
-    if estimated_value is None and retail_reference is not None:
+    if estimated_value is None and retail_reference is not None and not item_profile.get("pricing_evidence_policy"):
         factor = _retail_to_resale_factor_for_category(item_profile.get("category"))
         condition_multiplier = _condition_multiplier_for_retail_fallback(target_condition)
         if str(condition_grade or "").strip().casefold() == "new":
@@ -5547,6 +5595,7 @@ def admin_create_support_note(
 def admin_rerun_listing_analysis(
     listing_id: str,
     background_tasks: BackgroundTasks,
+    refresh_pricing: bool = False,
     principal: AuthPrincipal = Depends(require_admin_user),
     db: Database = Depends(get_db),
     settings: Settings = Depends(get_settings),
@@ -5574,6 +5623,7 @@ def admin_rerun_listing_analysis(
         debug=True,
         stage_images_after_analysis=False,
         job_id=str(analysis_job.get("job_id") or ""),
+        force_fresh_analysis=refresh_pricing,
     )
     db.create_admin_support_note(
         note_id=f"support-note-{uuid.uuid4()}",
@@ -9054,6 +9104,7 @@ async def app_assistant_chat(
                 headers={"Authorization": f"Bearer {settings.openai_api_key}", "Content-Type": "application/json"},
                 json={
                     "model": settings.listing_assistant_model,
+                    "reasoning": {"effort": settings.listing_assistant_reasoning_effort},
                     "instructions": instructions,
                     "input": f"APP STATE:\n{json.dumps({'inventory': inventory_summary, 'assistant_context': request.context.model_dump()})}\n\nLISTING CREATION WORKFLOW:\n{json.dumps(LISTING_CREATION_WORKFLOW)}\n\nCONVERSATION:\n{transcript}",
                     "text": {"format": {"type": "json_schema", "name": "app_assistant_response", "strict": True, "schema": schema}},
@@ -9502,6 +9553,7 @@ async def listing_assistant_chat(
                 },
                 json={
                     "model": settings.listing_assistant_model,
+                    "reasoning": {"effort": settings.listing_assistant_reasoning_effort},
                     "instructions": instructions,
                     "input": f"CURRENT LISTING CONTEXT:\n{json.dumps(context)}\n\nLISTING CREATION WORKFLOW:\n{json.dumps(LISTING_CREATION_WORKFLOW)}\n\nCONVERSATION:\n{conversation}",
                     "text": {
@@ -10496,6 +10548,9 @@ async def _run_listing_analysis_job(
             user_condition=user_condition,
             item_description=analysis_description,
             purchase_year=None,
+            identity_brand_override=brand_override,
+            refresh_pricing=True,
+            analysis_listing_id=listing_id,
             debug=debug,
             settings=settings,
             principal=AuthPrincipal(auth_type="analysis_job", subject=owner_subject, claims={"sub": owner_subject}),
@@ -10864,6 +10919,7 @@ async def queue_listing_analysis(
     background_tasks: BackgroundTasks,
     images: Annotated[list[UploadFile] | None, File()] = None,
     image_urls_json: Annotated[str | None, Form()] = None,
+    refresh_pricing: Annotated[bool, Form()] = False,
     category: Annotated[str | None, Form()] = None,
     item_size: Annotated[str | None, Form()] = None,
     user_condition: Annotated[str | None, Form()] = None,
@@ -10920,12 +10976,12 @@ async def queue_listing_analysis(
         if resolved:
             files.append(resolved)
     deduped_files: list[dict[str, object]] = []
-    seen_signatures: set[tuple[str, int]] = set()
+    seen_signatures: set[tuple[str, str]] = set()
     for entry in files:
         data = entry.get("data")
         if not isinstance(data, bytes):
             continue
-        signature = (str(entry.get("filename") or ""), len(data))
+        signature = (str(entry.get('source_url') or entry.get('filename') or ''), _image_content_hash(data))
         if signature in seen_signatures:
             continue
         seen_signatures.add(signature)
@@ -10953,6 +11009,7 @@ async def queue_listing_analysis(
         gpt_item_profiler=gpt_item_profiler,
         stage_images_after_analysis=uploaded_file_count > 0,
         job_id=str(analysis_job.get("job_id") or ""),
+        force_fresh_analysis=refresh_pricing,
     )
     return {"status": "queued", "job_id": str(analysis_job.get("job_id") or "")}
 
@@ -10991,6 +11048,9 @@ async def analyze(
     user_condition: Annotated[str | None, Form()] = None,
     item_description: Annotated[str | None, Form()] = None,
     purchase_year: Annotated[int | None, Form()] = None,
+    identity_brand_override: Annotated[str | None, Form()] = None,
+    refresh_pricing: Annotated[bool, Form()] = False,
+    analysis_listing_id: Annotated[str | None, Form()] = None,
     debug: Annotated[bool, Form()] = False,
     settings: Settings = Depends(get_settings),
     principal: AuthPrincipal = Depends(get_request_principal),
@@ -10999,6 +11059,10 @@ async def analyze(
     valuation_service: ValuationService = Depends(get_valuation_service),
     gpt_item_profiler=Depends(get_gpt_item_profiler),
 ) -> AnalyzeResponse:
+    if analysis_listing_id:
+        identity_listing = db.get_listing_by_id(analysis_listing_id)
+        if not identity_listing or identity_listing.get('owner_subject') != principal.subject:
+            raise HTTPException(status_code=404, detail='listing not found')
     item_id = (item_id or "").strip() or f"item-{uuid.uuid4()}"
     category = normalize_category(category)
     item_size = normalize_item_size(item_size)
@@ -11115,12 +11179,15 @@ async def analyze(
         profile_result = await asyncio.to_thread(
             gpt_item_profiler.profile_item,
             images=image_inputs,
-            brand_name="unknown",
+            brand_name=identity_brand_override or "unknown",
             category=category_out,
             item_size=item_size,
             condition_grade=valuation_condition_grade,
             condition_source="user_input" if user_condition_grade is not None else "model",
             item_description=item_description,
+            refresh_pricing=refresh_pricing,
+            listing_id=analysis_listing_id,
+            owner_subject=principal.subject,
         )
         item_profile_debug = {
             "enabled": profile_result.enabled,
@@ -11129,6 +11196,11 @@ async def analyze(
         }
         item_profile_payload = profile_result.profile
         if isinstance(item_profile_payload, dict):
+            from .pricing_evidence import POLICY_VERSION
+            if not item_profile_payload.get("pricing_evidence_policy"):
+                item_profile_payload["pricing_evidence_policy"] = {
+                    "version": POLICY_VERSION, "status": "needs_review",
+                    "reason": "provider_did_not_supply_validated_exact_model_evidence"}
             grounding_metadata = item_profile_payload.pop("_grounding_metadata", None)
             if grounding_metadata is not None:
                 item_profile_debug["groundingMetadata"] = grounding_metadata
@@ -11187,7 +11259,8 @@ async def analyze(
                 "pricing_fallback_used": False,
                 "condition_alignment": valuation_payload.get("condition_alignment"),
             }
-        if valuation_payload is None and settings.valuation_comps_enabled:
+        if (valuation_payload is None and settings.valuation_comps_enabled
+                and not (item_profile_payload or {}).get("pricing_evidence_policy")):
             valuation_request = ValuationRequest(
                 item_id=item_id,
                 brand=brand_out.name,
@@ -11217,7 +11290,8 @@ async def analyze(
                 "pricing_source": "none",
                 "pricing_fallback_used": False,
                 "comps_fallback_skipped": True,
-                "reason": "valuation_comps_disabled",
+                "reason": ("supported_same_brand_evidence_required" if (item_profile_payload or {}).get("pricing_evidence_policy")
+                           else "valuation_comps_disabled"),
             }
         if debug:
             valuation_debug = valuation_debug or {}
@@ -11266,6 +11340,10 @@ async def analyze(
 
     analysis_id = str(uuid.uuid4())
     response_payload = response.model_dump()
+    response_payload['_original_photo_hashes'] = sorted(_image_content_hash(image.bytes_data) for image in image_inputs)
+    response_payload['_analysis_input_context'] = {'item_description': item_description,
+        'item_size': item_size, 'user_condition': user_condition_grade, 'category': category,
+        'brand_override': identity_brand_override}
     db.insert_analysis(analysis_id, item_id, response_payload)
     if user_condition_grade is not None:
         db.insert_condition_feedback(

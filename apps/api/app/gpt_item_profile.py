@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import copy
 import hashlib
 import json
 import re
@@ -54,8 +55,10 @@ class GptItemProfiler:
         vertex_data_store: str | None = None,
         vertex_access_token: str | None = None,
         vertex_max_results: int = 10,
+        database_url: str | None = None,
     ):
         self.enabled = enabled
+        self.database_url = database_url
         self.provider_order = [p.strip().lower() for p in provider_order.split(",") if p.strip()] or ["gemini", "openai"]
         self.openai_api_key = openai_api_key
         self.openai_model = openai_model
@@ -84,9 +87,18 @@ class GptItemProfiler:
         condition_grade: str,
         condition_source: str,
         item_description: str | None,
+        refresh_pricing: bool = False,
+        listing_id: str | None = None,
+        owner_subject: str | None = None,
     ) -> GptItemProfileResult:
         if not self.enabled:
             return GptItemProfileResult(profile=None, enabled=False, called=False)
+        if (self.database_url and listing_id and owner_subject and self.provider_order[0] in {'hybrid', 'gemini_openai', 'gemini_openai_valuation'}
+                and self.gemini_api_key and self.openai_api_key):
+            return self._profile_with_saved_identity(images=images, brand_name=brand_name, category=category,
+                item_size=item_size, condition_grade=condition_grade, condition_source=condition_source,
+                item_description=item_description, refresh_pricing=refresh_pricing,
+                listing_id=listing_id, owner_subject=owner_subject)
         cache_key = self._cache_key(
             images=images,
             brand_name=brand_name,
@@ -96,9 +108,12 @@ class GptItemProfiler:
             condition_source=condition_source,
             item_description=item_description,
         )
-        cached = self._profile_cache.get(cache_key)
+        # Local fallback profiles must not leak across listings either. Without
+        # listing context, direct/standalone analyses never reuse this cache.
+        cache_key = hashlib.sha256(json.dumps([owner_subject, listing_id, cache_key]).encode()).hexdigest()
+        cached = None if refresh_pricing or not listing_id or not owner_subject else self._profile_cache.get(cache_key)
         if isinstance(cached, dict):
-            return GptItemProfileResult(profile=dict(cached), enabled=True, called=True)
+            return GptItemProfileResult(profile=copy.deepcopy(cached), enabled=True, called=True)
         schema = self._build_schema()
         provider_errors: list[str] = []
         called = False
@@ -125,6 +140,8 @@ class GptItemProfiler:
                     )
                     if parsed is not None:
                         parsed.setdefault("_provider", "hybrid")
+                        if (parsed.get("pricing_evidence_policy") or {}).get("status") == "needs_review":
+                            return GptItemProfileResult(profile=parsed, enabled=True, called=True)
                         if self._has_usable_profile_data(parsed) and self._has_usable_pricing(parsed):
                             self._profile_cache[cache_key] = dict(parsed)
                             return GptItemProfileResult(profile=parsed, enabled=True, called=True)
@@ -259,6 +276,55 @@ class GptItemProfiler:
         if not called:
             return GptItemProfileResult(profile=None, enabled=True, called=False, error="; ".join(provider_errors))
         return GptItemProfileResult(profile=None, enabled=True, called=True, error="; ".join(provider_errors))
+
+    def seed_saved_identity(self, *, images, category, brand_name, profile, listing_id=None, owner_subject=None):
+        """Adopt verified linked legacy evidence without re-identifying the product."""
+        from .product_identity import identity_fingerprint, resolve_identity, reusable_identity
+        if not self.database_url or not listing_id or not owner_subject or not reusable_identity(profile):
+            return
+        fingerprint = identity_fingerprint(images, category=category, brand_name=brand_name, model=self.gemini_model,
+                                           listing_id=listing_id, owner_subject=owner_subject)
+        seed = {**profile, '_identity_origin': 'linked_analysis'}
+        return resolve_identity(self.database_url, fingerprint, lambda: seed, timeout_s=self.timeout_s,
+                                listing_id=listing_id, owner_subject=owner_subject)[0]
+
+    def _profile_with_saved_identity(self, *, images, brand_name, category, item_size,
+                                     condition_grade, condition_source, item_description, refresh_pricing,
+                                     listing_id, owner_subject):
+        from .product_identity import identity_fingerprint, resolve_identity, IDENTITY_VERSION
+        fingerprint = identity_fingerprint(images, category=category, brand_name=brand_name, model=self.gemini_model,
+                                           listing_id=listing_id, owner_subject=owner_subject)
+        try:
+            identity, reused = resolve_identity(self.database_url, fingerprint,
+                lambda: self._call_gemini(images=images, brand_name=brand_name, category=category,
+                    item_size=item_size, condition_grade=condition_grade, condition_source=condition_source,
+                    item_description=item_description, schema=self._build_schema()), timeout_s=self.timeout_s,
+                    listing_id=listing_id, owner_subject=owner_subject)
+        except Exception as exc:
+            # Do not silently bypass the shared identity with another independent
+            # identification provider when the registry is unavailable.
+            return GptItemProfileResult(profile=None, enabled=True, called=True, error=f'identity: {exc}')
+        provenance = dict(fingerprint=fingerprint, version=IDENTITY_VERSION, reused=reused,
+                          origin=identity.get('_identity_origin', 'gemini'), model_version=self.gemini_model,
+                          listing_id=listing_id, owner_subject=owner_subject)
+        # Pricing is deliberately independent: no old resale/retail fields enter
+        # this call and a failed refresh cannot resurrect a previous price.
+        try:
+            content = self._build_content(images=images, brand_name=brand_name, category=category,
+                item_size=item_size, condition_grade=condition_grade, condition_source=condition_source,
+                item_description=item_description)
+            valuation = self._call_openai_valuation(content=content, gemini_profile=identity,
+                                                   condition_grade=condition_grade)
+            if not isinstance(valuation, dict):
+                raise ValueError('Pricing returned no valuation')
+            profile = self._merge_gemini_identification_with_openai_valuation(
+                gemini_profile=copy.deepcopy(identity), openai_valuation=valuation)
+            profile.setdefault('_workflow', {})['identity_reuse'] = provenance
+            return GptItemProfileResult(profile=profile, enabled=True, called=True)
+        except Exception as exc:
+            profile = copy.deepcopy(identity)
+            profile['_workflow'] = {'identity_reuse': provenance, 'pricing_error': str(exc)}
+            return GptItemProfileResult(profile=profile, enabled=True, called=True, error=f'pricing: {exc}')
 
     @staticmethod
     def _has_usable_pricing(profile: dict[str, Any]) -> bool:
@@ -975,7 +1041,7 @@ class GptItemProfiler:
         payload: dict[str, Any] = {
             "model": self.openai_model,
             "input": [{"role": "user", "content": content}],
-            "tools": [{"type": "web_search_preview"}],
+            "tools": [{"type": "web_search"}],
             "text": {
                 "format": {
                     "type": "json_schema",
@@ -992,7 +1058,13 @@ class GptItemProfiler:
     def _build_valuation_schema(self) -> dict[str, Any]:
         full = self._build_schema()
         props = full["properties"]
+        comparable_fields = {name: {"type": "string"} for name in
+            ("url", "brand", "model", "variant_match", "condition", "price_type", "currency", "match_type", "match_evidence", "similarity_basis", "adjustment_explanation")}
+        comparable_fields["price"] = {"type": ["number", "null"]}
+        props["pricing_comparables"] = {"type": "array", "items": {"type": "object",
+            "additionalProperties": False, "properties": comparable_fields, "required": list(comparable_fields)}}
         required = [
+            "pricing_comparables",
             "grounding_sources",
             "retail_price_estimate",
             "resale_price_estimate",
@@ -1071,7 +1143,28 @@ class GptItemProfiler:
             "10. LOGISTICS: Include an estimated packed shipping weight (e.g., 1.2 lbs / 0.55 kg) and box type recommendations.\n\n"
             "Return only the valuation JSON fields required by the schema."
         )
-        valuation_prompt = (valuation_prompt_override or default_prompt).strip()
+        strict_policy = (
+            "MANDATORY SAME-BRAND COMPARABLE EVIDENCE POLICY (overrides conflicting rules): "
+            "Prefer exact brand/model/variant resale evidence. If unavailable, sparse or discontinued, use similar models "
+            "from the SAME brand to estimate value without requiring manual review solely for missing exact matches. "
+            "Compare product type, material, construction, quality tier, collaboration and edition; brand alone is not enough. "
+            "Different-brand items are never price anchors. Do not invent a SKU or label a related model as exact. "
+            "Do not silently equate diffusion lines or unrelated product types; explain any relevant quality-tier differences. "
+            "Return pricing_comparables with URL, actual source brand/model, variant_match ('confirmed' or 'unconfirmed'), "
+            "condition, price, currency, price_type ('sold_displayed', 'asking', 'retail', 'unknown'), "
+            "match_type ('exact', 'related', 'different'), match_evidence, similarity_basis and adjustment_explanation. "
+            "For related models or unconfirmed variants, similarity_basis must explain why they are useful comparables and "
+            "adjustment_explanation must state material differences and how they affect value (or why no adjustment is justified). "
+            "Cite product pages whose titles identify the comparable's actual brand and model, not necessarily the target model; "
+            "include native citations so search metadata is available. "
+            "Sold with a displayed price is not proof of final payment. Explicitly distinguish asking evidence and inferred condition adjustments. "
+            "Resale references may include exact matches or explained same-brand similar-model comparables. "
+            "Explicitly say when the estimate is inferred from similar models and reflect evidence limitations in confidence and range. "
+            "Missing exact-model evidence is NOT by itself a reason to return null. Return null prices and an empty condition table "
+            "only when no defensible supported same-brand resale estimate can be made. No unsupported MSRP-percentage fallback. "
+            "Preserve the user's condition; do not invent premiums or evidence to fill the table.\n\n"
+        )
+        valuation_prompt = strict_policy + (valuation_prompt_override or default_prompt).strip()
         valuation_content = [
             *text_context,
             {
@@ -1085,7 +1178,8 @@ class GptItemProfiler:
         payload: dict[str, Any] = {
             "model": self.openai_model,
             "input": [{"role": "user", "content": valuation_content}],
-            "tools": [{"type": "web_search_preview"}],
+            "include": ["web_search_call.action.sources"],
+            "tools": [{"type": "web_search"}],
             "text": {
                 "format": {
                     "type": "json_schema",
@@ -1640,6 +1734,7 @@ class GptItemProfiler:
         gemini_profile: dict[str, Any],
         condition_grade: str | None = None,
         valuation_prompt_override: str | None = None,
+        capture: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
         payload = self._build_openai_valuation_payload(
             content=content,
@@ -1647,6 +1742,9 @@ class GptItemProfiler:
             condition_grade=condition_grade,
             valuation_prompt_override=valuation_prompt_override,
         )
+        if capture is not None:
+            capture.update(request=copy.deepcopy(payload), identity=copy.deepcopy(gemini_profile),
+                           condition=condition_grade)
         with httpx.Client(timeout=self.timeout_s) as client:
             resp = client.post(
                 "https://api.openai.com/v1/responses",
@@ -1659,11 +1757,18 @@ class GptItemProfiler:
             if resp.status_code >= 400:
                 raise RuntimeError(f"openai_http_{resp.status_code}: {resp.text[:600]}")
             raw = resp.json()
+        if capture is not None:
+            capture["raw_response"] = copy.deepcopy(raw)
         text = self._extract_output_text(raw)
         if not text:
             return None
         data = self._parse_json_relaxed(text)
-        return data if isinstance(data, dict) else None
+        if not isinstance(data, dict):
+            return None
+        if capture is not None:
+            capture["pre_validation"] = copy.deepcopy(data)
+        from .pricing_evidence import validate_valuation
+        return validate_valuation(data, gemini_profile, raw)
 
     def _merge_gemini_identification_with_openai_valuation(
         self,
@@ -1672,6 +1777,9 @@ class GptItemProfiler:
         openai_valuation: dict[str, Any],
     ) -> dict[str, Any]:
         merged = dict(gemini_profile)
+        for key in ("pricing_evidence_policy", "pricing_comparables"):
+            if key in openai_valuation:
+                merged[key] = openai_valuation[key]
         if "grounding_sources" in openai_valuation:
             merged["grounding_sources"] = openai_valuation.get("grounding_sources")
         for key in (

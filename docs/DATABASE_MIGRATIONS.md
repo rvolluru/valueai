@@ -49,6 +49,10 @@ service, not an unprovisioned Terraform target.
   data migration.
 - `0004_listing_pipeline_components` persists independent pricing/mannequin/staging
   checkpoints and immutable input snapshots, and indexes latest-job lookups.
+- `0005_product_identities` stores versioned shared product identifications separately
+  from pricing, allowing pricing refreshes without repeating identification.
+- `0006_listing_product_identities` introduces strict listing/owner-scoped storage.
+  Unscoped identities are not imported or read by the scoped implementation.
 - Future schema or data changes need a **new** migration version. Never alter the
   meaning of a version already deployed. Keep migrations additive/backward-compatible
   while old API/worker instances drain; use transactions or idempotent operations

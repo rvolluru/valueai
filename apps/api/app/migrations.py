@@ -37,12 +37,30 @@ def _pipeline_components(db):
     db.commit()
 
 
+def _product_identities(db):
+    db.execute("""CREATE TABLE IF NOT EXISTS product_identities (
+        fingerprint TEXT PRIMARY KEY, identity_json TEXT NOT NULL,
+        created_at TEXT NOT NULL)""")
+    db.commit()
+
+
+def _listing_product_identities(db):
+    db.execute("""CREATE TABLE IF NOT EXISTS listing_product_identities (
+        owner_subject TEXT NOT NULL, listing_id TEXT NOT NULL, fingerprint TEXT NOT NULL,
+        identity_json TEXT NOT NULL, created_at TEXT NOT NULL,
+        PRIMARY KEY (owner_subject, listing_id, fingerprint))""")
+    # Do not import unscoped identities: their listing/owner cannot be established.
+    db.commit()
+
+
 # Add a new version for future changes; do not edit an already-applied migration.
 MIGRATIONS = (
     ("0001_application_schema", _baseline),
     ("0002_analysis_listing_links", _analysis_history),
     ("0003_listing_media_urls", _media_urls),
     ("0004_listing_pipeline_components", _pipeline_components),
+    ("0005_product_identities", _product_identities),
+    ("0006_listing_product_identities", _listing_product_identities),
 )
 
 

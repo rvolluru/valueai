@@ -2661,11 +2661,28 @@ class Database:
             return True
         return any(row[0] == owner_subject for row in rows)
 
+    def item_is_linked_to_listing(self, item_id: str, listing_id: str, owner_subject: str) -> bool:
+        # A source-item pointer supplied during listing creation is not evidence
+        # that this analysis ran for that listing. Require its own job history.
+        return bool(self.fetchone(
+            f'SELECT 1 FROM listings l WHERE l.listing_id={self.param} AND l.owner_subject={self.param} '
+            f'AND (EXISTS (SELECT 1 FROM listing_analysis_jobs j WHERE j.result_item_id={self.param} '
+            'AND j.listing_id=l.listing_id AND j.owner_subject=l.owner_subject AND j.status=\'succeeded\') '
+            'OR EXISTS (SELECT 1 FROM analysis_listing_links a JOIN listing_analysis_jobs j ON j.job_id=a.job_id '
+            f'WHERE a.item_id={self.param} AND a.listing_id=l.listing_id AND a.owner_subject=l.owner_subject '
+            'AND j.listing_id=l.listing_id AND j.owner_subject=l.owner_subject))',
+            (listing_id, owner_subject, item_id, item_id)))
+
     def find_recent_analysis_by_image_hashes(
         self,
         hashes: list[str],
         limit: int = 50,
         owner_subject: str | None = None,
+        listing_id: str | None = None,
+        condition_grade: str | None = None,
+        category: str | None = None,
+        brand_name: str | None = None,
+        item_description: str | None = None,
     ) -> dict | None:
         target = sorted(h.strip() for h in hashes if isinstance(h, str) and h.strip())
         if not target:
@@ -2674,9 +2691,38 @@ class Database:
             item_id = str(analysis.get("item_id") or "").strip()
             if not item_id:
                 continue
+            if listing_id and (not owner_subject or not self.item_is_linked_to_listing(item_id, listing_id, owner_subject)):
+                continue
             if owner_subject and not self._item_has_listing_owner(item_id, owner_subject):
                 continue
-            candidate = sorted(self.list_image_content_hashes_for_item(item_id, limit=20))
+            response = analysis.get('response') or {}
+            normalize = lambda value: str(value or '').casefold().replace(' ', '').replace('_', '').replace('-', '')
+            if condition_grade and normalize(response.get('user_condition')) != normalize(condition_grade):
+                continue
+            if category and normalize(response.get('category')) != normalize(category):
+                continue
+            if brand_name and normalize((response.get('brand') or {}).get('name')) != normalize(brand_name):
+                continue
+            if item_description is not None:
+                context = response.get('_analysis_input_context') or (response.get('debug') or {}).get('input_hints')
+                if not isinstance(context, dict):
+                    continue
+                if ' '.join(str(context.get('item_description') or '').split()).casefold() != ' '.join(item_description.split()).casefold():
+                    continue
+            # Compare evidence captured for THIS analysis, not every image later
+            # attached to its item (which may include new photos or AI assets).
+            candidate = response.get('_original_photo_hashes')
+            if candidate is None:
+                records = {row['image_id']: row for row in self.list_image_records_for_item(item_id, limit=100)}
+                refs = response.get('uploaded_images') or []
+                if not isinstance(refs, list) or any(not isinstance(ref, dict) or not ref.get('image_id') for ref in refs):
+                    continue
+                candidate = [records.get(ref.get('image_id'), {}).get('content_hash') for ref in refs]
+                if not refs or any(str(records.get(ref.get('image_id'), {}).get('role_hint') or '').startswith('ai_') for ref in refs):
+                    continue
+            if not isinstance(candidate, list) or not candidate or any(not isinstance(value, str) or not value.strip() for value in candidate):
+                continue
+            candidate = sorted(value.strip() for value in candidate)
             if candidate and candidate == target:
                 return analysis
         return None

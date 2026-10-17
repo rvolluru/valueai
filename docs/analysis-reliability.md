@@ -46,7 +46,60 @@ Timeouts cancel async work; synchronous provider work already dispatched to thre
 can still take time to unwind under the provider's own request timeout. Its cancelled
 coroutine cannot subsequently merge a result. No runtime schema migration is used.
 
-## Proposed next consistency layer (not implemented)
+## Consistency layers: implemented identity and proposed pricing work
+
+### Identity reuse implemented in the current working tree
+
+Migration `0006_listing_product_identities` adds a listing-and-owner-scoped
+identification registry for the default hybrid profiler. Its fingerprint includes
+listing ID, owner subject, all original-byte hashes (sorted), category, explicit
+brand correction, identity policy version and Gemini model. Database keys and
+queries also require the listing/owner, independently of the fingerprint. The
+resolver validates the listing's current owner before any read/create. Two listings
+never look up one another's persisted identity record. A separately validated
+full-analysis reuse may copy evidence into the receiving listing's own record.
+The earlier unscoped `product_identities` table is not read or imported.
+Size, user condition, file order/names and generated descriptions do not reset
+identity. New/removed/changed photos, category/brand corrections, or model/policy
+changes select a new identity. A database/file lock serializes concurrent
+identification across workers. Only recognizable brand/model identities with
+model/profile confidence at least 0.7 are persisted; ambiguous results are not frozen.
+
+Unchanged, previously linked analyses can seed the registry after checking exact
+photo hashes, category, corrections and analysis-job history for this listing/owner.
+A supplied source-item pointer alone is insufficient. Existing canonical identity wins over a
+conflicting seed. Database full-result reuse is rejected when it disagrees with
+the canonical brand/model. No ownership, item IDs or old valuation fields transfer
+with identity. New hybrid pricing receives this identity and fresh condition/input
+context, with no old price/condition-dependent listing description. Valuation output
+cannot replace the saved identity fields. A pricing failure keeps identity but
+does not silently re-identify or resurrect its old price.
+
+`refresh_pricing=true` is available as a form field on the owner analysis-job
+endpoint, and a query parameter on the admin rerun endpoint. It bypasses whole-result
+reuse while preserving identity. Ordinary reruns can still reuse valid full results.
+Identity reuse/provenance, including listing/owner scope, appears under profiler
+workflow debug `identity_reuse`. Whole-analysis reuse is deliberately global,
+including across owners, but requires an exact complete photo-content match,
+matching condition/category, compatible explicit brand correction and description
+context. It hashes current resolved bytes rather than trusting a stale source-item
+pointer. Candidates use hashes captured for that analysis (legacy records resolve
+its specific uploaded-image IDs), not the item's later expanded image collection.
+Missing/unreadable images fail closed; photo order is irrelevant but missing,
+additional or changed content cannot match. Filename/length coincidences do not
+deduplicate distinct content. No owner, gallery, review state or listing-component
+checkpoint is copied from the source listing. Standalone `/v1/analyze` requests
+without a verified listing do not read/write persisted identity or reuse the
+process-local profile cache. The scoped fallback memory-cache key also includes
+listing/owner IDs.
+Alternate provider orders and standalone profilers without a database retain their
+legacy fallback behavior; shared identity is specifically the configured hybrid path.
+
+There is no new user-facing refresh button or manual model-confirmation UI in this
+change. Arbitrary description/title edits are not treated as identity corrections;
+structured brand/category corrections and photo changes are the invalidation inputs.
+
+### Still proposed
 
 1. Compute a versioned input fingerprint from all original-photo hashes and the actual supplied inputs (condition, size, category, brand corrections and description). Include model/provider, prompt/schema and pricing-policy versions. Ignore generated/staged images. Never reuse when original photos or relevant user facts change.
 2. Persist one canonical successful result for that fingerprint in the shared database. Use an atomic single-flight claim so independent workers do not produce competing canonical results. Do not promote failed/incomplete results; preserve the pricing-review state for genuinely unresolved values.

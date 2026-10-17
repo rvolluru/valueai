@@ -1025,7 +1025,8 @@ def test_mannequin_images_are_excluded_from_analysis_inputs_and_reuse_hashes() -
                 {"image_id": "synthetic", "role_hint": "ai_mannequin", "storage_uri": "synthetic.png", "content_hash": "synthetic-hash"},
             ]
 
-        def find_recent_analysis_by_image_hashes(self, hashes, limit=50):
+        def find_recent_analysis_by_image_hashes(self, hashes, limit=50, **scope):
+            assert 'listing_id' not in scope and 'owner_subject' not in scope
             self.captured_hashes = hashes
             return None
 
@@ -1038,8 +1039,9 @@ def test_mannequin_images_are_excluded_from_analysis_inputs_and_reuse_hashes() -
         listing_id="listing-test",
         owner_subject="owner-test",
         current={"source_item_id": "item-test"},
+        files=[{'data': b'original-photo'}],
     ) is None
-    assert db.captured_hashes == ["original-hash"]
+    assert db.captured_hashes == [hashlib.sha256(b'original-photo').hexdigest()]
 
 
 def test_dependency_health_reports_core_services_and_redacts_secrets():
@@ -1829,6 +1831,7 @@ def _stub_item_profile(
 ) -> dict:
     resale_price = estimated_price
     return {
+        "pricing_evidence_policy": {"version": "same-brand-comparables-v4", "status": "qualified" if estimated_price else "needs_review"},
         "category": category,
         "candidate_brand": brand,
         "candidate_model": model,
@@ -2752,7 +2755,7 @@ def test_create_listing_with_analyzing_status_queues_backend_analysis() -> None:
     assert listing["analysis"]["brand"]["name"] == "Chanel"
 
 
-def test_create_listing_reuses_recent_analysis_for_same_uploaded_images() -> None:
+def test_new_listing_reuses_verified_analysis_for_same_photos() -> None:
     client = _build_client()
     _override_gpt_profiler(
         _stub_item_profile(
@@ -2818,12 +2821,11 @@ def test_create_listing_reuses_recent_analysis_for_same_uploaded_images() -> Non
     assert listing["image"] == image_url
     assert listing["images"] == [image_url]
     assert listing["analysis"]["item_id"] == "item-repeat-upload"
-    assert listing["analysis"]["uploaded_images"][0]["image_url"] == image_url
     assert listing["analysis"]["debug"]["analysis_reuse"]["reused"] is True
     assert listing["analysis"]["debug"]["analysis_reuse"]["scope"] == "global"
 
 
-def test_create_listing_reuses_recent_analysis_across_accounts_for_same_uploaded_images() -> None:
+def test_create_listing_reuses_verified_analysis_across_accounts_for_identical_photos() -> None:
     client = _build_client()
     _override_gpt_profiler(
         _stub_item_profile(
@@ -2913,11 +2915,8 @@ def test_create_listing_reuses_recent_analysis_across_accounts_for_same_uploaded
     assert listing["image"] == image_url
     assert listing["images"] == [image_url]
     assert listing["analysis"]["item_id"] == "item-account-two-upload"
-    assert listing["analysis"]["uploaded_images"][0]["image_url"] == image_url
-    reuse_debug = listing["analysis"]["debug"]["analysis_reuse"]
-    assert reuse_debug["reused"] is True
-    assert reuse_debug["scope"] == "global"
-    assert reuse_debug["source_item_id"] == "item-account-one-analysis"
+    assert listing["analysis"]["debug"]["analysis_reuse"]["scope"] == "global"
+    assert listing["analysis"]["debug"]["analysis_reuse"]["source_item_id"] == "item-account-one-analysis"
 
 
 def test_create_listing_with_analyzing_status_marks_failed_when_images_are_unreadable() -> None:
@@ -3349,7 +3348,7 @@ def test_plain_new_condition_replaces_primary_nwt_framing_with_non_nwt_breakdown
     assert valuation["basis"] == "gpt_retail_reference_resale_fallback"
 
 
-def test_analyze_skips_crawler_when_gemini_retail_reference_can_be_derived(monkeypatch) -> None:
+def test_analyze_rejects_unqualified_gemini_retail_reference(monkeypatch) -> None:
     os.environ["GPT_ITEM_PROFILE_ENABLED"] = "true"
     client = _build_client()
     from app.deps import get_gpt_item_profiler, get_valuation_service
@@ -3428,12 +3427,10 @@ def test_analyze_skips_crawler_when_gemini_retail_reference_can_be_derived(monke
         )
         assert res.status_code == 200, res.text
         body = res.json()
-        assert body["valuation"]["estimated_value"] == 1240.0
-        assert body["valuation"]["visual_condition_adjustment"]["applied"] is False
-        assert body["valuation"]["retail_reference_value"] == 1550.0
-        assert body["valuation"]["basis"] == "gpt_retail_reference_resale_fallback"
+        assert body["valuation"] is None
+        assert body["item_profile"]["pricing_evidence_policy"]["status"] == "needs_review"
         assert body["debug"]["enrichment"]["gpt_item_profile"]["retail_reference_extracted"]["applied"] is True
-        assert body["debug"]["valuation"]["pricing_source"] == "gpt_primary"
+        assert body["debug"]["valuation"]["pricing_source"] == "none"
         assert body["debug"]["valuation"]["pricing_fallback_used"] is False
     finally:
         app.dependency_overrides.clear()
@@ -3558,7 +3555,7 @@ def test_analyze_warns_when_user_condition_conflicts_with_model() -> None:
 
 def test_user_condition_drives_valuation_before_model_is_trusted() -> None:
     client = _build_client()
-    _override_gpt_profiler(_stub_item_profile())
+    _override_gpt_profiler(_stub_item_profile(condition_assumption="New"))
     files = [
         ("images", ("full_item.jpg", _make_image(), "image/jpeg")),
         ("images", ("nike_tag_closeup.jpg", _make_image("NIKE"), "image/jpeg")),
@@ -3621,7 +3618,7 @@ def test_gpt_pricing_is_used_as_primary_when_available() -> None:
         app.dependency_overrides.clear()
 
 
-def test_crawler_pricing_is_used_as_fallback_when_gpt_has_no_price() -> None:
+def test_crawler_cannot_bypass_missing_exact_model_evidence() -> None:
     os.environ["VALUATION_PROVIDERS"] = "stub"
     os.environ["VALUATION_COMPS_ENABLED"] = "true"
     client = _build_client()
@@ -3640,6 +3637,7 @@ def test_crawler_pricing_is_used_as_fallback_when_gpt_has_no_price() -> None:
 
     class StubFallbackValuationService:
         def evaluate(self, request, debug=False):
+            raise AssertionError("Unqualified crawler pricing must not bypass exact-model review")
             return ValuationResult(
                 estimated_value=321.0,
                 currency="USD",
@@ -3681,10 +3679,8 @@ def test_crawler_pricing_is_used_as_fallback_when_gpt_has_no_price() -> None:
         res = client.post("/v1/analyze", data={"debug": "true"}, files=files, headers={"x-api-key": "test-key"})
         assert res.status_code == 200, res.text
         body = res.json()
-        assert body["valuation"] is not None
-        assert body["valuation"]["estimated_value"] == 321.0
-        assert body["debug"]["valuation"]["pricing_source"] == "crawler_fallback"
-        assert body["debug"]["valuation"]["pricing_fallback_used"] is True
+        assert body["valuation"] is None
+        assert body["debug"]["valuation"]["pricing_fallback_used"] is False
     finally:
         app.dependency_overrides.clear()
         os.environ["VALUATION_COMPS_ENABLED"] = "false"

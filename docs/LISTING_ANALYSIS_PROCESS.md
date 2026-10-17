@@ -6,8 +6,47 @@ model calls, decisions, outputs and user review—not a reliability assessment.
 **Implementation status:** parallel pricing/mannequin/cleanup processing is deployed
 in production release `51bb1bd`. Persistent listing identification, explicit pricing
 refresh and strengthened photo-content reuse checks described below are in the
-current local code and **not yet deployed**. Model names are repository defaults;
+release candidate and **not yet deployed**. This release is being prepared for
+production on October 16; deployment status will be updated after verification.
+Model names are repository defaults;
 environment configuration can override them.
+
+Local upgrade preparation also replaces OpenAI's legacy `web_search_preview` tool
+with `web_search` and explicitly sets configurable chat reasoning effort (default
+`low`). Candidate pricing/chat models are isolated in
+`config/ai-model-candidates.env`, not activated automatically. See
+[AI model lifecycle and evaluation policy](AI_MODEL_LIFECYCLE.md) for the inventory,
+comparison procedure, weekly retirement reviews and promotion/rollback gates.
+Production model names remain unchanged until evaluation and an approved deployment.
+
+**Local, not deployed: comparable policy `same-brand-comparables-v4`.** OpenAI pricing
+returns structured comparable brand/model, variant, condition, price type, price,
+currency, URL and matching evidence. Exact brand/model/variant matches are preferred.
+Similar models and unconfirmed variants from the same brand can also anchor resale
+when the model explains their similarity and material differences/pricing adjustments.
+Missing exact matches or discontinued models alone do not require manual review.
+Different brands remain excluded. Native provider source titles are preferred. If
+the retrieved URL has no native title, the comparable's model/product name can
+instead match the short model-written summary for that same URL. This fallback
+requires the URL to appear in actual provider search/open-page/citation metadata;
+a URL present only in generated text is insufficient. An existing contradictory
+native title cannot be overridden by a generated summary. Accepted sources record
+`native_title` or `model_reported_summary_retrieved_url` support explicitly.
+This verifies title support or generated-text consistency, not the truth of the extracted price,
+variant or final transaction amount. A sold page's displayed price is not proof of
+payment. Title checks ignore labelled catalog IDs/sizes, a leading collection year
+and common condition/tag qualifiers. They allow missing descriptive words with at
+least 60% core-word overlap (at least two words, or the sole core word for a
+one-word model). Distinctive model/collaboration names and model numbers still need
+support, as does the brand. Brand-only matches and unsupported summary/model pairs
+still fail; missing titles alone no longer force review when the fallback passes.
+
+Without qualified evidence, the policy clears retail/resale prices and all bands;
+condition retries, retail-derived fallback and crawler fallback cannot restore a
+value. Existing missing-value/manual-review/admin-alert handling applies. Provider
+fallback results without this policy are also blocked from pricing. Cross-listing
+full-analysis reuse requires the current qualified policy marker; older cached
+prices are not reused. Saved item identification can still be reused independently.
 
 ### Document maintenance and version history
 
@@ -142,6 +181,9 @@ There are two distinct reuse decisions.
 
 A previous analysis can be reused **across listings and owners** when:
 
+- Its pricing evidence has the current `same-brand-comparables-v4` qualified marker (local,
+  not deployed); older pricing must be researched again.
+
 - The complete original-photo content matches. Photo order does not matter; changed,
   added or missing photo content does not qualify.
 - User condition and category match.
@@ -209,6 +251,45 @@ Authenticity screening is not certification. Missing supporting documents for an
 applicable brand can generate warnings or an authenticity-receipt photo request.
 
 ## 8. Research and estimate value with OpenAI
+
+Local policy changes below are not deployed. Exact brand/model/variant matches are
+preferred, but supported same-brand similar models are valid resale anchors. The
+model compares product type, material, construction, quality tier, collaboration and
+edition, explains differences and their price adjustment (or why none is justified),
+and reflects inference uncertainty in its confidence/range. Brand alone is not enough;
+different-brand references cannot anchor a value. Related-model estimates do not
+automatically enter manual review. No supported defensible estimate still means review.
+Every comparable records match evidence, condition, asking/sold-display type,
+similarity basis and adjustment explanation. The server checks native provider
+search titles for the actual comparable's brand/model (not the target's), or uses
+the retrieved-URL/model-summary fallback described above, and records
+accepted/rejected evidence. This does not independently verify the extracted price
+or final payment. It tolerates catalogue/size qualifiers and partial descriptive
+overlap as described above, but retains distinctive model-name and brand checks.
+Collaboration-to-base-brand normalization is still a separate unresolved limitation;
+this title-matching update does not change the brand equality rule.
+
+Local evaluation tooling can capture the exact pricing request, fixed identity and
+condition, full provider response (including native search metadata and usage),
+pre-validation valuation and post-validation result. Capture is opt-in; production
+does not save these additional artifacts. The evaluation runner checkpoints results
+after each completed call in owner-readable, Git-ignored local files. Its `--replay`
+mode applies the current server evidence rules to the stored pre-validation response
+without API calls or loading credentials. This can test validator changes only;
+it cannot simulate a new prompt, new search results or a different model response.
+
+The separate local `scripts/evaluate_fixed_comparables.py` experiment can send a
+URL-deduplicated union of captured comparables to both pricing models, with identical
+identity, condition, evidence and schema and web tools disabled. It requires explicit
+`--execute` for paid calls and saves full responses and an evidence hash locally.
+Experimental instructions request source weights and adjusted prices and a rounded
+weighted-mean estimate; this is not the production pricing algorithm or approval.
+Its `--fixed-weights --ids C3,C8,C9,C10` mode uses exactly four selected resale
+references at 25% each, strips prior adjustment recommendations, and requests only
+per-reference adjusted prices and rationale. Code validates the source IDs and
+calculates the mean, rounded to the nearest USD 25 (half-up). Missing/null source
+adjustments do not permit reweighting: they leave the experiment incomplete. This
+is a local evaluation mode, not a change to production valuation.
 
 The preferred hybrid pricing request receives:
 

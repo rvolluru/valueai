@@ -128,6 +128,7 @@ def test_cached_analysis_revalidates_price_instead_of_copying_old_wrong_band():
 
     p = profile("LikeNew", rows=[{"label": "New without tags", "condition_grade": "New", "estimated_price": 300}])
     p["model_identification"] = {"name": "Dress"}
+    p["pricing_evidence_policy"] = {"version": "same-brand-comparables-v4", "status": "qualified"}
     cached = {"brand": {"name": "Known brand", "confidence": .95}, "category": "clothes",
               "user_condition": "New", "item_profile": p,
               "valuation": {"estimated_value": 999, "currency": "USD"}}
@@ -138,7 +139,8 @@ def test_cached_analysis_revalidates_price_instead_of_copying_old_wrong_band():
         def list_image_records_for_item(self, item_id, limit=20):
             return [{"image_id": "photo", "content_hash": "same-photo", "role_hint": "full_item"}]
 
-        def find_recent_analysis_by_image_hashes(self, hashes, limit=50):
+        def find_recent_analysis_by_image_hashes(self, hashes, limit=50, **scope):
+            assert scope == {'condition_grade': 'New', 'category': None, 'brand_name': None, 'item_description': ''}
             return {"analysis_id": "cached", "item_id": "source", "response": cached}
 
         def update_listing(self, **kwargs):
@@ -151,6 +153,7 @@ def test_cached_analysis_revalidates_price_instead_of_copying_old_wrong_band():
     result = _reuse_recent_analysis_for_listing(
         db=db, listing_id="listing", owner_subject="owner",
         current={"source_item_id": "source", "condition": "New", "title": "Dress"},
+        files=[{'data': b'original'}],
     )
     assert result is not None
     assert db.updated["estimated_value"] == 300
