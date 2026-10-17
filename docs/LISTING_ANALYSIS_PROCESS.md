@@ -325,6 +325,20 @@ are eligible on the same terms across websites. This does not modify the runtime
 prompt; original prices remain fixed and any asking-to-clearing adjustment must
 be explicit.
 
+For a deployed-pricing baseline, `scripts/evaluate_deployed_pricing_case.py`
+verifies an ECS task-definition image against an explicit Git revision, extracts
+that revision into an isolated temporary directory, and imports its profiler,
+evidence validator, identity extractor and final value selector together. It
+replays pricing with the saved Gemini identity and original category/size/condition
+hints, preserving the deployed request and fresh independent search behavior.
+It runs the deployed OpenAI model and a Sol model-only substitution, recording raw
+and validated results separately. Unlike the shared-research experiments, it
+does not add an allowlist, assessment schema, weights or rounding rule absent from
+that deployed revision. It is pricing-only: no fresh identification, production
+identity/cache/database operations, mannequin generation or listing writes occur.
+The script stores only nonsecret ECS profiler settings; credentials stay out of
+artifacts. This baseline tool is evaluation-only and not part of runtime analysis.
+
 ### Comparable matching and valuation
 
 The following policy is deployed in release `635ec54`. Exact brand/model/variant matches are
