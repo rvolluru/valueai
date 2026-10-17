@@ -6,7 +6,7 @@ import unicodedata
 from urllib.parse import parse_qsl, unquote, urlencode, urlsplit, urlunsplit
 
 POLICY_VERSION = "same-brand-comparables-v4"
-MATCHING_POLICY = "source-identity-context-v2"
+MATCHING_POLICY = "same-brand-model-flexible-v3"
 
 
 def tokens(value):
@@ -24,8 +24,8 @@ def core_product_tokens(value):
     return tokens(text) - {"w", "with", "tags", "tag", "new", "nwt", "pre", "owned", "the", "and"}
 
 
-# Descriptors can be abbreviated/omitted by search titles. Named models and
-# collaboration names must remain supported, even when descriptive overlap is high.
+# Descriptors can be abbreviated/omitted by search titles. Remaining name tokens
+# distinguish exact claims from supported same-brand related comparables.
 TITLE_DESCRIPTORS = set("monogram workwear denim zip up button front print graphic leather calf lambskin cotton wool silk studded moto motorcycle biker bomber jacket jackets coat coats shirt shirts dress dresses bag bags tote shoulder flap shorts pants skirt blue black brown white grey gray indigo dark light men mens women womens pristine excellent good fair limited edition full point collar ribbed patch pocket pockets utility quilted metallic distressed slim fit".split())
 TITLE_DESCRIPTORS.add("patchwork")
 TITLE_DESCRIPTORS.update("green beige pink red navy cream purple orange yellow tan burgundy multicolor multicolour removable shearling embellished embroidery embroidered fleece jacquard through hood hooded rtw outerwear large medium small extra size xs xl xxl xxs xxxl authentic authenticity sale sold soldout sold out asking price usd dollars used excellent very condition tag tags nwt nwd nwot nwb nwt pristine with for of in on at to by listing item product details clothing accessories poshmark realreal trr ebay vestiaire collective rebag depop vinted".split())
@@ -51,15 +51,13 @@ def source_title_supports(brand, comparable_model, title):
     title_words = product_tokens(title, brand)
     if not brand <= title_words:
         return False
-    # Only a leading collection year is optional. Numbers in named models
-    # (e.g. Re-Edition 2005 versus 2000) remain distinguishing evidence.
     core = model_tokens(comparable_model, brand)
-    distinctive = core - TITLE_DESCRIPTORS
     overlap = core & title_words
-    # Source titles often omit color, trim, fabric qualifiers and season. Do not
-    # require a percentage of every descriptive word; retain named-model checks.
-    return bool(core and distinctive <= title_words and
-                len(overlap) >= min(2, len(core)) and (distinctive or len(core) >= 2))
+    # Names and style numbers need not match literally. Same-brand product-family
+    # evidence is enough; explicit brand/product/material conflicts are checked
+    # separately, and comparable similarity/adjustment explanations remain required.
+    same_family = any(core & family and title_words & family for family in PRODUCT_FAMILIES)
+    return bool(core and (len(overlap) >= 2 or same_family))
 
 
 PRODUCT_FAMILIES = (
@@ -86,11 +84,7 @@ def native_title_conflicts(brand, comparable_model, title):
     if (("denim" in core and "leather" in words and "denim" not in words)
             or ("leather" in core and "denim" in words and "leather" not in words)):
         return True
-    named = core - TITLE_DESCRIPTORS
-    source_named = model_tokens(title, brand) - TITLE_DESCRIPTORS
-    # Explicit different model names/numbers remain conflicts; mere omission of
-    # a model name from a shortened generic title can use corroborating context.
-    return bool(named - words and source_named - named)
+    return False
 
 
 def source_identity_support(brand, comparable_model, key, titles, retrieved, summaries, match_evidence):
@@ -170,18 +164,29 @@ def validate_valuation(data, identity, raw):
             summaries.setdefault(key, []).append(source["snippet"])
     source_support = {}
     accepted, rejected = [], []
-    for row in data.get("pricing_comparables") or []:
+    for row in result.get("pricing_comparables") or []:
         key = url_key(row.get("url"))
         reason = None
         row_model = model_tokens(row.get("model"), brand)
         exact = row.get("match_type") == "exact" and row.get("variant_match") == "confirmed"
+        # A nonliteral model match may still be a useful comparable. Do not claim
+        # verified exactness: retain it as related with explicit pricing context.
+        source_names_differ = any(
+            (model_tokens(title, brand) - TITLE_DESCRIPTORS)
+            != (row_model - TITLE_DESCRIPTORS)
+            for title in titles.get(key, [])
+        )
+        if exact and (not model or not model <= row_model or source_names_differ):
+            row["match_type"] = "related"
+            row["variant_match"] = "unconfirmed"
+            exact = False
         support = source_identity_support(brand, row.get("model"), key, titles, retrieved, summaries, row.get("match_evidence")) if key else None
         if row.get("match_type") not in {"exact", "related"}:
             reason = "not_a_comparable"
         elif not brand or product_tokens(row.get("brand"), brand) != brand or not row_model:
             reason = "identity_mismatch_or_ambiguous_model"
-        elif exact and (not model or not model <= row_model):
-            reason = "claimed_exact_model_mismatch"
+        elif any(model & family for family in PRODUCT_FAMILIES) and any(row_model & family for family in PRODUCT_FAMILIES) and not any(model & family and row_model & family for family in PRODUCT_FAMILIES):
+            reason = "incompatible_product_family"
         elif not exact and (not str(row.get("similarity_basis") or "").strip()
                             or not str(row.get("adjustment_explanation") or "").strip()):
             reason = "missing_similarity_or_adjustment_explanation"
@@ -205,7 +210,7 @@ def validate_valuation(data, identity, raw):
         "status": "qualified" if passed else "needs_review", "accepted": accepted, "rejected": rejected,
         "source_support": source_support,
         "basis": "same_brand_similar_model" if any(r.get("match_type") == "related" or r.get("variant_match") != "confirmed" for r in accepted) else "exact_model",
-        "verification": "Normalized source identity supported by native title, provider-retrieved product URL, or corroborating title/URL/summary context. Explicit native brand/model/product conflicts remain blocked. Model-extracted prices, variants and conditions are not independently verified."}
+        "verification": "Same-brand product evidence supported by native title, provider-retrieved product URL, or corroborating title/URL/summary context. Model names need not match exactly; nonliteral exact claims become related comparables requiring similarity and adjustment explanations. Brand, product-family and explicit material conflicts remain blocked. Model-extracted prices, variants and conditions are not independently verified."}
     if not passed:
         for field in ("resale_price_estimate", "retail_price_estimate"):
             estimate = result.get(field)

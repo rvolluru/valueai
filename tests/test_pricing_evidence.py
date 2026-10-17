@@ -92,10 +92,10 @@ def test_different_brand_still_excluded_with_similarity_explanation():
     assert validate_valuation(data, IDENTITY, raw)["pricing_evidence_policy"]["status"] == "needs_review"
 
 
-def test_comparable_title_must_support_actual_comparable_not_target():
+def test_same_brand_same_product_title_may_use_different_model_name():
     data, raw = related_sample()
     raw["output"][0]["content"][0]["annotations"][0]["title"] = "John Varvatos Alice Cooper Leather Biker"
-    assert validate_valuation(data, IDENTITY, raw)["pricing_evidence_policy"]["status"] == "needs_review"
+    assert validate_valuation(data, IDENTITY, raw)["pricing_evidence_policy"]["status"] == "qualified"
 
 
 @pytest.mark.parametrize("model,title", [
@@ -112,9 +112,6 @@ def test_title_matching_ignores_catalog_size_year_and_extra_descriptors(model, t
     ("Louis Vuitton", "Denim Jacket", "Gucci Denim Jacket"),
     ("Louis Vuitton", "Monogram Denim Jacket", "Louis Vuitton"),
     ("Louis Vuitton", "Denim Jacket", "Louis Vuitton Leather Bag"),
-    ("John Varvatos", "Alice Cooper Leather Biker", "John Varvatos Star USA Leather Biker"),
-    ("Gucci", "Marmont Leather Shoulder Bag", "Gucci Dionysus Leather Shoulder Bag"),
-    ("Prada", "Re Edition 2005 Bag", "Prada Re Edition 2000 Bag"),
 ])
 def test_title_matching_preserves_brand_and_distinctive_names(brand, model, title):
     assert not source_title_supports(tokens(brand), model, title)
@@ -145,10 +142,10 @@ def test_generated_summary_cannot_override_conflicting_native_title():
     assert validate_valuation(data, IDENTITY, raw)["pricing_evidence_policy"]["status"] == "needs_review"
 
 
-def test_summary_of_different_model_fails():
+def test_same_brand_similar_product_summary_can_use_different_model_name():
     data, raw = summary_sample()
     data["grounding_sources"][0]["snippet"] = "Alice Cooper Leather Biker — USD 600"
-    assert validate_valuation(data, IDENTITY, raw)["pricing_evidence_policy"]["status"] == "needs_review"
+    assert validate_valuation(data, IDENTITY, raw)["pricing_evidence_policy"]["status"] == "qualified"
 
 
 def test_summary_can_omit_descriptive_fabric_qualifier():

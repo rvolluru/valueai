@@ -8,6 +8,10 @@ October 16, 2026. Persistent listing identification, explicit pricing refresh,
 strengthened photo-content reuse checks and comparable policy v4 are deployed.
 Parallel pricing/mannequin/cleanup processing remains enabled. Existing listing
 values are not automatically recalculated by deployment.
+**Local, not deployed:** matching policy `same-brand-model-flexible-v3` removes
+literal model-name and model-number equality requirements. Same-brand, same-product-family
+comparables may use different names. Nonliteral exact claims are downgraded to
+related/unconfirmed and require similarity and pricing-adjustment explanations.
 **Hotfix deployed:** release `3da3a58` deployed successfully October 17, 2026,
 to both API and analysis workers. Source matching policy
 `source-identity-context-v2` relaxes overly literal title/summary comparisons as
@@ -35,7 +39,7 @@ the retrieved URL has no native title, the comparable's model/product name can
 instead match the short model-written summary for that same URL. This fallback
 requires the URL to appear in actual provider search/open-page/citation metadata;
 a URL present only in generated text is insufficient. An existing contradictory
-native brand/model/product conflict cannot be overridden by a generated summary.
+native brand/product conflict cannot be overridden by a generated summary.
 Short generic titles can be corroborated by provider-retrieved product URL paths
 and source summaries. Accepted sources record `native_title`,
 `model_reported_summary_retrieved_url`, `retrieved_product_url_identity` or
@@ -47,9 +51,12 @@ and common condition/tag qualifiers. The hotfix normalizes Unicode hyphens,
 possessives, the LV abbreviation for an already established Louis Vuitton brand,
 and ZipThrough/Zip-Through spelling. It allows omitted descriptive color, trim,
 fabric and condition words without a 60% whole-description overlap requirement.
-Distinctive model/collaboration names and model numbers still need support, as
-does the brand. A named one-word model can qualify; generic matches need at least
-two shared product terms. Explicit conflicting product families and denim/leather
+In the local v3 matcher, model/collaboration names and model numbers need not
+match exactly. Brand support and either two shared product terms or a shared
+product family are required. Nonliteral exact claims (including different native
+source model names) are treated as related/unconfirmed, with similarity and
+pricing-adjustment explanations required. Target/comparable product families
+must also be compatible. Explicit conflicting product families and denim/leather
 descriptions remain blocked. A provider-retrieved product slug may corroborate a
 short summary such as “Exact style title”; URL query keywords do not count as
 product identity. Tracking parameters do not make the same retrieved page appear
