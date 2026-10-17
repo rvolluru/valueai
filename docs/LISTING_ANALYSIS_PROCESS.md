@@ -12,6 +12,17 @@ values are not automatically recalculated by deployment.
 literal model-name and model-number equality requirements. Same-brand, same-product-family
 comparables may use different names. Nonliteral exact claims are downgraded to
 related/unconfirmed and require similarity and pricing-adjustment explanations.
+**Local, not deployed:** when primary-reference validation fails but accepted
+comparables remain, OpenAI gets one pricing-only recalculation using only those
+unchanged accepted records. Search is disabled, rejected records and the previous
+price are excluded, and no currency conversion is performed. The retry preserves
+identity, user condition and condition-pricing guidance. With no supplied official
+retail evidence it must leave MSRP null. The server checks record immutability and
+revalidates every primary reference against the original provider metadata. Retry
+failure, changed evidence, unsupported references or insufficient evidence leaves
+the item in manual review. The retry uses the remaining configured pricing-call
+time budget and is skipped when five seconds or less remain. Debug evidence records
+the attempt and original rejections; evaluation captures retain both calls.
 **Hotfix deployed:** release `3da3a58` deployed successfully October 17, 2026,
 to both API and analysis workers. Source matching policy
 `source-identity-context-v2` relaxes overly literal title/summary comparisons as
@@ -70,7 +81,8 @@ adds `matching_policy: source-identity-context-v2`. Previously qualified analyse
 remain eligible because this is a matching relaxation, not a new pricing/source
 policy. Previously blocked listings are not automatically assigned a value; their
 cleared estimates require a normal analysis rerun. No rejected source is silently
-dropped from the primary-reference set to salvage a price.
+dropped to retain the original price: the local accepted-evidence repair instead
+requests a new model estimate and validates it again.
 
 Without qualified evidence, the policy clears retail/resale prices and all bands;
 condition retries, retail-derived fallback and crawler fallback cannot restore a
