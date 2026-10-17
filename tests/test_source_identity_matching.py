@@ -66,19 +66,42 @@ def test_generic_native_title_can_use_richer_product_url():
     assert validate_valuation(data, identity, raw)["pricing_evidence_policy"]["status"] == "qualified"
 
 
-def test_native_distinctive_name_conflict_remains_blocked():
+def test_same_brand_different_model_names_are_allowed():
     url = "https://www.therealreal.com/products/gucci-marmont-leather-bag"
     data, identity, raw = sample(url=url, model="Marmont Leather Bag", title="Gucci Dionysus Leather Bag")
     data["pricing_comparables"][0].update(brand="Gucci", match_type="related")
     identity.update(candidate_brand="Gucci", candidate_model="Marmont Leather Bag")
-    assert validate_valuation(data, identity, raw)["pricing_evidence_policy"]["status"] == "needs_review"
+    assert validate_valuation(data, identity, raw)["pricing_evidence_policy"]["status"] == "qualified"
 
 
-def test_native_model_number_conflict_remains_blocked():
+def test_same_brand_different_model_numbers_are_allowed():
     data, identity, raw = sample(url="https://www.therealreal.com/products/prada-re-edition-2005-bag",
         model="Re Edition 2005 Bag", title="Prada Re Edition 2000 Bag")
     data["pricing_comparables"][0].update(brand="Prada", match_type="related")
     identity.update(candidate_brand="Prada", candidate_model="Re Edition 2005 Bag")
+    assert validate_valuation(data, identity, raw)["pricing_evidence_policy"]["status"] == "qualified"
+
+
+def test_shortened_exact_claim_becomes_supported_related_comparable():
+    data, identity, raw = sample(model="Monogram Jacquard Fleece Jacket (2020)",
+        title="Louis Vuitton Monogram Fleece Jacket")
+    data["pricing_comparables"][0]["variant_match"] = "confirmed"
+    result = validate_valuation(data, identity, raw)
+    policy = result["pricing_evidence_policy"]
+    assert policy["status"] == "qualified"
+    assert policy["basis"] == "same_brand_similar_model"
+    assert policy["accepted"][0]["match_type"] == "related"
+    assert data["pricing_comparables"][0]["match_type"] == "exact"
+
+
+def test_nonliteral_exact_claim_requires_similarity_and_adjustment_context():
+    data, identity, raw = sample(model="Monogram Fleece Jacket", title="Louis Vuitton Fleece Jacket")
+    data["pricing_comparables"][0].update(variant_match="confirmed", adjustment_explanation="")
+    assert validate_valuation(data, identity, raw)["pricing_evidence_policy"]["status"] == "needs_review"
+
+
+def test_same_brand_wrong_product_family_cannot_be_an_anchor():
+    data, identity, raw = sample(model="Silk Dress", title="Louis Vuitton Silk Dress")
     assert validate_valuation(data, identity, raw)["pricing_evidence_policy"]["status"] == "needs_review"
 
 
