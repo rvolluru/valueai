@@ -1,7 +1,9 @@
 # AI model upgrades and retirement policy
 
 Updated October 16, 2026. Owner: Jouft engineering/release maintainer.
-Implementation is local; no production model has been changed by this work.
+Current-model runtime changes deployed in release `635ec54` on October 16, 2026.
+Production model names remain unchanged; candidate models and comparison experiments
+have not been promoted to production.
 
 ## Inventory and candidates
 
