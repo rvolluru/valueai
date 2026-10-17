@@ -8,7 +8,8 @@ October 16, 2026. Persistent listing identification, explicit pricing refresh,
 strengthened photo-content reuse checks and comparable policy v4 are deployed.
 Parallel pricing/mannequin/cleanup processing remains enabled. Existing listing
 values are not automatically recalculated by deployment.
-**Hotfix candidate, not yet deployed:** source matching policy
+**Hotfix deployed:** release `3da3a58` deployed successfully October 17, 2026,
+to both API and analysis workers. Source matching policy
 `source-identity-context-v2` relaxes overly literal title/summary comparisons as
 described below. It does not change production model names, source eligibility,
 retail guidance, condition pricing or the requirement for qualified resale anchors.
