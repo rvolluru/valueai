@@ -10,6 +10,10 @@ Parallel pricing/mannequin/cleanup processing remains enabled. Existing listing
 values are not automatically recalculated by deployment.
 **Local, not deployed:** policy `same-brand-comparables-v5` adds enforced OpenAI
 search-domain restrictions and server-side source-role validation described below.
+**Hotfix candidate, not yet deployed:** source matching policy
+`source-identity-context-v2` relaxes overly literal title/summary comparisons as
+described below. It does not change production model names, source eligibility,
+retail guidance, condition pricing or the requirement for qualified resale anchors.
 Model names are repository defaults;
 environment configuration can override them.
 
@@ -32,16 +36,36 @@ the retrieved URL has no native title, the comparable's model/product name can
 instead match the short model-written summary for that same URL. This fallback
 requires the URL to appear in actual provider search/open-page/citation metadata;
 a URL present only in generated text is insufficient. An existing contradictory
-native title cannot be overridden by a generated summary. Accepted sources record
-`native_title` or `model_reported_summary_retrieved_url` support explicitly.
+native brand/model/product conflict cannot be overridden by a generated summary.
+Short generic titles can be corroborated by provider-retrieved product URL paths
+and source summaries. Accepted sources record `native_title`,
+`model_reported_summary_retrieved_url`, `retrieved_product_url_identity` or
+`retrieved_url_title_summary_context` support explicitly.
 This verifies title support or generated-text consistency, not the truth of the extracted price,
 variant or final transaction amount. A sold page's displayed price is not proof of
 payment. Title checks ignore labelled catalog IDs/sizes, a leading collection year
-and common condition/tag qualifiers. They allow missing descriptive words with at
-least 60% core-word overlap (at least two words, or the sole core word for a
-one-word model). Distinctive model/collaboration names and model numbers still need
-support, as does the brand. Brand-only matches and unsupported summary/model pairs
-still fail; missing titles alone no longer force review when the fallback passes.
+and common condition/tag qualifiers. The hotfix normalizes Unicode hyphens,
+possessives, the LV abbreviation for an already established Louis Vuitton brand,
+and ZipThrough/Zip-Through spelling. It allows omitted descriptive color, trim,
+fabric and condition words without a 60% whole-description overlap requirement.
+Distinctive model/collaboration names and model numbers still need support, as
+does the brand. A named one-word model can qualify; generic matches need at least
+two shared product terms. Explicit conflicting product families and denim/leather
+descriptions remain blocked. A provider-retrieved product slug may corroborate a
+short summary such as “Exact style title”; URL query keywords do not count as
+product identity. Tracking parameters do not make the same retrieved page appear
+unretrieved (including eBay itmmeta/itmprp tracking); item-identifying query and
+eBay variation parameters are preserved. Brand-only URLs,
+unretrieved model-written URLs and unrelated summaries still fail. This checks
+source identity, not price truth, final payment or exact physical-item equivalence.
+
+For the production hotfix, the broad comparable-policy marker stays
+`same-brand-comparables-v4` (the separate local source-restriction candidate retains
+v5); provenance adds `matching_policy: source-identity-context-v2`. Previously qualified analyses
+remain eligible because this is a matching relaxation, not a new pricing/source
+policy. Previously blocked listings are not automatically assigned a value; their
+cleared estimates require a normal analysis rerun. No rejected source is silently
+dropped from the primary-reference set to salvage a price.
 
 Without qualified evidence, the policy clears retail/resale prices and all bands;
 condition retries, retail-derived fallback and crawler fallback cannot restore a
