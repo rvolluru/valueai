@@ -10,7 +10,8 @@ Parallel pricing/mannequin/cleanup processing remains enabled. Existing listing
 values are not automatically recalculated by deployment.
 **Local, not deployed:** policy `same-brand-comparables-v5` adds enforced OpenAI
 search-domain restrictions and server-side source-role validation described below.
-**Hotfix candidate, not yet deployed:** source matching policy
+**Hotfix deployed:** release `3da3a58` deployed successfully October 17, 2026,
+to both API and analysis workers. Source matching policy
 `source-identity-context-v2` relaxes overly literal title/summary comparisons as
 described below. It does not change production model names, source eligibility,
 retail guidance, condition pricing or the requirement for qualified resale anchors.
