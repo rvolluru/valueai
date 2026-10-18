@@ -2682,7 +2682,6 @@ class Database:
         condition_grade: str | None = None,
         category: str | None = None,
         brand_name: str | None = None,
-        item_description: str | None = None,
     ) -> dict | None:
         target = sorted(h.strip() for h in hashes if isinstance(h, str) and h.strip())
         if not target:
@@ -2703,12 +2702,6 @@ class Database:
                 continue
             if brand_name and normalize((response.get('brand') or {}).get('name')) != normalize(brand_name):
                 continue
-            if item_description is not None:
-                context = response.get('_analysis_input_context') or (response.get('debug') or {}).get('input_hints')
-                if not isinstance(context, dict):
-                    continue
-                if ' '.join(str(context.get('item_description') or '').split()).casefold() != ' '.join(item_description.split()).casefold():
-                    continue
             # Compare evidence captured for THIS analysis, not every image later
             # attached to its item (which may include new photos or AI assets).
             candidate = response.get('_original_photo_hashes')

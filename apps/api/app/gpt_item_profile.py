@@ -441,7 +441,7 @@ class GptItemProfiler:
         h.update(b"|")
         h.update((condition_source or "").strip().casefold().encode("utf-8"))
         h.update(b"|")
-        h.update((item_description or "").strip().casefold().encode("utf-8"))
+        # Descriptions are editable/generated copy, not reuse identity evidence.
         for img in images[: self.max_images]:
             h.update(b"|img|")
             h.update((img.content_type or "").encode("utf-8"))
