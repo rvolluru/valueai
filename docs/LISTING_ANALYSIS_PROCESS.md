@@ -1,6 +1,6 @@
 # Jouft listing analysis: complete process
 
-Updated October 17, 2026. This document explains the functional process: inputs,
+Updated October 18, 2026. This document explains the functional process: inputs,
 model calls, decisions, outputs and user review—not a reliability assessment.
 
 **Implementation status:** production release `635ec54` deployed successfully on
@@ -10,6 +10,9 @@ Parallel pricing/mannequin/cleanup processing remains enabled. Existing listing
 values are not automatically recalculated by deployment.
 **Local, not deployed:** policy `same-brand-comparables-v5` adds enforced OpenAI
 search-domain restrictions and server-side source-role validation described below.
+**Local, default-off, not deployed:** `GPT_CONTROLLED_RESEARCH_ENABLED=true` enables
+the generalized per-site research and persisted snapshot path described in section 8.
+Migration `0007_pricing_research_snapshots` must run explicitly before app startup.
 **Deployed October 17, 2026, release `fecdad2`:** matching policy `same-brand-model-flexible-v3` removes
 literal model-name and model-number equality requirements. Same-brand, same-product-family
 comparables may use different names. Nonliteral exact claims are downgraded to
@@ -158,6 +161,9 @@ value                       │                        │
 The three branches run in parallel. Pricing completion makes the listing reviewable;
 optional images can finish later. Mannequin generation does not depend on the price
 or on a pricing-generated title.
+With controlled research enabled locally, the “OpenAI pricing” step expands to:
+reuse eligible research snapshot → otherwise parallel per-site research and save
+snapshot → search-disabled model valuation → frozen-evidence validation.
 
 ## 3. Inputs and their roles
 
@@ -331,11 +337,64 @@ Old complete-analysis cache entries must be researched again under v5; scoped
 photo identity can still be reused. No existing listing is automatically repriced.
 
 Domain restrictions do not independently verify a price, condition or product
-image. Research and valuation are still one OpenAI call; a separately persisted
-research dataset, page-content verification, and search-disabled valuation are
-future work, not implemented by these source controls. No model names change.
+image. With the default setting, research and valuation are still one OpenAI call.
+The optional runtime path below separates them; independent page-content and
+transaction verification remain unimplemented. No model names change.
 
-An evaluation-only prototype, `scripts/evaluate_controlled_research.py`, schedules
+### Optional application-controlled research (local, disabled by default)
+
+The runtime module `apps/api/app/controlled_research.py` is shared with the earlier
+evaluation script. It builds an ordered plan from the established brand/model and
+product-family terms, rather than hard-coded Louis Vuitton denim-jacket queries.
+Each approved resale site gets one domain-filtered request; a registered official
+brand site gets a separate retail-only request. These seven/eight requests run in
+parallel. Each requests at most three individual product pages, first with the
+model-name query then a predefined broader product-family query if needed.
+Queries do not include user condition or size. Hosted search can rewrite queries:
+application scheduling and domain coverage are enforced, not exact internal queries.
+Requested plans, structured responses and actual provider tool metadata are saved.
+
+The application checks retrieval provenance, source role/domain, brand, compatible
+product family, positive USD price and a price-containing model-reported excerpt.
+No currency conversion is performed. Conflicting duplicate price/condition facts
+are excluded. Remaining records are deduplicated and ranked deterministically by
+model-token overlap then canonical URL; no equal weights or price-based source
+selection are imposed.
+
+`pricing_research_snapshots` stores immutable research snapshots. Their key includes
+protocol/source-policy version, requested plan, currency, condition-independent
+identity and listing/owner/original-photo fingerprint. Ownership is checked before
+lookup. Different listings/owners cannot accidentally share snapshots; existing
+global complete-analysis reuse remains separate and unchanged. Same-listing
+condition/size changes and pricing refreshes reuse eligible research. Changed
+photos, brand/model identity or research policy invalidate the key. Snapshots expire
+after `GPT_CONTROLLED_RESEARCH_TTL_S` (default seven days). Expiry appends a new
+version, retaining the prior record. There is currently no separate manual research
+refresh endpoint. Cross-worker locking avoids duplicate concurrent research.
+Empty or partially failed research runs are not cached. Partial current evidence
+may still be valued if defensible; coverage failures remain recorded.
+
+Valuation uses the normal pricing schema and retail/condition guidance with search
+disabled. It may choose useful candidates and explain adjustments, but cannot
+change observed brand/model, condition, price, currency or price type, introduce
+new sources or treat retail as resale. Every primary reference is revalidated
+against the original research metadata. Official retail estimates must be backed
+by a referenced frozen official price. The model still determines the target value;
+the runtime does not import the experiment's weighted-mean arithmetic. Failed
+validation does not fall back to independent searching or resurrect prior prices.
+No resale evidence leaves the item requiring review. A New-from-Like-New pricing
+retry reuses the same scoped snapshot when available.
+
+Research receives 65% of the configured pricing time budget; valuation receives
+the remaining time. Debug provenance records snapshot ID, key, creation time,
+research model, reuse status, site coverage and validation errors. Evaluation captures
+can additionally retain the full snapshot and valuation response. Final condition
+price bands are not cached by this feature: fresh valuation from the same evidence
+can still vary. This is an evidence-consistency foundation, not a deterministic
+price guarantee. The feature requires a scoped listing and hybrid identification;
+unscoped callers cannot silently bypass it.
+
+The evaluation CLI, `scripts/evaluate_controlled_research.py`, schedules
 one separately domain-filtered GPT-5 research request for each approved resale
 website plus the registered official brand site, using application-supplied queries.
 Hosted search can rewrite queries; the script records the requested plan and actual
@@ -360,8 +419,9 @@ the application audits IDs, references and comparable price preservation. It
 calculates the weighted mean and nearest-USD-25 rounding using decimal arithmetic,
 and flags model estimates inconsistent with that calculation. Source
 facts remain model-extracted, not independently verified page or transaction facts.
-This prototype is not connected to runtime analysis, reuse or publication and does
-not replace the production comparable validator. Research can be reused locally
+Its research planning/filtering implementation is shared with the optional runtime
+path, but its two-model comparison and arithmetic audit remain evaluation-only and
+do not replace the runtime comparable validator. Research can be reused locally
 with `--reuse-research` without paying for another search run.
 Its source-neutral valuation policy removes the older eBay-sold-only instruction
 from the experimental request: supplied resale asking and sold-displayed prices
@@ -603,8 +663,10 @@ an obsolete photo set or superseded run are not attached to the updated listing.
 
 The owner can inspect/zoom through photos, review generated previews and correct
 listing details. Brand corrections are carried into analysis as user corrections.
-Changed photos are new evidence; explicit pricing refresh requests fresh research
-while preserving eligible identity.
+Changed photos are new evidence. By default, explicit pricing refresh requests fresh
+research while preserving eligible identity. When controlled research is enabled,
+pricing refresh instead revalues eligible saved evidence; only expiry or changed
+photo/identity/policy inputs starts new research.
 
 ## 14. Publish to Marketplace
 
@@ -684,6 +746,7 @@ Primary source locations:
   value selection, manual review, generation and cleanup helpers.
 - `apps/api/app/gpt_item_profile.py`: identification/OCR, research, pricing prompts and structured profiles.
 - `apps/api/app/product_identity.py`: listing-scoped identification reuse.
+- `apps/api/app/controlled_research.py`: optional scheduled research, evidence filtering and scoped snapshots.
 - `apps/api/app/listing_pipeline.py`: input assembly and the three parallel branches.
 - `apps/api/app/mannequin_fidelity.py`: planning, clothing coverage and fidelity review.
 - `apps/api/app/pipeline_results.py`: attach component results to the listing.

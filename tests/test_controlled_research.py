@@ -53,6 +53,7 @@ def test_research_pool_deterministic_and_does_not_add_model_adjustments():
     artifact = dict(identity=IDENTITY, condition="NewWithTags", research=[research])
     original = copy.deepcopy(artifact)
     evidence = module.shared_evidence(artifact)
+    assert evidence['user_condition'] == 'NewWithTags'
     assert evidence["comparables"][0]["id"] == "C1"
     assert "Not yet valued" in evidence["comparables"][0]["adjustment_explanation"]
     assert artifact == original

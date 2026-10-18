@@ -54,6 +54,15 @@ def _listing_product_identities(db):
 
 
 # Add a new version for future changes; do not edit an already-applied migration.
+def _pricing_research_snapshots(db):
+    db.execute("""CREATE TABLE IF NOT EXISTS pricing_research_snapshots (
+        snapshot_id TEXT PRIMARY KEY, research_key TEXT NOT NULL,
+        snapshot_json TEXT NOT NULL, created_at TEXT NOT NULL)""")
+    db.execute("CREATE INDEX IF NOT EXISTS idx_research_snapshots_key_created "
+               "ON pricing_research_snapshots (research_key, created_at)")
+    db.commit()
+
+
 MIGRATIONS = (
     ("0001_application_schema", _baseline),
     ("0002_analysis_listing_links", _analysis_history),
@@ -61,6 +70,7 @@ MIGRATIONS = (
     ("0004_listing_pipeline_components", _pipeline_components),
     ("0005_product_identities", _product_identities),
     ("0006_listing_product_identities", _listing_product_identities),
+    ("0007_pricing_research_snapshots", _pricing_research_snapshots),
 )
 
 

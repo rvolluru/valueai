@@ -89,6 +89,8 @@ def get_gpt_item_profiler() -> GptItemProfiler:
     s = get_settings()
     return GptItemProfiler(
         database_url=s.database_url,
+        controlled_research_enabled=s.gpt_controlled_research_enabled,
+        controlled_research_ttl_s=s.gpt_controlled_research_ttl_s,
         enabled=s.gpt_item_profile_enabled,
         provider_order=s.gpt_item_profile_provider_order,
         openai_api_key=s.openai_api_key,
