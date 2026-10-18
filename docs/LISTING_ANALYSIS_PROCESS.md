@@ -13,6 +13,10 @@ search-domain restrictions and server-side source-role validation described belo
 **Local, default-off, not deployed:** `GPT_CONTROLLED_RESEARCH_ENABLED=true` enables
 the generalized per-site research and persisted snapshot path described in section 8.
 Migration `0007_pricing_research_snapshots` must run explicitly before app startup.
+**Local, not deployed:** complete-analysis reuse no longer compares description
+text or requires a saved description-input context. This applies to blank,
+generated and owner-edited descriptions; explicit brand corrections remain a
+separate reuse guard. The fallback in-memory profile cache also ignores description.
 **Deployed October 17, 2026, release `fecdad2`:** matching policy `same-brand-model-flexible-v3` removes
 literal model-name and model-number equality requirements. Same-brand, same-product-family
 comparables may use different names. Nonliteral exact claims are downgraded to
@@ -173,7 +177,7 @@ snapshot → search-disabled model valuation → frozen-evidence validation.
 | Category | Clothes, shoes, handbag or accessories; selects coverage requirements and processing paths |
 | User condition | Authoritative pricing condition: New With Tags, New or Like New |
 | Size | Product/listing context; pricing instructions prohibit size-based premiums or discounts |
-| User description | Additional facts and research context; meaningful differences can prevent complete-analysis reuse |
+| User description | Additional context for fresh analysis; not a criterion for analysis reuse |
 | Explicit brand correction | Authoritative user correction; changes identification context |
 | Listing ID and owner | Associate results correctly and scope saved identity |
 | Pricing refresh request | Obtain fresh pricing without necessarily identifying the item again |
@@ -241,12 +245,16 @@ A previous analysis can be reused **across listings and owners** when:
   added or missing photo content does not qualify.
 - User condition and category match.
 - Explicit brand corrections are compatible with the analyzed brand.
-- Supplied description context is compatible.
 - Brand/model identification is usable and a condition-aligned value can be selected.
 
 Matching compares actual current photo bytes against evidence recorded for the source
 analysis. It does not rely on filenames, file lengths, an old source-item pointer,
 or photos that were attached to the source item after its analysis.
+Description text is excluded from reuse matching, whether blank, AI-generated or
+owner-edited. New listings commonly start blank, and saving generated copy must
+not turn the same photos and condition into a different analysis request. Text
+still reaches the model when a fresh analysis is explicitly requested or otherwise
+required. Missing historical description metadata does not invalidate reuse.
 
 If eligible, the application reuses the model evidence without repeating model calls
 and reapplies the condition-selection rules. The receiving listing keeps its own

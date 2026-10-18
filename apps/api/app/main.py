@@ -974,17 +974,12 @@ def _reuse_recent_analysis_for_listing(
     image_hashes = [_image_content_hash(entry['data']) for entry in files]
     if not image_hashes:
         return None
-    description_hint = str(current.get('description') or '')
-    previous_analysis = current.get('analysis') or {}
-    if previous_analysis and description_hint == _profile_description_from_analysis(previous_analysis)[1]:
-        description_hint = str(((previous_analysis.get('debug') or {}).get('input_hints') or {}).get('item_description') or '')
     cached = db.find_recent_analysis_by_image_hashes(
         image_hashes,
         limit=50,
         condition_grade=current.get('condition'),
         category=current.get('category'),
         brand_name=((current.get('analysis') or {}).get('user_corrections') or {}).get('brand'),
-        item_description=description_hint,
     )
     if not cached or not isinstance(cached.get("response"), dict):
         return None

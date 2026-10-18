@@ -274,13 +274,40 @@ def test_global_analysis_reuse_requires_complete_exact_photo_evidence(url, targe
         'brand': {'name': 'RHODE', 'confidence': .95, 'evidence': 'label'},
         'condition': {'grade': 'New', 'confidence': 1}, 'user_condition': 'New',
         '_original_photo_hashes': ['a', 'b'], '_analysis_input_context': {'item_description': ''}})
-    assert db.find_recent_analysis_by_image_hashes(target, condition_grade='New', category='clothes', item_description='') is None
-    assert db.find_recent_analysis_by_image_hashes(['b', 'a'], condition_grade='New', category='clothes', item_description='')['item_id'] == 'priced-item'
-    assert db.find_recent_analysis_by_image_hashes(['a', 'b'], condition_grade='LikeNew', category='clothes', item_description='') is None
-    assert db.find_recent_analysis_by_image_hashes(['a', 'b'], condition_grade='New', category='shoes', item_description='') is None
-    assert db.find_recent_analysis_by_image_hashes(['a', 'b'], condition_grade='New', brand_name='Corrected brand', item_description='') is None
-    assert db.find_recent_analysis_by_image_hashes(['a', 'b'], condition_grade='New', item_description='Different product facts') is None
+    assert db.find_recent_analysis_by_image_hashes(target, condition_grade='New', category='clothes') is None
+    assert db.find_recent_analysis_by_image_hashes(['b', 'a'], condition_grade='New', category='clothes')['item_id'] == 'priced-item'
+    assert db.find_recent_analysis_by_image_hashes(['a', 'b'], condition_grade='LikeNew', category='clothes') is None
+    assert db.find_recent_analysis_by_image_hashes(['a', 'b'], condition_grade='New', category='shoes') is None
+    assert db.find_recent_analysis_by_image_hashes(['a', 'b'], condition_grade='New', brand_name='Corrected brand') is None
     db.close()
+
+
+@pytest.mark.parametrize('context', [None, {'item_description': ''},
+    {'item_description': 'Earlier AI-generated listing description'}])
+def test_analysis_lookup_does_not_require_description_context(url, context):
+    db = Database(url)
+    db.insert_item('description-item')
+    response = {'category': 'clothes', 'user_condition': 'NewWithTags',
+        'brand': {'name': 'RHODE', 'confidence': .95, 'evidence': 'label'},
+        'condition': {'grade': 'NewWithTags', 'confidence': 1},
+        '_original_photo_hashes': ['photo-a', 'photo-b']}
+    if context is not None:
+        response['_analysis_input_context'] = context
+    db.insert_analysis('description-analysis', 'description-item', response)
+    match = db.find_recent_analysis_by_image_hashes(['photo-b', 'photo-a'],
+        condition_grade='NewWithTags', category='clothes')
+    assert match['analysis_id'] == 'description-analysis'
+    db.close()
+
+
+def test_fallback_profile_cache_ignores_description_but_not_photo_or_condition(url):
+    model = profiler(url)
+    def key(description, image=b'original', condition='New'):
+        return model._cache_key(images=[photo(image)], brand_name='RHODE', category='clothes',
+            item_size='M', condition_grade=condition, condition_source='user_input', item_description=description)
+    assert key('') == key('AI-generated or owner-edited listing copy')
+    assert key('') != key('', image=b'changed')
+    assert key('') != key('', condition='LikeNew')
 
 
 def test_legacy_candidate_uses_its_original_analysis_refs_not_later_item_images(url):

@@ -132,6 +132,7 @@ def test_cached_analysis_revalidates_price_instead_of_copying_old_wrong_band():
     p["pricing_evidence_policy"] = {"version": POLICY_VERSION, "status": "qualified"}
     cached = {"brand": {"name": "Known brand", "confidence": .95}, "category": "clothes",
               "user_condition": "New", "item_profile": p,
+              "_analysis_input_context": {"item_description": "Previous AI-generated description"},
               "valuation": {"estimated_value": 999, "currency": "USD"}}
 
     class FakeDb:
@@ -141,7 +142,7 @@ def test_cached_analysis_revalidates_price_instead_of_copying_old_wrong_band():
             return [{"image_id": "photo", "content_hash": "same-photo", "role_hint": "full_item"}]
 
         def find_recent_analysis_by_image_hashes(self, hashes, limit=50, **scope):
-            assert scope == {'condition_grade': 'New', 'category': None, 'brand_name': None, 'item_description': ''}
+            assert scope == {'condition_grade': 'New', 'category': None, 'brand_name': None}
             return {"analysis_id": "cached", "item_id": "source", "response": cached}
 
         def update_listing(self, **kwargs):
