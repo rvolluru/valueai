@@ -170,15 +170,15 @@ def test_runtime_no_search_valuation_reuses_snapshot_across_conditions(database,
         assert 'include' not in payload
         text = payload['input'][0]['content'][-1]['text']
         evidence = json.loads(text.split('\n',1)[1])
-        row = {k:evidence[0][k] for k in ('url','brand','model','condition','price','currency','price_type')}
+        row = dict(id=evidence[0]['id'])
         row.update(match_type='related', variant_match='unconfirmed', match_evidence='Same-brand fleece jacket',
             similarity_basis='Similar construction', adjustment_explanation='Adjust for condition')
         if mode == 'changed_price':
             row['price'] = 1
         if mode == 'new_url':
-            row['url'] = 'https://poshmark.com/listing/invented'
+            row['id'] = 'unknown-id'
         return dict(output=[]), dict(pricing_comparables=[row], grounding_sources=[],
-            resale_price_estimate=dict(estimated_price=2700, condition_grade='New', references=[dict(url=row['url'])]),
+            resale_price_estimate=dict(estimated_price=2700, condition_grade='New', references=[dict(url=URL)]),
             retail_price_estimate=dict(estimated_price=None, references=[]), resale_price_breakdown=[])
     monkeypatch.setattr(model, '_research_request', request)
     for condition in ('New','NewWithTags'):
@@ -197,3 +197,30 @@ def test_feature_default_off_and_requires_scope_when_enabled(database):
         model._call_openai_valuation(content=[], gemini_profile=IDENTITY, condition_grade='New')
     from app.settings import Settings
     assert Settings().gpt_controlled_research_enabled is False
+
+
+def test_server_binds_ids_to_exact_source_facts_without_model_copying_text():
+    from app.controlled_research import bind_valuation_evidence, JUDGMENT_FIELDS, selection_schema
+    saved = dict(candidate(), id='C1', source_role='resale', condition='Good (seller’s “Item Rank: A”)')
+    selection = dict(id='C1', **{k:'Related judgment' for k in JUDGMENT_FIELDS})
+    original = copy.deepcopy(saved)
+    bound, errors = bind_valuation_evidence(dict(pricing_comparables=[selection]), [saved])
+    assert not errors
+    assert bound['pricing_comparables'][0]['condition'] == saved['condition']
+    assert bound['pricing_comparables'][0]['model'] == saved['model']
+    assert bound['pricing_comparables'][0]['price'] == saved['price']
+    assert saved == original
+    assert set(selection_schema([saved])['properties']) == {'id', *JUDGMENT_FIELDS}
+    _, errors = bind_valuation_evidence(dict(pricing_comparables=[selection, selection]), [saved])
+    assert errors
+
+
+def test_research_rejects_actual_native_brand_conflicts_before_snapshot():
+    from app.controlled_research import shared_evidence
+    row = candidate()
+    raw = dict(output=[dict(type='web_search_call', action=dict(sources=[dict(url=URL, title='Gucci Fleece Jacket')]))])
+    research = dict(status='returned', plan=dict(site='Poshmark', domains=['poshmark.com'], role='resale'),
+        data=dict(candidates=[row]), raw_response=raw)
+    evidence = shared_evidence(dict(identity=IDENTITY, research=[research]))
+    assert not evidence['comparables']
+    assert evidence['exclusions'][0]['reason'] == 'no_supported_source_title_or_summary'

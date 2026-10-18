@@ -17,6 +17,11 @@ Migration `0007_pricing_research_snapshots` must run explicitly before app start
 text or requires a saved description-input context. This applies to blank,
 generated and owner-edited descriptions; explicit brand corrections remain a
 separate reuse guard. The fallback in-memory profile cache also ignores description.
+**Local, not deployed:** controlled research protocol v2 uses ID-only comparable
+selection and server-side factual binding. Research filtering now applies the same
+source-title support checks as final validation. The observed seller-title spelling
+“Louis Vuittion” is normalized only for an established Louis Vuitton identity;
+generic fuzzy brand matching is not enabled.
 **Deployed October 17, 2026, release `fecdad2`:** matching policy `same-brand-model-flexible-v3` removes
 literal model-name and model-number equality requirements. Same-brand, same-product-family
 comparables may use different names. Nonliteral exact claims are downgraded to
@@ -380,10 +385,17 @@ refresh endpoint. Cross-worker locking avoids duplicate concurrent research.
 Empty or partially failed research runs are not cached. Partial current evidence
 may still be valued if defensible; coverage failures remain recorded.
 
-Valuation uses the normal pricing schema and retail/condition guidance with search
-disabled. It may choose useful candidates and explain adjustments, but cannot
-change observed brand/model, condition, price, currency or price type, introduce
-new sources or treat retail as resale. Every primary reference is revalidated
+Valuation uses the normal retail/condition guidance with search disabled. Its
+comparable-selection schema returns only a bounded snapshot record ID plus match,
+similarity and pricing-adjustment judgments. The server reconstructs URL, brand,
+model, source condition, price, currency and price type from the immutable record;
+the model does not reproduce these fields. Unknown/duplicate IDs or injected factual
+fields fail validation. It may choose useful candidates and explain adjustments, but cannot
+change observed facts, introduce
+new sources or treat retail as resale. Research and final validation both check
+source-title identity support. The explicit seller-title spelling “Louis Vuittion”
+is recognized only for the established Louis Vuitton brand, not via broad fuzzy
+matching. Every primary reference is revalidated
 against the original research metadata. Official retail estimates must be backed
 by a referenced frozen official price. The model still determines the target value;
 the runtime does not import the experiment's weighted-mean arithmetic. Failed

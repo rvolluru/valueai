@@ -2755,24 +2755,32 @@ def test_create_listing_with_analyzing_status_queues_backend_analysis() -> None:
     assert listing["analysis"]["brand"]["name"] == "Chanel"
 
 
-def test_new_listing_reuses_verified_analysis_for_same_photos() -> None:
+def test_new_listing_reuses_verified_analysis_for_same_photos(monkeypatch) -> None:
     client = _build_client()
-    _override_gpt_profiler(
-        _stub_item_profile(
+    profile = _stub_item_profile(
             brand="Louis Vuitton",
             model="Looping MM",
             category="handbag",
             estimated_price=1150,
         )
-    )
+    profile['resale_price_breakdown'] = [dict(label='Like New', condition_grade='LikeNew',
+        estimated_price=1150, range_low=1000, range_high=1300, currency='USD', confidence=.66)]
+    _override_gpt_profiler(profile)
     image_bytes = _make_image("LV")
     analyze_res = client.post(
         "/v1/analyze",
-        data={"item_id": "item-original-analysis", "user_condition": "LikeNew", "debug": "true"},
+        data={"item_id": "item-original-analysis", "user_condition": "LikeNew", "debug": "true",
+              "item_description": "Earlier generated listing description"},
         files=[("images", ("lv.jpg", image_bytes, "image/jpeg"))],
         headers={"x-api-key": "test-key"},
     )
     assert analyze_res.status_code == 200, analyze_res.text
+    from app import main
+    fresh_analysis_calls = []
+    def forbidden_fresh_analysis(**kwargs):
+        fresh_analysis_calls.append(kwargs)
+        raise AssertionError('Duplicate must reuse evidence without model analysis')
+    monkeypatch.setattr(main, '_run_listing_analysis_job_threaded', forbidden_fresh_analysis)
 
     upload = client.post(
         "/v1/uploads/images",
@@ -2823,6 +2831,8 @@ def test_new_listing_reuses_verified_analysis_for_same_photos() -> None:
     assert listing["analysis"]["item_id"] == "item-repeat-upload"
     assert listing["analysis"]["debug"]["analysis_reuse"]["reused"] is True
     assert listing["analysis"]["debug"]["analysis_reuse"]["scope"] == "global"
+    assert fresh_analysis_calls == []
+    assert listing['analysis']['item_profile']['resale_price_breakdown'] == analyze_res.json()['item_profile']['resale_price_breakdown']
 
 
 def test_create_listing_reuses_verified_analysis_across_accounts_for_identical_photos() -> None:

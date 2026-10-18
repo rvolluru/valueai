@@ -55,6 +55,13 @@ def test_brand_alias_is_scoped_to_established_brand():
     assert validate_valuation(data, identity, raw)["pricing_evidence_policy"]["status"] == "needs_review"
 
 
+def test_observed_seller_brand_misspelling_is_scoped_not_generic_fuzzy_matching():
+    data, identity, raw = sample(title='USED LOUIS VUITTION MONOGRAM FLEECE JACKET | eBay')
+    assert validate_valuation(data, identity, raw)['pricing_evidence_policy']['status'] == 'qualified'
+    data, identity, raw = sample(title='USED GUCCI VUITTION MONOGRAM FLEECE JACKET')
+    assert validate_valuation(data, identity, raw)['pricing_evidence_policy']['status'] == 'needs_review'
+
+
 @pytest.mark.parametrize("title", ["Gucci Monogram Fleece Jacket", "Louis Vuitton Silk Shirt", "Louis Vuitton Leather Handbag"])
 def test_native_brand_or_product_conflict_cannot_be_overridden_by_good_slug(title):
     data, identity, raw = sample(title=title)

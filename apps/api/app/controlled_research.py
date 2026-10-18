@@ -13,10 +13,10 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
 from .db import Database, utc_now_iso
-from .pricing_evidence import PRODUCT_FAMILIES, retrieved_urls, tokens, url_key
+from .pricing_evidence import PRODUCT_FAMILIES, retrieved_urls, search_titles, source_identity_support, tokens, url_key
 from .pricing_sources import RESALE_DOMAINS, SOURCE_POLICY_VERSION, brand_key, official_domains, url_in_domains
 
-VERSION = "controlled-research-snapshot-v1"
+VERSION = "controlled-research-snapshot-v2"
 SITES = {
     "The RealReal": ("therealreal.com",),
     "Poshmark": ("poshmark.com", "poshmark.ca"),
@@ -118,9 +118,14 @@ def shared_evidence(artifact):
             rejected.append(dict(site=research["plan"]["site"], reason="research_failed"))
             continue
         retrieved = {canonical_url(u) for u in retrieved_urls(research["raw_response"])}
+        titles = search_titles(research['raw_response'])
         for source in research["data"].get("candidates", [])[:3]:
             row = copy.deepcopy(source)
             reason = candidate_rejection(row, research["plan"], identity, retrieved)
+            key = canonical_url(row.get('url'))
+            if not reason and not source_identity_support(tokens(identity.get('candidate_brand')),
+                    row.get('model'), key, titles, retrieved, {key: [row.get('summary') or '']}, row.get('summary')):
+                reason = 'no_supported_source_title_or_summary'
             if reason:
                 rejected.append(dict(site=research["plan"]["site"], url=row.get("url"), reason=reason))
                 continue
@@ -217,3 +222,32 @@ def collect_research(identity, model, request, timeout_s):
     snapshot = dict(identity=research_identity(identity), research=research, research_model=model)
     snapshot["evidence"] = shared_evidence(snapshot)
     return snapshot
+
+
+JUDGMENT_FIELDS = ('match_type', 'variant_match', 'match_evidence', 'similarity_basis', 'adjustment_explanation')
+FACT_FIELDS = ('url', 'brand', 'model', 'condition', 'price', 'currency', 'price_type')
+
+
+def selection_schema(evidence):
+    """Return only bounded IDs and judgments, never regenerated source facts."""
+    properties = {'id': {'type': 'string', 'enum': [r['id'] for r in evidence if r['source_role'] == 'resale']}}
+    properties.update({key: {'type': 'string'} for key in JUDGMENT_FIELDS})
+    return dict(type='object', additionalProperties=False, properties=properties, required=list(properties))
+
+
+def bind_valuation_evidence(data, evidence):
+    """Resolve model-selected IDs to server-owned immutable evidence records."""
+    result = copy.deepcopy(data)
+    fixed = {r['id']: r for r in evidence if r['source_role'] == 'resale'}
+    records, errors, seen = [], [], set()
+    for selection in data.get('pricing_comparables') or []:
+        key = selection.get('id')
+        if key not in fixed or key in seen or set(selection) != {'id', *JUDGMENT_FIELDS}:
+            errors.append('invalid_or_duplicate_comparable_selection')
+            continue
+        seen.add(key)
+        row = {field: copy.deepcopy(fixed[key][field]) for field in FACT_FIELDS}
+        row.update({field: selection[field] for field in JUDGMENT_FIELDS})
+        records.append(row)
+    result['pricing_comparables'] = [] if errors else records
+    return result, errors
