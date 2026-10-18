@@ -10,14 +10,14 @@ Parallel pricing/mannequin/cleanup processing remains enabled. Existing listing
 values are not automatically recalculated by deployment.
 **Local, not deployed:** policy `same-brand-comparables-v5` adds enforced OpenAI
 search-domain restrictions and server-side source-role validation described below.
-**Local, default-off, not deployed:** `GPT_CONTROLLED_RESEARCH_ENABLED=true` enables
+**Deployed October 18, 2026, release `238f0d3`, disabled by default:** `GPT_CONTROLLED_RESEARCH_ENABLED=true` enables
 the generalized per-site research and persisted snapshot path described in section 8.
 Migration `0007_pricing_research_snapshots` must run explicitly before app startup.
-**Local, not deployed:** complete-analysis reuse no longer compares description
+**Deployed in `238f0d3`:** complete-analysis reuse no longer compares description
 text or requires a saved description-input context. This applies to blank,
 generated and owner-edited descriptions; explicit brand corrections remain a
 separate reuse guard. The fallback in-memory profile cache also ignores description.
-**Local, not deployed:** controlled research protocol v2 uses ID-only comparable
+**Included in `238f0d3`, controlled research remains disabled:** protocol v2 uses ID-only comparable
 selection and server-side factual binding. Research filtering now applies the same
 source-title support checks as final validation. The observed seller-title spelling
 “Louis Vuittion” is normalized only for an established Louis Vuitton identity;
@@ -268,6 +268,11 @@ Explicit pricing refresh and applicable fresh-analysis/correction paths bypass o
 complete-result reuse. If a listing already has a saved identity, a cached analysis
 with an incompatible brand/model is not substituted for it.
 
+The release regression test exercises upload/create/background-job/readback with
+different source/new description text, checks identical reused value and condition
+bands, and fails if fresh model analysis starts. The current deployment does not
+automatically reconcile existing listings whose earlier independent estimates differ.
+
 ### Saved identity for the same listing
 
 If fresh pricing is needed, an existing identity can be reused for **that listing
@@ -352,7 +357,7 @@ image. With the default setting, research and valuation are still one OpenAI cal
 The optional runtime path below separates them; independent page-content and
 transaction verification remain unimplemented. No model names change.
 
-### Optional application-controlled research (local, disabled by default)
+### Optional application-controlled research (deployed, disabled by default)
 
 The runtime module `apps/api/app/controlled_research.py` is shared with the earlier
 evaluation script. It builds an ordered plan from the established brand/model and
