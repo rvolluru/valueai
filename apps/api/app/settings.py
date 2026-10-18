@@ -83,6 +83,8 @@ class Settings(BaseSettings):
     gpt_item_profile_max_images: int = Field(default=6, ge=1, le=6)
     gpt_item_profile_image_detail: str = "auto"
     gpt_item_profile_reasoning_effort: str = "low"
+    gpt_controlled_research_enabled: bool = False
+    gpt_controlled_research_ttl_s: int = Field(default=604800, ge=60, le=2592000)
     gpt_item_profile_vertex_search_enabled: bool = False
     gpt_item_profile_vertex_search_project_id: str | None = None
     gpt_item_profile_vertex_search_location: str = "global"
