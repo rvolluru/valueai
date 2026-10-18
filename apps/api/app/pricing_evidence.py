@@ -38,6 +38,10 @@ def product_tokens(value, brand):
     # Normalize known aliases only for the already established source brand.
     if brand == {"louis", "vuitton"} and "lv" in words:
         words = (words - {"lv"}) | brand
+    # Explicit observed seller-title misspelling, scoped to established Louis
+    # Vuitton only. Do not introduce generic fuzzy matching between brands.
+    if brand == {"louis", "vuitton"} and {"louis", "vuittion"} <= words:
+        words = (words - {"vuittion"}) | {"vuitton"}
     if "zipthrough" in words:
         words = (words - {"zipthrough"}) | {"zip", "through"}
     return words
