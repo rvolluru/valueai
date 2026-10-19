@@ -21,4 +21,5 @@ infra/terraform/terraform.tfstate
 infra/terraform/terraform.tfstate.backup
 runs
 samples
-docs
+docs/*
+!docs/listing-analysis-guide.html
