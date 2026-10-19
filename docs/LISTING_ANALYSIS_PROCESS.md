@@ -3,12 +3,18 @@
 Updated October 19, 2026. This document explains the functional process: inputs,
 model calls, decisions, outputs and user review—not a reliability assessment.
 
-**Admin guide access (implemented, pending deployment):** `/docs/listing-analysis`
+**Admin guide access (live-site verified October 19, 2026):** `/docs/listing-analysis`
 loads a sign-in shell. The guide itself is fetched from
 `/v1/admin/docs/listing-analysis` with a Clerk bearer token and server-side admin-role
 authorization on every request. API keys alone do not grant access. HTML is packaged
 outside public static assets and served with private/no-store caching and noindex.
 The admin workspace links to this page. Authorized readers can still save copies.
+Release `34a5a12` includes Docker packaging of this protected artifact. The production
+web bundle contains the guide viewer and the document endpoint returns 401 without
+a bearer token. Local authorization regressions verify 403 for non-admins and 200
+with no-store for admins. GitHub's rollout status remained delayed/inconsistent at
+this verification; full workflow completion and an authenticated production browser
+check were not yet independently confirmed.
 
 **Implementation status:** production release `635ec54` deployed successfully on
 October 16, 2026. Persistent listing identification, explicit pricing refresh,
