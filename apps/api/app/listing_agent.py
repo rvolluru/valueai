@@ -61,6 +61,29 @@ class Turn(BaseModel):
     confirmation_token: str | None = Field(default=None, max_length=64)
 
 
+def direct_answer(state, message):
+    """Parse only unambiguous answers to the current, unchanged intake question."""
+    pending = state.get('pending') or {}
+    if (state.get('listing_id') or pending.get('type') != 'question'
+            or pending.get('version') != Agent.version(state)):
+        return None
+    value = message.strip()
+    normalized = value.casefold()
+    field = pending.get('field')
+    choices = {
+        'condition': {'new': 'New', 'new with tags': 'NewWithTags', 'newwithtags': 'NewWithTags',
+                      'nwt': 'NewWithTags', 'like new': 'LikeNew', 'likenew': 'LikeNew'},
+        'category': {'clothes': 'clothes', 'shoes': 'shoes', 'handbag': 'handbag', 'accessories': 'accessories'},
+    }
+    if field in choices and normalized in choices[field]:
+        return {field: choices[field][normalized]}
+    if field == 'size' and (normalized in {'xxs', 'xs', 's', 'm', 'l', 'xl', 'xxl', 'xxxl',
+            'small', 'medium', 'large', 'mini', 'one size'} or
+            re.fullmatch(r'(?:(?:US|UK|EU)\s*)?\d{1,3}(?:\.5)?(?:\s*(?:US|UK|EU|W|M|N|wide|narrow))?', value, re.I)):
+        return {'size': value}
+    return None
+
+
 class ToolArgs(BaseModel):
     model_config = ConfigDict(extra='forbid')
 
@@ -434,6 +457,7 @@ class Agent:
                 result['reply'] = persisted_reply['content']
                 self.store.complete(state, turn, result)
                 return result
+            answer = direct_answer(state, turn.message) if not turn.confirmation_token else None
             if (state.get('pending') or {}).get('type') == 'question' and not resumed:
                 state['pending'] = None
             if turn.confirmation_token:
@@ -448,6 +472,9 @@ class Agent:
             if not any(m.get('request_id') == turn.request_id for m in state['messages']):
                 state['messages'] = [*state['messages'], {'role': 'user', 'content': turn.message, 'request_id': turn.request_id}][-20:]
                 self.store.save(state)
+            if answer:
+                # Same fact tool/validation/provenance as model proposals; no approval bypass.
+                await self.execute('record_user_facts', dict(facts=answer, evidence_quote=turn.message), state, turn)
             inputs = [dict(role='user', content='AUTHORITATIVE STATE:\n' + json.dumps(await self.public(state))),
                       *[{k: m[k] for k in ('role', 'content')} for m in state['messages']]]
             reply = 'Please continue with the remaining details.'
@@ -458,7 +485,7 @@ class Agent:
             recovery_reason = None
             try:
                 async with asyncio.timeout(self.settings.listing_agent_turn_timeout_s):
-                    for _ in range(0 if state['stage'] in {'analyzing', 'review_ready', 'failed', 'closed'} else self.settings.listing_agent_max_steps):
+                    for _ in range(0 if answer or state['stage'] in {'analyzing', 'review_ready', 'failed', 'closed'} else self.settings.listing_agent_max_steps):
                         raw = await self.model(self.settings, inputs)
                         for metric in usage:
                             usage[metric] += int((raw.get('usage') or {}).get(metric) or 0)
@@ -482,7 +509,7 @@ class Agent:
                         if result.get('paused'):
                             break
                     else:
-                        recovery_reason = 'step_budget'
+                        recovery_reason = 'direct_intake_answer' if answer else 'step_budget'
                         await self.recover_next_step(state, turn)
             except (httpx.HTTPError, TimeoutError, ValueError, KeyError, TypeError) as exc:
                 log_json('listing_agent_turn_interrupted', session_id=session_id, error_type=type(exc).__name__)

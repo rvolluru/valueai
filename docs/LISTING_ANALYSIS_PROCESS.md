@@ -861,6 +861,15 @@ Actual additions/removals invalidate coverage, waivers, approval and photo-infer
 category, then clients request reassessment. Once a draft exists, image changes
 continue through the ordinary listing editor. These changes are local only.
 
+Clear standalone answers to the active, version-current category/condition/size
+question are recorded through the same validated fact tool using the exact user
+message as evidence, then advance directly to the next question or confirmation
+without a model call. This prevents a model-generated evidence-quote mismatch
+from losing an answer such as `New`. Only explicit recognized choices/simple size
+formats qualify; ambiguous answers still use the model. It does not infer facts
+from images, change evidence validation, or authorize creation/analysis without
+the confirmation control. This intake fix is local only.
+
 Explicit migration `0009_listing_agent_sessions` creates owner-scoped session,
 request-replay and tool-ledger records. Dedicated DB connections, cross-process
 session locks and revision checks prevent concurrent turns from silently

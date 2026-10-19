@@ -246,6 +246,53 @@ def test_recommended_photos_do_not_block_ready_summary(fixture):
     assert services.created == services.started == 0
 
 
+@pytest.mark.parametrize('field,message,value', [
+    ('condition', 'New', 'New'), ('condition', 'new with tags', 'NewWithTags'),
+    ('condition', 'LikeNew', 'LikeNew'), ('category', 'shoes', 'shoes'),
+    ('size', '8.5', '8.5'), ('size', 'EU 39', 'EU 39'), ('size', 'M', 'M'),
+])
+def test_clear_answer_to_current_question_is_saved_without_model_quote(fixture, field, message, value):
+    db, store, state, settings, services = fixture
+    state.update(facts=dict(category='shoes', condition='New', size='8'),
+                 evidence=dict(status='checked', missing_required=[]))
+    state['facts'].pop(field)
+    state['pending'] = dict(type='question', field=field, question='Provide ' + field, version=Agent.version(state))
+    store.save(state)
+    async def no_model(*args):
+        pytest.fail('A clear answer must not need a model to quote it')
+    agent = Agent(store, settings, services, no_model)
+    request = turn(state, message=message)
+    result = run(agent.turn(state['session_id'], request))
+    assert result['facts'][field] == value
+    assert result['pending']['type'] == 'confirm_analysis'
+    assert store.load(state['session_id'])['fact_provenance'][field] == 'user_message'
+    assert services.created == services.started == 0
+    assert run(agent.turn(state['session_id'], request)) == result
+
+
+def test_new_condition_answer_advances_to_size_not_same_question(fixture):
+    db, store, state, settings, services = fixture
+    state.update(facts=dict(category='shoes'), evidence=dict(status='checked', missing_required=[]))
+    state['pending'] = dict(type='question', field='condition', question='What condition?', version=Agent.version(state))
+    store.save(state)
+    model = scripted()  # No provider call needed to accept this answer.
+    result = run(Agent(store, settings, services, model).turn(state['session_id'], turn(state, message='New')))
+    assert result['facts']['condition'] == 'New'
+    assert result['pending']['field'] == 'size'
+    assert result['reply'] == 'What is the item size?'
+    assert model.captured == []
+
+
+@pytest.mark.parametrize('message', ['new?', 'not new', 'New or Like new', 'I am not sure'])
+def test_ambiguous_condition_is_not_directly_recorded(fixture, message):
+    db, store, state, settings, services = fixture
+    state['pending'] = dict(type='question', field='condition', question='What condition?', version=Agent.version(state))
+    store.save(state)
+    result = run(Agent(store, settings, services, scripted(('ask_user', dict(field='condition',
+        question='Please clarify the condition.')))).turn(state['session_id'], turn(state, message=message)))
+    assert 'condition' not in result['facts']
+
+
 def test_missing_views_block_confirmation_and_waiver_needs_explicit_evidence(fixture):
     db, store, state, settings, services = fixture
     state.update(facts=dict(category='clothes', condition='New', size='M'),
