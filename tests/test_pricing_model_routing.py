@@ -21,11 +21,12 @@ def database(tmp_path, monkeypatch):
     url = f"sqlite:///{tmp_path / 'cohorts.db'}"
     db = Database(url)
     full = migrations.MIGRATIONS
+    routing_index = next(i for i, (version, _) in enumerate(full) if version == '0008_listing_pricing_models')
     with monkeypatch.context() as scoped:
-        scoped.setattr(migrations, 'MIGRATIONS', full[:-1])
+        scoped.setattr(migrations, 'MIGRATIONS', full[:routing_index])
         db.initialize()
         insert(db, 'legacy')
-    assert migrations.migrate(db) == ['0008_listing_pricing_models']
+    assert migrations.migrate(db) == [version for version, _ in full[routing_index:]]
     for key in ('new', 'duplicate', 'other'):
         insert(db, key)
     db.close()

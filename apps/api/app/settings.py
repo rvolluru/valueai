@@ -128,6 +128,9 @@ class Settings(BaseSettings):
     gemini_api_key: str | None = None
     openai_api_key: str | None = None
     listing_assistant_model: str = "gpt-5-mini"
+    listing_agent_enabled: bool = False
+    listing_agent_max_steps: int = Field(default=6, ge=1, le=12)
+    listing_agent_turn_timeout_s: float = Field(default=90, ge=10, le=180)
     listing_assistant_reasoning_effort: str = "low"
     listing_assistant_timeout_s: float = Field(default=30.0, ge=5.0, le=120.0)
     sqs_analysis_queue_url: str | None = None

@@ -818,6 +818,8 @@ result should therefore be assumed to have used the preferred sequence.
 
 ## 16. Chatbot entry into this process
 
+### Existing path (default)
+
 Listing chat collects evidence and item facts, helps create the listing, presents
 analysis results, accepts corrections and helps publish with user confirmation.
 Its structured actions are executed by application code through listing APIs.
@@ -825,6 +827,47 @@ Its structured actions are executed by application code through listing APIs.
 Chat is not a separate pricing authority and does not replace the analysis above.
 Marketplace search, finding tradeable matches and preparing a trade are later
 actions using the resulting listings.
+
+### Tool-using listing agent (implemented locally, disabled by default)
+
+The opt-in agent uses the configured chat model with strict function tools. Its
+server-owned loop executes a permitted tool, persists the real outcome and feeds
+that outcome back to the model to choose a next tool/question. It pauses for human
+input, exact-summary approval, or background analysis rather than keeping an
+unbounded request alive. Default limits are six model/tool steps, 1,800 output
+tokens per model call, and 90 seconds per turn.
+
+Explicit migration `0009_listing_agent_sessions` creates owner-scoped session,
+request-replay and tool-ledger records. Dedicated DB connections, cross-process
+session locks and revision checks prevent concurrent turns from silently
+overwriting state. Replaying a request with changed input is rejected. Draft and
+job IDs are deterministic per session. A 60-second dispatch lease permits queued
+job recovery without dispatching on every poll; existing worker locks deduplicate
+concurrent deliveries. No schema changes happen inside tools.
+
+The agent receives uploaded originals bound to its owner/session; client-supplied
+workflow stage, photo-role assertions, owner/listing IDs or approval booleans are
+not accepted. It invokes the existing coverage service and records facts proposed
+from user messages. Confirmation shows those facts and any explicitly unavailable
+views; the confirmation control is bound to the current photo/fact/evidence
+snapshot. Changing photos invalidates coverage, waivers, approval and any old
+photo-inferred category. Coverage timeout skips only the initial check: category
+still must be supplied, and full item/pricing analysis still runs.
+
+After approval, shared validated listing creation produces one private draft and
+the existing analysis worker pipeline runs unchanged, including subscription and
+ownership checks, identity/reuse rules, sticky GPT/Sol assignment, source policy,
+manual review and optional parallel imagery. The agent does not invent prices.
+Returning/polling reads the actual job and saved listing without another chat-model
+call. Missing valuation is shown as needs-review. Publication and post-creation
+corrections remain in the existing My Closet editor; the agent cannot publish or
+trade. It does not yet proactively resume a model conversation after job completion.
+
+`LISTING_AGENT_ENABLED` on the API, `VITE_LISTING_AGENT_ENABLED` for web and
+`EXPO_PUBLIC_LISTING_AGENT_ENABLED` for mobile are default-off opt-ins. Both client
+and server flags must be enabled for the relevant pilot client. No production
+activation or paid evaluation has been performed. See
+`docs/CHATBOT_AGENT_PLAN.md` for endpoints, implementation limits and release gates.
 
 ## 17. User-facing outcomes when a stage does not finish
 

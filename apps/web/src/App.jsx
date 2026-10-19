@@ -20,12 +20,14 @@ import ListingPhotoEditor from './components/ListingPhotoEditor'
 import PhotoNavigation from './components/PhotoNavigation'
 import NotificationsPage from './components/NotificationsPage'
 import AnalysisGuidePage from './components/AnalysisGuidePage'
+import ListingAgentChat from './components/ListingAgentChat'
 import jouftLogo from './assets/jouft-logo.png'
 
 const API_DEFAULT =
   import.meta.env.VITE_API_BASE_URL ||
   (typeof window !== 'undefined' ? window.location.origin : 'http://127.0.0.1:8000')
 const CLERK_ENABLED = Boolean(import.meta.env.VITE_CLERK_PUBLISHABLE_KEY)
+const LISTING_AGENT_ENABLED = import.meta.env.VITE_LISTING_AGENT_ENABLED === 'true'
 const IS_PROD = Boolean(import.meta.env.PROD)
 const VALID_TABS = new Set(['market', 'portfolio', 'closet_matches', 'inbox', 'sender_items', 'profile', 'profile_setup', 'admin', 'trade', 'edit_listing', 'review_listing', 'notifications'])
 const TEMP_SHOW_PROFILE_QUESTIONNAIRE_ON_LOGIN = false
@@ -4700,7 +4702,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   useEffect(() => {
     const selectedImages = createImageSlots.filter(Boolean).slice(0, 6)
     const listingPhotoFlowActive = showCreateListingModal || appAssistantListingFlow
-    if (!listingPhotoFlowActive || selectedImages.length === 0) {
+    if (!listingPhotoFlowActive || selectedImages.length === 0 || (LISTING_AGENT_ENABLED && (createListingMode === 'chat' || appAssistantListingFlow))) {
       setCreateImageRoleCheck(null)
       setCreateImageRoleBusy(false)
       setCreateImageRoleError('')
@@ -4738,7 +4740,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
       cancelled = true
       window.clearTimeout(timer)
     }
-  }, [showCreateListingModal, appAssistantListingFlow, createImageSlots, createImageRoleRetry, apiBaseUrl, apiKey, clerkEnabled, getBearerToken])
+  }, [showCreateListingModal, appAssistantListingFlow, createListingMode, createImageSlots, createImageRoleRetry, apiBaseUrl, apiKey, clerkEnabled, getBearerToken])
 
   const modalPreviewUrls = listingModalMode === 'edit'
     ? [...editPreviewUrls, ...previewUrls].slice(0, 6)
@@ -9092,7 +9094,8 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                 {message.shipments?.length > 0 && <div className="app-assistant-status-list">{message.shipments.map((shipment) => <article key={shipment.shipment_id}><strong>{shipment.carrier || 'Shipment'} · {shipment.tracking_number || 'Tracking pending'}</strong><span>{shipment.tracking_status_details || shipment.tracking_status || shipment.status}</span></article>)}</div>}
               </div>
             </div>)}
-            {appAssistantListingFlow && <div className="app-assistant-listing-flow">
+            {LISTING_AGENT_ENABLED && appAssistantListingFlow && <ListingAgentChat apiBaseUrl={apiBaseUrl} apiKey={apiKey} getBearerToken={getBearerToken} clerkEnabled={clerkEnabled} />}
+            {appAssistantListingFlow && !LISTING_AGENT_ENABLED && <div className="app-assistant-listing-flow">
               <div className="app-assistant-turn assistant"><span aria-hidden="true"><LogoJ small /></span><div><p>{createImageSlots.filter(Boolean).length ? `${createImageSlots.filter(Boolean).length}/6 photos added.` : 'Add clear photos of the item to begin.'}</p><label className="ghost small listing-chat-upload"><span>{createImageSlots.filter(Boolean).length ? 'Add more photos' : 'Choose photos'}</span><input type="file" accept="image/*" multiple onChange={(event) => { handleCreatePhotoFiles(event.target.files); event.target.value = '' }} /></label></div></div>
               {createSlotPreviewUrls.filter(Boolean).length > 0 && <div className="app-assistant-photo-row">{createSlotPreviewUrls.filter(Boolean).map((url, index) => {
                 const assignment = createImageRoleCheck?.images?.[index]
@@ -9138,7 +9141,9 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
             {appAssistantBusy && <div className="app-assistant-turn assistant"><span aria-hidden="true"><LogoJ small /></span><p>Thinking…</p></div>}
             {appAssistantError && <p className="app-assistant-error">{appAssistantError}</p>}
           </div>
+          {!(LISTING_AGENT_ENABLED && appAssistantListingFlow) && <>
           <form className="app-assistant-compose" onSubmit={(event) => { event.preventDefault(); if (appAssistantListingFlow) { const value = appAssistantInput; setAppAssistantInput(''); void sendListingAssistantMessage(value) } else { void sendAppAssistantMessage() } }}><textarea value={appAssistantInput} onChange={(event) => setAppAssistantInput(event.target.value)} placeholder={appAssistantListingFlow ? (listingChatStage === 'review' ? 'Describe a change or say “publish it”' : listingChatStage === 'published' ? 'Choose a match or ask what to do next' : 'Reply about your listing') : 'Ask Jouft anything'} rows={2} disabled={appAssistantBusy || listingAssistantBusy || createImageRoleBusy || listingChatStage === 'analyzing'} /><button className="primary small" type="submit" disabled={!appAssistantInput.trim() || appAssistantBusy || listingAssistantBusy || createImageRoleBusy || listingChatStage === 'analyzing'}>Send</button></form>
+          </>}
         </aside>
       )}
 
@@ -9536,7 +9541,8 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
 
             </div>}
 
-            {createListingMode === 'chat' && <section className="listing-assistant is-open listing-chat-create">
+            {createListingMode === 'chat' && LISTING_AGENT_ENABLED && <ListingAgentChat apiBaseUrl={apiBaseUrl} apiKey={apiKey} getBearerToken={getBearerToken} clerkEnabled={clerkEnabled} />}
+            {createListingMode === 'chat' && !LISTING_AGENT_ENABLED && <section className="listing-assistant is-open listing-chat-create">
               {createImageRoleError && <div role="status"><p>{createImageRoleError}</p>{renderManualPhotoCategory()}</div>}
                 <div className="listing-chat-header">
                   <span className="listing-chat-avatar" aria-hidden="true"><LogoJ small /></span>

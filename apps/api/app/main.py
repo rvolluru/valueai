@@ -113,11 +113,13 @@ from .schemas import (
     VersionResponse,
 )
 from .settings import Settings
+from .listing_agent_routes import router as listing_agent_router
 from .storage import Storage, build_storage
 from .trade_match_agent import build_trade_match_suggestions
 
 
 app = FastAPI(title="ValueAI Fashion Analyzer", version="0.1.0")
+app.include_router(listing_agent_router)
 
 IMAGE_ROLE_VALUES = [
     "full_front", "full_back", "side_or_profile", "brand_label",
@@ -5662,6 +5664,19 @@ def create_listing(
     valuation_service: ValuationService = Depends(get_valuation_service),
     gpt_item_profiler=Depends(get_gpt_item_profiler),
 ):
+    return _create_listing_for_owner(payload, background_tasks, principal, db, settings,
+                                     valuation_service, gpt_item_profiler)
+
+
+def _create_listing_for_owner(payload, background_tasks, principal, db, settings,
+                              valuation_service, gpt_item_profiler, *, listing_id=None):
+    """Shared validated creation boundary; internal deterministic IDs enable retries."""
+    if listing_id:
+        existing = db.get_listing_by_id(listing_id)
+        if existing:
+            if existing.get('owner_subject') != principal.subject:
+                raise HTTPException(status_code=404, detail='Listing not found')
+            return ListingResponse.model_validate(existing)
     _require_subscription_entitlement(db, principal)
     normalized_image, normalized_images = _normalize_listing_media_for_storage(
         db=db,
@@ -5669,7 +5684,7 @@ def create_listing(
         images=_listing_storage_images(payload.images, payload.analysis, payload.listed_images),
         source_item_id=payload.source_item_id,
     )
-    listing_id = str(uuid.uuid4())
+    listing_id = listing_id or str(uuid.uuid4())
     owner_name = None
     if principal.auth_type == "clerk":
         owner_name = (

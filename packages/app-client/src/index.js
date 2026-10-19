@@ -339,6 +339,18 @@ export function createApiClient(options) {
     return post("/v1/listing-assistant/chat", { conversation_id, messages, context }, resolvedAuth);
   }
 
+  async function uploadListingAgentPhotos({ sessionId, requestId, expectedRevision, images }, auth = {}) {
+    const fd = new FormData();
+    fd.append('request_id', requestId);
+    fd.append('expected_revision', String(expectedRevision));
+    images.forEach((img, index) => {
+      if (img?.uri && !img?.file) fd.append('images', { uri: img.uri, name: img.fileName || `photo-${index + 1}.jpg`, type: img.mimeType || 'image/jpeg' });
+      else fd.append('images', img.file || img);
+    });
+    return requestFormData({ apiBaseUrl, path: `/v1/listing-agent/sessions/${encodeURIComponent(sessionId)}/photos`,
+      auth: await resolveAuth(auth), formData: fd, ...requestOptions });
+  }
+
   return {
     get,
     post,
@@ -352,6 +364,11 @@ export function createApiClient(options) {
     confirmImageUploads,
     queueListingAnalysis,
     chatWithListingAssistant,
+    uploadListingAgentPhotos,
+    getListingAgentSession: (id, auth = {}) => get(`/v1/listing-agent/sessions/${encodeURIComponent(id)}`, auth),
+    getActiveListingAgentSession: (auth = {}) => get('/v1/listing-agent/sessions/active', auth),
+    startListingAgentSession: (payload, auth = {}) => post('/v1/listing-agent/sessions', payload, auth),
+    turnWithListingAgent: (id, payload, auth = {}) => post(`/v1/listing-agent/sessions/${encodeURIComponent(id)}/turns`, payload, auth),
     chatWithAppAssistant: (payload, auth = {}) => post("/v1/app-assistant/chat", payload, auth),
     getActiveListingAssistantConversation: (auth = {}) => get("/v1/listing-assistant/conversations/active", auth),
     updateListingAssistantConversation: (conversationId, payload, auth = {}) => patch(`/v1/listing-assistant/conversations/${encodeURIComponent(conversationId)}`, payload, auth),

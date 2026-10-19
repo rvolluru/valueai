@@ -27,6 +27,7 @@ import InlinePhotoCarousel from './src/components/InlinePhotoCarousel';
 import { appendListingPhotos, remainingPhotoSlots } from './src/lib/listingPhotos.mjs';
 import * as ImageManipulator from 'expo-image-manipulator';
 import NotificationsScreen from './src/components/NotificationsScreen';
+import ListingAgentChat from './src/components/ListingAgentChat';
 import { nextGalleryIndex } from './src/lib/galleryPaging.mjs';
 import { withPhotoCheckTimeout } from '../../packages/app-client/src/photoCheck';
 import * as WebBrowser from 'expo-web-browser';
@@ -49,6 +50,7 @@ import { BodoniModa_700Bold } from '@expo-google-fonts/bodoni-moda/700Bold';
 WebBrowser.maybeCompleteAuthSession();
 
 const API_DEFAULT = process.env.EXPO_PUBLIC_API_BASE_URL || Constants.expoConfig?.extra?.apiBaseUrl || 'http://127.0.0.1:8000';
+const LISTING_AGENT_ENABLED = process.env.EXPO_PUBLIC_LISTING_AGENT_ENABLED === 'true';
 const CLERK_PUBLISHABLE_KEY = Constants.expoConfig?.extra?.clerkPublishableKey || process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY || '';
 const TEMP_SHOW_PROFILE_QUESTIONNAIRE_ON_LOGIN = false;
 const ANALYSIS_FAILED_MESSAGE = 'Analysis failed. Please manually update the listing details.';
@@ -3379,7 +3381,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
 
   useEffect(() => {
     if (!authReady()) return;
-    if (activeTab !== 'create' || editingListingId || images.length === 0) {
+    if (activeTab !== 'create' || editingListingId || images.length === 0 || (LISTING_AGENT_ENABLED && (createListingMode === 'chat' || appAssistantListingFlow))) {
       setCreateImageRoleCheck(null);
       setCreateImageRoleBusy(false);
       setCreateImageRoleError('');
@@ -3411,7 +3413,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
       }
     }, 500);
     return () => clearTimeout(timer);
-  }, [activeTab, editingListingId, images, apiClient, createImageRoleRetry]);
+  }, [activeTab, editingListingId, images, apiClient, createImageRoleRetry, createListingMode, appAssistantListingFlow]);
 
   useEffect(() => {
     if (!authReady()) return;
@@ -4891,7 +4893,8 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                 </View>
             )}
 
-            {!editingListingId && createListingMode === 'chat' ? (
+            {!editingListingId && createListingMode === 'chat' && LISTING_AGENT_ENABLED ? <ListingAgentChat client={apiClient} getAuth={authContext} images={images} onPickPhotos={pickImages} onClearPhotos={() => setImages([])} styles={styles} /> : null}
+            {!editingListingId && createListingMode === 'chat' && !LISTING_AGENT_ENABLED ? (
               <View style={styles.listingAssistantPanel}>
                 <View style={styles.listingChatHeader}>
                   <View style={styles.listingChatAvatar}><LogoJ small /></View>
@@ -6507,7 +6510,8 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                 {(message.shipments || []).map((shipment) => <View key={shipment.shipment_id} style={styles.appAssistantStatusRow}><Text style={styles.listingAssistantTitle}>{shipment.carrier || 'Shipment'} • {shipment.tracking_number || 'Tracking pending'}</Text><Text style={styles.helperText}>{shipment.tracking_status_details || shipment.tracking_status || shipment.status}</Text></View>)}
               </View>
             </View>)}
-            {appAssistantListingFlow ? <View style={styles.appAssistantListingFlow}>
+            {appAssistantListingFlow && LISTING_AGENT_ENABLED ? <ListingAgentChat client={apiClient} getAuth={authContext} images={images} onPickPhotos={pickImages} onClearPhotos={() => setImages([])} styles={styles} /> : null}
+            {appAssistantListingFlow && !LISTING_AGENT_ENABLED ? <View style={styles.appAssistantListingFlow}>
               {createImageRoleError ? <View style={styles.createGuidanceBlock}><Text style={styles.helperText}>{createImageRoleError}</Text>{renderManualPhotoCategory()}</View> : null}
               <View style={styles.appAssistantTurn}><View style={styles.listingChatAvatar}><LogoJ small /></View><View style={styles.appAssistantBubble}><Text style={styles.listingAssistantMessageText}>{images.length ? `${images.length}/6 photos added.` : 'Add clear photos of the item to begin.'}</Text><TouchableOpacity style={styles.secondaryBtnCompact} onPress={pickImages} disabled={images.length >= 6 || createImageRoleBusy}><Text style={styles.secondaryBtnText}>{images.length ? 'Add More Photos' : 'Choose Photos'}</Text></TouchableOpacity></View></View>
               {images.length > 0 ? <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.listingChatPhotoRow}>{images.map((asset, index) => <Image key={`${asset?.uri}-${index}`} source={{ uri: asset.uri }} style={styles.listingChatPhoto} />)}</ScrollView> : null}
@@ -6520,7 +6524,9 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
             {appAssistantBusy ? <ActivityIndicator color={theme.brand} /> : null}
             {appAssistantError ? <Text style={styles.error}>{appAssistantError}</Text> : null}
           </ScrollView>
+          {!(LISTING_AGENT_ENABLED && appAssistantListingFlow) ? <>
           <View style={styles.appAssistantComposer}><TextInput style={[styles.input, styles.appAssistantInput]} value={appAssistantInput} onChangeText={setAppAssistantInput} placeholder={appAssistantListingFlow ? 'Reply about your listing' : 'Ask Jouft anything'} multiline editable={!appAssistantBusy && !listingAssistantBusy} /><TouchableOpacity style={[styles.primaryBtnCompact, (!appAssistantInput.trim() || appAssistantBusy || listingAssistantBusy) && styles.primaryBtnDisabled]} onPress={() => { if (appAssistantListingFlow) { const value = appAssistantInput; setAppAssistantInput(''); sendListingAssistantMessage(value); } else sendAppAssistantMessage(); }} disabled={!appAssistantInput.trim() || appAssistantBusy || listingAssistantBusy}><Ionicons name="arrow-up" size={20} color="#fff" /></TouchableOpacity></View>
+          </> : null}
         </SafeAreaView>
       </Modal>
       <Modal

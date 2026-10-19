@@ -75,6 +75,22 @@ def _listing_pricing_models(db):
     db.commit()
 
 
+def _listing_agent_sessions(db):
+    db.execute("""CREATE TABLE IF NOT EXISTS listing_agent_sessions (
+        session_id TEXT PRIMARY KEY, owner_subject TEXT NOT NULL, revision INTEGER NOT NULL,
+        state_json TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)""")
+    db.execute("CREATE INDEX IF NOT EXISTS idx_listing_agent_owner ON listing_agent_sessions (owner_subject, updated_at)")
+    db.execute("""CREATE TABLE IF NOT EXISTS listing_agent_requests (
+        session_id TEXT NOT NULL, request_id TEXT NOT NULL, input_hash TEXT NOT NULL,
+        status TEXT NOT NULL, result_json TEXT, updated_at TEXT NOT NULL,
+        PRIMARY KEY (session_id, request_id))""")
+    db.execute("""CREATE TABLE IF NOT EXISTS listing_agent_tools (
+        session_id TEXT NOT NULL, tool_key TEXT NOT NULL, name TEXT NOT NULL,
+        status TEXT NOT NULL, result_json TEXT, updated_at TEXT NOT NULL,
+        PRIMARY KEY (session_id, tool_key))""")
+    db.commit()
+
+
 MIGRATIONS = (
     ("0001_application_schema", _baseline),
     ("0002_analysis_listing_links", _analysis_history),
@@ -84,6 +100,7 @@ MIGRATIONS = (
     ("0006_listing_product_identities", _listing_product_identities),
     ("0007_pricing_research_snapshots", _pricing_research_snapshots),
     ("0008_listing_pricing_models", _listing_pricing_models),
+    ("0009_listing_agent_sessions", _listing_agent_sessions),
 )
 
 
