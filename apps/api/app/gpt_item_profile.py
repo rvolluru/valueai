@@ -1467,9 +1467,21 @@ class GptItemProfiler:
         repaired = dict(profile)
         repair_log: dict[str, Any] = {}
 
+        # Logo-only OCR may win selection even when the batch pass read the full
+        # label. Use corroborated full-name text for missing-brand recovery.
+        if isinstance(label_ocr, dict):
+            batch = label_ocr.get('_batch_ocr_result')
+            batch_brand = cls._brand_from_label_ocr(batch)
+            batch_conf = cls._label_ocr_confidence(batch)
+            batch_raw = ' '.join(cls._label_ocr_raw_text(batch).casefold().split())
+            selected_brand = cls._brand_from_label_ocr(label_ocr)
+            if (batch_brand and batch_conf is not None and batch_conf >= .85
+                    and batch_brand.casefold() in batch_raw
+                    and (not selected_brand or selected_brand.casefold() == batch_brand.casefold())):
+                label_ocr = batch
         ocr_brand = cls._brand_from_label_ocr(label_ocr)
         ocr_conf = cls._label_ocr_confidence(label_ocr)
-        raw_ocr = cls._label_ocr_raw_text(label_ocr)
+        raw_ocr = ' '.join(cls._label_ocr_raw_text(label_ocr).split())
         if cls._text_is_missing(repaired.get("candidate_brand")):
             if ocr_brand and ocr_conf is not None and ocr_conf >= 0.85 and ocr_brand.casefold() in raw_ocr.casefold():
                 repaired["candidate_brand"] = ocr_brand

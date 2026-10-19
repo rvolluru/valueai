@@ -95,6 +95,41 @@ def test_key_ignores_photo_order_but_not_photos_category_brand_or_version():
     assert original != key([photo(b'a'), photo(b'b')], model='new-model')
 
 
+def test_strong_label_identity_with_neutral_model_confidence_survives_condition_change(url, monkeypatch):
+    verified = identity()
+    verified['model_identification']['confidence'] = .5
+    verified['label_ocr'] = {'brand_text': 'RHODE', 'confidence': .99,
+                             'raw_visible_text': 'RHODE'}
+    first = profiler(url)
+    monkeypatch.setattr(first, '_call_gemini', lambda **kwargs: verified)
+    monkeypatch.setattr(first, '_call_openai_valuation', lambda **kwargs: {})
+    first.profile_item(**args())
+    second = profiler(url)
+    monkeypatch.setattr(second, '_call_gemini', lambda **kwargs: pytest.fail('Identity must survive condition change'))
+    monkeypatch.setattr(second, '_call_openai_valuation', lambda **kwargs: {})
+    changed = args()
+    changed['condition_grade'] = 'NewWithTags'
+    assert second.profile_item(**changed).profile['_workflow']['identity_reuse']['reused'] is True
+
+
+def test_neutral_model_without_readable_label_is_not_persistable():
+    from app.product_identity import reusable_identity
+    value = identity()
+    value['model_identification']['confidence'] = .5
+    assert not reusable_identity(value)
+    value['label_ocr'] = {'brand_text': 'RHODE', 'confidence': .99, 'raw_visible_text': 'R'}
+    assert not reusable_identity(value)
+
+
+def test_missing_brand_recovers_from_full_batch_label_not_logo():
+    result = GptItemProfiler._repair_structured_profile_from_grounded_evidence(
+        {'candidate_brand': None, 'candidate_model': None}, grounded_text='',
+        label_ocr={'brand_text': 'Louis Vuitton', 'confidence': .95, 'raw_visible_text': 'LV',
+                   '_batch_ocr_result': {'brand_text': 'LOUIS VUITTON', 'confidence': .99,
+                                         'raw_visible_text': 'LOUIS VUITTON\nPARIS'}})
+    assert result['candidate_brand'] == 'LOUIS VUITTON'
+
+
 def test_concurrent_jobs_identify_once(url):
     entered, release = threading.Event(), threading.Event()
     calls, results, failures = [], [], []
