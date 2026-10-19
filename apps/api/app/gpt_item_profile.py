@@ -27,6 +27,8 @@ class GptItemProfileResult:
 
 class GptItemProfiler:
     controlled_research_enabled = False
+    pricing_model_routing_enabled = False
+    _pricing_assignment_bound = False
     TRUSTED_PRICING_DOMAINS = RESALE_DOMAINS
     def __init__(
         self,
@@ -51,6 +53,8 @@ class GptItemProfiler:
         database_url: str | None = None,
         controlled_research_enabled: bool = False,
         controlled_research_ttl_s: int = 604800,
+        pricing_model_routing_enabled: bool = False,
+        new_listing_pricing_model: str = 'gpt-6.1-sol',
     ):
         self.enabled = enabled
         self.database_url = database_url
@@ -59,6 +63,9 @@ class GptItemProfiler:
         self.provider_order = [p.strip().lower() for p in provider_order.split(",") if p.strip()] or ["gemini", "openai"]
         self.openai_api_key = openai_api_key
         self.openai_model = openai_model
+        self.ocr_openai_model = openai_model
+        self.pricing_model_routing_enabled = pricing_model_routing_enabled
+        self.new_listing_pricing_model = new_listing_pricing_model
         self.gemini_api_key = gemini_api_key
         self.gemini_model = gemini_model
         self.vertex_search_enabled = vertex_search_enabled
@@ -73,6 +80,38 @@ class GptItemProfiler:
         self.image_detail = image_detail if image_detail in {"low", "high", "auto"} else "auto"
         self.reasoning_effort = reasoning_effort.strip().lower() if reasoning_effort else ""
         self._profile_cache: dict[str, dict[str, Any]] = {}
+
+    def for_listing(self, listing_id, owner_subject):
+        from .pricing_models import resolve_pricing_model
+        if not self.database_url:
+            raise ValueError('Sticky pricing requires a persistent database')
+        assignment = resolve_pricing_model(self.database_url, listing_id, owner_subject,
+            new_model=self.new_listing_pricing_model)
+        scoped = copy.copy(self)
+        scoped.openai_model = assignment['model']
+        scoped.pricing_model_assignment = assignment
+        scoped._pricing_assignment_bound = True
+        scoped._profile_cache = {}
+        return scoped
+
+    def accept_reused_pricing_model(self, *, listing_id, owner_subject, analysis):
+        from .pricing_models import analysis_pricing_model, resolve_pricing_model, LEGACY_MODEL
+        if not self.pricing_model_routing_enabled:
+            return True
+        inherited = analysis_pricing_model(analysis)
+        if inherited not in {LEGACY_MODEL, self.openai_model, self.new_listing_pricing_model}:
+            return False
+        assignment = resolve_pricing_model(self.database_url, listing_id, owner_subject,
+            new_model=self.new_listing_pricing_model, inherited_model=inherited)
+        if assignment['model'] != inherited:
+            return False
+        # Copy the source model's provenance, not its listing/owner binding.
+        profile = analysis.setdefault('item_profile', {})
+        profile.setdefault('_workflow', {})['pricing_model_assignment'] = copy.deepcopy(assignment)
+        workflow = (((analysis.get('debug') or {}).get('enrichment') or {}).get('gpt_item_profile') or {}).get('workflow')
+        if isinstance(workflow, dict):
+            workflow['pricing_model_assignment'] = copy.deepcopy(assignment)
+        return True
 
     def profile_item(
         self,
@@ -90,6 +129,15 @@ class GptItemProfiler:
     ) -> GptItemProfileResult:
         if not self.enabled:
             return GptItemProfileResult(profile=None, enabled=False, called=False)
+        if self.pricing_model_routing_enabled and listing_id and owner_subject and not self._pricing_assignment_bound:
+            scoped = self.for_listing(listing_id, owner_subject)
+            result = scoped.profile_item(images=images, brand_name=brand_name, category=category,
+                item_size=item_size, condition_grade=condition_grade, condition_source=condition_source,
+                item_description=item_description, refresh_pricing=refresh_pricing,
+                listing_id=listing_id, owner_subject=owner_subject)
+            if isinstance(result.profile, dict):
+                result.profile.setdefault('_workflow', {})['pricing_model_assignment'] = copy.deepcopy(scoped.pricing_model_assignment)
+            return result
         if self.controlled_research_enabled and not (
                 self.database_url and listing_id and owner_subject and self.openai_api_key and self.gemini_api_key
                 and self.provider_order[0] in {'hybrid', 'gemini_openai', 'gemini_openai_valuation'}):
@@ -586,7 +634,7 @@ class GptItemProfiler:
             "required": ["brand_text", "confidence", "evidence_image_id", "raw_visible_text", "rationale"],
         }
         return {
-            "model": self.openai_model,
+            "model": getattr(self, 'ocr_openai_model', self.openai_model),
             "input": [
                 {
                     "role": "user",
@@ -1706,6 +1754,10 @@ class GptItemProfiler:
 
     def estimate_new_from_like_new(self, *, item_profile: dict, reference: dict) -> dict | None:
         """One pricing-only retry; existing identification remains authoritative."""
+        assignment = (item_profile.get('_workflow') or {}).get('pricing_model_assignment') or {}
+        if self.pricing_model_routing_enabled and assignment and not self._pricing_assignment_bound:
+            return self.for_listing(assignment['listing_id'], assignment['owner_subject']).estimate_new_from_like_new(
+                item_profile=item_profile, reference=reference)
         if not self.openai_api_key:
             return None
         instruction = (

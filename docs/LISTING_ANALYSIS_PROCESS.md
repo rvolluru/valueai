@@ -10,6 +10,14 @@ Parallel pricing/mannequin/cleanup processing remains enabled. Existing listing
 values are not automatically recalculated by deployment.
 **Local, not deployed:** policy `same-brand-comparables-v5` adds enforced OpenAI
 search-domain restrictions and server-side source-role validation described below.
+**Local routing rollout, not deployed to production:** optional sticky pricing-model
+cohorts use `GPT_PRICING_MODEL_ROUTING_ENABLED` (default false) and
+`GPT_NEW_LISTING_PRICING_MODEL` (default `gpt-6.1-sol`). Existing listings are
+grandfathered to GPT-5 by explicit migration `0008_listing_pricing_models`; new
+listings requiring fresh pricing use Sol when routing is enabled. Gemini and chat
+models are unchanged. Verified locally October 18: routing is enabled, 136 existing
+listings were pinned to GPT-5, Sol model access returned HTTP 200, and the restarted
+backend passed its health check. Production configuration has not changed.
 **Deployed October 18, 2026, release `238f0d3`, disabled by default:** `GPT_CONTROLLED_RESEARCH_ENABLED=true` enables
 the generalized per-site research and persisted snapshot path described in section 8.
 Migration `0007_pricing_research_snapshots` must run explicitly before app startup.
@@ -274,6 +282,31 @@ The release regression test exercises upload/create/background-job/readback with
 different source/new description text, checks identical reused value and condition
 bands, and fails if fresh model analysis starts. The current deployment does not
 automatically reconcile existing listings whose earlier independent estimates differ.
+
+### Sticky pricing-model assignment (local rollout only)
+
+Complete-analysis reuse still runs before a new model is selected. With routing
+enabled, an eligible new duplicate inherits its reused analysis's recorded pricing
+model (legacy analyses without model metadata are treated as GPT-5), without a
+model call. Source pricing-model provenance is rebound to the receiving listing
+and owner. An already pinned listing does not accept cached pricing from another
+model cohort; it retains its assigned model for fresh pricing instead.
+
+For fresh pricing, `listing_pricing_models` persists the first assignment with
+listing ID, owner, model, reason and timestamp. Migration 0008 pins every existing
+listing to GPT-5 once; listings created afterward are assigned the configured new
+model on their first fresh pricing request. Atomic first-writer assignment handles
+concurrent jobs. Retries, photo/condition changes and explicit reanalysis do not
+change the assignment. Provider failures do not silently switch cohorts. The model
+is selected on a per-request profiler copy rather than mutating the shared profiler.
+Pricing repair and the New-from-Like-New follow-up use that same model. Gemini
+identification and the existing OpenAI label-OCR fallback model remain unchanged.
+Saved profiles record `_workflow.pricing_model_assignment` for auditability.
+
+Unscoped/standalone analysis retains the base configured GPT-5 model; sticky routing
+requires a real listing and validated owner. Default-off configuration preserves
+the existing production behavior. This rollout does not reprice existing listings,
+enable controlled research, or promise identical results between model cohorts.
 
 ### Saved identity for the same listing
 
@@ -771,6 +804,7 @@ Primary source locations:
   value selection, manual review, generation and cleanup helpers.
 - `apps/api/app/gpt_item_profile.py`: identification/OCR, research, pricing prompts and structured profiles.
 - `apps/api/app/product_identity.py`: listing-scoped identification reuse.
+- `apps/api/app/pricing_models.py`: persistent pricing-model cohorts and ownership checks.
 - `apps/api/app/controlled_research.py`: optional scheduled research, evidence filtering and scoped snapshots.
 - `apps/api/app/listing_pipeline.py`: input assembly and the three parallel branches.
 - `apps/api/app/mannequin_fidelity.py`: planning, clothing coverage and fidelity review.

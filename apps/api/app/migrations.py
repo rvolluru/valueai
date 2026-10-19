@@ -63,6 +63,18 @@ def _pricing_research_snapshots(db):
     db.commit()
 
 
+def _listing_pricing_models(db):
+    db.execute("""CREATE TABLE IF NOT EXISTS listing_pricing_models (
+        listing_id TEXT PRIMARY KEY, owner_subject TEXT NOT NULL,
+        model TEXT NOT NULL, reason TEXT NOT NULL, assigned_at TEXT NOT NULL)""")
+    # All existing listings belong to the pre-rollout GPT-5 cohort. Migration is
+    # explicit and one-time; never repeat this backfill in request/job code.
+    db.execute("INSERT INTO listing_pricing_models (listing_id,owner_subject,model,reason,assigned_at) "
+        f"SELECT listing_id,owner_subject,'gpt-5','legacy_existing_listing',{db.param} FROM listings WHERE 1=1 "
+        "ON CONFLICT (listing_id) DO NOTHING", (utc_now_iso(),))
+    db.commit()
+
+
 MIGRATIONS = (
     ("0001_application_schema", _baseline),
     ("0002_analysis_listing_links", _analysis_history),
@@ -71,6 +83,7 @@ MIGRATIONS = (
     ("0005_product_identities", _product_identities),
     ("0006_listing_product_identities", _listing_product_identities),
     ("0007_pricing_research_snapshots", _pricing_research_snapshots),
+    ("0008_listing_pricing_models", _listing_pricing_models),
 )
 
 

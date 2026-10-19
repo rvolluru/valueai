@@ -47,6 +47,15 @@ Next manual review: October 23, 2026. Git history versions all decisions.
 
 ## Evaluation gate
 
+October 18 local-only rollout: user-approved sticky pricing cohorts keep existing
+listings on GPT-5, allow genuinely new listings requiring fresh pricing to use
+`gpt-6.1-sol`, and retain that assignment for later reanalysis. Eligible duplicates
+reuse existing evidence/model rather than forcing a new Sol call. The default
+feature flag remains off and production has not switched models. This limited
+local rollout does not constitute a broad production promotion or remove the
+evaluation/migration requirements below. See the canonical process guide for the
+assignment, provenance and retry rules.
+
 Use 30–50 permissioned examples spanning categories, all three conditions,
 missing evidence, weak identity, manual-review cases and prior failures. Keep
 photos, identity, condition, prompts and reasoning fixed when comparing pricing

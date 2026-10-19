@@ -122,6 +122,10 @@ def _pricing(db, snapshot, files, settings, valuation_service, gpt_item_profiler
                     str((value.get('model_identification') or {}).get('name') or '').strip().casefold())
         if identity_name(profile) != identity_name(canonical):
             cached = None
+    if cached and hasattr(gpt_item_profiler, 'accept_reused_pricing_model'):
+        if not gpt_item_profiler.accept_reused_pricing_model(listing_id=snapshot['listing_id'],
+                owner_subject=snapshot['owner_subject'], analysis=cached['analysis']):
+            cached = None
     if cached:
         cached['analysis'].setdefault('debug', {})['analysis_execution'] = {
             'job_id': snapshot['job_id'], 'listing_id': snapshot['listing_id']}

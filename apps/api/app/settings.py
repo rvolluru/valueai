@@ -78,6 +78,8 @@ class Settings(BaseSettings):
     gpt_item_profile_enabled: bool = True
     gpt_item_profile_provider_order: str = "hybrid,gemini,openai"
     gpt_item_profile_model: str = "gpt-5"
+    gpt_pricing_model_routing_enabled: bool = False
+    gpt_new_listing_pricing_model: str = "gpt-6.1-sol"
     gpt_item_profile_gemini_model: str = "gemini-3.8-flash"
     gpt_item_profile_timeout_s: float = 120.0
     gpt_item_profile_max_images: int = Field(default=6, ge=1, le=6)

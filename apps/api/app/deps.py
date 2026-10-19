@@ -95,6 +95,8 @@ def get_gpt_item_profiler() -> GptItemProfiler:
         provider_order=s.gpt_item_profile_provider_order,
         openai_api_key=s.openai_api_key,
         openai_model=s.gpt_item_profile_model,
+        pricing_model_routing_enabled=s.gpt_pricing_model_routing_enabled,
+        new_listing_pricing_model=s.gpt_new_listing_pricing_model,
         gemini_api_key=s.gemini_api_key,
         gemini_model=s.gpt_item_profile_gemini_model,
         timeout_s=s.gpt_item_profile_timeout_s,
