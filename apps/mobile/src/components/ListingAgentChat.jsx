@@ -1,8 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Image, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { createListingAgentController } from '../../../../packages/app-client/src/listingAgent';
 
-export default function ListingAgentChat({ client, getAuth, images, onPickPhotos, styles, onClearPhotos }) {
+export default function ListingAgentChat({ client, getAuth, images, onPickPhotos, styles, onClearPhotos, apiBaseUrl }) {
   const [view, setView] = useState({ session: null, busy: false, error: '' });
   const [text, setText] = useState('');
   const auth = useRef(getAuth);
@@ -21,9 +21,15 @@ export default function ListingAgentChat({ client, getAuth, images, onPickPhotos
     <Text style={styles.helperText}>Create a private draft. Nothing is published from this chat.</Text>
     {session ? <>
       <Text style={styles.helperText}>{session.photos.length}/6 saved photos · {session.stage.replaceAll('_', ' ')}</Text>
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }} accessibilityLabel="Saved photos">
+        {session.photos.map((photo, index) => <View key={photo.image_id} style={{ width: '30%' }}>
+          <Image source={{ uri: new URL(photo.url, apiBaseUrl).href }} accessibilityLabel={`Saved item photo ${index + 1}`} style={{ width: '100%', aspectRatio: 1 }} />
+          {!session.listing_id ? button(`Remove photo ${index + 1}`, () => controller.removePhoto(photo.image_id)) : null}
+        </View>)}
+      </View>
       {!session.listing_id ? <View>
-        {button(images.length ? 'Add more photos' : 'Choose photos', onPickPhotos, images.length >= 6)}
-        <Text style={styles.helperText}>{images.length} selected{images.length ? ', not uploaded yet. Press “Use these photos” before replying.' : '.'} Using photos replaces the complete saved set.</Text>
+        {button(images.length ? 'Add more photos' : 'Choose photos', onPickPhotos, session.photos.length >= 6 || images.length >= 6)}
+        <Text style={styles.helperText}>{images.length} selected{images.length ? ', not uploaded yet. Press “Use these photos” before replying.' : '.'} Existing photos stay saved. Up to 6 saved photos total.</Text>
         {button('Use these photos', () => controller.upload(images, onClearPhotos), !images.length)}
         {images.length ? button('Clear selected photos', onClearPhotos) : null}
       </View> : null}

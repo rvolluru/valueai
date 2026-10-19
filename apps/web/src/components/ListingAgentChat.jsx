@@ -26,12 +26,20 @@ export default function ListingAgentChat({ apiBaseUrl, apiKey, getBearerToken, c
     {!session && !view.busy && <button onClick={() => controller.retry()}>Connect</button>}
     {session && <>
       <p>{session.photos.length}/6 photos saved · {session.stage.replaceAll('_', ' ')}</p>
+      <div className="listing-agent-photos" aria-label="Saved photos">
+        {session.photos.map((photo, index) => <figure key={photo.image_id}>
+          <img src={new URL(photo.url, apiBaseUrl || window.location.origin).href} alt={`Saved item photo ${index + 1}`} />
+          {!session.listing_id && <button type="button" disabled={view.busy} aria-label={`Remove photo ${index + 1}`} onClick={() => controller.removePhoto(photo.image_id)}>Remove</button>}
+        </figure>)}
+      </div>
       {!session.listing_id && <div>
-        <label>Choose the complete photo set (JPEG, PNG or WebP, up to 6)
-          <input ref={fileInput} type="file" accept="image/jpeg,image/png,image/webp" multiple disabled={view.busy} onChange={event => setFiles(Array.from(event.target.files || []).slice(0, 6))} />
+        <label>Add photos (JPEG, PNG or WebP, up to 6 saved in total)
+          <input ref={fileInput} type="file" accept="image/jpeg,image/png,image/webp" multiple disabled={view.busy || session.photos.length >= 6} onChange={event => setFiles(Array.from(event.target.files || []))} />
         </label>
-        {!!files.length && <p role="status">{files.length} photos selected, not uploaded yet. Press “Use these photos” before replying. This replaces the complete saved photo set.</p>}
+        {!!files.length && <p role="status">{files.length} photos selected, not uploaded yet. Press “Use these photos” before replying. Existing photos stay saved.</p>}
+        {session.photos.length >= 6 && <p>All 6 photo slots are filled. Remove a photo to add another.</p>}
         <button disabled={view.busy || !files.length} onClick={() => controller.upload(files, () => { setFiles([]); if (fileInput.current) fileInput.current.value = '' })}>Use these photos</button>
+        {!!files.length && <button type="button" disabled={view.busy} onClick={() => { setFiles([]); if (fileInput.current) fileInput.current.value = '' }}>Clear selected photos</button>}
       </div>}
       <div className="listing-assistant-messages" aria-live="polite">
         {session.messages.map((message, index) => <div key={index} className={`listing-assistant-message ${message.role}`}><p>{message.content}</p></div>)}

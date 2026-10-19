@@ -222,6 +222,30 @@ def test_model_photo_question_separates_optional_from_required(fixture):
     assert 'You must provide' not in result['reply']
 
 
+@pytest.mark.parametrize('field', ['photos', 'condition', 'details'])
+def test_recommended_photos_never_become_a_blocking_question(fixture, field):
+    db, store, state, settings, services = fixture
+    state.update(facts=dict(category='shoes'), evidence=dict(status='checked', missing_required=[],
+        missing_recommended=['size_or_material_label', 'condition_or_wear']))
+    store.save(state)
+    model = scripted(('ask_user', dict(field=field, question='Upload wear photos or tell me which recommended views are unavailable.')))
+    result = run(Agent(store, settings, services, model).turn(state['session_id'], turn(state, message='Continue')))
+    assert result['pending']['field'] == 'condition'
+    assert 'unavailable' not in result['reply']
+    assert services.created == 0
+
+
+def test_recommended_photos_do_not_block_ready_summary(fixture):
+    db, store, state, settings, services = fixture
+    state.update(facts=dict(category='shoes', condition='New', size='8'),
+        evidence=dict(status='checked', missing_required=[], missing_recommended=['condition_or_wear']))
+    store.save(state)
+    model = scripted(('ask_user', dict(field='photos', question='Upload optional wear photos.')))
+    result = run(Agent(store, settings, services, model).turn(state['session_id'], turn(state)))
+    assert result['pending']['type'] == 'confirm_analysis'
+    assert services.created == services.started == 0
+
+
 def test_missing_views_block_confirmation_and_waiver_needs_explicit_evidence(fixture):
     db, store, state, settings, services = fixture
     state.update(facts=dict(category='clothes', condition='New', size='M'),

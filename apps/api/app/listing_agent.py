@@ -35,8 +35,8 @@ def photo_question(state):
     if not missing:
         return None
     question = ('Required before continuing: ' + ', '.join(map(label, missing)) + '. '
-                f'I currently have {len(state["photos"])} saved photos. Choose the complete photo set '
-                '(including the new view), then press “Use these photos”. If a required view cannot be provided, tell me which one.')
+                f'I currently have {len(state["photos"])} saved photos. Choose the missing photos, '
+                'then press “Use these photos” to add them. Existing photos stay saved. If a required view cannot be provided, tell me which one.')
     optional = evidence.get('missing_recommended', [])
     if optional:
         question += ' Optional, not required to continue: ' + ', '.join(map(label, optional)) + '.'
@@ -309,6 +309,18 @@ class Agent:
             if state['stage'] in {'analyzing', 'review_ready', 'failed'}:
                 raise ValueError('Use the analysis status; do not ask intake questions now')
             question = photo_question(state) if args.field == 'photos' else None
+            if not photo_question(state) and (state.get('evidence') or {}).get('status') == 'checked':
+                # Recommendations must never become a required question/waiver loop.
+                missing = next(((key, prompt) for key, prompt in (
+                    ('category', 'Which category is your item: clothes, shoes, handbag, or accessories?'),
+                    ('condition', 'What is the condition: New with tags, New, or Like new?'),
+                    ('size', 'What is the item size?')) if not state['facts'].get(key)), None)
+                if missing:
+                    args = Question(field=missing[0], question=missing[1])
+                    question = args.question
+                else:
+                    await self.recover_next_step(state, turn)
+                    return {'paused': True, 'pending': state.get('pending'), 'stage': state['stage']}
             state['pending'] = dict(type='question', id=str(uuid.uuid4()), field=args.field,
                                     question=question or args.question, version=self.version(state))
             return {'paused': True, 'pending': state['pending']}

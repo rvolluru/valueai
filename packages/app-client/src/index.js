@@ -365,6 +365,7 @@ export function createApiClient(options) {
     queueListingAnalysis,
     chatWithListingAssistant,
     uploadListingAgentPhotos,
+    removeListingAgentPhoto: (id, payload, auth = {}) => post(`/v1/listing-agent/sessions/${encodeURIComponent(id)}/photos/remove`, payload, auth),
     getListingAgentSession: (id, auth = {}) => get(`/v1/listing-agent/sessions/${encodeURIComponent(id)}`, auth),
     getActiveListingAgentSession: (auth = {}) => get('/v1/listing-agent/sessions/active', auth),
     startListingAgentSession: (payload, auth = {}) => post('/v1/listing-agent/sessions', payload, auth),

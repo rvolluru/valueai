@@ -20,6 +20,10 @@ test('agent distinguishes selected photos from uploaded photos before accepting 
   assert.match(mobile, /not uploaded yet/);
   assert.match(mobile, /controller.upload\(images, onClearPhotos\)/);
   assert.match(mobile, /!text.trim\(\) \|\| !!images.length/);
+  assert.match(web, /aria-label="Saved photos"/);
+  assert.match(web, /controller.removePhoto\(photo.image_id\)/);
+  assert.match(mobile, /controller.removePhoto\(photo.image_id\)/);
+  assert.doesNotMatch(web + mobile, /replaces the complete saved/);
 });
 test('photo role labels take their own row instead of covering Set Hero', () => {
   const badge = css.match(/\.listing-image-role-badge\s*\{([^}]+)\}/)[1];

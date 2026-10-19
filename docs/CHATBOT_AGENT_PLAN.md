@@ -22,7 +22,7 @@ legacy path; the new path is described in the implementation status section.
 - Human approval is an explicit confirmation control tied to the exact current
   photos, proposed facts, coverage and waived views. Saying "yes" in prose alone
   cannot grant mutation permissions. Uploaded photos are revalidated from storage
-  before creation; photo replacement invalidates coverage/waivers/approval and
+  before creation; adding/removing photos invalidates coverage/waivers/approval and
   removes an old photo-inferred category.
 - Model/provider calls are stubbed in automated tests. Coverage timeout skips only
   coverage; category must still be supplied and full analysis still starts.
@@ -50,8 +50,10 @@ results. Polling/returning to chat resumes job status without another model call
 it does not yet run a proactive post-analysis model conversation or push callback.
 After a draft is created, corrections and publication use the existing My Closet
 editor, not agent mutation tools. The new agent has no publish/trade tool. A new
-session is an explicit separate draft. Pre-draft uploads replace the full selected
-photo set (1–6 JPEG/PNG/WebP, up to 15 MB and 40 MP each); request IDs preserve
+session is an explicit separate draft. Pre-draft uploads add to the saved photo
+set, deduplicated by content hash (up to 6 JPEG/PNG/WebP, 15 MB and 40 MP each).
+Both clients show saved thumbnails and allow explicit removal before draft creation;
+request IDs preserve
 network-retry idempotency. Unresolved pricing is displayed as needs-review, not $0.
 
 Live provider quality/latency, authenticated browser walkthroughs and physical
@@ -95,6 +97,25 @@ and a failed model turn after a successful upload. These are stubbed provider
 checks, not a rerun of the member's live session.
 
 ## First delivery boundary
+
+### Additive photo follow-up (local only)
+
+Uploads now append unique originals rather than replacing earlier photos. The
+server enforces six total before storing additions, and duplicate-only uploads
+preserve evidence and approval. Explicit removal is session/owner scoped,
+revision-checked and retry-safe via `POST /v1/listing-agent/sessions/{id}/photos/remove`.
+It detaches the photo from this draft; it does not delete the stored media object.
+Real photo changes invalidate coverage, waivers, approval and photo-inferred
+category. Clients automatically ask the agent to reassess after additions/removals.
+If required coverage is complete, backend question handling asks only for missing
+category/condition/size or presents confirmation, even if the model tries to ask
+for optional photos or optional-view waivers. No standard listing path changes.
+
+Verification: 515 Python tests and 40 JavaScript tests passed, plus the web build
+and offline iOS JavaScript export. Added checks cover additive/deduplicated uploads,
+the six-photo cap, duplicate-only evidence retention, owner/revision-scoped removal,
+last-photo removal, retries and post-creation restrictions, and optional-only photo
+requests advancing to facts or confirmation. Provider calls remain stubbed.
 
 Create one owner-scoped, private, review-ready listing draft through conversation.
 Publication, marketplace research/matching and trade execution remain outside the

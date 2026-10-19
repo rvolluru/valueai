@@ -4893,7 +4893,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                 </View>
             )}
 
-            {!editingListingId && createListingMode === 'chat' && LISTING_AGENT_ENABLED ? <ListingAgentChat client={apiClient} getAuth={authContext} images={images} onPickPhotos={pickImages} onClearPhotos={() => setImages([])} styles={styles} /> : null}
+            {!editingListingId && createListingMode === 'chat' && LISTING_AGENT_ENABLED ? <ListingAgentChat client={apiClient} apiBaseUrl={apiBaseUrl} getAuth={authContext} images={images} onPickPhotos={pickImages} onClearPhotos={() => setImages([])} styles={styles} /> : null}
             {!editingListingId && createListingMode === 'chat' && !LISTING_AGENT_ENABLED ? (
               <View style={styles.listingAssistantPanel}>
                 <View style={styles.listingChatHeader}>
@@ -6510,7 +6510,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                 {(message.shipments || []).map((shipment) => <View key={shipment.shipment_id} style={styles.appAssistantStatusRow}><Text style={styles.listingAssistantTitle}>{shipment.carrier || 'Shipment'} • {shipment.tracking_number || 'Tracking pending'}</Text><Text style={styles.helperText}>{shipment.tracking_status_details || shipment.tracking_status || shipment.status}</Text></View>)}
               </View>
             </View>)}
-            {appAssistantListingFlow && LISTING_AGENT_ENABLED ? <ListingAgentChat client={apiClient} getAuth={authContext} images={images} onPickPhotos={pickImages} onClearPhotos={() => setImages([])} styles={styles} /> : null}
+            {appAssistantListingFlow && LISTING_AGENT_ENABLED ? <ListingAgentChat client={apiClient} apiBaseUrl={apiBaseUrl} getAuth={authContext} images={images} onPickPhotos={pickImages} onClearPhotos={() => setImages([])} styles={styles} /> : null}
             {appAssistantListingFlow && !LISTING_AGENT_ENABLED ? <View style={styles.appAssistantListingFlow}>
               {createImageRoleError ? <View style={styles.createGuidanceBlock}><Text style={styles.helperText}>{createImageRoleError}</Text>{renderManualPhotoCategory()}</View> : null}
               <View style={styles.appAssistantTurn}><View style={styles.listingChatAvatar}><LogoJ small /></View><View style={styles.appAssistantBubble}><Text style={styles.listingAssistantMessageText}>{images.length ? `${images.length}/6 photos added.` : 'Add clear photos of the item to begin.'}</Text><TouchableOpacity style={styles.secondaryBtnCompact} onPress={pickImages} disabled={images.length >= 6 || createImageRoleBusy}><Text style={styles.secondaryBtnText}>{images.length ? 'Add More Photos' : 'Choose Photos'}</Text></TouchableOpacity></View></View>

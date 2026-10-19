@@ -45,6 +45,54 @@ def test_disabled_route_and_auth_required(client, monkeypatch):
     assert client.post('/v1/listing-agent/sessions', headers=AUTH, json={'request_id': 'x'}).status_code == 404
 
 
+def test_additive_photos_deduplicate_enforce_limit_and_remove_safely(client):
+    state = upload(client, start(client)).json()
+    first = state['photos'][0]
+    path = f'/v1/listing-agent/sessions/{state["session_id"]}/photos'
+    for i, color in enumerate(['blue', 'green', 'yellow', 'black', 'white']):
+        response = upload(client, state, photo(color), f'add-{i}')
+        assert response.status_code == 200, response.text
+        state = response.json()
+    assert len(state['photos']) == 6 and state['photos'][0] == first
+    assert upload(client, state, photo('purple'), 'overflow').status_code == 400
+    # Duplicate content at capacity is harmless, and replay does not append again.
+    duplicate = upload(client, state, photo(), 'duplicate')
+    assert duplicate.status_code == 200, duplicate.text
+    assert len(duplicate.json()['photos']) == 6
+    assert upload(client, state, photo(), 'duplicate').json() == duplicate.json()
+    state = duplicate.json()
+    payload = dict(request_id='remove', expected_revision=state['revision'], image_id=first['image_id'])
+    removed = client.post(path + '/remove', headers=AUTH, json=payload)
+    assert removed.status_code == 200, removed.text
+    assert len(removed.json()['photos']) == 5
+    assert first not in removed.json()['photos']
+    assert removed.json()['evidence'] is None and removed.json()['pending'] is None
+    assert client.post(path + '/remove', headers=AUTH, json=payload).json() == removed.json()
+    assert client.post(path + '/remove', headers=AUTH, json=dict(request_id='stale',
+        expected_revision=state['revision'], image_id=state['photos'][1]['image_id'])).status_code == 409
+    assert upload(client, removed.json(), photo('purple'), 'new-slot').status_code == 200
+
+
+def test_remove_photo_is_owner_scoped_and_allows_removing_last_photo(client):
+    from app.auth import AuthPrincipal, get_request_principal
+    from app.main import app
+    state = upload(client, start(client)).json()
+    path = f'/v1/listing-agent/sessions/{state["session_id"]}/photos/remove'
+    payload = dict(request_id='remove-last', expected_revision=state['revision'], image_id=state['photos'][0]['image_id'])
+    app.dependency_overrides[get_request_principal] = lambda: AuthPrincipal(auth_type='clerk', subject='other', claims={})
+    try:
+        assert client.post(path, headers=AUTH, json=payload).status_code == 404
+    finally:
+        app.dependency_overrides.pop(get_request_principal, None)
+    missing = dict(payload, request_id='missing', image_id='not-in-this-session')
+    assert client.post(path, headers=AUTH, json=missing).status_code == 404
+    assert client.post(path, headers=AUTH, json=missing).status_code == 404
+    result = client.post(path, headers=AUTH, json=payload)
+    assert result.status_code == 200, result.text
+    assert result.json()['photos'] == []
+    assert not result.json()['analysis_confirmed']
+
+
 def test_real_photo_upload_invalidates_missing_sole_and_rechecks_once(client, monkeypatch):
     from app import listing_agent, listing_agent_routes
     assessed = []
@@ -129,6 +177,8 @@ def test_real_private_draft_and_job_are_idempotent_and_can_resume(client, monkey
     assert resumed['listing']['estimated_value'] == 123
     assert resumed['listing']['status'] != 'Active'
     assert upload(client, resumed, request='changed-after-draft').status_code == 409
+    assert client.post(path + '/photos/remove', headers=AUTH, json=dict(request_id='remove-after-draft',
+        expected_revision=resumed['revision'], image_id=uploaded['photos'][0]['image_id'])).status_code == 409
     db.create_listing_analysis_job(job_id='external-edit-job', listing_id=running['listing_id'], owner_subject='api-key')
     handed_off = client.get(path, headers=AUTH).json()
     assert handed_off['stage'] == 'closed'
@@ -233,7 +283,7 @@ def test_owner_scoping_and_stale_confirmation(client, monkeypatch):
     assert result.status_code == 409
 
 
-def test_photo_replacement_invalidates_coverage_and_approval(client):
+def test_photo_addition_invalidates_coverage_and_approval(client):
     from app.deps import get_settings
     from app.listing_agent import Store
     from app.db import Database
@@ -245,9 +295,16 @@ def test_photo_replacement_invalidates_coverage_and_approval(client):
         saved = store.load(state['session_id'])
         saved.update(evidence={'status': 'checked'}, waivers=['brand_label'], approved='old', pending={'type': 'confirm_analysis'})
         store.save(saved)
+        duplicate = upload(client, saved, photo(), 'duplicate-preserves-evidence')
+        assert duplicate.status_code == 200, duplicate.text
+        saved = store.load(state['session_id'])
+        assert saved['evidence'] == {'status': 'checked'}
+        assert saved['approved'] == 'old' and saved['waivers'] == ['brand_label']
         response = upload(client, saved, photo('blue'), 'replacement')
         assert response.status_code == 200, response.text
         updated = store.load(state['session_id'])
+        assert len(updated['photos']) == 2
+        assert updated['photos'][0] == state['photos'][0]
         assert updated['evidence'] is None and updated['approved'] is None and updated['pending'] is None
         assert updated['waivers'] == []
     finally:

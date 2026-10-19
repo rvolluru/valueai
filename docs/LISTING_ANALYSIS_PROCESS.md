@@ -846,9 +846,20 @@ the private draft and starting the same guarded analysis job. It does not add an
 unbounded model loop, bypass approval, waive missing views, or change evaluation.
 Recovery stays within the turn deadline and logs model-step count and reason.
 Photo questions explicitly distinguish required views from optional recommended
-views. Claiming an upload in text does not change saved evidence. Web/mobile show
+views. Once required coverage is complete, server question handling moves to
+missing category/condition/size or confirmation instead of requesting recommended
+photos or waivers. Claiming an upload in text does not change saved evidence. Web/mobile show
 selected-but-not-uploaded photos, require uploading them before a text reply, and
 clear that selection once upload succeeds, even if the subsequent model turn fails.
+
+Agent uploads add unique originals to the saved set by content hash, up to six
+total; they never silently replace existing photos. Duplicate-only uploads leave
+coverage and approval intact. Web/mobile show saved thumbnails and explicit remove
+controls before draft creation. Removal detaches one owned session photo (not a
+storage-object deletion) through a revision-checked, request-idempotent endpoint.
+Actual additions/removals invalidate coverage, waivers, approval and photo-inferred
+category, then clients request reassessment. Once a draft exists, image changes
+continue through the ordinary listing editor. These changes are local only.
 
 Explicit migration `0009_listing_agent_sessions` creates owner-scoped session,
 request-replay and tool-ledger records. Dedicated DB connections, cross-process

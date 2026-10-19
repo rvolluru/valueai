@@ -31,6 +31,18 @@ class Start(BaseModel):
     request_id: str = Field(min_length=1, max_length=120)
 
 
+class RemovePhoto(Start):
+    expected_revision: int = Field(ge=0)
+    image_id: str = Field(min_length=1, max_length=120)
+
+
+def invalidate_photo_evidence(state):
+    state.update(evidence=None, waivers=[], approved=None, pending=None)
+    if state.get('fact_provenance', {}).get('category') == 'photo_detection':
+        state['facts'].pop('category', None)
+        state['fact_provenance'].pop('category', None)
+
+
 class Services:
     def __init__(self, db, settings, principal, tasks):
         self.db, self.settings, self.principal, self.tasks = db, settings, principal, tasks
@@ -260,13 +272,16 @@ async def photos(session_id: str, tasks: BackgroundTasks,
                     raise HTTPException(400, 'Upload readable JPEG, PNG or WebP photos') from exc
                 files.append((data, fmt, hashlib.sha256(data).hexdigest()))
             operation = Turn(request_id=request_id, expected_revision=expected_revision,
-                             message='Replace photos: ' + ','.join(f[2] for f in files))
+                             message='Add photos: ' + ','.join(f[2] for f in files))
             previous, resumed = agent.store.request(state, operation)
             if previous is not None:
                 return previous
+            hashes = {p['content_hash'] for p in state['photos']} | {f[2] for f in files}
+            if len(hashes) > 6:
+                raise HTTPException(400, 'A draft can have up to 6 photos. Remove a saved photo before adding more.')
             item_id = 'agent-' + session_id
             db.insert_item(item_id)
-            stored = []
+            stored = list(state['photos'])
             storage = get_storage()
             for data, fmt, content_hash in files:
                 image_id = str(uuid.uuid5(uuid.NAMESPACE_URL, session_id + ':' + content_hash))
@@ -278,10 +293,40 @@ async def photos(session_id: str, tasks: BackgroundTasks,
                         filename=filename, role_hint='full_item' if not stored else 'close_up', content_hash=content_hash))
                 if not any(p['image_id'] == image_id for p in stored):
                     stored.append(dict(image_id=image_id, item_id=item_id, url='/v1/images/' + image_id, content_hash=content_hash))
-            state.update(photos=stored, evidence=None, waivers=[], approved=None, pending=None)
-            if state.get('fact_provenance', {}).get('category') == 'photo_detection':
-                state['facts'].pop('category', None)
-                state['fact_provenance'].pop('category', None)
+            if stored != state['photos']:
+                state['photos'] = stored
+                invalidate_photo_evidence(state)
+            agent.store.save(state)
+            result = await agent.public(state)
+            agent.store.complete(state, operation, result)
+            return result
+    finally:
+        db.close()
+
+
+@router.post('/sessions/{session_id}/photos/remove')
+async def remove_photo(session_id: str, payload: RemovePhoto, tasks: BackgroundTasks,
+                       settings: Settings = Depends(enabled),
+                       principal: AuthPrincipal = Depends(get_request_principal)):
+    db, agent = agent_for(settings, principal, tasks)
+    try:
+        with agent.store.lock(session_id):
+            state = agent.store.load(session_id)
+            if state['listing_id']:
+                raise HTTPException(409, 'Use the listing editor to change an existing draft')
+            operation = Turn(request_id=payload.request_id, expected_revision=payload.expected_revision,
+                             message='Remove photo: ' + payload.image_id)
+            previous, resumed = agent.store.request(state, operation)
+            if previous is not None:
+                return previous
+            remaining = [p for p in state['photos'] if p['image_id'] != payload.image_id]
+            if len(remaining) == len(state['photos']) and not (resumed and
+                    state.get('last_photo_removal') == [payload.request_id, payload.image_id]):
+                raise HTTPException(404, 'Photo is not in this conversation')
+            if remaining != state['photos']:
+                state['photos'] = remaining
+                state['last_photo_removal'] = [payload.request_id, payload.image_id]
+                invalidate_photo_evidence(state)
             agent.store.save(state)
             result = await agent.public(state)
             agent.store.complete(state, operation, result)

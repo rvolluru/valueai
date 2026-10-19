@@ -75,6 +75,22 @@ export function createListingAgentController(client, getAuth, onChange) {
       if (!state.session) return;
       return perform(async () => client.getListingAgentSession(state.session.session_id, await getAuth()));
     },
+    removePhoto(imageId) {
+      if (!state.session || state.session.listing_id) return;
+      const session = state.session;
+      const requestId = id();
+      const turnId = id();
+      return perform(async () => {
+        const updated = await client.removeListingAgentPhoto(session.session_id, {
+          request_id: requestId, expected_revision: session.revision, image_id: imageId,
+        }, await getAuth());
+        emit({ session: updated });
+        return client.turnWithListingAgent(session.session_id, {
+          request_id: turnId, expected_revision: updated.revision,
+          message: 'I removed a saved photo. Please check the remaining evidence and guide me to the next required step.',
+        }, await getAuth());
+      });
+    },
     retry() { if (retryOperation) return perform(retryOperation); },
     activate() { disposed = false; },
     dispose() { disposed = true; },

@@ -96,3 +96,23 @@ test('saved uploads clear selection even if the follow-up model turn fails', asy
   assert.equal(cleared, 2);
   assert.deepEqual(fixture.view.session, saved);
 });
+
+test('photo removal retries preserve IDs and use the updated revision for reassessment', async () => {
+  const removals = [], turns = [];
+  const fixture = setup({
+    removeListingAgentPhoto: async (id, payload) => { removals.push(payload); return { session_id: id, revision: 6, photos: [] }; },
+    turnWithListingAgent: async (id, payload) => {
+      turns.push(payload);
+      if (turns.length === 1) throw new Error('Lost response');
+      return { session_id: id, revision: 8, photos: [] };
+    },
+  });
+  await fixture.controller.load();
+  await fixture.controller.removePhoto('photo-one');
+  assert.equal(fixture.view.session.revision, 6);
+  await fixture.controller.retry();
+  assert.deepEqual(removals[0], removals[1]);
+  assert.deepEqual(turns[0], turns[1]);
+  assert.equal(turns[0].expected_revision, 6);
+  assert.equal(removals[0].image_id, 'photo-one');
+});

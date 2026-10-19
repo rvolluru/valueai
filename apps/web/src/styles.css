@@ -5286,6 +5286,10 @@ textarea:focus-visible,
 .listing-agent-chat.panel { min-width: 0; overflow: visible; overflow-wrap: anywhere; }
 .listing-agent-chat .listing-assistant-messages { max-height: none; overflow: visible; }
 .listing-agent-chat input, .listing-agent-chat textarea { max-width: 100%; box-sizing: border-box; }
+.listing-agent-photos { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.listing-agent-photos figure { margin: 0; min-width: 0; }
+.listing-agent-photos img { display: block; width: 100%; aspect-ratio: 1; object-fit: cover; }
+.listing-agent-photos button { width: 100%; min-height: 40px; }
 .app-assistant-turn { display: flex; justify-content: flex-end; gap: 9px; }
 .app-assistant-turn.assistant { justify-content: flex-start; }
 .app-assistant-turn > span { display: grid; flex: 0 0 30px; width: 30px; height: 30px; place-items: center; border-radius: 50%; background: #5b1720; color: #fff; font-family: Georgia, serif; }
