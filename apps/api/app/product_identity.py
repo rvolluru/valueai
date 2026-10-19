@@ -43,9 +43,32 @@ def reusable_identity(profile):
         confidence = float(model.get('confidence') or profile.get('confidence') or 0)
     except (ValueError, TypeError):
         return False
+    # A formatter's neutral model score must not discard a strongly identified
+    # garment with a directly readable brand label. Keep genuinely weak model
+    # assessments below .5 ineligible, and never promote the reported confidence.
+    ocr = profile.get('label_ocr') or {}
+    candidates = [ocr, ocr.get('_batch_ocr_result')] if isinstance(ocr, dict) else []
+    brand = str(profile.get('candidate_brand') or '').strip().casefold()
+    def readable_label(row):
+        if not isinstance(row, dict):
+            return False
+        raw = row.get('raw_visible_text') or ''
+        raw = ' '.join(map(str, raw)) if isinstance(raw, list) else str(raw)
+        try:
+            score = float(row.get('confidence') or 0)
+        except (TypeError, ValueError):
+            return False
+        return (score >= .85 and score <= 1 and brand
+                and str(row.get('brand_text') or '').strip().casefold() == brand
+                and brand in ' '.join(raw.casefold().split()))
+    try:
+        strong_label_identity = (confidence >= .5 and float(profile.get('confidence') or 0) >= .9
+                                 and any(readable_label(row) for row in candidates))
+    except (TypeError, ValueError):
+        strong_label_identity = False
     return (str(profile.get('candidate_brand') or '').strip().casefold() not in unknown
             and str(model.get('name') or '').strip().casefold() not in unknown
-            and confidence >= .7)
+            and (confidence >= .7 or strong_label_identity))
 
 
 def resolve_identity(database_url, fingerprint, identify, *, timeout_s, listing_id, owner_subject):

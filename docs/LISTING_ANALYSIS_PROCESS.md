@@ -318,7 +318,13 @@ explicit brand correction, Gemini model and identity-policy version. Size, condi
 photo order, filenames and generated descriptions do not change the identity key.
 
 Only recognizable brand/model results with model/profile confidence of at least
-70% are persisted. Weak/unknown identities are not made permanent. Eligible prior
+70% are persisted. A local-only correction also permits model confidence of at
+least 50% when overall identity confidence is at least 90% and OCR directly reads
+the same full brand name at at least 85% confidence. Reported model confidence is
+not raised. Missing-brand recovery can use a corroborating full-label batch OCR
+result instead of logo-only selected OCR; conflicting OCR brands are not combined.
+Condition-only changes reuse this identity and rerun pricing, not identification.
+Weak/unknown identities are not made permanent. Eligible prior
 evidence can initialize the listing's own identity record, including a separately
 validated complete-analysis reuse. A listing does not directly look up another
 listing's persisted identity record.
