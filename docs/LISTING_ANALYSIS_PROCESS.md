@@ -8,16 +8,21 @@ October 16, 2026. Persistent listing identification, explicit pricing refresh,
 strengthened photo-content reuse checks and comparable policy v4 are deployed.
 Parallel pricing/mannequin/cleanup processing remains enabled. Existing listing
 values are not automatically recalculated by deployment.
-**Local, not deployed:** policy `same-brand-comparables-v5` adds enforced OpenAI
+**Prepared for production rollout (not yet verified):** policy `same-brand-comparables-v5` adds enforced OpenAI
 search-domain restrictions and server-side source-role validation described below.
-**Local routing rollout, not deployed to production:** optional sticky pricing-model
+**Prepared for production routing rollout (not yet verified):** optional sticky pricing-model
 cohorts use `GPT_PRICING_MODEL_ROUTING_ENABLED` (default false) and
 `GPT_NEW_LISTING_PRICING_MODEL` (default `gpt-6.1-sol`). Existing listings are
 grandfathered to GPT-5 by explicit migration `0008_listing_pricing_models`; new
 listings requiring fresh pricing use Sol when routing is enabled. Gemini and chat
 models are unchanged. Verified locally October 18: routing is enabled, 136 existing
 listings were pinned to GPT-5, Sol model access returned HTTP 200, and the restarted
-backend passed its health check. Production configuration has not changed.
+backend passed its health check. The production deployment now explicitly enables
+routing on both API and workers, retains GPT-5 as the legacy/OCR model, and keeps
+application-controlled research disabled to match local behavior. Explicit migration
+0008 pins pre-existing production listings before either service is rolled out.
+New duplicates may inherit the reused analysis's model assignment without a new
+call; new fresh Sol listings remain on Sol for subsequent reruns.
 **Deployed October 18, 2026, release `238f0d3`, disabled by default:** `GPT_CONTROLLED_RESEARCH_ENABLED=true` enables
 the generalized per-site research and persisted snapshot path described in section 8.
 Migration `0007_pricing_research_snapshots` must run explicitly before app startup.

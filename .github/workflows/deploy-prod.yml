@@ -289,6 +289,10 @@ jobs:
                   | upsert_env("PHOTOROOM_API_KEY"; $PHOTOROOM_API_KEY)
                   | upsert_env("IMAGE_STAGING_PHOTOROOM_ENABLED"; "false")
                   | upsert_env("GPT_ITEM_PROFILE_PROVIDER_ORDER"; "hybrid,gemini,openai")
+                  | upsert_env("GPT_ITEM_PROFILE_MODEL"; "gpt-5")
+                  | upsert_env("GPT_PRICING_MODEL_ROUTING_ENABLED"; "true")
+                  | upsert_env("GPT_NEW_LISTING_PRICING_MODEL"; "gpt-6.1-sol")
+                  | upsert_env("GPT_CONTROLLED_RESEARCH_ENABLED"; "false")
                   | upsert_env("GPT_ITEM_PROFILE_TIMEOUT_S"; "240")
                   | upsert_env("LISTING_ANALYSIS_ATTEMPT_TIMEOUT_S"; "300")
                   | upsert_env("STRIPE_SECRET_KEY"; $STRIPE_SECRET_KEY)
@@ -342,6 +346,10 @@ jobs:
             | .containerDefinitions |= map(
                 .image = $IMAGE
                 | upsert_env("IMAGE_STAGING_PHOTOROOM_ENABLED"; "false")
+                | upsert_env("GPT_ITEM_PROFILE_MODEL"; "gpt-5")
+                | upsert_env("GPT_PRICING_MODEL_ROUTING_ENABLED"; "true")
+                | upsert_env("GPT_NEW_LISTING_PRICING_MODEL"; "gpt-6.1-sol")
+                | upsert_env("GPT_CONTROLLED_RESEARCH_ENABLED"; "false")
                 | upsert_env("GPT_ITEM_PROFILE_TIMEOUT_S"; "240")
                 | upsert_env("LISTING_ANALYSIS_ATTEMPT_TIMEOUT_S"; "300")
               )
@@ -372,11 +380,26 @@ jobs:
 
           key = os.getenv("OPENAI_API_KEY", "").strip()
           result = {"openai_key_configured": bool(key), "status_code": None, "error": None}
+          from app.deps import get_settings, get_db
+          settings = get_settings()
+          assert settings.gpt_pricing_model_routing_enabled is True
+          assert settings.gpt_new_listing_pricing_model == "gpt-6.1-sol"
+          assert settings.gpt_item_profile_model == "gpt-5"
+          assert settings.gpt_controlled_research_enabled is False
+          db = get_db()
+          row = db.fetchone("SELECT COUNT(*) FROM listing_pricing_models")
+          result["persisted_model_assignments"] = row[0]
+          result["new_listing_model"] = settings.gpt_new_listing_pricing_model
           exit_code = 1
           if not key:
               result["error"] = "OPENAI_API_KEY missing"
           else:
               try:
+                  access = httpx.get(
+                      "https://api.openai.com/v1/models/" + settings.gpt_new_listing_pricing_model,
+                      headers={"Authorization": f"Bearer {key}"}, timeout=30,
+                  )
+                  access.raise_for_status()
                   resp = httpx.post(
                       "https://api.openai.com/v1/responses",
                       headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
