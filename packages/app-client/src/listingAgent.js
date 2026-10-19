@@ -19,6 +19,7 @@ export function createListingAgentController(client, getAuth, onChange) {
       const session = await operation();
       retryOperation = null;
       emit({ session, error: '' });
+      return session;
     } catch (error) {
       emit({ error: error.message || 'Unable to finish. Your saved progress is safe.' });
       // A stale revision must be reviewed, not silently rebased over another device.
@@ -55,13 +56,15 @@ export function createListingAgentController(client, getAuth, onChange) {
       if (pending?.type !== 'confirm_analysis') return;
       return perform(turnOperation(state.session, 'I confirm this summary. Create a private draft and start analysis; do not publish.', pending.token));
     },
-    upload(images) {
+    upload(images, onUploaded = () => {}) {
       if (!state.session || !images.length) return;
       const session = state.session;
       const requestId = id();
       const turnId = id();
       return perform(async () => {
         const uploaded = await client.uploadListingAgentPhotos({ sessionId: session.session_id, requestId, expectedRevision: session.revision, images }, await getAuth());
+        emit({ session: uploaded });
+        onUploaded();
         return client.turnWithListingAgent(session.session_id, {
           request_id: turnId, expected_revision: uploaded.revision,
           message: 'I uploaded these original photos. Please check the evidence and guide me through creating a private listing draft.',

@@ -72,6 +72,28 @@ Vite served its enabled flag and Metro loaded the local Expo overrides. All 502
 Python tests and 34 JavaScript tests passed after activation. Provider calls in
 these tests are stubbed; live agent quality remains to be evaluated.
 
+## Local recovery follow-up (October 19, 2026; not deployed)
+
+The shoe session retained three original photos and still lacked `shoe_sole` when
+the member wrote “I uploaded sole photo”. No replacement upload had reached the
+session. The turn reused the existing assessment, then repeatedly read context.
+The original six-step limit surfaced an internal budget message to the member.
+
+The local fix stops repeated no-progress tool calls and uses bounded domain
+recovery to ask for the genuinely missing input or show confirmation. Already
+approved work may finish via the existing idempotent draft/job tools. Budgets,
+ownership, confirmation and normal evaluation remain unchanged. Required photo
+questions now separate optional recommendations. Both clients distinguish pending
+selection from saved uploads and prevent sending text instead of uploading a
+selected photo set. Provider calls are stubbed in regression tests.
+
+Verification: 509 Python tests and 39 shared-client/web JavaScript tests passed;
+the web build and offline iOS JavaScript export passed. The tests cover unchanged
+photo claims/context loops, actual replacement uploads and reassessment, optional
+views not blocking confirmation, recovery after approval without duplicate jobs,
+and a failed model turn after a successful upload. These are stubbed provider
+checks, not a rerun of the member's live session.
+
 ## First delivery boundary
 
 Create one owner-scoped, private, review-ready listing draft through conversation.

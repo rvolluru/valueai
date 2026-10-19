@@ -45,6 +45,40 @@ def test_disabled_route_and_auth_required(client, monkeypatch):
     assert client.post('/v1/listing-agent/sessions', headers=AUTH, json={'request_id': 'x'}).status_code == 404
 
 
+def test_real_photo_upload_invalidates_missing_sole_and_rechecks_once(client, monkeypatch):
+    from app import listing_agent, listing_agent_routes
+    assessed = []
+    async def assess(self, state):
+        self.files(state)
+        assessed.append(len(state['photos']))
+        return dict(status='checked', category='shoes', category_confidence=1,
+                    missing_required=['shoe_sole'] if len(state['photos']) == 1 else [],
+                    missing_recommended=['condition_or_wear'])
+    monkeypatch.setattr(listing_agent_routes.Services, 'assess', assess)
+    state = upload(client, start(client)).json()
+    path = f'/v1/listing-agent/sessions/{state["session_id"]}'
+    monkeypatch.setattr(listing_agent, 'call_model', scripted(('assess_photo_evidence', {}),
+        ('ask_user', {'field': 'photos', 'question': 'Add the sole.'})))
+    state = client.post(path + '/turns', headers=AUTH, json=dict(request_id='first',
+        expected_revision=state['revision'], message='Check my photos')).json()
+    assert 'shoe sole' in state['reply']
+    uploaded = client.post(path + '/photos', headers=AUTH,
+        data={'request_id': 'with-sole', 'expected_revision': state['revision']},
+        files=[('images', ('front.jpg', photo(), 'image/jpeg')),
+               ('images', ('sole.jpg', photo('blue'), 'image/jpeg'))]).json()
+    assert len(uploaded['photos']) == 2
+    assert uploaded['evidence'] is None and uploaded['pending'] is None
+    monkeypatch.setattr(listing_agent, 'call_model', scripted(('assess_photo_evidence', {}),
+        ('record_user_facts', {'facts': {'condition': 'New', 'size': '8'}, 'evidence_quote': 'New, size 8'}),
+        ('prepare_analysis_confirmation', {})))
+    response = client.post(path + '/turns', headers=AUTH, json=dict(request_id='second',
+        expected_revision=uploaded['revision'], message='New, size 8'))
+    assert response.status_code == 200, response.text
+    assert response.json()['pending']['type'] == 'confirm_analysis'
+    assert response.json()['evidence']['missing_required'] == []
+    assert assessed == [1, 2]
+
+
 def test_real_private_draft_and_job_are_idempotent_and_can_resume(client, monkeypatch):
     from app import listing_agent, listing_agent_routes, main
     from app.deps import get_db

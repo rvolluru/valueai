@@ -23,8 +23,8 @@ export default function ListingAgentChat({ client, getAuth, images, onPickPhotos
       <Text style={styles.helperText}>{session.photos.length}/6 saved photos · {session.stage.replaceAll('_', ' ')}</Text>
       {!session.listing_id ? <View>
         {button(images.length ? 'Add more photos' : 'Choose photos', onPickPhotos, images.length >= 6)}
-        <Text style={styles.helperText}>{images.length} selected. Using photos replaces the complete saved set.</Text>
-        {button('Use selected photos', () => controller.upload(images), !images.length)}
+        <Text style={styles.helperText}>{images.length} selected{images.length ? ', not uploaded yet. Press “Use these photos” before replying.' : '.'} Using photos replaces the complete saved set.</Text>
+        {button('Use these photos', () => controller.upload(images, onClearPhotos), !images.length)}
         {images.length ? button('Clear selected photos', onClearPhotos) : null}
       </View> : null}
       {session.messages.map((message, index) => <View key={index} style={styles.listingChatAssistantBubble}><Text style={styles.helperText}>{message.role === 'user' ? 'You' : 'Jouft'}</Text><Text style={styles.listingAssistantMessageText}>{message.content}</Text></View>)}
@@ -45,7 +45,7 @@ export default function ListingAgentChat({ client, getAuth, images, onPickPhotos
         {session.stage === 'closed' ? <Text style={styles.helperText}>This listing changed outside this conversation. Continue in My Closet.</Text> : null}
       </View> : null}
       {!session.listing_id ? <View><TextInput accessibilityLabel="Reply to listing agent" style={styles.input} value={text} onChangeText={setText} multiline maxLength={2000} editable={!view.busy} placeholder="Tell me about your item…" />
-        {button('Send', () => { controller.send(text); setText(''); }, !text.trim())}</View> : null}
+        {button('Send', () => { controller.send(text); setText(''); }, !text.trim() || !!images.length)}</View> : null}
       {button('Start another draft', () => { onClearPhotos(); controller.startNew(); })}
     </> : null}
     {view.busy ? <ActivityIndicator /> : null}

@@ -3,6 +3,24 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+test('agent content stays in the assistant transcript scroll area without card clipping', () => {
+  const transcript = css.match(/\.app-assistant-transcript\s*\{([^}]+)\}/)[1];
+  assert.match(transcript, /grid-auto-rows: max-content/);
+  assert.match(transcript, /min-height: 0/);
+  assert.match(transcript, /overflow-y: auto/);
+  assert.match(css, /\.listing-agent-chat\.panel\s*\{[^}]*overflow: visible/);
+  assert.match(css, /\.listing-agent-chat \.listing-assistant-messages\s*\{[^}]*max-height: none; overflow: visible/);
+});
+test('agent distinguishes selected photos from uploaded photos before accepting text replies', () => {
+  const web = readFileSync(new URL('../components/ListingAgentChat.jsx', import.meta.url), 'utf8');
+  const mobile = readFileSync(new URL('../../../mobile/src/components/ListingAgentChat.jsx', import.meta.url), 'utf8');
+  assert.match(web, /selected, not uploaded yet/);
+  assert.match(web, /if \(!text.trim\(\) \|\| files.length\) return/);
+  assert.match(web, /controller.upload\(files, \(\) => \{ setFiles\(\[\]\)/);
+  assert.match(mobile, /not uploaded yet/);
+  assert.match(mobile, /controller.upload\(images, onClearPhotos\)/);
+  assert.match(mobile, /!text.trim\(\) \|\| !!images.length/);
+});
 test('photo role labels take their own row instead of covering Set Hero', () => {
   const badge = css.match(/\.listing-image-role-badge\s*\{([^}]+)\}/)[1];
   assert.match(badge, /position: static/);

@@ -79,3 +79,20 @@ test('upload retry preserves photo and follow-up turn idempotency keys', async (
   assert.deepEqual(uploads[0], uploads[1]);
   assert.deepEqual(turns[0], turns[1]);
 });
+
+test('saved uploads clear selection even if the follow-up model turn fails', async () => {
+  let cleared = 0;
+  const saved = { session_id: 'one', revision: 5, photos: [{ image_id: 'saved' }] };
+  const fixture = setup({
+    uploadListingAgentPhotos: async () => saved,
+    turnWithListingAgent: async () => { throw new Error('Provider unavailable'); },
+  });
+  await fixture.controller.load();
+  await fixture.controller.upload([{ file: 'original' }], () => cleared++);
+  assert.equal(cleared, 1);
+  assert.deepEqual(fixture.view.session, saved);
+  assert.match(fixture.view.error, /Provider unavailable/);
+  await fixture.controller.retry();
+  assert.equal(cleared, 2);
+  assert.deepEqual(fixture.view.session, saved);
+});

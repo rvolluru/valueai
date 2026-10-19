@@ -5282,7 +5282,10 @@ textarea:focus-visible,
 .app-assistant-panel > header small { color: #5b1720; font-size: 10px; font-weight: 700; }
 .app-assistant-panel > header strong { font-size: 15px; }
 .app-assistant-panel > header button { width: 34px; height: 34px; border: 0; background: transparent; font-size: 25px; }
-.app-assistant-transcript { display: grid; align-content: start; gap: 14px; overflow-y: auto; padding: 16px; }
+.app-assistant-transcript { display: grid; grid-auto-rows: max-content; align-content: start; min-height: 0; min-width: 0; gap: 14px; overflow-y: auto; overscroll-behavior-y: contain; padding: 16px; }
+.listing-agent-chat.panel { min-width: 0; overflow: visible; overflow-wrap: anywhere; }
+.listing-agent-chat .listing-assistant-messages { max-height: none; overflow: visible; }
+.listing-agent-chat input, .listing-agent-chat textarea { max-width: 100%; box-sizing: border-box; }
 .app-assistant-turn { display: flex; justify-content: flex-end; gap: 9px; }
 .app-assistant-turn.assistant { justify-content: flex-start; }
 .app-assistant-turn > span { display: grid; flex: 0 0 30px; width: 30px; height: 30px; place-items: center; border-radius: 50%; background: #5b1720; color: #fff; font-family: Georgia, serif; }

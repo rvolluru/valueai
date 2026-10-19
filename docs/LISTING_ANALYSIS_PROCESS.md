@@ -837,6 +837,19 @@ input, exact-summary approval, or background analysis rather than keeping an
 unbounded request alive. Default limits are six model/tool steps, 1,800 output
 tokens per model call, and 90 seconds per turn.
 
+Local recovery update (not deployed to production): repeated identical tool calls
+without a changed photo/fact/evidence/draft/job snapshot stop early. When this
+happens or the six-step model budget runs out, bounded server recovery checks
+coverage if needed and presents the next required photo/fact question or summary
+confirmation. If the exact summary was already approved, it can finish creating
+the private draft and starting the same guarded analysis job. It does not add an
+unbounded model loop, bypass approval, waive missing views, or change evaluation.
+Recovery stays within the turn deadline and logs model-step count and reason.
+Photo questions explicitly distinguish required views from optional recommended
+views. Claiming an upload in text does not change saved evidence. Web/mobile show
+selected-but-not-uploaded photos, require uploading them before a text reply, and
+clear that selection once upload succeeds, even if the subsequent model turn fails.
+
 Explicit migration `0009_listing_agent_sessions` creates owner-scoped session,
 request-replay and tool-ledger records. Dedicated DB connections, cross-process
 session locks and revision checks prevent concurrent turns from silently

@@ -159,13 +159,67 @@ def test_step_budget_and_provider_failure_preserve_progress(fixture):
     db, store, state, settings, services = fixture
     settings.listing_agent_max_steps = 2
     result = run(Agent(store, settings, services, scripted(('get_listing_context', {}), ('get_listing_context', {}))).turn(state['session_id'], turn(state)))
-    assert 'step limit' in result['reply']
+    assert result['pending']['field'] == 'condition'
+    assert 'step limit' not in result['reply']
     async def broken(*args):
         raise httpx.ReadTimeout('provider timeout')
     result2 = run(Agent(store, settings, services, broken).turn(state['session_id'], turn(result, 'next')))
     assert 'could not finish' in result2['reply']
     assert len(result2['messages']) == 4
     assert services.created == 0
+
+
+def test_claimed_upload_with_unchanged_photos_breaks_context_loop(fixture):
+    db, store, state, settings, services = fixture
+    state.update(facts={'category': 'shoes'}, evidence=dict(status='checked',
+        missing_required=['shoe_sole'], missing_recommended=['size_or_material_label', 'condition_or_wear']))
+    store.save(state)
+    model = scripted(('assess_photo_evidence', {}), ('get_listing_context', {}), ('get_listing_context', {}))
+    agent = Agent(store, settings, services, model)
+    request = turn(state, message='I uploaded sole photo')
+    result = run(agent.turn(state['session_id'], request))
+    assert result['pending']['field'] == 'photos'
+    assert 'Required before continuing: shoe sole (bottom)' in result['reply']
+    assert 'Optional, not required to continue: size/material label, condition/wear' in result['reply']
+    assert 'press “Use these photos”' in result['reply']
+    assert '1 saved photos' in result['reply']
+    assert services.assessed == services.created == services.started == 0
+    assert run(agent.turn(state['session_id'], request)) == result
+    assert len(model.captured) == 3
+
+
+def test_step_budget_recovers_to_confirmation_without_skipping_human_approval(fixture):
+    db, store, state, settings, services = fixture
+    settings.listing_agent_max_steps = 1
+    state.update(facts=dict(category='clothes', condition='New', size='M'),
+                 evidence=dict(status='checked', missing_required=[], missing_recommended=['condition_or_wear']))
+    store.save(state)
+    result = run(Agent(store, settings, services, scripted(('get_listing_context', {}))).turn(state['session_id'], turn(state)))
+    assert result['pending']['type'] == 'confirm_analysis'
+    assert services.created == services.started == 0
+
+
+def test_budget_recovery_after_confirmation_starts_exactly_one_job(fixture):
+    db, store, state, settings, services = fixture
+    prepared, _ = prepare(fixture)
+    settings.listing_agent_max_steps = 1
+    agent = Agent(store, settings, services, scripted(('create_private_draft', {})))
+    request = turn(prepared, 'confirm-recovery', 'Confirm', confirmation_token=prepared['pending']['token'])
+    result = run(agent.turn(state['session_id'], request))
+    assert result['stage'] == 'analyzing'
+    assert services.created == services.started == 1
+    assert run(agent.turn(state['session_id'], request)) == result
+    assert services.created == services.started == 1
+
+
+def test_model_photo_question_separates_optional_from_required(fixture):
+    db, store, state, settings, services = fixture
+    state['evidence'] = dict(status='checked', missing_required=['shoe_sole'], missing_recommended=['condition_or_wear'])
+    store.save(state)
+    result = run(Agent(store, settings, services, scripted(('ask_user', dict(field='photos',
+        question='You must provide sole and condition photos.')))).turn(state['session_id'], turn(state)))
+    assert 'Optional, not required to continue: condition/wear.' in result['reply']
+    assert 'You must provide' not in result['reply']
 
 
 def test_missing_views_block_confirmation_and_waiver_needs_explicit_evidence(fixture):

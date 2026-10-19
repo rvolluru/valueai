@@ -6,6 +6,7 @@ export default function ListingAgentChat({ apiBaseUrl, apiKey, getBearerToken, c
   const [view, setView] = useState({ session: null, busy: false, error: '' })
   const [text, setText] = useState('')
   const [files, setFiles] = useState([])
+  const fileInput = useRef(null)
   const auth = useRef(null)
   auth.current = async () => clerkEnabled ? { bearerToken: await getBearerToken() } : { apiKey }
   const { controller } = useMemo(() => {
@@ -20,16 +21,17 @@ export default function ListingAgentChat({ apiBaseUrl, apiKey, getBearerToken, c
   }, [controller, view.session?.stage])
   const session = view.session
   const pending = session?.pending
-  return <section className="panel listing-assistant is-open" aria-label="Listing draft agent">
+  return <section className="panel listing-assistant listing-agent-chat is-open" aria-label="Listing draft agent">
     <h3>Jouft Listing Agent</h3><p>Create a private draft. Nothing is published from this chat.</p>
     {!session && !view.busy && <button onClick={() => controller.retry()}>Connect</button>}
     {session && <>
       <p>{session.photos.length}/6 photos saved · {session.stage.replaceAll('_', ' ')}</p>
       {!session.listing_id && <div>
         <label>Choose the complete photo set (JPEG, PNG or WebP, up to 6)
-          <input type="file" accept="image/jpeg,image/png,image/webp" multiple disabled={view.busy} onChange={event => setFiles(Array.from(event.target.files || []).slice(0, 6))} />
+          <input ref={fileInput} type="file" accept="image/jpeg,image/png,image/webp" multiple disabled={view.busy} onChange={event => setFiles(Array.from(event.target.files || []).slice(0, 6))} />
         </label>
-        <button disabled={view.busy || !files.length} onClick={() => controller.upload(files)}>Use these photos</button>
+        {!!files.length && <p role="status">{files.length} photos selected, not uploaded yet. Press “Use these photos” before replying. This replaces the complete saved photo set.</p>}
+        <button disabled={view.busy || !files.length} onClick={() => controller.upload(files, () => { setFiles([]); if (fileInput.current) fileInput.current.value = '' })}>Use these photos</button>
       </div>}
       <div className="listing-assistant-messages" aria-live="polite">
         {session.messages.map((message, index) => <div key={index} className={`listing-assistant-message ${message.role}`}><p>{message.content}</p></div>)}
@@ -49,9 +51,9 @@ export default function ListingAgentChat({ apiBaseUrl, apiKey, getBearerToken, c
         {session.stage === 'failed' && <p>Analysis did not finish. The draft is saved in My Closet.</p>}
         {session.stage === 'closed' && <p>This listing changed outside this conversation. Continue in My Closet.</p>}
       </div>}
-      {!session.listing_id && <form onSubmit={event => { event.preventDefault(); if (!text.trim()) return; controller.send(text); setText('') }}>
+      {!session.listing_id && <form onSubmit={event => { event.preventDefault(); if (!text.trim() || files.length) return; controller.send(text); setText('') }}>
         <label>Your reply<textarea value={text} onChange={event => setText(event.target.value)} maxLength={2000} disabled={view.busy} /></label>
-        <button disabled={view.busy || !text.trim()}>Send</button>
+        <button disabled={view.busy || !text.trim() || !!files.length}>Send</button>
       </form>}
       <button disabled={view.busy} onClick={() => { setFiles([]); controller.startNew() }}>Start another draft</button>
     </>}
