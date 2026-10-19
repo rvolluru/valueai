@@ -380,6 +380,16 @@ variable "gpt_item_profile_model" {
   default = "gpt-5"
 }
 
+variable "gpt_pricing_model_routing_enabled" {
+  type    = bool
+  default = true
+}
+
+variable "gpt_new_listing_pricing_model" {
+  type    = string
+  default = "gpt-6.1-sol"
+}
+
 variable "gpt_item_profile_gemini_model" {
   type    = string
   default = "gemini-3.8-flash"
