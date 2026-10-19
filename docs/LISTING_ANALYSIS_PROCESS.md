@@ -318,7 +318,8 @@ explicit brand correction, Gemini model and identity-policy version. Size, condi
 photo order, filenames and generated descriptions do not change the identity key.
 
 Only recognizable brand/model results with model/profile confidence of at least
-70% are persisted. A local-only correction also permits model confidence of at
+70% are persisted. The correction deployed in release `55c105a` (workflow
+`39192241451`) also permits model confidence of at
 least 50% when overall identity confidence is at least 90% and OCR directly reads
 the same full brand name at at least 85% confidence. Reported model confidence is
 not raised. Missing-brand recovery can use a corroborating full-label batch OCR
