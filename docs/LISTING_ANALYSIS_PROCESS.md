@@ -1,6 +1,6 @@
 # Jouft listing analysis: complete process
 
-Updated October 18, 2026. This document explains the functional process: inputs,
+Updated October 19, 2026. This document explains the functional process: inputs,
 model calls, decisions, outputs and user review—not a reliability assessment.
 
 **Implementation status:** production release `635ec54` deployed successfully on
@@ -404,11 +404,26 @@ Old complete-analysis cache entries must be researched again under v5; scoped
 photo identity can still be reused. No existing listing is automatically repriced.
 
 Domain restrictions do not independently verify a price, condition or product
-image. With the default setting, research and valuation are still one OpenAI call.
+image. With the current local and production setting, research and valuation are
+still one OpenAI call: **OpenAI finds the pricing comparables**, using the listing's
+assigned model (GPT-5 for pre-rollout listings; Sol for new fresh analyses, retained
+on reruns). Gemini's grounded search supports **product identification**, not the
+selection of approved pricing comparables. The backend applies source and comparable
+validation to OpenAI's result before accepting a value. Eligible complete-analysis
+reuse requires no new research or pricing call.
 The optional runtime path below separates them; independent page-content and
-transaction verification remain unimplemented. No model names change.
+transaction verification remain unimplemented.
 
 ### Optional application-controlled research (deployed, disabled by default)
+
+**Currently disabled in both local and production.** In this mode the backend
+controls research scheduling, queries, approved-site coverage, evidence filtering
+and snapshot reuse, but **OpenAI still performs the comparable searches**, using
+the listing's assigned pricing model. Gemini supplies the established identity;
+it is not the comparable-research provider. The subsequent OpenAI valuation call
+has search disabled and receives the saved evidence set. The model still estimates
+the value; the application does not calculate a weighted final price. Reusing a
+snapshot reduces evidence-driven variability, not all model-output variability.
 
 The runtime module `apps/api/app/controlled_research.py` is shared with the earlier
 evaluation script. It builds an ordered plan from the established brand/model and
@@ -764,8 +779,9 @@ downstream of analysis; it is not another calculation of the item's price.
 | Initial coverage | Gemini `gemini-3.8-flash` | Supplied photos | Category and photo roles |
 | Label reading | Gemini; OpenAI OCR fallback | Original-photo evidence | Label text and brand evidence |
 | Identification | Gemini `gemini-3.8-flash` | Originals, labels, user context and grounded search | Structured identity/profile |
-| Hybrid valuation | OpenAI `gpt-5` | Structured identity/current facts and web search; no image parts in this call | Retail/resale estimates, bands and references |
-| New-from-LikeNew inference | OpenAI `gpt-5` | Existing identity and LikeNew reference band | Separate New estimate or no estimate |
+| Comparable research and hybrid valuation (current active path) | Assigned OpenAI model: `gpt-5` for existing cohort; `gpt-6.1-sol` for new fresh cohort | Structured identity/current facts and approved-domain web search; no image parts in this call | Pricing comparables, retail/resale estimates, bands and references |
+| Application-controlled research (disabled locally and in production) | Backend orchestration + assigned OpenAI model | Established identity and application-planned approved-site queries | Filtered, persisted comparable snapshot; subsequent valuation cannot search |
+| New-from-LikeNew inference | Same assigned OpenAI pricing model | Existing identity and LikeNew reference band | Separate New estimate or no estimate |
 | Mannequin planning/review | Gemini `gemini-3.8-flash` | Originals and, for review, candidate image | Plan, coverage and fidelity assessment |
 | Mannequin synthesis | Gemini `gemini-3-pro-image` | Best front original and styling prompt | Preview image |
 | Photo cleanup | Configured segmentation service | Original image | Original-pixel white-background variant |
