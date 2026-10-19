@@ -3,6 +3,13 @@
 Updated October 19, 2026. This document explains the functional process: inputs,
 model calls, decisions, outputs and user review—not a reliability assessment.
 
+**Admin guide access (implemented, pending deployment):** `/docs/listing-analysis`
+loads a sign-in shell. The guide itself is fetched from
+`/v1/admin/docs/listing-analysis` with a Clerk bearer token and server-side admin-role
+authorization on every request. API keys alone do not grant access. HTML is packaged
+outside public static assets and served with private/no-store caching and noindex.
+The admin workspace links to this page. Authorized readers can still save copies.
+
 **Implementation status:** production release `635ec54` deployed successfully on
 October 16, 2026. Persistent listing identification, explicit pricing refresh,
 strengthened photo-content reuse checks and comparable policy v4 are deployed.

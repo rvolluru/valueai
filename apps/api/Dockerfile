@@ -29,6 +29,7 @@ COPY --from=py-deps /usr/local /usr/local
 COPY pyproject.toml README.md ./
 COPY apps/api ./apps/api
 COPY packages ./packages
+COPY docs/listing-analysis-guide.html ./docs/listing-analysis-guide.html
 COPY --from=web-build /web/dist ./apps/api/app/static
 
 RUN --mount=type=cache,target=/root/.cache/pip pip install --no-deps .

@@ -2867,6 +2867,26 @@ def privacy_page():
     return _spa_index_response()
 
 
+@app.get("/docs/listing-analysis")
+def analysis_guide_page():
+    # Only the authentication shell is public; document bytes require admin auth.
+    return _spa_index_response()
+
+
+@app.get("/v1/admin/docs/listing-analysis", response_class=HTMLResponse)
+def admin_analysis_guide(principal: AuthPrincipal = Depends(require_admin_user)):
+    guide = Path(__file__).resolve().parents[3] / "docs" / "listing-analysis-guide.html"
+    if not guide.is_file():
+        raise HTTPException(status_code=404, detail="Analysis guide unavailable")
+    return HTMLResponse(guide.read_text(encoding="utf-8"), headers={
+        "Cache-Control": "private, no-store",
+        "Vary": "Authorization",
+        "X-Content-Type-Options": "nosniff",
+        "X-Robots-Tag": "noindex, nofollow, noarchive",
+        "Content-Security-Policy": "frame-ancestors 'self'",
+    })
+
+
 @app.get("/terms")
 def terms_page():
     return _spa_index_response()

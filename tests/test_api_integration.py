@@ -72,6 +72,33 @@ def _build_client():
     return TestClient(app)
 
 
+def test_analysis_guide_is_admin_only_and_not_public_static():
+    from app.auth import AuthPrincipal, require_clerk_user
+    from app.main import app
+    client = _build_client()
+    url = '/v1/admin/docs/listing-analysis'
+    try:
+        assert client.get(url).status_code == 401
+        assert client.get(url, headers={'x-api-key': 'test-key'}).status_code == 401
+        app.dependency_overrides[require_clerk_user] = lambda: AuthPrincipal(
+            auth_type='clerk', subject='member', claims={})
+        denied = client.get(url)
+        assert denied.status_code == 403
+        assert 'Jouft listing analysis: complete process' not in denied.text
+        app.dependency_overrides[require_clerk_user] = lambda: AuthPrincipal(
+            auth_type='clerk', subject='admin', claims={'role': 'admin'})
+        response = client.get(url)
+        assert response.status_code == 200
+        assert '<!doctype html>' in response.text.lower()
+        assert response.headers['cache-control'] == 'private, no-store'
+        assert response.headers['vary'] == 'Authorization'
+        assert 'noindex' in response.headers['x-robots-tag']
+        for public in ['/docs/listing-analysis-guide.html', '/ui/docs/listing-analysis-guide.html', '/assets/listing-analysis-guide.html']:
+            assert client.get(public).status_code == 404
+    finally:
+        app.dependency_overrides.clear()
+
+
 def test_health_endpoint_remains_public_and_lightweight():
     client = _build_client()
 

@@ -19,6 +19,7 @@ import TradeItemPicker from './components/TradeItemPicker'
 import ListingPhotoEditor from './components/ListingPhotoEditor'
 import PhotoNavigation from './components/PhotoNavigation'
 import NotificationsPage from './components/NotificationsPage'
+import AnalysisGuidePage from './components/AnalysisGuidePage'
 import jouftLogo from './assets/jouft-logo.png'
 
 const API_DEFAULT =
@@ -1546,6 +1547,9 @@ async function fetchShippingLabelDocumentRemote({ apiBaseUrl, apiKey, bearerToke
 }
 
 export default function App() {
+  if (typeof window !== 'undefined' && window.location.pathname === '/docs/listing-analysis') {
+    return CLERK_ENABLED ? <AnalysisGuidePage apiBaseUrl={API_DEFAULT} /> : <p>Sign-in is required to access this guide.</p>
+  }
   if (typeof window !== 'undefined' && window.location.pathname === '/terms') {
     return <TermsPage />
   }
@@ -8912,6 +8916,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                   <h2>Support Operations</h2>
                 </div>
                 <div className="market-controls">
+                  <a className="ghost" href="/docs/listing-analysis" target="_blank" rel="noopener noreferrer">Analysis guide</a>
                   <input value={adminSearch} onChange={(e) => setAdminSearch(e.target.value)} placeholder="Search item, brand, category..." />
                   <button className="primary" onClick={loadAdminAnalyses} disabled={adminLoading}>{adminLoading ? 'Loading...' : 'Refresh'}</button>
                 </div>
