@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi.testclient import TestClient
 from PIL import Image, ImageDraw
+import pytest
 from app.pricing_evidence import POLICY_VERSION
 
 
@@ -2727,8 +2728,11 @@ def test_listings_support_limit_offset_pagination() -> None:
     assert last_ids == [created_ids[0]]
 
 
-def test_create_listing_with_analyzing_status_queues_backend_analysis() -> None:
+@pytest.mark.parametrize('agent_enabled', [False, True])
+def test_create_listing_with_analyzing_status_queues_backend_analysis(monkeypatch, agent_enabled) -> None:
     client = _build_client()
+    from app.deps import get_settings, get_db
+    monkeypatch.setattr(get_settings(), 'listing_agent_enabled', agent_enabled)
     _override_gpt_profiler(
         _stub_item_profile(
             brand="Chanel",
@@ -2781,6 +2785,7 @@ def test_create_listing_with_analyzing_status_queues_backend_analysis() -> None:
     assert listing["image"] == image_url
     assert listing["images"] == [image_url]
     assert listing["analysis"]["brand"]["name"] == "Chanel"
+    assert not get_db().fetchall('SELECT session_id FROM listing_agent_sessions')
 
 
 def test_new_listing_reuses_verified_analysis_for_same_photos(monkeypatch) -> None:

@@ -27,7 +27,14 @@ legacy path; the new path is described in the implementation status section.
 - Model/provider calls are stubbed in automated tests. Coverage timeout skips only
   coverage; category must still be supplied and full analysis still starts.
 
-### Local activation (not enabled by this implementation)
+### Local activation (enabled October 19, 2026)
+
+The local API, Vite and Expo opt-ins are enabled in ignored environment files.
+Expo targets `http://127.0.0.1:8000` for the iOS simulator rather than production;
+Android emulators require `http://10.0.2.2:8000` instead. Production remains off.
+The standard listing form still uses its existing creation/evaluation path; a
+regression test runs that path with the agent both enabled and disabled and checks
+that no agent session is created.
 
 Run the explicit API migration using the same environment/PYTHONPATH as the backend
 (`python -m app.migrations`, or the existing backend startup script). Set
@@ -52,13 +59,18 @@ device testing remain release gates; the local pilot is not production-approved.
 
 ### Verification performed
 
-The local migration was applied and the backend was restarted with the agent still
-disabled; health returned OK. The full Python suite passed (501 tests) and shared
+The local migration was applied. Before activation, the full Python suite passed
+(501 tests) and shared
 client/web JavaScript tests passed (34 tests). The enabled web build and offline
 iOS/Android JavaScript exports passed. These are automated/stubbed checks, not a
 live model-quality or native-device acceptance test. Recovery tests cover lost
 responses, post-insert interruption, stale revisions/confirmations, superseded
 interrupted turns, session locking and re-dispatch after an expired lease.
+
+Activation verification: the running API returned `enabled: true` and health 200;
+Vite served its enabled flag and Metro loaded the local Expo overrides. All 502
+Python tests and 34 JavaScript tests passed after activation. Provider calls in
+these tests are stubbed; live agent quality remains to be evaluated.
 
 ## First delivery boundary
 

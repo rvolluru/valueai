@@ -865,7 +865,11 @@ trade. It does not yet proactively resume a model conversation after job complet
 
 `LISTING_AGENT_ENABLED` on the API, `VITE_LISTING_AGENT_ENABLED` for web and
 `EXPO_PUBLIC_LISTING_AGENT_ENABLED` for mobile are default-off opt-ins. Both client
-and server flags must be enabled for the relevant pilot client. No production
+and server flags must be enabled for the relevant pilot client. Local API/web/Expo
+opt-ins were enabled October 19, 2026, using the local backend. The standard form
+retains its existing creation and evaluation path, covered with the agent flag
+both on and off; local activation does not change pricing models or reuse rules.
+No production
 activation or paid evaluation has been performed. See
 `docs/CHATBOT_AGENT_PLAN.md` for endpoints, implementation limits and release gates.
 
