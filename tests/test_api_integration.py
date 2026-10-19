@@ -14,6 +14,18 @@ import pytest
 from app.pricing_evidence import POLICY_VERSION
 
 
+@pytest.mark.parametrize('path', ['/data-deletion', '/data-deletion/'])
+def test_data_deletion_page_is_public(path, monkeypatch):
+    client = _build_client()
+    from app import main
+    from fastapi.responses import HTMLResponse
+    monkeypatch.setattr(main, '_spa_index_response', lambda: HTMLResponse('<html>public app shell</html>'))
+    response = client.get(path)
+    assert response.status_code == 200
+    assert response.headers['content-type'].startswith('text/html')
+    assert 'public app shell' in response.text
+
+
 def _make_image(text: str = "") -> bytes:
     img = Image.new("RGB", (320, 320), color="white")
     d = ImageDraw.Draw(img)

@@ -2869,6 +2869,12 @@ def privacy_page():
     return _spa_index_response()
 
 
+@app.get("/data-deletion")
+@app.get("/data-deletion/")
+def data_deletion_page():
+    return _spa_index_response()
+
+
 @app.get("/docs/listing-analysis")
 def analysis_guide_page():
     # Only the authentication shell is public; document bytes require admin auth.

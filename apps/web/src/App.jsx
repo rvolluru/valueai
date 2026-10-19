@@ -1558,6 +1558,9 @@ export default function App() {
   if (typeof window !== 'undefined' && window.location.pathname === '/privacy') {
     return <PrivacyPolicyPage />
   }
+  if (typeof window !== 'undefined' && window.location.pathname.replace(/\/$/, '') === '/data-deletion') {
+    return <DataDeletionPage />
+  }
   if (CLERK_ENABLED) return <ClerkMarketplaceApp />
   return <LocalMarketplaceApp />
 }
@@ -1843,8 +1846,46 @@ function PrivacyPolicyPage() {
             ) : null}
             {section.body?.map((paragraph) => <p key={paragraph}>{paragraph}</p>)}
             {section.contact ? <p className="legal-contact">{section.contact}</p> : null}
+            {section.title === '5. Your Rights (California Residents)' && <p>All Jouft users, including users who sign in with Facebook, can request deletion. See our <a href="/data-deletion">user data deletion instructions</a>.</p>}
           </section>
         ))}
+      </section>
+    </main>
+  )
+}
+
+function DataDeletionPage() {
+  return (
+    <main className="legal-page">
+      <header className="legal-header">
+        <a className="legal-wordmark" href="/">JOUFT</a>
+        <a className="legal-back-link" href="/privacy">Privacy Policy</a>
+      </header>
+      <section className="legal-card">
+        <p className="eyebrow">Privacy</p>
+        <h1>User Data Deletion</h1>
+        <div className="legal-divider" />
+        <section className="legal-section">
+          <h2>Request deletion of your Jouft data</h2>
+          <p>You can request deletion of your Jouft account and associated personal data, including data received through Facebook Login. You do not need to sign in to submit a request.</p>
+          <ol>
+            <li>Email <a href="mailto:admin@jouft.com?subject=Jouft%20data%20deletion%20request">admin@jouft.com</a> with the subject “Jouft data deletion request”.</li>
+            <li>Include the email address associated with your Jouft account. If you used Facebook Login, mention that in your request. If possible, send your request from your account email address.</li>
+            <li>Specify whether you want your entire account deleted or particular personal data removed.</li>
+          </ol>
+          <p>Do not send passwords, payment card details, or identity documents. If you cannot access your account email, contact us at the same address for help verifying ownership.</p>
+        </section>
+        <section className="legal-section">
+          <h2>What happens next</h2>
+          <p>Our team will verify account ownership before processing your request and contact you by email about its status and completion. You can follow up at admin@jouft.com.</p>
+          <p>For an account deletion request, we review the personal data associated with your account, including your profile, listings and uploaded photos, preferences, and linked Facebook account information, for deletion or de-identification. Some records may need to be retained for legal obligations, fraud prevention, payment disputes, or unresolved transactions. We will explain any applicable retention when responding to your request.</p>
+          <p>This page provides instructions for a manually processed request; opening the page or sending an email does not automatically delete your account. Deleting your Jouft account does not delete your Facebook account.</p>
+        </section>
+        <section className="legal-section">
+          <h2>Disconnect Facebook</h2>
+          <p>You can also remove Jouft from Facebook’s Apps and Websites settings to revoke its access. Disconnecting Facebook does not itself delete data already stored by Jouft; use the email instructions above to request deletion.</p>
+          <p>Read our <a href="/privacy">Privacy Policy</a> for more information.</p>
+        </section>
       </section>
     </main>
   )
