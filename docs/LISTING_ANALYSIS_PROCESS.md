@@ -305,7 +305,11 @@ different source/new description text, checks identical reused value and conditi
 bands, and fails if fresh model analysis starts. The current deployment does not
 automatically reconcile existing listings whose earlier independent estimates differ.
 
-### Sticky pricing-model assignment (local rollout only)
+### Sticky pricing-model assignment (deployed and enabled in production)
+
+Production release `9bbe8f5` enabled this routing on the API and analysis workers.
+Existing listings were persisted as GPT-5 by migration 0008; new listings requiring
+fresh analysis use Sol and retain their assignment on later reruns.
 
 Complete-analysis reuse still runs before a new model is selected. With routing
 enabled, an eligible new duplicate inherits its reused analysis's recorded pricing
@@ -326,8 +330,9 @@ identification and the existing OpenAI label-OCR fallback model remain unchanged
 Saved profiles record `_workflow.pricing_model_assignment` for auditability.
 
 Unscoped/standalone analysis retains the base configured GPT-5 model; sticky routing
-requires a real listing and validated owner. Default-off configuration preserves
-the existing production behavior. This rollout does not reprice existing listings,
+requires a real listing and validated owner. The application feature flag defaults
+off, but local and production configurations explicitly enable routing. This rollout
+does not reprice existing listings,
 enable controlled research, or promise identical results between model cohorts.
 
 ### Saved identity for the same listing
@@ -385,7 +390,12 @@ applicable brand can generate warnings or an authenticity-receipt photo request.
 
 ## 8. Research and estimate value with OpenAI
 
-### Approved sources (local implementation, not deployed)
+### Approved sources (deployed and enforced in production)
+
+Production release `9bbe8f5` includes policy `same-brand-comparables-v5`, with
+search-domain restrictions and server-side source-role validation for both GPT-5
+and Sol. Application-controlled research remains disabled locally and in production;
+the active pricing model searches these approved sources itself.
 
 OpenAI Responses `web_search.filters.allowed_domains` limits pricing research to
 The RealReal, Poshmark, Vestiaire Collective, Rebag, Depop, Vinted and eBay, plus
