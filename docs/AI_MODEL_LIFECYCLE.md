@@ -1,15 +1,17 @@
 # AI model upgrades and retirement policy
 
-Updated October 16, 2026. Owner: Jouft engineering/release maintainer.
+Updated October 18, 2026. Owner: Jouft engineering/release maintainer.
 Current-model runtime changes deployed in release `635ec54` on October 16, 2026.
-Production model names remain unchanged; candidate models and comparison experiments
-have not been promoted to production.
+Release `9bbe8f5`, workflow `39193566712`, enables user-approved sticky pricing
+cohorts in production: existing listings retain GPT-5; new fresh listings use Sol.
+Chat candidates and application-controlled research remain unpromoted/disabled.
 
 ## Inventory and candidates
 
 | Role | Current production model | Candidate | Decision |
 | --- | --- | --- | --- |
-| Pricing, condition inference and OpenAI OCR fallback | gpt-5 | gpt-6.1-sol, reasoning low | Evaluate before promotion |
+| Pricing | gpt-5 (existing), gpt-6.1-sol (new fresh) | Further upgrades | Sticky cohorts deployed |
+| OpenAI OCR fallback | gpt-5 | None | Retain |
 | Application/listing chat | gpt-5-mini | gpt-6-luna, reasoning low | Evaluate before promotion |
 | Identity, OCR and photo coverage | gemini-3.8-flash | Same | Retain; evaluate temperature separately |
 | Mannequin images | gemini-3-pro-image | Same | Retain |
@@ -47,12 +49,14 @@ Next manual review: October 23, 2026. Git history versions all decisions.
 
 ## Evaluation gate
 
-October 18 local-only rollout: user-approved sticky pricing cohorts keep existing
+October 18 production rollout: user-approved sticky pricing cohorts keep existing
 listings on GPT-5, allow genuinely new listings requiring fresh pricing to use
 `gpt-6.1-sol`, and retain that assignment for later reanalysis. Eligible duplicates
 reuse existing evidence/model rather than forcing a new Sol call. The default
-feature flag remains off and production has not switched models. This limited
-local rollout does not constitute a broad production promotion or remove the
+application feature flag defaults off, but production API and workers explicitly
+enable it. Migration 0008 grandfathered existing listings before rollout. Deployed
+settings, Sol access, service stability and public health checks passed. This limited
+cohort rollout does not remove the
 evaluation/migration requirements below. See the canonical process guide for the
 assignment, provenance and retry rules.
 

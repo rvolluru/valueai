@@ -8,9 +8,9 @@ October 16, 2026. Persistent listing identification, explicit pricing refresh,
 strengthened photo-content reuse checks and comparable policy v4 are deployed.
 Parallel pricing/mannequin/cleanup processing remains enabled. Existing listing
 values are not automatically recalculated by deployment.
-**Prepared for production rollout (not yet verified):** policy `same-brand-comparables-v5` adds enforced OpenAI
+**Deployed October 18, 2026, release `9bbe8f5`, workflow `39193566712`:** policy `same-brand-comparables-v5` adds enforced OpenAI
 search-domain restrictions and server-side source-role validation described below.
-**Prepared for production routing rollout (not yet verified):** optional sticky pricing-model
+**Deployed and enabled in `9bbe8f5`:** optional sticky pricing-model
 cohorts use `GPT_PRICING_MODEL_ROUTING_ENABLED` (default false) and
 `GPT_NEW_LISTING_PRICING_MODEL` (default `gpt-6.1-sol`). Existing listings are
 grandfathered to GPT-5 by explicit migration `0008_listing_pricing_models`; new
@@ -23,6 +23,10 @@ application-controlled research disabled to match local behavior. Explicit migra
 0008 pins pre-existing production listings before either service is rolled out.
 New duplicates may inherit the reused analysis's model assignment without a new
 call; new fresh Sol listings remain on Sol for subsequent reruns.
+The rollout completed successfully: migration and both ECS service stability checks
+passed; the deployed smoke task verified routing settings, assignment-table access,
+Sol model access and an OpenAI request. Public health returned OK. No listing values
+were automatically recalculated.
 **Deployed October 18, 2026, release `238f0d3`, disabled by default:** `GPT_CONTROLLED_RESEARCH_ENABLED=true` enables
 the generalized per-site research and persisted snapshot path described in section 8.
 Migration `0007_pricing_research_snapshots` must run explicitly before app startup.
