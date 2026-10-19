@@ -25,6 +25,17 @@ test('agent distinguishes selected photos from uploaded photos before accepting 
   assert.match(mobile, /controller.removePhoto\(photo.image_id\)/);
   assert.doesNotMatch(web + mobile, /replaces the complete saved/);
 });
+test('agent review uses current gallery and a separate explicit publication control', () => {
+  for (const path of ['../components/ListingAgentChat.jsx', '../../../mobile/src/components/ListingAgentChat.jsx']) {
+    const source = readFileSync(new URL(path, import.meta.url), 'utf8');
+    assert.match(source, /session.listing.images/);
+    assert.match(source, /Confirm and publish to Marketplace/);
+    assert.match(source, /controller.publish\(mannequinChoice \|\| null\)/);
+    assert.match(source, /review.mannequin_choice_required && !mannequinChoice/);
+    assert.match(source, /MANNEQUIN_DISCLAIMER/);
+    assert.match(source, /\[review\?\.token\]/);
+  }
+});
 test('photo role labels take their own row instead of covering Set Hero', () => {
   const badge = css.match(/\.listing-image-role-badge\s*\{([^}]+)\}/)[1];
   assert.match(badge, /position: static/);

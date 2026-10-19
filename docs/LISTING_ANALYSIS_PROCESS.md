@@ -900,9 +900,27 @@ the existing analysis worker pipeline runs unchanged, including subscription and
 ownership checks, identity/reuse rules, sticky GPT/Sol assignment, source policy,
 manual review and optional parallel imagery. The agent does not invent prices.
 Returning/polling reads the actual job and saved listing without another chat-model
-call. Missing valuation is shown as needs-review. Publication and post-creation
-corrections remain in the existing My Closet editor; the agent cannot publish or
-trade. It does not yet proactively resume a model conversation after job completion.
+call. Missing valuation is shown as needs-review. Post-creation corrections remain
+in My Closet. The local review/publication extension shows current listing details,
+value and saved gallery in chat, plus synthetic previews with the AI disclaimer.
+When generated assets exist, the user must choose include/exclude explicitly.
+
+Publication requires a separate “Confirm and publish to Marketplace” action with
+a `publication_token` bound to the current listing snapshot and successful job.
+Analysis approval and chat prose cannot authorize it. The guarded publication tool
+rechecks ownership, current successful analysis, category-valid size, positive
+valuation and pending pricing review, then uses the normal listing update path
+for subscription, mannequin review, gallery normalization, rejection feedback and
+publication-email handling. Atomic optional `expected_updated_at` and latest-job
+write checks reject a concurrent listing edit or reanalysis; ordinary updates
+without these conditions are unchanged.
+Request replay and a persisted publication approval permit post-write recovery
+without duplicate publication. A successful session becomes `published` and shows
+the real Active listing. Manual review blocks publishing; users are not asked to
+set a value. Corrections use My Closet and require a fresh review snapshot.
+This extension is local only; production and evaluation/model routing are unchanged.
+The agent cannot trade and does not proactively resume a model conversation after
+job completion; review cards/status are projected from actual saved state.
 
 `LISTING_AGENT_ENABLED` on the API, `VITE_LISTING_AGENT_ENABLED` for web and
 `EXPO_PUBLIC_LISTING_AGENT_ENABLED` for mobile are default-off opt-ins. Both client

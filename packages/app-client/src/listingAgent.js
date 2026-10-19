@@ -56,6 +56,15 @@ export function createListingAgentController(client, getAuth, onChange) {
       if (pending?.type !== 'confirm_analysis') return;
       return perform(turnOperation(state.session, 'I confirm this summary. Create a private draft and start analysis; do not publish.', pending.token));
     },
+    publish(mannequinChoice = null) {
+      const session = state.session;
+      const review = session?.publication_review;
+      if (!review?.publishable || (review.mannequin_choice_required && !mannequinChoice)) return;
+      const payload = { request_id: id(), expected_revision: session.revision,
+        message: 'I reviewed the listing details, photos and value. Publish this listing to Marketplace.',
+        publication_token: review.token, mannequin_choice: mannequinChoice };
+      return perform(async () => client.turnWithListingAgent(session.session_id, payload, await getAuth()));
+    },
     upload(images, onUploaded = () => {}) {
       if (!state.session || !images.length) return;
       const session = state.session;

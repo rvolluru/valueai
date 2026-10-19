@@ -5286,6 +5286,7 @@ textarea:focus-visible,
 .listing-agent-chat.panel { min-width: 0; overflow: visible; overflow-wrap: anywhere; }
 .listing-agent-chat .listing-assistant-messages { max-height: none; overflow: visible; }
 .listing-agent-chat input, .listing-agent-chat textarea { max-width: 100%; box-sizing: border-box; }
+.listing-agent-chat input[type="radio"] { width: auto; min-height: 0; margin-right: 8px; }
 .listing-agent-photos { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 .listing-agent-photos figure { margin: 0; min-width: 0; }
 .listing-agent-photos img { display: block; width: 100%; aspect-ratio: 1; object-fit: cover; }

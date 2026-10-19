@@ -371,14 +371,23 @@ def test_coverage_timeout_requires_category_but_does_not_skip_full_analysis(fixt
     assert services.assessed == 0  # Selecting category does not retry timed-out coverage.
 
 
-def test_no_publish_or_trade_tools_and_strict_schemas():
+def test_publication_tool_is_separate_and_no_trade_tools_exist():
     schemas = tools()
-    assert not any('publish' in t['name'] or 'trade' in t['name'] for t in schemas)
+    assert [t['name'] for t in schemas if 'publish' in t['name']] == ['publish_listing']
+    assert not any('trade' in t['name'] for t in schemas)
     for tool in schemas:
         schema = tool['parameters']
         assert schema['additionalProperties'] is False
         assert set(schema['required']) == set(schema['properties'])
         assert '$ref' not in json.dumps(schema)
+
+
+def test_model_cannot_publish_with_prose_or_analysis_approval(fixture):
+    db, store, state, settings, services = fixture
+    model = scripted(('publish_listing', {}), ('ask_user', {'field': 'details', 'question': 'Complete the private draft first.'}))
+    run(Agent(store, settings, services, model).turn(state['session_id'], turn(state, message='yes publish it')))
+    assert 'Explicit publication confirmation' in json.loads(model.captured[1][-1]['output'])['error']
+    assert services.created == services.started == 0
 
 
 def test_interrupted_old_turn_cannot_overwrite_a_newer_turn(fixture):

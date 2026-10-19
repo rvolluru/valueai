@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createWebApiClient } from '../lib/apiClient'
 import { createListingAgentController } from '../../../../packages/app-client/src/listingAgent'
+import { MANNEQUIN_DISCLAIMER } from '../../../../packages/app-client/src/mannequinDisclosure'
 
 export default function ListingAgentChat({ apiBaseUrl, apiKey, getBearerToken, clerkEnabled }) {
   const [view, setView] = useState({ session: null, busy: false, error: '' })
   const [text, setText] = useState('')
   const [files, setFiles] = useState([])
+  const [mannequinChoice, setMannequinChoice] = useState('')
   const fileInput = useRef(null)
   const auth = useRef(null)
   auth.current = async () => clerkEnabled ? { bearerToken: await getBearerToken() } : { apiKey }
@@ -21,14 +23,18 @@ export default function ListingAgentChat({ apiBaseUrl, apiKey, getBearerToken, c
   }, [controller, view.session?.stage])
   const session = view.session
   const pending = session?.pending
+  const review = session?.publication_review
+  const displayPhotos = session?.listing ? (session.listing.images || []).map((url, index) => ({ image_id: `review-${index}`, url })) : session?.photos || []
+  useEffect(() => { setMannequinChoice('') }, [review?.token])
   return <section className="panel listing-assistant listing-agent-chat is-open" aria-label="Listing draft agent">
-    <h3>Jouft Listing Agent</h3><p>Create a private draft. Nothing is published from this chat.</p>
+    <h3>Jouft Listing Agent</h3><p>Create a private draft, review the results, and publish only after your confirmation.</p>
     {!session && !view.busy && <button onClick={() => controller.retry()}>Connect</button>}
     {session && <>
       <p>{session.photos.length}/6 photos saved · {session.stage.replaceAll('_', ' ')}</p>
       <div className="listing-agent-photos" aria-label="Saved photos">
-        {session.photos.map((photo, index) => <figure key={photo.image_id}>
+        {displayPhotos.map((photo, index) => <figure key={photo.image_id}>
           <img src={new URL(photo.url, apiBaseUrl || window.location.origin).href} alt={`Saved item photo ${index + 1}`} />
+          {review?.mannequin_assets.some(asset => asset.image_url === photo.url) && <figcaption>{MANNEQUIN_DISCLAIMER}</figcaption>}
           {!session.listing_id && <button type="button" disabled={view.busy} aria-label={`Remove photo ${index + 1}`} onClick={() => controller.removePhoto(photo.image_id)}>Remove</button>}
         </figure>)}
       </div>
@@ -55,7 +61,18 @@ export default function ListingAgentChat({ apiBaseUrl, apiKey, getBearerToken, c
       {session.listing && <div className="panel"><h4>{session.listing.title}</h4>
         <p>{session.listing.brand} · {session.listing.condition} · {session.listing.size}</p>
         <p>{session.listing.description}</p>
-        {session.stage === 'review_ready' && <p>{session.listing.estimated_value > 0 ? `Estimated value: $${session.listing.estimated_value}` : 'Value needs review.'} Review and edit this private draft in My Closet.</p>}
+        {session.stage === 'review_ready' && <>
+          <p>{session.listing.estimated_value > 0 ? `Estimated value: $${session.listing.estimated_value}` : 'Value needs review.'}</p>
+          <p>Review these details and the saved photos above. To make corrections, edit the listing in My Closet, then reload saved progress here.</p>
+          {review?.mannequin_choice_required && <fieldset disabled={view.busy}><legend>Include the AI-generated mannequin image?</legend>
+            {review.mannequin_assets.map((asset, index) => asset.image_url && <figure key={index}><img src={new URL(asset.image_url, apiBaseUrl || window.location.origin).href} alt="AI-generated mannequin preview" style={{ width: '100%', maxHeight: 280, objectFit: 'contain' }} /><figcaption>{MANNEQUIN_DISCLAIMER}</figcaption></figure>)}
+            {['include', 'exclude'].map(choice => <label key={choice}><input type="radio" name={`mannequin-${session.session_id}`} value={choice} checked={mannequinChoice === choice} onChange={() => setMannequinChoice(choice)} />{choice === 'include' ? 'Include mannequin image' : 'Use original photos only'}</label>)}
+          </fieldset>}
+          {review?.reasons.map(reason => <p key={reason} role="status">{reason}</p>)}
+          {review && <button className="primary" disabled={view.busy || !review.publishable || (review.mannequin_choice_required && !mannequinChoice)} onClick={() => controller.publish(mannequinChoice || null)}>Confirm and publish to Marketplace</button>}
+          <button disabled={view.busy} onClick={() => controller.refresh()}>Reload saved progress</button>
+        </>}
+        {session.stage === 'published' && <p role="status">Published to Marketplace.</p>}
         {session.stage === 'failed' && <p>Analysis did not finish. The draft is saved in My Closet.</p>}
         {session.stage === 'closed' && <p>This listing changed outside this conversation. Continue in My Closet.</p>}
       </div>}

@@ -2,6 +2,7 @@
 import hashlib
 import io
 import json
+import math
 import uuid
 from datetime import datetime, timezone
 from typing import Annotated
@@ -13,7 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from .auth import AuthPrincipal, get_request_principal
 from .db import Database, PersistedImage, utc_now_iso
 from .deps import get_gpt_item_profiler, get_settings, get_storage, get_valuation_service
-from .listing_agent import Agent, Store, Turn
+from .listing_agent import Agent, Store, Turn, digest, valid_size
 from .schemas import ListingCreateRequest
 from .settings import Settings
 
@@ -175,8 +176,53 @@ class Services:
         public = {k: listing.get(k) for k in ('listing_id', 'title', 'brand', 'category', 'condition', 'size',
                     'description', 'estimated_value', 'status', 'image', 'images')}
         public['pricing_review'] = (listing.get('analysis') or {}).get('pricing_review')
+        from .main import _display_image_urls_from_storage_images, _normalize_public_image_url
+        public['images'] = _display_image_urls_from_storage_images(listing.get('images') or [])
+        public['image'] = _normalize_public_image_url(listing.get('image'))
         public['conversation_current'] = current
         return ({k: job.get(k) for k in ('job_id', 'status', 'stage')}, public)
+
+    async def publication_review(self, state):
+        listing = self.listing(state)
+        job = self.db.get_listing_analysis_job(state['job_id'], self.principal.subject)
+        latest = self.db.get_latest_listing_analysis_job(listing['listing_id'], self.principal.subject)
+        reasons = []
+        if not job or job['status'] != 'succeeded' or (latest and latest['job_id'] != state['job_id']):
+            reasons.append('The current analysis must finish successfully before publishing.')
+        if listing['status'] != 'Review':
+            reasons.append('This listing is not a private draft ready for review.')
+        if not valid_size(listing):
+            reasons.append('Select a valid size in My Closet before publishing.')
+        analysis = listing.get('analysis') or {}
+        value = float(listing.get('estimated_value') or 0)
+        if (analysis.get('pricing_review') or {}).get('status') == 'pending' or not math.isfinite(value) or value <= 0:
+            reasons.append('This item needs pricing review before publishing. You do not need to set a value.')
+        if not listing.get('images') and not listing.get('image'):
+            reasons.append('Add listing photos in My Closet before publishing.')
+        assets = [a for a in analysis.get('generated_assets', []) if isinstance(a, dict) and a.get('synthetic')]
+        return dict(token=digest({'listing': listing, 'job_id': state['job_id']}), publishable=not reasons,
+                    reasons=reasons, mannequin_assets=assets, mannequin_choice_required=bool(assets))
+
+    async def publish(self, state, token, mannequin_choice):
+        from .main import update_listing
+        review = await self.publication_review(state)
+        if review['token'] != token:
+            raise HTTPException(409, 'The listing changed. Review the latest details before publishing.')
+        if not review['publishable']:
+            raise HTTPException(409, ' '.join(review['reasons']))
+        if review['mannequin_choice_required'] and mannequin_choice not in {'include', 'exclude'}:
+            raise HTTPException(409, 'Choose whether to include the mannequin image before publishing.')
+        listing = self.listing(state)
+        if digest({'listing': listing, 'job_id': state['job_id']}) != token:
+            raise HTTPException(409, 'The listing changed. Review the latest details before publishing.')
+        payload = ListingCreateRequest.model_validate({**listing, 'status': 'Active', 'mannequin_choice': mannequin_choice})
+        # Reuse normal owner/subscription/manual-review/media/publication checks and notification.
+        response = update_listing(listing['listing_id'], payload, self.tasks, self.principal,
+                                  self.db, self.settings, get_valuation_service(), get_gpt_item_profiler(),
+                                  expected_updated_at=listing['updated_at'], expected_analysis_job_id=state['job_id'])
+        if response.status != 'Active':
+            raise HTTPException(409, 'The listing was not published; review its current status in My Closet.')
+        return response.model_dump()
 
 
 def agent_for(settings, principal, tasks):

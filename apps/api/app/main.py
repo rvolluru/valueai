@@ -6229,8 +6229,12 @@ def update_listing(
     settings: Settings = Depends(get_settings),
     valuation_service: ValuationService = Depends(get_valuation_service),
     gpt_item_profiler=Depends(get_gpt_item_profiler),
+    expected_updated_at: str | None = None,
+    expected_analysis_job_id: str | None = None,
 ):
     previous_record = next((r for r in db.list_owner_listings(principal.subject, limit=500) if r["listing_id"] == listing_id), None)
+    if expected_updated_at is not None and (previous_record or {}).get('updated_at') != expected_updated_at:
+        raise HTTPException(status_code=409, detail='The listing changed. Review its latest version before saving.')
     previous_brand = str(previous_record.get("brand") or "").strip().casefold() if isinstance(previous_record, dict) else ""
     next_brand = str(payload.brand or "").strip().casefold()
     brand_changed = previous_record is not None and previous_brand != next_brand
@@ -6306,8 +6310,12 @@ def update_listing(
         source_item_id=payload.source_item_id,
         analysis=payload.analysis,
         status=effective_status,
+        **({'expected_updated_at': expected_updated_at} if expected_updated_at is not None else {}),
+        **({'expected_analysis_job_id': expected_analysis_job_id} if expected_analysis_job_id is not None else {}),
     )
     if not updated:
+        if expected_updated_at is not None:
+            raise HTTPException(status_code=409, detail='The listing changed. Review its latest version before saving.')
         raise HTTPException(status_code=404, detail="listing not found")
     if assets and payload.mannequin_choice == "exclude":
         _record_mannequin_rejection(db, listing=previous_record, assets=assets,

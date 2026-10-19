@@ -116,3 +116,23 @@ test('photo removal retries preserve IDs and use the updated revision for reasse
   assert.equal(turns[0].expected_revision, 6);
   assert.equal(removals[0].image_id, 'photo-one');
 });
+
+test('publication uses separate reviewed-version approval and preserves it on retry', async () => {
+  const calls = [];
+  const fixture = setup({ turnWithListingAgent: async (id, payload) => {
+    calls.push(payload);
+    if (calls.length === 1) throw new Error('Lost response');
+    return { session_id: id, revision: 9, stage: 'published' };
+  } });
+  fixture.session.publication_review = { publishable: true, token: 'review-version', mannequin_choice_required: true };
+  await fixture.controller.load();
+  await fixture.controller.publish();
+  assert.equal(calls.length, 0);
+  await fixture.controller.publish('exclude');
+  await fixture.controller.retry();
+  assert.deepEqual(calls[0], calls[1]);
+  assert.equal(calls[0].publication_token, 'review-version');
+  assert.equal(calls[0].mannequin_choice, 'exclude');
+  assert.equal(calls[0].confirmation_token, undefined);
+  assert.equal(fixture.view.session.stage, 'published');
+});

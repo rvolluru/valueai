@@ -2855,6 +2855,8 @@ class Database:
         source_item_id: str | None,
         analysis: dict | None,
         status: str,
+        expected_updated_at: str | None = None,
+        expected_analysis_job_id: str | None = None,
     ) -> bool:
         condition = validate_listing_condition(condition)
         updated_at = utc_now_iso()
@@ -2903,6 +2905,12 @@ class Database:
             listing_id,
             owner_subject,
         )
+        if expected_updated_at is not None:
+            sql += f" AND COALESCE(updated_at, created_at) = {self.param}"
+            params += (expected_updated_at,)
+        if expected_analysis_job_id is not None:
+            sql += f" AND (SELECT j.job_id FROM listing_analysis_jobs j WHERE j.listing_id=listings.listing_id AND j.owner_subject=listings.owner_subject ORDER BY j.created_at DESC LIMIT 1) = {self.param}"
+            params += (expected_analysis_job_id,)
         if self._sqlite_conn is not None:
             with self._sqlite_lock:
                 self._sqlite_conn.execute(sql, params)

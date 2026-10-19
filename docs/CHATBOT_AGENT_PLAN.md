@@ -48,8 +48,8 @@ Expo; restart the relevant processes. The API also exposes authenticated
 The agent creates and analyzes one private draft per session, then renders real
 results. Polling/returning to chat resumes job status without another model call;
 it does not yet run a proactive post-analysis model conversation or push callback.
-After a draft is created, corrections and publication use the existing My Closet
-editor, not agent mutation tools. The new agent has no publish/trade tool. A new
+After a draft is created, corrections use the existing My Closet editor. The agent
+now supports explicit reviewed-version publication, but has no trade tool. A new
 session is an explicit separate draft. Pre-draft uploads add to the saved photo
 set, deduplicated by content hash (up to 6 JPEG/PNG/WebP, 15 MB and 40 MP each).
 Both clients show saved thumbnails and allow explicit removal before draft creation;
@@ -143,10 +143,42 @@ last-photo removal, retries and post-creation restrictions, and optional-only ph
 requests advancing to facts or confirmation. Provider calls remain stubbed.
 
 Create one owner-scoped, private, review-ready listing draft through conversation.
-Publication, marketplace research/matching and trade execution remain outside the
-new agent's first tool set. Keep the existing chat path available behind a feature
+Publication was outside the first tool set and is now implemented locally below.
+Marketplace matching and trade execution remain outside this delivery. Keep the existing chat path available behind a feature
 flag while evaluating the replacement. Retain the configured chat model initially;
 this is an orchestration change, not a model migration.
+
+## Review and publish extension (local only, not deployed)
+
+When the saved analysis job succeeds, the web/mobile review card displays actual
+title, brand, condition, size, description, value and current saved gallery.
+Corrections still use My Closet; reload saved progress afterwards. A different
+analysis job or external non-draft status closes the old agent workflow.
+
+The public session includes a publication-review token bound to the persisted
+listing snapshot and job. Publication uses a distinct `publication_token`, not
+the earlier analysis `confirmation_token`. The explicit “Confirm and publish to
+Marketplace” control submits it with the current session revision and an optional
+explicit mannequin `include`/`exclude` choice. Synthetic previews carry the existing
+AI disclaimer; a choice is required when generated assets exist. There is no
+default choice and no publication based on prose, model inference or a timer.
+
+The guarded `publish_listing` tool rechecks owner, current successful analysis,
+valid size, positive valuation and pending pricing review. It calls the normal
+listing update/publication path, retaining subscription, media-review, mannequin
+rejection and publication-email behavior. Snapshot validation plus an atomic
+`expected_updated_at`/latest-analysis-job write conditions reject a concurrent edit or reanalysis without
+overwriting it. Ordinary updates that omit this optional condition are unchanged.
+The session persists separate publication approval before the write; replay and
+post-write recovery recognize the already-active listing without publishing again.
+The session then reports `published`. No trade is submitted. Production flags and
+pricing/evaluation are unchanged; no real user listing was published during tests.
+
+Verification: 542 Python tests and 42 JavaScript tests passed, along with the web
+build and offline iOS JavaScript export. Publication tests cover prose refusal,
+separate approval, include/exclude choices, stale snapshots, atomic concurrent-edit
+and reanalysis conflicts, manual review/subscription/ownership checks, replay and
+recovery after the listing write but before the tool checkpoint.
 
 ## Current implementation map
 

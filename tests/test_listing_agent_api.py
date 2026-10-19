@@ -32,6 +32,160 @@ def start(client):
     return response.json()
 
 
+def review_ready(client, analysis=None):
+    from app.deps import get_db
+    from app.listing_agent import Store
+    state = upload(client, start(client)).json()
+    url = state['photos'][0]['url']
+    response = client.post('/v1/listings', headers=AUTH, json=dict(title='Reviewed coat', brand='Chanel',
+        category='clothes', condition='New', size='M', estimated_value=123, status='Review',
+        image=url, images=[url], source_item_id=state['photos'][0]['item_id'], analysis=analysis))
+    assert response.status_code == 200, response.text
+    db = get_db()
+    job = db.create_listing_analysis_job(job_id='review-job', listing_id=response.json()['listing_id'], owner_subject='api-key')
+    db.update_listing_analysis_job(job_id=job['job_id'], owner_subject='api-key', status='succeeded', stage='completed', completed=True)
+    store = Store(db, 'api-key')
+    saved = store.load(state['session_id'])
+    saved.update(listing_id=response.json()['listing_id'], job_id=job['job_id'], stage='analyzing')
+    store.save(saved)
+    result = client.get(f'/v1/listing-agent/sessions/{state["session_id"]}', headers=AUTH)
+    assert result.status_code == 200, result.text
+    return result.json()
+
+
+def test_review_publish_requires_its_own_approval_and_is_idempotent(client, monkeypatch):
+    from app.deps import get_db
+    from app import listing_agent
+    async def no_model(*args):
+        pytest.fail('Review/publication control must not need a model call')
+    monkeypatch.setattr(listing_agent, 'call_model', no_model)
+    state = review_ready(client)
+    assert state['stage'] == 'review_ready' and state['publication_review']['publishable']
+    path = f'/v1/listing-agent/sessions/{state["session_id"]}/turns'
+    prose = client.post(path, headers=AUTH, json=dict(request_id='prose', expected_revision=state['revision'], message='yes publish it'))
+    assert prose.status_code == 200, prose.text
+    assert get_db().get_listing_by_id(state['listing_id'])['status'] == 'Review'
+    state = prose.json()
+    payload = dict(request_id='publish', expected_revision=state['revision'], message='Confirm and publish',
+                   publication_token=state['publication_review']['token'])
+    response = client.post(path, headers=AUTH, json=payload)
+    assert response.status_code == 200, response.text
+    assert response.json()['stage'] == 'published'
+    assert response.json()['listing']['status'] == 'Active'
+    assert client.post(path, headers=AUTH, json=payload).json() == response.json()
+    assert len(get_db().fetchall('SELECT job_id FROM listing_analysis_jobs')) == 1
+
+
+def test_publication_rejects_stale_review_and_manual_pricing_review(client):
+    from app.deps import get_db
+    state = review_ready(client)
+    path = f'/v1/listing-agent/sessions/{state["session_id"]}'
+    db = get_db()
+    db.execute('UPDATE listings SET title=? WHERE listing_id=?', ('Changed title', state['listing_id']))
+    db.commit()
+    response = client.post(path + '/turns', headers=AUTH, json=dict(request_id='stale-publish',
+        expected_revision=state['revision'], message='Publish', publication_token=state['publication_review']['token']))
+    assert response.status_code == 409
+    assert db.get_listing_by_id(state['listing_id'])['status'] == 'Review'
+    db.execute('UPDATE listings SET analysis_json=? WHERE listing_id=?',
+               ('{"pricing_review":{"status":"pending"}}', state['listing_id']))
+    db.commit()
+    current = client.get(path, headers=AUTH).json()
+    assert not current['publication_review']['publishable']
+    assert client.post(path + '/turns', headers=AUTH, json=dict(request_id='manual-review',
+        expected_revision=current['revision'], message='Publish', publication_token=current['publication_review']['token'])).status_code == 409
+
+
+@pytest.mark.parametrize('choice', ['include', 'exclude'])
+def test_publication_requires_explicit_mannequin_choice(client, choice):
+    import json
+    from app.deps import get_db
+    state = review_ready(client)
+    url = client.post('/v1/uploads/images', headers=AUTH, data={'item_id': 'generated-preview'},
+        files=[('images', ('preview.jpg', photo('blue'), 'image/jpeg'))]).json()['uploaded_images'][0]['image_url']
+    db = get_db()
+    analysis = {'generated_assets': [dict(synthetic=True, kind='mannequin', image_url=url, review_decision='pending')]}
+    db.execute('UPDATE listings SET analysis_json=? WHERE listing_id=?', (json.dumps(analysis), state['listing_id']))
+    db.commit()
+    path = f'/v1/listing-agent/sessions/{state["session_id"]}'
+    state = client.get(path, headers=AUTH).json()
+    assert state['publication_review']['mannequin_choice_required']
+    payload = dict(request_id='publish-choice', expected_revision=state['revision'], message='Publish reviewed listing',
+                   publication_token=state['publication_review']['token'])
+    assert client.post(path + '/turns', headers=AUTH, json=payload).status_code == 409
+    payload.update(request_id='publish-with-choice', mannequin_choice=choice)
+    response = client.post(path + '/turns', headers=AUTH, json=payload)
+    assert response.status_code == 200, response.text
+    listing = db.get_listing_by_id(state['listing_id'])
+    assert listing['status'] == 'Active'
+    assert listing['analysis']['generated_assets'][0]['review_decision'] == choice
+    assert client.post(path + '/turns', headers=AUTH, json=payload).json() == response.json()
+
+
+@pytest.mark.parametrize('race', ['edit', 'analysis'])
+def test_publication_blocks_concurrent_edit_at_database_write(client, monkeypatch, race):
+    from app.db import Database
+    from app.deps import get_db
+    state = review_ready(client)
+    original = Database.update_listing
+    def racing_update(self, **kwargs):
+        if kwargs.get('expected_updated_at'):
+            if race == 'edit':
+                self.execute('UPDATE listings SET title=?,updated_at=? WHERE listing_id=?',
+                             ('Concurrent correction', '2099-01-01T00:00:00+00:00', state['listing_id']))
+                self.commit()
+            else:
+                self.create_listing_analysis_job(job_id='new-analysis', listing_id=state['listing_id'], owner_subject='api-key')
+        return original(self, **kwargs)
+    monkeypatch.setattr(Database, 'update_listing', racing_update)
+    response = client.post(f'/v1/listing-agent/sessions/{state["session_id"]}/turns', headers=AUTH,
+        json=dict(request_id='race', expected_revision=state['revision'], message='Publish',
+                  publication_token=state['publication_review']['token']))
+    assert response.status_code == 409
+    listing = get_db().get_listing_by_id(state['listing_id'])
+    assert listing['status'] == 'Review'
+    assert listing['title'] == ('Concurrent correction' if race == 'edit' else 'Reviewed coat')
+
+
+def test_publication_recovers_after_write_before_tool_checkpoint(client, monkeypatch):
+    from app import listing_agent_routes
+    state = review_ready(client)
+    original = listing_agent_routes.Services.publish
+    async def interrupted(self, *args):
+        await original(self, *args)
+        raise RuntimeError('Lost response after publication')
+    monkeypatch.setattr(listing_agent_routes.Services, 'publish', interrupted)
+    payload = dict(request_id='resume-publish', expected_revision=state['revision'], message='Publish',
+                   publication_token=state['publication_review']['token'])
+    path = f'/v1/listing-agent/sessions/{state["session_id"]}/turns'
+    assert client.post(path, headers=AUTH, json=payload).status_code == 409
+    response = client.post(path, headers=AUTH, json=payload)
+    assert response.status_code == 200, response.text
+    assert response.json()['stage'] == 'published'
+
+
+def test_publication_keeps_subscription_and_owner_checks(client, monkeypatch):
+    from app.auth import AuthPrincipal, get_request_principal
+    from app import main
+    from app.deps import get_db
+    from fastapi import HTTPException
+    state = review_ready(client)
+    payload = dict(request_id='protected-publish', expected_revision=state['revision'], message='Publish',
+                   publication_token=state['publication_review']['token'])
+    path = f'/v1/listing-agent/sessions/{state["session_id"]}/turns'
+    main.app.dependency_overrides[get_request_principal] = lambda: AuthPrincipal(auth_type='clerk', subject='other', claims={})
+    try:
+        assert client.post(path, headers=AUTH, json=payload).status_code == 404
+    finally:
+        main.app.dependency_overrides.pop(get_request_principal, None)
+    def subscription_required(*args):
+        raise HTTPException(402, 'Subscription required')
+    monkeypatch.setattr(main, '_require_subscription_entitlement', subscription_required)
+    response = client.post(path, headers=AUTH, json=payload)
+    assert response.status_code == 409 and 'Subscription required' in response.text
+    assert get_db().get_listing_by_id(state['listing_id'])['status'] == 'Review'
+
+
 def upload(client, state, data=None, request='photos'):
     return client.post(f'/v1/listing-agent/sessions/{state["session_id"]}/photos', headers=AUTH,
         data={'request_id': request, 'expected_revision': state['revision']},
