@@ -865,10 +865,18 @@ Clear standalone answers to the active, version-current category/condition/size
 question are recorded through the same validated fact tool using the exact user
 message as evidence, then advance directly to the next question or confirmation
 without a model call. This prevents a model-generated evidence-quote mismatch
-from losing an answer such as `New`. Only explicit recognized choices/simple size
-formats qualify; ambiguous answers still use the model. It does not infer facts
+from losing an answer such as `New`. Only explicit recognized condition/category
+choices and allowed category sizes qualify; ambiguous answers still use the model. It does not infer facts
 from images, change evidence validation, or authorize creation/analysis without
 the confirmation control. This intake fix is local only.
+
+Size validation is category-specific and matches the web listing form's allowed
+options. For shoes, `10` is not valid; `US 10` is a valid explicit selection.
+The agent receives the allowed list, shows it when asking size, and rejects
+unsupported values on both direct and model-proposed paths. Model-proposed sizes
+must also appear explicitly in the user message; no inferred US/EU conversion is
+permitted. Confirmation, draft creation and analysis start reject an invalid saved
+size. Invalid historical values are not added to form dropdowns or silently fixed.
 
 Explicit migration `0009_listing_agent_sessions` creates owner-scoped session,
 request-replay and tool-ledger records. Dedicated DB connections, cross-process

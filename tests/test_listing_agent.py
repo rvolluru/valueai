@@ -237,7 +237,7 @@ def test_recommended_photos_never_become_a_blocking_question(fixture, field):
 
 def test_recommended_photos_do_not_block_ready_summary(fixture):
     db, store, state, settings, services = fixture
-    state.update(facts=dict(category='shoes', condition='New', size='8'),
+    state.update(facts=dict(category='shoes', condition='New', size='US 8'),
         evidence=dict(status='checked', missing_required=[], missing_recommended=['condition_or_wear']))
     store.save(state)
     model = scripted(('ask_user', dict(field='photos', question='Upload optional wear photos.')))
@@ -249,11 +249,11 @@ def test_recommended_photos_do_not_block_ready_summary(fixture):
 @pytest.mark.parametrize('field,message,value', [
     ('condition', 'New', 'New'), ('condition', 'new with tags', 'NewWithTags'),
     ('condition', 'LikeNew', 'LikeNew'), ('category', 'shoes', 'shoes'),
-    ('size', '8.5', '8.5'), ('size', 'EU 39', 'EU 39'), ('size', 'M', 'M'),
+    ('size', 'US 8.5', 'US 8.5'), ('size', 'US 10', 'US 10'), ('size', 'M', 'M'),
 ])
 def test_clear_answer_to_current_question_is_saved_without_model_quote(fixture, field, message, value):
     db, store, state, settings, services = fixture
-    state.update(facts=dict(category='shoes', condition='New', size='8'),
+    state.update(facts=dict(category='clothes' if value == 'M' else 'shoes', condition='New', size='US 8'),
                  evidence=dict(status='checked', missing_required=[]))
     state['facts'].pop(field)
     state['pending'] = dict(type='question', field=field, question='Provide ' + field, version=Agent.version(state))
@@ -279,8 +279,54 @@ def test_new_condition_answer_advances_to_size_not_same_question(fixture):
     result = run(Agent(store, settings, services, model).turn(state['session_id'], turn(state, message='New')))
     assert result['facts']['condition'] == 'New'
     assert result['pending']['field'] == 'size'
-    assert result['reply'] == 'What is the item size?'
+    assert 'Please select a valid size:' in result['reply']
+    assert 'US 10' in result['reply']
     assert model.captured == []
+
+
+@pytest.mark.parametrize('proposed,message', [('10', '10'), ('US 10', '10'), ('EU 43', 'EU 43'), ('US 10', 'US 10.5')])
+def test_invalid_or_inferred_shoe_size_is_rejected(fixture, proposed, message):
+    db, store, state, settings, services = fixture
+    state.update(facts=dict(category='shoes', condition='New'), evidence=dict(status='checked', missing_required=[]))
+    state['pending'] = dict(type='question', field='size', question='Select size', version=Agent.version(state))
+    store.save(state)
+    model = scripted(('record_user_facts', {'facts': {'size': proposed}, 'evidence_quote': message}),
+                     ('ask_user', {'field': 'size', 'question': 'Size?'}))
+    # US 10.5 itself is valid and handled directly, not converted to US 10.
+    result = run(Agent(store, settings, services, model).turn(state['session_id'], turn(state, message=message)))
+    if message == 'US 10.5':
+        assert result['facts']['size'] == 'US 10.5'
+    else:
+        assert 'size' not in result['facts']
+        assert 'error' in json.loads(model.captured[1][-1]['output'])
+        assert result['pending']['field'] == 'size'
+        assert 'US 10' in result['reply']
+    assert services.created == services.started == 0
+
+
+def test_old_invalid_size_cannot_be_confirmed_or_used_to_create_draft(fixture):
+    db, store, state, settings, services = fixture
+    state.update(facts=dict(category='shoes', condition='New', size='10'), evidence=dict(status='checked', missing_required=[]))
+    state['approved'] = Agent.version(state)
+    store.save(state)
+    agent = Agent(store, settings, services, scripted(('prepare_analysis_confirmation', {}),
+        ('create_private_draft', {}), ('ask_user', {'field': 'size', 'question': 'Choose size'})))
+    result = run(agent.turn(state['session_id'], turn(state, message='Continue')))
+    assert result['pending']['field'] == 'size'
+    assert services.created == services.started == 0
+
+
+def test_agent_size_options_match_web_category_lists():
+    import re
+    from pathlib import Path
+    from app.listing_agent import SIZE_OPTIONS
+    source = (Path(__file__).resolve().parents[1] / 'apps/web/src/App.jsx').read_text()
+    def values(pattern):
+        return re.findall(r"'([^']+)'", re.search(pattern, source).group(1))
+    assert SIZE_OPTIONS['shoes'] == values(r"if \(category === 'shoes'\) return \[([^\]]+)\]")
+    assert SIZE_OPTIONS['handbag'] == values(r"if \(category === 'handbag'\) return \[([^\]]+)\]")
+    assert SIZE_OPTIONS['accessories'] == values(r'const ACCESSORY_SIZE_OPTIONS = \[([^\]]+)\]')
+    assert SIZE_OPTIONS['clothes'] == values(r'const APPAREL_SIZE_OPTIONS = \[([^\]]+)\]') + values(r'const US_NUMERIC_APPAREL_SIZE_OPTIONS = \[([^\]]+)\]')
 
 
 @pytest.mark.parametrize('message', ['new?', 'not new', 'New or Like new', 'I am not sure'])

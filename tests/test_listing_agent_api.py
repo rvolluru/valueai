@@ -117,10 +117,10 @@ def test_real_photo_upload_invalidates_missing_sole_and_rechecks_once(client, mo
     assert len(uploaded['photos']) == 2
     assert uploaded['evidence'] is None and uploaded['pending'] is None
     monkeypatch.setattr(listing_agent, 'call_model', scripted(('assess_photo_evidence', {}),
-        ('record_user_facts', {'facts': {'condition': 'New', 'size': '8'}, 'evidence_quote': 'New, size 8'}),
+        ('record_user_facts', {'facts': {'condition': 'New', 'size': 'US 8'}, 'evidence_quote': 'New, size US 8'}),
         ('prepare_analysis_confirmation', {})))
     response = client.post(path + '/turns', headers=AUTH, json=dict(request_id='second',
-        expected_revision=uploaded['revision'], message='New, size 8'))
+        expected_revision=uploaded['revision'], message='New, size US 8'))
     assert response.status_code == 200, response.text
     assert response.json()['pending']['type'] == 'confirm_analysis'
     assert response.json()['evidence']['missing_required'] == []

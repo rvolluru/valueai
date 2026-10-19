@@ -102,12 +102,23 @@ checks, not a rerun of the member's live session.
 
 A live turn answering `New` failed because the model's `record_user_facts`
 evidence quote did not match the current message. The quote guard remains strict.
-Recognized standalone condition/category choices and simple size answers now go
+Recognized standalone condition/category choices and valid category size choices now go
 through the same fact tool with the actual user message as evidence, but only for
 the current version-bound question and before draft creation. The next required
 question/confirmation is presented without a provider call. Ambiguous answers,
 compound messages and other questions retain the model path. Confirmation is
 still required; no prices or identities are inferred from this parser.
+
+Size follow-up (local only): size must be in the category's existing form options.
+Bare `10` is invalid for shoes, while `US 10` is valid. The direct parser and model
+fact tool both enforce this; the model cannot add a prefix absent from the user's
+answer. Size questions expose the full allowed list. Invalid saved sizes cannot
+pass confirmation, creation or analysis start, and edit dropdowns are not expanded
+to accommodate them. Existing invalid listings need an explicit valid selection.
+
+Size validation verification: all 533 Python tests and the web build passed,
+including parity with the form's category options, invalid/inferred shoe sizes,
+and blocking confirmation/creation for an old invalid size.
 
 Verification: all 527 Python tests passed, including direct answers, ambiguous
 answers, replay safety, and `New` advancing to size without a model call.

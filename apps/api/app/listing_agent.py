@@ -17,6 +17,22 @@ from pydantic import BaseModel, ConfigDict, Field
 from .db import utc_now_iso
 from .logging_utils import log_json
 
+SIZE_OPTIONS = {
+    'shoes': ['US 5', 'US 5.5', 'US 6', 'US 6.5', 'US 7', 'US 7.5', 'US 8', 'US 8.5', 'US 9', 'US 9.5', 'US 10', 'US 10.5', 'US 11', 'US 12'],
+    'clothes': ['XXS', 'XS', 'S', 'M', 'L', 'XL', 'XXL', 'XXXL', '00', '0', '2', '4', '6', '8', '10', '12', '14', '16', '18', '20', '22', '24'],
+    'handbag': ['Mini', 'Small', 'Medium', 'Large'],
+    'accessories': ['One Size', 'Mini', 'Small', 'Medium', 'Large', 'Adjustable'],
+}
+
+
+def valid_size(facts):
+    return facts.get('size') in SIZE_OPTIONS.get(facts.get('category'), [])
+
+
+def size_question(state):
+    options = SIZE_OPTIONS.get(state['facts'].get('category'), [])
+    return 'Please select a valid size: ' + ', '.join(options) + '.' if options else 'Please select a category before choosing a size.'
+
 
 def digest(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
@@ -77,10 +93,10 @@ def direct_answer(state, message):
     }
     if field in choices and normalized in choices[field]:
         return {field: choices[field][normalized]}
-    if field == 'size' and (normalized in {'xxs', 'xs', 's', 'm', 'l', 'xl', 'xxl', 'xxxl',
-            'small', 'medium', 'large', 'mini', 'one size'} or
-            re.fullmatch(r'(?:(?:US|UK|EU)\s*)?\d{1,3}(?:\.5)?(?:\s*(?:US|UK|EU|W|M|N|wide|narrow))?', value, re.I)):
-        return {'size': value}
+    if field == 'size':
+        selected = next((s for s in SIZE_OPTIONS.get(state['facts'].get('category'), []) if s.casefold() == normalized), None)
+        if selected:
+            return {'size': selected}
     return None
 
 
@@ -282,6 +298,7 @@ class Agent:
         return {k: state[k] for k in ('session_id', 'revision', 'stage', 'facts', 'photos', 'evidence',
                                       'waivers', 'pending', 'listing_id', 'job_id', 'messages')} | actual | {
             'analysis_confirmed': state.get('approved') == self.version(state),
+            'size_options': SIZE_OPTIONS.get(state['facts'].get('category'), []),
         }
 
     async def execute(self, name, arguments, state, turn):
@@ -337,7 +354,7 @@ class Agent:
                 missing = next(((key, prompt) for key, prompt in (
                     ('category', 'Which category is your item: clothes, shoes, handbag, or accessories?'),
                     ('condition', 'What is the condition: New with tags, New, or Like new?'),
-                    ('size', 'What is the item size?')) if not state['facts'].get(key)), None)
+                    ('size', size_question(state))) if (not valid_size(state['facts']) if key == 'size' else not state['facts'].get(key))), None)
                 if missing:
                     args = Question(field=missing[0], question=missing[1])
                     question = args.question
@@ -356,6 +373,12 @@ class Agent:
                 updates = args.facts.model_dump(exclude_none=True)
                 if any(not str(v).strip() for v in updates.values()):
                     raise ValueError('Facts must not be blank')
+                if 'size' in updates:
+                    category = updates.get('category') or state['facts'].get('category')
+                    if updates['size'] not in SIZE_OPTIONS.get(category, []):
+                        raise ValueError('Size must be one of: ' + ', '.join(SIZE_OPTIONS.get(category, [])))
+                    if not re.search(r'(?<!\w)' + re.escape(updates['size']) + r'(?!\w|\.\d)', turn.message, re.I):
+                        raise ValueError('Size must be explicitly supplied by the user; do not infer a sizing system')
                 if ('category' in updates and updates['category'] != state['facts'].get('category')
                         and (state.get('evidence') or {}).get('status') == 'checked'):
                     state['evidence'] = None  # Reassess requirements for the corrected category.
@@ -383,6 +406,8 @@ class Agent:
         if name == 'prepare_analysis_confirmation':
             evidence = state.get('evidence') or {}
             missing = [k for k in ('category', 'condition', 'size') if not state['facts'].get(k)]
+            if state['facts'].get('size') and not valid_size(state['facts']):
+                missing.append('valid category size')
             if not state['photos'] or not evidence:
                 missing.append('photos')
             if evidence.get('status') == 'checked':
@@ -393,6 +418,8 @@ class Agent:
                 facts=state['facts'].copy(), waived_views=state['waivers'][:], photo_count=len(state['photos']))
             return {'paused': True, 'pending': state['pending']}
         if name in {'create_private_draft', 'start_listing_analysis'}:
+            if not valid_size(state['facts']):
+                raise ValueError('A valid category size is required')
             if state.get('approved') != self.version(state):
                 raise ValueError('Explicit confirmation of the current summary is required')
             if name == 'create_private_draft':
@@ -424,8 +451,8 @@ class Agent:
         if not question:
             for key, prompt in [('category', 'Which category is your item: clothes, shoes, handbag, or accessories?'),
                                 ('condition', 'What is the condition: New with tags, New, or Like new?'),
-                                ('size', 'What is the item size?')]:
-                if not state['facts'].get(key):
+                                ('size', size_question(state))]:
+                if not valid_size(state['facts']) if key == 'size' else not state['facts'].get(key):
                     field, question = key, prompt
                     break
         if question:
