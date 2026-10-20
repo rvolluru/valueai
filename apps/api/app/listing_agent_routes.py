@@ -14,7 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from .auth import AuthPrincipal, get_request_principal
 from .db import Database, PersistedImage, utc_now_iso
 from .deps import get_gpt_item_profiler, get_settings, get_storage, get_valuation_service
-from .listing_agent import Agent, Store, Turn, digest, valid_size
+from .listing_agent import Agent, Store, Turn, digest, valid_size, SIZE_OPTIONS
 from .schemas import ListingCreateRequest
 from .settings import Settings
 
@@ -220,7 +220,10 @@ class Services:
         if listing['status'] != 'Review':
             reasons.append('This listing is not a private draft ready for review.')
         if not valid_size(listing):
-            reasons.append('Select a valid size in My Closet before publishing.')
+            sizes = SIZE_OPTIONS.get(listing.get('category'), [])
+            example = 'M' if 'M' in sizes else sizes[0] if sizes else 'the correct size'
+            reasons.append(f'What is the size? Tell me here in chat—for example, “Change size to {example}”. '
+                           f'Valid sizes: {", ".join(sizes)}. I need a valid size before publishing.')
         analysis = listing.get('analysis') or {}
         value = float(listing.get('estimated_value') or 0)
         if (analysis.get('pricing_review') or {}).get('status') == 'pending' or not math.isfinite(value) or value <= 0:

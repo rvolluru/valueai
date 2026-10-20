@@ -320,6 +320,30 @@ def test_review_publish_requires_its_own_approval_and_is_idempotent(client, monk
     assert len(get_db().fetchall('SELECT job_id FROM listing_analysis_jobs')) == 1
 
 
+def test_invalid_saved_size_is_resolved_in_chat_without_changing_value(client, monkeypatch):
+    from app import listing_agent
+    from app.deps import get_db
+    state = review_ready(client)
+    db = get_db()
+    db.execute('UPDATE listings SET size=? WHERE listing_id=?', ('Medium', state['listing_id']))
+    db.commit()
+    current = client.get(f'/v1/listing-agent/sessions/{state["session_id"]}', headers=AUTH).json()
+    reason = ' '.join(current['publication_review']['reasons'])
+    assert 'Tell me here in chat' in reason
+    assert 'Change size to M' in reason and 'Valid sizes:' in reason
+    assert 'My Closet' not in reason
+    assert not current['publication_review']['publishable']
+    monkeypatch.setattr(listing_agent, 'call_model', scripted(('propose_listing_changes',
+        {'facts': {'size': 'M'}, 'evidence_quote': 'Change size to M'})))
+    corrected = client.post(f'/v1/listing-agent/sessions/{state["session_id"]}/turns', headers=AUTH,
+        json=dict(request_id='repair-invalid-size', expected_revision=current['revision'], message='Change size to M'))
+    assert corrected.status_code == 200, corrected.text
+    assert corrected.json()['listing']['size'] == 'M'
+    assert corrected.json()['listing']['estimated_value'] == 123
+    assert corrected.json()['publication_review']['publishable']
+    assert corrected.json()['listing']['status'] == 'Review'
+
+
 def test_agent_matches_require_publication_and_never_publish_implicitly(client):
     from app.deps import get_db
     state = review_ready(client)

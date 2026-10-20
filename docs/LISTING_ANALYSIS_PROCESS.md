@@ -940,7 +940,10 @@ Before publication, users describe corrections in chat; there is no embedded edi
 form. The `propose_listing_changes` tool validates user-quoted fields and saves an
 explicit change/update/set/correct/replace request directly, without a second Save
 step. Questions/hypotheticals, unsaved photo changes and unrelated older staged
-fields are not implicitly approved. Invalid sizes remain rejected. Older/staged
+fields are not implicitly approved. Invalid sizes remain rejected. An invalid saved
+size prompts for a correction here in chat, with allowed sizes and a “Change size
+to …” example, not a redirect to My Closet. Size-only corrections retain value.
+Older/staged
 proposals can be resolved by typing “Save changes” or “Discard changes”; the
 server binds saving to the current proposal, revision and owner, not publication.
 The local review UI collapses photo management, descriptions and prior conversation

@@ -7,6 +7,10 @@ legacy path; the new path is described in the implementation status section.
 
 ## Implemented local pilot
 
+- Invalid saved sizes now prompt for a correction in chat, list canonical allowed
+  sizes and give a “Change size to …” example, rather than redirecting to My Closet.
+  Publication remains blocked until corrected; size-only edits retain value.
+
 - Review lookup ignores conversational command words such as “review” in title
   references. Ambiguous requests show actual candidate cards; unmatched titles show
   recent owned drafts or an explicit no-listing message, never an empty chooser.
