@@ -53,7 +53,12 @@ def review_ready(client, analysis=None):
     return result.json()
 
 
-def test_general_review_handoff_resolves_first_result_and_opens_owned_session(client, monkeypatch):
+@pytest.mark.parametrize('reference,index,message,found', [
+    (None, 1, 'review first one', True),
+    (None, None, 'Review Chanel Reviewed coat', True),
+    ('No such title', None, 'Review No such title', False),
+])
+def test_general_review_handoff_resolves_first_result_and_opens_owned_session(client, monkeypatch, reference, index, message, found):
     import json
     from app import main
     state = review_ready(client)
@@ -61,7 +66,7 @@ def test_general_review_handoff_resolves_first_result_and_opens_owned_session(cl
         status_code = 200
         def json(self):
             return {'output': [{'content': [{'type': 'output_text', 'text': json.dumps(dict(
-                intent='review_listing', reply='Review it', listing_reference=None, listing_reference_index=1,
+                intent='review_listing', reply='Review it', listing_reference=reference, listing_reference_index=index,
                 listing_reference_scope='closet', navigation=None))}]}]}
     class Model:
         def __init__(self, *a, **kw): pass
@@ -70,15 +75,29 @@ def test_general_review_handoff_resolves_first_result_and_opens_owned_session(cl
         async def post(self, *a, **kw): return Response()
     monkeypatch.setattr(main.httpx, 'AsyncClient', Model)
     result = client.post('/v1/app-assistant/chat', headers=AUTH, json=dict(
-        messages=[{'role': 'user', 'content': 'review first one'}], context={
+        messages=[{'role': 'user', 'content': message}], context={
             'closet_result_ids': [state['listing_id']], 'result_listing_ids': [state['listing_id']]}))
     assert result.status_code == 200, result.text
+    if not found:
+        assert result.json()['review_listing_id'] is None
+        assert result.json()['listings'][0]['listing_id'] == state['listing_id']
+        assert 'could not find that title' in result.json()['reply']
+        return
     assert result.json()['review_listing_id'] == state['listing_id']
     opened = client.post('/v1/listing-agent/sessions/review', headers=AUTH,
                          json=dict(request_id='review-entry', listing_id=state['listing_id']))
     assert opened.status_code == 200, opened.text
     assert opened.json()['listing']['title'] == 'Reviewed coat'
     assert opened.json()['stage'] == 'review_ready'
+
+
+def test_review_reference_ignores_command_words_but_preserves_ambiguity():
+    from app.main import _app_assistant_listing_candidates, _app_assistant_resolve_listing
+    listings = [dict(listing_id='one', title='Printed Monogram Short-Sleeved Shirt', brand='Louis Vuitton'),
+                dict(listing_id='two', title='Monogram Embroidered Suede Overshirt', brand='Louis Vuitton')]
+    assert len(_app_assistant_listing_candidates('Review Louis Vuitton monogram shirt', listings)) == 2
+    assert _app_assistant_resolve_listing('Review Louis Vuitton monogram shirt', listings, []) is None
+    assert _app_assistant_resolve_listing('Review Louis Vuitton suede overshirt', listings, [])['listing_id'] == 'two'
 
 
 def test_review_corrections_are_proposed_confirmed_and_invalidate_publication(client):

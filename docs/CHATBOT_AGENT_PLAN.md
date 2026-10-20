@@ -1,11 +1,15 @@
 # Listing chatbot: current flow and agent implementation plan
 
-Updated October 19, 2026. First bounded implementation is now present locally,
+Updated October 20, 2026. First bounded implementation is now present locally,
 behind default-off flags. No production rollout or paid model evaluation has been
 performed for this agent. The current-flow table below describes the retained
 legacy path; the new path is described in the implementation status section.
 
 ## Implemented local pilot
+
+- Review lookup ignores conversational command words such as “review” in title
+  references. Ambiguous requests show actual candidate cards; unmatched titles show
+  recent owned drafts or an explicit no-listing message, never an empty chooser.
 
 - Read-only Marketplace matching after publication: `find_marketplace_matches`
   reuses the normal closet matching service (value tolerance, current preferences,

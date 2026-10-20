@@ -1,6 +1,6 @@
 # Jouft listing analysis: complete process
 
-Updated October 19, 2026. This document explains the functional process: inputs,
+Updated October 20, 2026. This document explains the functional process: inputs,
 model calls, decisions, outputs and user review—not a reliability assessment.
 
 **Admin guide access (live-site verified October 19, 2026):** `/docs/listing-analysis`
@@ -929,7 +929,10 @@ resolves an owned listing by ID/title or numbered closet results and returns a
 `review_listing_id` handoff. Both clients explicitly open that listing's owner-scoped
 review session; they do not reuse an unrelated last conversation. With this feature
 enabled, general-chat publication requests also enter this review boundary.
-Ambiguous targets require selection. Opening review never creates another listing
+Review lookup ignores command words such as “review” when matching titles.
+Ambiguous targets show actual candidate cards for selection. An unmatched title
+shows recent owned drafts, or a clear no-listing message if none exist; the user is
+never asked to choose from empty results. Opening review never creates another listing
 or analysis job. Saved legacy analysis without a job may be reviewed as persisted
 analysis; missing analysis cannot authorize publication.
 

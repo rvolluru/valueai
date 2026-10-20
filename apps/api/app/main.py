@@ -8960,6 +8960,7 @@ def _app_assistant_listing_card(listing: dict, settings: Settings) -> dict:
 
 APP_ASSISTANT_REFERENCE_STOP_WORDS = {
     "the", "a", "an", "my", "listing", "item", "publish", "post", "make", "put", "live", "marketplace", "please",
+    "review", "edit", "correct", "show", "me",
 }
 
 
@@ -9197,7 +9198,13 @@ async def app_assistant_chat(
             reply = 'This listing is not a private draft. You can edit it in My Closet.'
         else:
             result_listings = _app_assistant_listing_candidates(reference, own_listings)[:12]
-            reply = 'Which listing would you like to review? Choose by title or the numbered results.'
+            if result_listings:
+                reply = 'I found several possible listings. Which one would you like to review? Choose by title or the numbered results.'
+            else:
+                result_listings = [item for item in own_listings
+                    if str(item.get('status')).casefold() in {'review', 'analyzing', 'analysisfailed'}][:12]
+                reply = ('I could not find that title. Here are your recent drafts; choose one by title or number.'
+                         if result_listings else 'I could not find that listing in your closet. Tell me its exact title, or create a new listing.')
     elif intent == "create_listing":
         navigation = "create"
         # The client opens a photo-first workflow for this intent. Keep this
