@@ -3,7 +3,7 @@ import { ActivityIndicator, Image, Text, TextInput, TouchableOpacity, View } fro
 import { createListingAgentController } from '../../../../packages/app-client/src/listingAgent';
 import { MANNEQUIN_DISCLAIMER } from '../../../../packages/app-client/src/mannequinDisclosure';
 
-export default function ListingAgentChat({ client, getAuth, images, onPickPhotos, styles, onClearPhotos, apiBaseUrl, initialListingId = null, newSessionRequestId = null, onExit = null, onStartNew = null }) {
+export default function ListingAgentChat({ client, getAuth, images, onPickPhotos, styles, onClearPhotos, apiBaseUrl, initialListingId = null, newSessionRequestId = null, onExit = null, onStartNew = null, onOpenMatch = null }) {
   const [view, setView] = useState({ session: null, busy: false, error: '' });
   const [text, setText] = useState('');
   const [mannequinChoice, setMannequinChoice] = useState('');
@@ -83,16 +83,29 @@ export default function ListingAgentChat({ client, getAuth, images, onPickPhotos
           {!proposal && review?.reasons.map(reason => <Text key={reason} style={styles.helperText}>{reason}</Text>)}
           {!proposal && review?.publishable ? button('Confirm and publish to Marketplace', () => controller.publish(mannequinChoice || null), !!images.length || !review.publishable || (review.mannequin_choice_required && !mannequinChoice)) : null}
         </View> : null}
-        {session.stage === 'published' ? <Text style={styles.helperText}>Published to Marketplace.</Text> : null}
+        {session.stage === 'published' ? <View><Text style={styles.helperText}>{session.marketplace_matches ? 'Published to Marketplace.' : session.messages.filter(message => message.role === 'assistant').at(-1)?.content || 'Published to Marketplace.'}</Text>
+          {button(session.marketplace_matches ? 'Refresh matches' : 'Find matching items', () => controller.send('Find marketplace matches'))}
+        </View> : null}
         {session.stage === 'failed' ? <Text style={styles.error}>Analysis could not finish. Your draft is saved in My Closet.</Text> : null}
         {session.stage === 'closed' ? <View><Text style={styles.helperText}>This listing changed. Reopen review to see the current saved version.</Text>
           {session.photo_dirty ? button('Discard staged changes', () => controller.send('Discard changes')) : null}
           {button('Reopen review', () => controller.load(session.listing_id))}</View> : null}
       </View> : null}
+      {session.stage === 'published' && session.marketplace_matches ? <View accessibilityLabel="Marketplace matches">
+        <Text style={styles.listingAssistantTitle}>Marketplace matches</Text>
+        <Text style={styles.helperText}>{session.marketplace_matches.count} matching items based on your item’s saved value and preferences. No offer has been sent.</Text>
+        {session.marketplace_matches.items.map(item => <View key={item.listing_id} style={styles.listingChatAssistantBubble}>
+          {item.image ? <Image source={{ uri: new URL(item.image, apiBaseUrl).href }} accessibilityLabel={item.title} style={{ width: 100, height: 100, resizeMode: 'contain' }} /> : null}
+          <Text style={styles.listingAssistantTitle}>{item.title}</Text><Text style={styles.helperText}>{item.brand} · {item.size} · {item.condition} · ${item.estimated_value}</Text>
+          {onOpenMatch ? button('View in Marketplace', () => onOpenMatch(item)) : null}
+        </View>)}
+        {!session.marketplace_matches.count ? <Text style={styles.helperText}>No matching items right now. Check again later.</Text> : null}
+        {session.marketplace_matches.has_more ? <Text style={styles.helperText}>Showing the first {session.marketplace_matches.items.length} of {session.marketplace_matches.count} matches.</Text> : null}
+      </View> : null}
       {canEdit && session.pending?.type === 'question' && session.pending.field === 'condition' ? <View accessibilityLabel="Choose item condition" style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
         {['New with tags', 'New', 'Like new'].map(condition => <React.Fragment key={condition}>{button(condition, () => controller.send(condition), !!images.length)}</React.Fragment>)}
       </View> : null}
-      {canEdit ? <View><TextInput accessibilityLabel="Reply to listing agent" style={styles.input} value={text} onChangeText={setText} multiline maxLength={2000} editable={!view.busy} placeholder="Tell me about your item or describe a correction…" />
+      {canEdit || session.stage === 'published' ? <View><TextInput accessibilityLabel="Reply to listing agent" style={styles.input} value={text} onChangeText={setText} multiline maxLength={2000} editable={!view.busy} placeholder="Tell me about your item or ask for matches…" />
         {button('Send', () => { controller.send(text); setText(''); }, !text.trim() || !!images.length)}</View> : null}
       {button('Start another draft', async () => { onClearPhotos(); if (await controller.startNew()) onStartNew?.(); })}
     </> : null}

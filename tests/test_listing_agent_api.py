@@ -301,6 +301,60 @@ def test_review_publish_requires_its_own_approval_and_is_idempotent(client, monk
     assert len(get_db().fetchall('SELECT job_id FROM listing_analysis_jobs')) == 1
 
 
+def test_agent_matches_require_publication_and_never_publish_implicitly(client):
+    from app.deps import get_db
+    state = review_ready(client)
+    response = client.post(f'/v1/listing-agent/sessions/{state["session_id"]}/turns', headers=AUTH,
+        json=dict(request_id='private-matches', expected_revision=state['revision'], message='Find matches'))
+    assert response.status_code == 200, response.text
+    assert 'Publish your reviewed listing first' in response.json()['reply']
+    assert get_db().get_listing_by_id(state['listing_id'])['status'] == 'Review'
+    assert 'marketplace_matches' not in response.json()
+
+
+def test_agent_matches_use_value_preferences_target_sizes_and_live_availability(client, monkeypatch):
+    from app.db import Database
+    from app.deps import get_db
+    monkeypatch.setattr(Database, 'get_user_profile_quiz', lambda *args: {'shoes_size': 'US 7', 'category_preferences': ['shoes']})
+    state = review_ready(client)
+    db = get_db()
+    ids = {}
+    for title, category, size, value, owner, status in [
+        ('Good shoes', 'shoes', 'US 7', 123, 'seller', 'Active'),
+        ('Wrong size', 'shoes', 'US 8', 123, 'seller', 'Active'),
+        ('Wrong category', 'handbag', 'Small', 123, 'seller', 'Active'),
+        ('Wrong value', 'shoes', 'US 7', 9999, 'seller', 'Active'),
+        ('Own shoes', 'shoes', 'US 7', 123, 'api-key', 'Active'),
+        ('Private shoes', 'shoes', 'US 7', 123, 'seller', 'Review'),
+    ]:
+        created = client.post('/v1/listings', headers=AUTH, json=dict(title=title, brand='Chanel', category=category,
+            condition='New', size=size, estimated_value=value, status='Review')).json()
+        ids[title] = created['listing_id']
+        db.execute('UPDATE listings SET owner_subject=?,status=? WHERE listing_id=?', (owner, status, created['listing_id']))
+        db.commit()
+    path = f'/v1/listing-agent/sessions/{state["session_id"]}/turns'
+    published = client.post(path, headers=AUTH, json=dict(request_id='match-publish', expected_revision=state['revision'],
+        message='Publish', publication_token=state['publication_review']['token'])).json()
+    payload = dict(request_id='find-real-matches', expected_revision=published['revision'], message='Find marketplace matches')
+    response = client.post(path, headers=AUTH, json=payload)
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert [item['listing_id'] for item in result['marketplace_matches']['items']] == [ids['Good shoes']]
+    assert 'No offer has been sent' in result['reply']
+    assert client.post(path, headers=AUTH, json=payload).json() == result
+    assert not db.fetchall('SELECT offer_id FROM trade_offers')
+    from app import listing_agent
+    monkeypatch.setattr(listing_agent, 'call_model', scripted(('find_marketplace_matches', {})))
+    natural = client.post(path, headers=AUTH, json=dict(request_id='natural-matching', expected_revision=result['revision'],
+        message='What items could I trade for?'))
+    assert natural.status_code == 200, natural.text
+    assert natural.json()['marketplace_matches']['count'] == 1
+    db.execute('UPDATE listings SET status=? WHERE listing_id=?', ('Review', ids['Good shoes']))
+    db.commit()
+    refreshed = client.get(f'/v1/listing-agent/sessions/{state["session_id"]}', headers=AUTH).json()
+    assert refreshed['marketplace_matches']['count'] == 0
+
+
 def test_publication_rejects_stale_review_and_manual_pricing_review(client):
     from app.deps import get_db
     state = review_ready(client)

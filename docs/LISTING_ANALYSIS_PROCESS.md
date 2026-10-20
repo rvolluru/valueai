@@ -972,6 +972,19 @@ buttons in web/mobile chat. A choice sends the same validated message as typing;
 it does not bypass evidence, analysis or publication approval. Typed replies remain
 available, and quick replies are disabled while busy or photos await upload.
 
+After explicit publication, chat supports the read-only `find_marketplace_matches`
+tool, via natural messages or Find matching items / Refresh matches. It delegates
+to the existing closet-to-Marketplace matching service: the source must be owned
+and Active, targets must be other-owner Active items with positive values, the
+existing target-value tolerance applies, and targets must fit the viewer's saved
+category and category-specific size preferences. Already-sent offer pairs are
+excluded. Cross-category matches use the target category's sizes, not the source's.
+Web/mobile display up to 12 real results with total/empty-state information and
+item-detail navigation. Refresh/reopen rechecks current availability/preferences;
+historical message text is not authoritative availability. A private draft gets a
+publication prerequisite, never automatic publication. Matching does not create
+offers or trades. This extension is local only; regular matching logic is unchanged.
+
 `LISTING_AGENT_ENABLED` on the API, `VITE_LISTING_AGENT_ENABLED` for web and
 `EXPO_PUBLIC_LISTING_AGENT_ENABLED` for mobile are default-off opt-ins. Both client
 and server flags must be enabled for the relevant pilot client. Local API/web/Expo

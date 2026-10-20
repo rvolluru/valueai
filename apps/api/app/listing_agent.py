@@ -133,6 +133,7 @@ TOOL_MODELS = {
     'start_listing_analysis': ToolArgs,
     'get_analysis_status': ToolArgs,
     'prepare_draft_review': ToolArgs,
+    'find_marketplace_matches': ToolArgs,
     'publish_listing': ToolArgs,
     'propose_listing_changes': RecordFacts,
     'apply_listing_changes': ToolArgs,
@@ -153,6 +154,7 @@ def tools():
         'start_listing_analysis': 'Start or resume the existing background analysis for the confirmed private draft. Never publish.',
         'get_analysis_status': 'Read the real persisted analysis job and draft status.',
         'prepare_draft_review': 'Prepare a review card only from a successfully analyzed private draft. Manual review is distinct from a priced item.',
+        'find_marketplace_matches': 'Find real Marketplace matches for this published listing using saved value and owner preferences. Never invent matches or send an offer. If private, explain that publication is required first.',
         'publish_listing': 'Publish the reviewed draft only with a separate backend-verified publication approval. User prose and analysis confirmation never authorize publishing.',
         'propose_listing_changes': 'Validate requested corrections to this existing private listing. Quote the current user request. Only explicitly requested facts, never prices. Clear correction commands save directly; ambiguous requests and photo changes are staged, not silently approved. Read the result before reporting success.',
         'apply_listing_changes': 'Save proposed changes only after the separate backend-verified edit confirmation. Analysis-sensitive changes rerun the existing analysis pipeline.',
@@ -278,7 +280,8 @@ async def call_model(settings, inputs):
                     'Never send an existing listing through intake record_user_facts. Explicit correction requests are saved by propose_listing_changes; do not ask for another confirmation. '
                     'Ask a clarification for ambiguous, hypothetical or invalid corrections. Size-only corrections retain the saved valuation. '
                     'Photos may be staged for edits; propose empty facts to confirm staged photos. Use keep_as_draft when requested; '
-                    'discard edits only on explicit cancellation. prepare_draft_review returns the real saved draft for review and publication approval.'),
+                    'discard edits only on explicit cancellation. prepare_draft_review returns the real saved draft for review and publication approval. '
+                    'After publication, use find_marketplace_matches when the user wants matching Marketplace items. Finding matches never sends offers.'),
                 'input': inputs, 'tools': tools(), 'tool_choice': 'required',
             })
         response.raise_for_status()
@@ -316,6 +319,8 @@ class Agent:
         actual = await self.refresh(state)
         if state['stage'] == 'review_ready' and hasattr(self.services, 'publication_review'):
             actual['publication_review'] = await self.services.publication_review(state)
+        if state['stage'] == 'published' and state.get('matches_requested'):
+            actual['marketplace_matches'] = await self.services.find_matches(state)
         return {k: state[k] for k in ('session_id', 'revision', 'stage', 'facts', 'photos', 'evidence',
                                       'waivers', 'pending', 'listing_id', 'job_id', 'messages')} | actual | {
             'analysis_confirmed': state.get('approved') == self.version(state),
@@ -361,6 +366,14 @@ class Agent:
         return result
 
     async def dispatch(self, name, args, state, turn):
+        if name == 'find_marketplace_matches':
+            await self.refresh(state)
+            if state['stage'] != 'published':
+                return {'paused': True, 'reply': 'Publish your reviewed listing first, then I can find Marketplace matches. Nothing has been published or offered.'}
+            result = await self.services.find_matches(state)
+            state['matches_requested'] = True
+            return {'paused': True, 'reply': (f"I found {result['count']} Marketplace matches within your value band and saved preferences. No offer has been sent."
+                if result['count'] else 'No Marketplace items currently match your value band and saved preferences. You can check again later. No offer has been sent.')}
         if name in {'propose_listing_changes', 'apply_listing_changes', 'discard_listing_changes', 'keep_as_draft'}:
             await self.refresh(state)
             if state['stage'] != 'review_ready' and not (name == 'discard_listing_changes' and state['stage'] == 'closed'):
@@ -617,7 +630,9 @@ class Agent:
                 await self.execute('record_user_facts', dict(facts=answer, evidence_quote=turn.message), state, turn)
             action_reply = None
             edit_action = None
-            if turn.message.casefold() == 'discard changes':
+            if turn.message.strip().casefold() in {'find matches', 'find matching items', 'find marketplace matches', 'show matches'}:
+                edit_action = ('find_marketplace_matches', {})
+            elif turn.message.casefold() == 'discard changes':
                 edit_action = ('discard_listing_changes', {})
             elif turn.message.casefold() == 'keep as draft':
                 edit_action = ('keep_as_draft', {})
@@ -651,7 +666,7 @@ class Agent:
             recovery_reason = None
             try:
                 async with asyncio.timeout(self.settings.listing_agent_turn_timeout_s):
-                    for _ in range(0 if answer or edit_action or state['stage'] in {'analyzing', 'failed', 'closed', 'published'} else self.settings.listing_agent_max_steps):
+                    for _ in range(0 if answer or edit_action or turn.publication_token or state['stage'] in {'analyzing', 'failed', 'closed'} else self.settings.listing_agent_max_steps):
                         raw = await self.model(self.settings, inputs)
                         for metric in usage:
                             usage[metric] += int((raw.get('usage') or {}).get(metric) or 0)
@@ -690,7 +705,7 @@ class Agent:
                          state['pending']['question'] if (state.get('pending') or {}).get('type') == 'question' else
                          'Your analyzed draft is ready. Review it, request corrections, keep it as a draft, or explicitly confirm publication.')
             elif state['stage'] == 'published':
-                reply = 'Your listing is now published to Marketplace.'
+                reply = action_reply or 'Your listing is now published to Marketplace. Ask me to find matches when you are ready.'
             elif state['stage'] == 'failed':
                 reply = 'Analysis could not finish. Your private draft is saved; it has not been published.'
             elif state['stage'] == 'closed':

@@ -194,6 +194,18 @@ class Services:
         public['conversation_current'] = current
         return ({k: job.get(k) for k in ('job_id', 'status', 'stage')}, public)
 
+    async def find_matches(self, state):
+        from .main import list_closet_listing_marketplace_matches, _normalize_public_image_url
+        listing = self.listing(state)
+        if listing['status'] != 'Active' or ((listing.get('analysis') or {}).get('pricing_review') or {}).get('status') == 'pending':
+            raise HTTPException(409, 'Publish a priced listing before finding matches')
+        result = list_closet_listing_marketplace_matches(listing['listing_id'], limit=12, offset=0,
+            principal=self.principal, db=self.db, settings=self.settings)
+        return {**{k: result[k] for k in ('count', 'has_more')},
+            'items': [{**{k: item.get(k) for k in ('listing_id', 'title', 'brand', 'category', 'condition', 'size', 'estimated_value', 'description', 'status', 'owner_name', 'owner_subject')},
+                       'image': _normalize_public_image_url(item.get('image')),
+                       'images': [_normalize_public_image_url(url) for url in item.get('images') or []]} for item in result['items']]}
+
     async def publication_review(self, state):
         listing = self.listing(state)
         job = self.db.get_listing_analysis_job(state['job_id'], self.principal.subject) if state.get('job_id') else None

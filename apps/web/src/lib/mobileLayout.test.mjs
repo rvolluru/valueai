@@ -73,6 +73,17 @@ test('condition quick replies are message-based and scoped to the active questio
     assert.match(source, /Choose item condition/);
   }
 });
+
+test('published listing chat offers read-only Marketplace matching on both clients', () => {
+  for (const path of ['../components/ListingAgentChat.jsx', '../../../mobile/src/components/ListingAgentChat.jsx']) {
+    const source = readFileSync(new URL(path, import.meta.url), 'utf8');
+    assert.match(source, /controller.send\('Find marketplace matches'\)/);
+    assert.match(source, /session.marketplace_matches.items.map/);
+    assert.match(source, /View in Marketplace/);
+    assert.match(source, /No offer has been sent/);
+    assert.match(source, /No matching items right now/);
+  }
+});
 test('photo role labels take their own row instead of covering Set Hero', () => {
   const badge = css.match(/\.listing-image-role-badge\s*\{([^}]+)\}/)[1];
   assert.match(badge, /position: static/);

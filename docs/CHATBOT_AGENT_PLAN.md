@@ -7,6 +7,15 @@ legacy path; the new path is described in the implementation status section.
 
 ## Implemented local pilot
 
+- Read-only Marketplace matching after publication: `find_marketplace_matches`
+  reuses the normal closet matching service (value tolerance, current preferences,
+  target-category sizes, other-owner Active listings, already-sent offer exclusions).
+  Users can ask in chat or use Find matching items / Refresh matches. Web/mobile
+  show the first 12 actual results, total/empty state and links to item details.
+  Session reload refreshes matches against current availability/preferences.
+  Private drafts must first be explicitly published; finding matches never publishes
+  or sends offers. Trade execution remains outside this delivery.
+
 - Condition questions offer New with tags / New / Like new quick-reply buttons on
   web and mobile. They send ordinary chat answers through existing validation;
   typing remains available. Buttons appear only for the current condition question.
@@ -172,7 +181,7 @@ requests advancing to facts or confirmation. Provider calls remain stubbed.
 
 Create one owner-scoped, private, review-ready listing draft through conversation.
 Publication was outside the first tool set and is now implemented locally below.
-Marketplace matching and trade execution remain outside this delivery. Keep the existing chat path available behind a feature
+Marketplace matching is now implemented locally below; trade execution remains outside this delivery. Keep the existing chat path available behind a feature
 flag while evaluating the replacement. Retain the configured chat model initially;
 this is an orchestration change, not a model migration.
 

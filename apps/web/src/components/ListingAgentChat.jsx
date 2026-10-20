@@ -90,16 +90,29 @@ export default function ListingAgentChat({ apiBaseUrl, apiKey, getBearerToken, c
           {!proposal && review?.reasons.map(reason => <p key={reason} role="status">{reason}</p>)}
           {!proposal && review?.publishable && <button className="primary" disabled={view.busy || !!files.length || !review.publishable || (review.mannequin_choice_required && !mannequinChoice)} onClick={() => controller.publish(mannequinChoice || null)}>Confirm and publish to Marketplace</button>}
         </>}
-        {session.stage === 'published' && <p role="status">Published to Marketplace.</p>}
+        {session.stage === 'published' && <><p role="status">{session.marketplace_matches ? 'Published to Marketplace.' : session.messages.filter(message => message.role === 'assistant').at(-1)?.content || 'Published to Marketplace.'}</p>
+          <button className="primary" disabled={view.busy} onClick={() => controller.send('Find marketplace matches')}>{session.marketplace_matches ? 'Refresh matches' : 'Find matching items'}</button>
+        </>}
         {session.stage === 'failed' && <p>Analysis did not finish. The draft is saved in My Closet.</p>}
         {session.stage === 'closed' && <div><p>This listing changed. Reopen review to see the current saved version.</p>
           {session.photo_dirty && <button disabled={view.busy} onClick={() => controller.send('Discard changes')}>Discard staged changes</button>}
           <button disabled={view.busy} onClick={() => controller.load(session.listing_id)}>Reopen review</button></div>}
       </div>}
+      {session.stage === 'published' && session.marketplace_matches && <section aria-label="Marketplace matches">
+        <h4>Marketplace matches</h4>
+        <p>{session.marketplace_matches.count} matching items based on your item’s saved value and your preferences. No offer has been sent.</p>
+        {session.marketplace_matches.items.map(item => <article className="panel" key={item.listing_id}>
+          {item.image && <img src={new URL(item.image, apiBaseUrl || window.location.origin).href} alt={item.title} style={{ width: 100, height: 100, objectFit: 'contain' }} />}
+          <h4>{item.title}</h4><p>{item.brand} · {item.size} · {item.condition} · ${item.estimated_value}</p>
+          <a href={`/?tab=market&listing=${encodeURIComponent(item.listing_id)}`}>View in Marketplace</a>
+        </article>)}
+        {!session.marketplace_matches.count && <p>No matching items right now. Check again later.</p>}
+        {session.marketplace_matches.has_more && <p>Showing the first {session.marketplace_matches.items.length} of {session.marketplace_matches.count} matches.</p>}
+      </section>}
       {canEdit && pending?.type === 'question' && pending.field === 'condition' && <div role="group" aria-label="Choose item condition" className="listing-chat-quick-replies">
         {['New with tags', 'New', 'Like new'].map(condition => <button key={condition} type="button" className="ghost small" disabled={view.busy || !!files.length} onClick={() => controller.send(condition)}>{condition}</button>)}
       </div>}
-      {canEdit && <form onSubmit={event => { event.preventDefault(); if (!text.trim() || files.length) return; controller.send(text); setText('') }}>
+      {(canEdit || session.stage === 'published') && <form onSubmit={event => { event.preventDefault(); if (!text.trim() || files.length) return; controller.send(text); setText('') }}>
         <label>{reviewing ? 'Ask a question or describe a correction' : 'Your reply'}<textarea value={text} onChange={event => setText(event.target.value)} maxLength={2000} disabled={view.busy} /></label>
         <button disabled={view.busy || !text.trim() || !!files.length}>Send</button>
       </form>}
