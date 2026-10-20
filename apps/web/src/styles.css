@@ -5291,6 +5291,12 @@ textarea:focus-visible,
 .listing-agent-photos figure { margin: 0; min-width: 0; }
 .listing-agent-photos img { display: block; width: 100%; aspect-ratio: 1; object-fit: cover; }
 .listing-agent-photos button { width: 100%; min-height: 40px; }
+.listing-agent-chat.panel { padding: 16px; border: 0; background: transparent; }
+.listing-agent-chat details { margin: 12px 0; }
+.listing-agent-chat summary { cursor: pointer; padding: 10px 0; font-weight: 600; }
+.listing-agent-chat .panel { padding: 16px; margin: 12px 0; }
+.listing-agent-chat button { margin: 4px 8px 4px 0; }
+.listing-agent-chat .listing-agent-photos img { max-height: 160px; object-fit: contain; }
 .app-assistant-turn { display: flex; justify-content: flex-end; gap: 9px; }
 .app-assistant-turn.assistant { justify-content: flex-start; }
 .app-assistant-turn > span { display: grid; flex: 0 0 30px; width: 30px; height: 30px; place-items: center; border-radius: 50%; background: #5b1720; color: #fff; font-family: Georgia, serif; }

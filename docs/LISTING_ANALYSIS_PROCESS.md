@@ -933,6 +933,15 @@ analysis; missing analysis cannot authorize publication.
 Before publication, users may describe corrections or use Edit details. The
 `propose_listing_changes` tool stages only explicitly requested editable facts;
 the form follows the same path. Changes are displayed with their reanalysis impact.
+Web and mobile show the saved edit proposal beside publication controls, even if
+a subsequent chat question replaces the current pending prompt. Confirmation uses
+the saved proposal token; a follow-up question never removes the approval requirement.
+The local review UI collapses photo management, descriptions and prior conversation
+by default, keeping the current saved summary and change action visible. Proposals
+show saved-to-proposed values with Save changes / Cancel changes. Publication is
+shown only when the review is publishable and no proposal is outstanding. Chat
+replies with an outstanding proposal give the same save/cancel instruction rather
+than another confirmation question. Saving remains distinct from publication.
 `apply_listing_changes` requires a separate proposal-bound edit confirmation, not
 analysis/publication approval. Title/description-only edits retain the value;
 brand/category/condition/size or confirmed photo changes queue ordinary reanalysis.

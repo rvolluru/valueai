@@ -9129,10 +9129,10 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
       <button className="app-assistant-launcher" type="button" aria-label={appAssistantOpen ? 'Close Jouft assistant' : 'Open Jouft assistant'} title="Jouft assistant" onClick={() => setAppAssistantOpen((open) => !open)}><span className="app-assistant-logo-j" aria-hidden="true"><img src={jouftLogo} alt="" /></span></button>
       {appAssistantOpen && (
         <aside className="app-assistant-panel" aria-label="Jouft assistant">
-          <header><div><small>JOUFT ASSISTANT</small><strong>What would you like to do?</strong></div><button type="button" aria-label="Close assistant" onClick={() => setAppAssistantOpen(false)}>×</button></header>
+          <header><div><small>JOUFT ASSISTANT</small><strong>{LISTING_AGENT_ENABLED && appAssistantListingFlow ? (appAssistantReviewListingId ? 'Review your listing' : 'Create your listing') : 'What would you like to do?'}</strong></div><button type="button" aria-label="Close assistant" onClick={() => setAppAssistantOpen(false)}>×</button></header>
           <div ref={listingAssistantMessagesRef} className="app-assistant-transcript" aria-live="polite">
             {appAssistantMessages.length === 0 && <div className="app-assistant-turn assistant"><span aria-hidden="true"><LogoJ small /></span><p>I can help create a listing, find matches, start a trade, or check shipping. Just tell me what you need.</p></div>}
-            {appAssistantMessages.map((message, index) => <div className={`app-assistant-turn ${message.role}`} key={message.message_id || `${message.role}-${index}`}>
+            {!(LISTING_AGENT_ENABLED && appAssistantListingFlow) && appAssistantMessages.map((message, index) => <div className={`app-assistant-turn ${message.role}`} key={message.message_id || `${message.role}-${index}`}>
               {message.role === 'assistant' && <span aria-hidden="true"><LogoJ small /></span>}
               <div><p>{message.content}</p>
                 {message.listings?.length > 0 && <div className="app-assistant-results">{message.listings.map((listing, listingIndex) => <article key={listing.listing_id}>{listing.image && <img src={listing.image} alt={listing.title || 'Listing'} />}<div><small>{listingIndex + 1} · {listing.brand || 'Unknown brand'}</small><strong>{listing.title}</strong><span>{listing.size || 'Size not provided'} · {displayConditionLabel(listing.condition)}</span></div></article>)}</div>}

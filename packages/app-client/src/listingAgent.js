@@ -75,9 +75,10 @@ export function createListingAgentController(client, getAuth, onChange) {
     },
     confirmEdits() {
       const session = state.session;
-      if (session?.pending?.type !== 'confirm_changes') return;
+      const proposal = session?.edit_proposal || (session?.pending?.type === 'confirm_changes' ? session.pending : null);
+      if (!proposal?.token) return;
       const payload = { request_id: id(), expected_revision: session.revision,
-        message: 'I confirm these proposed changes. Save them, but do not publish.', edit_token: session.pending.token };
+        message: 'I confirm these proposed changes. Save them, but do not publish.', edit_token: proposal.token };
       return perform(async () => client.turnWithListingAgent(session.session_id, payload, await getAuth()));
     },
     upload(images, onUploaded = () => {}) {

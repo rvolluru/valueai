@@ -7,6 +7,17 @@ legacy path; the new path is described in the implementation status section.
 
 ## Implemented local pilot
 
+- Simplified local review presentation: one contextual assistant header; web hides
+  the duplicate general-chat handoff while in listing mode (Back restores it).
+  Review photos, description and history expand on demand; saved/proposed values
+  and Save/Cancel controls stay together. Publish appears only when eligible.
+  Outstanding proposals use a deterministic save/cancel reply, not an extra question.
+
+- Review confirmation recovery (local): pending questions no longer hide saved
+  edit proposals. Web/mobile show Confirm changes and Discard changes beside
+  Publish, and the shared controller confirms the durable proposal token.
+  Regression coverage includes a size proposal followed by a pending question.
+
 - `apps/api/app/listing_agent.py`: strict function tools, bounded Responses API
   execution loop, persisted questions/summary confirmation, model usage and redacted
   tool-outcome logging. The existing configured chat model is retained.

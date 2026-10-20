@@ -24,17 +24,21 @@ export default function ListingAgentChat({ apiBaseUrl, apiKey, getBearerToken, c
   }, [controller, view.session?.stage])
   const session = view.session
   const pending = session?.pending
+  const proposal = session?.edit_proposal || (pending?.type === 'confirm_changes' ? pending : null)
   const review = session?.publication_review
   const canEdit = !session?.listing_id || session?.stage === 'review_ready'
+  const reviewing = !!session?.listing_id
   const displayPhotos = session?.listing && !canEdit ? (session.listing.images || []).map((url, index) => ({ image_id: `review-${index}`, url })) : session?.photos || []
   useEffect(() => { setMannequinChoice('') }, [review?.token])
   return <section className="panel listing-assistant listing-agent-chat is-open" aria-label="Listing draft agent">
-    <h3>Jouft Listing Agent</h3><p>Create a private draft, review the results, and publish only after your confirmation.</p>
-    {onExit && <button disabled={view.busy} onClick={onExit}>Back to assistant</button>}
+    {!reviewing && <p>Add photos to create a private draft. Nothing is published without your confirmation.</p>}
+    {onExit && <button className="ghost small" disabled={view.busy} onClick={onExit}>Back to conversation</button>}
     {!session && !view.busy && <button onClick={() => controller.retry()}>Connect</button>}
     {session && <>
-      <p>{session.photos.length}/6 photos saved · {session.stage.replaceAll('_', ' ')}</p>
+      {!reviewing && <p>{session.photos.length}/6 photos saved</p>}
       {session.photo_dirty && <p role="status">Photo changes are staged only. Confirm the proposed changes before they are applied to the listing.</p>}
+      <details className="listing-agent-photo-details" open={!reviewing || undefined}>
+      <summary>Photos ({session.photos.length}) · View or change</summary>
       <div className="listing-agent-photos" aria-label="Saved photos">
         {displayPhotos.map((photo, index) => <figure key={photo.image_id}>
           <img src={new URL(photo.url, apiBaseUrl || window.location.origin).href} alt={`Saved item photo ${index + 1}`} />
@@ -51,16 +55,14 @@ export default function ListingAgentChat({ apiBaseUrl, apiKey, getBearerToken, c
         <button disabled={view.busy || !files.length} onClick={() => controller.upload(files, () => { setFiles([]); if (fileInput.current) fileInput.current.value = '' })}>Use these photos</button>
         {!!files.length && <button type="button" disabled={view.busy} onClick={() => { setFiles([]); if (fileInput.current) fileInput.current.value = '' }}>Clear selected photos</button>}
       </div>}
-      {pending?.type === 'confirm_changes' && <div className="panel">
-        <h4>Confirm proposed changes</h4>
-        {Object.entries(pending.changes).map(([key, value]) => <p key={key}>{key}: {value}</p>)}
-        <p>{pending.photo_count} photos. {pending.reanalyze ? 'This will run analysis again before publication.' : 'The existing analysis and value will be retained.'}</p>
-        <button disabled={view.busy} onClick={() => controller.confirmEdits()}>Confirm changes</button>
-        <button disabled={view.busy} onClick={() => controller.send('Discard changes')}>Discard changes</button>
-      </div>}
-      <div className="listing-assistant-messages" aria-live="polite">
+      </details>
+      <details className="listing-agent-history" open={!reviewing || undefined}>
+      <summary>Conversation history</summary>
+      <div className="listing-assistant-messages">
         {session.messages.map((message, index) => <div key={index} className={`listing-assistant-message ${message.role}`}><p>{message.content}</p></div>)}
       </div>
+      </details>
+      {reviewing && !proposal && session.stage === 'review_ready' && <p role="status">{session.messages.filter(message => message.role === 'assistant').at(-1)?.content}</p>}
       {pending?.type === 'confirm_analysis' && <div className="panel">
         <h4>Confirm your draft details</h4>
         <dl>{Object.entries(pending.facts).map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{value}</dd></div>)}</dl>
@@ -71,10 +73,10 @@ export default function ListingAgentChat({ apiBaseUrl, apiKey, getBearerToken, c
       {session.listing_id && !session.job_id && <button disabled={view.busy} onClick={() => controller.send('Continue the confirmed private draft and start its analysis.')}>Continue saved draft</button>}
       {session.listing && <div className="panel"><h4>{session.listing.title}</h4>
         <p>{session.listing.brand} · {session.listing.condition} · {session.listing.size}</p>
-        <p>{session.listing.description}</p>
+        <details><summary>Item description</summary><p>{session.listing.description}</p></details>
         {session.stage === 'review_ready' && <>
           <p>{session.listing.estimated_value > 0 ? `Estimated value: $${session.listing.estimated_value}` : 'Value needs review.'}</p>
-          <p>Review the details and photos. Describe a correction below or use Edit details before publishing.</p>
+          {!proposal && <p>Everything look right? Publish, or edit the details first.</p>}
           <button disabled={view.busy} onClick={() => setEditFields(Object.fromEntries(['title', 'brand', 'category', 'condition', 'size', 'description'].map(key => [key, session.listing[key] || ''])))}>Edit details</button>
           <button disabled={view.busy} onClick={() => controller.send('Keep as draft')}>Keep as draft</button>
           {editFields && <form onSubmit={async event => { event.preventDefault(); if (await controller.proposeEdits(editFields)) setEditFields(null) }}>
@@ -89,9 +91,15 @@ export default function ListingAgentChat({ apiBaseUrl, apiKey, getBearerToken, c
             {review.mannequin_assets.map((asset, index) => asset.image_url && <figure key={index}><img src={new URL(asset.image_url, apiBaseUrl || window.location.origin).href} alt="AI-generated mannequin preview" style={{ width: '100%', maxHeight: 280, objectFit: 'contain' }} /><figcaption>{MANNEQUIN_DISCLAIMER}</figcaption></figure>)}
             {['include', 'exclude'].map(choice => <label key={choice}><input type="radio" name={`mannequin-${session.session_id}`} value={choice} checked={mannequinChoice === choice} onChange={() => setMannequinChoice(choice)} />{choice === 'include' ? 'Include mannequin image' : 'Use original photos only'}</label>)}
           </fieldset>}
-          {review?.reasons.map(reason => <p key={reason} role="status">{reason}</p>)}
-          {review && <button className="primary" disabled={view.busy || !!editFields || !!files.length || !review.publishable || (review.mannequin_choice_required && !mannequinChoice)} onClick={() => controller.publish(mannequinChoice || null)}>Confirm and publish to Marketplace</button>}
-          <button disabled={view.busy} onClick={() => controller.refresh()}>Reload saved progress</button>
+          {proposal && <div className="panel" aria-label="Proposed listing changes">
+            <h4>Save these changes?</h4>
+            {Object.entries(proposal.changes || {}).map(([key, value]) => <p key={key}>{key}: {session.listing[key] || 'Not set'} → {value}</p>)}
+            <p>{session.photos.length} photos. {proposal.reanalyze ? 'This will run analysis again before publication.' : 'The existing analysis and value will be retained.'}</p>
+            <button className="primary" disabled={view.busy || !!editFields || !!files.length} onClick={() => controller.confirmEdits()}>Save changes</button>
+            <button className="ghost" disabled={view.busy} onClick={() => controller.send('Discard changes')}>Cancel changes</button>
+          </div>}
+          {!proposal && review?.reasons.map(reason => <p key={reason} role="status">{reason}</p>)}
+          {!proposal && review?.publishable && <button className="primary" disabled={view.busy || !!editFields || !!files.length || !review.publishable || (review.mannequin_choice_required && !mannequinChoice)} onClick={() => controller.publish(mannequinChoice || null)}>Confirm and publish to Marketplace</button>}
         </>}
         {session.stage === 'published' && <p role="status">Published to Marketplace.</p>}
         {session.stage === 'failed' && <p>Analysis did not finish. The draft is saved in My Closet.</p>}
@@ -100,7 +108,7 @@ export default function ListingAgentChat({ apiBaseUrl, apiKey, getBearerToken, c
           <button disabled={view.busy} onClick={() => controller.load(session.listing_id)}>Reopen review</button></div>}
       </div>}
       {canEdit && <form onSubmit={event => { event.preventDefault(); if (!text.trim() || files.length) return; controller.send(text); setText('') }}>
-        <label>Your reply<textarea value={text} onChange={event => setText(event.target.value)} maxLength={2000} disabled={view.busy} /></label>
+        <label>{reviewing ? 'Ask a question or describe a correction' : 'Your reply'}<textarea value={text} onChange={event => setText(event.target.value)} maxLength={2000} disabled={view.busy} /></label>
         <button disabled={view.busy || !text.trim() || !!files.length}>Send</button>
       </form>}
       <button disabled={view.busy} onClick={async () => { setFiles([]); if (fileInput.current) fileInput.current.value = ''; if (await controller.startNew()) onStartNew?.() }}>Start another draft</button>

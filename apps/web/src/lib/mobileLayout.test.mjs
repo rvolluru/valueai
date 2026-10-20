@@ -40,6 +40,21 @@ test('agent review uses current gallery and a separate explicit publication cont
     assert.match(source, /controller.load\(initialListingId\)/);
   }
 });
+
+test('review keeps current actions compact and separates saving from publication', () => {
+  const web = readFileSync(new URL('../components/ListingAgentChat.jsx', import.meta.url), 'utf8');
+  const mobile = readFileSync(new URL('../../../mobile/src/components/ListingAgentChat.jsx', import.meta.url), 'utf8');
+  assert.match(web, /Conversation history/);
+  assert.match(web, /open=\{!reviewing \|\| undefined\}/);
+  assert.match(mobile, /showHistory/);
+  for (const source of [web, mobile]) {
+    assert.match(source, /Save these changes\?/);
+    assert.match(source, /Save changes/);
+    assert.match(source, /Cancel changes/);
+    assert.match(source, /!proposal && review\?\.publishable/);
+    assert.doesNotMatch(source, /<h3>Jouft Listing Agent/);
+  }
+});
 test('photo role labels take their own row instead of covering Set Hero', () => {
   const badge = css.match(/\.listing-image-role-badge\s*\{([^}]+)\}/)[1];
   assert.match(badge, /position: static/);

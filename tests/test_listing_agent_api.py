@@ -107,6 +107,26 @@ def test_review_corrections_are_proposed_confirmed_and_invalidate_publication(cl
         message='Publish', publication_token=old_token)).status_code == 409
 
 
+def test_followup_question_does_not_add_another_confirmation_for_saved_proposal(client, monkeypatch):
+    from app import listing_agent
+    state = review_ready(client)
+    path = f'/v1/listing-agent/sessions/{state["session_id"]}/turns'
+    proposed = client.post(path, headers=AUTH, json=dict(request_id='propose-followup',
+        expected_revision=state['revision'], message='Change title',
+        edit_fields={'title': 'Corrected coat'})).json()
+    monkeypatch.setattr(listing_agent, 'call_model', scripted(('ask_user',
+        {'field': 'details', 'question': 'Do you want me to proceed once you confirm?'})))
+    response = client.post(path, headers=AUTH, json=dict(request_id='followup-confirm',
+        expected_revision=proposed['revision'], message='confirm'))
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert result['edit_proposal']['token'] == proposed['edit_proposal']['token']
+    assert 'Choose Save changes' in result['messages'][-1]['content']
+    assert 'Do you want me' not in result['messages'][-1]['content']
+    assert not result['publication_review']['publishable']
+    assert result['listing']['title'] == 'Reviewed coat'
+
+
 def test_natural_correction_uses_proposal_tool_and_analysis_sensitive_edits_reanalyze(client, monkeypatch):
     from app import listing_agent, main
     from app.deps import get_db

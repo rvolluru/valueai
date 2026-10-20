@@ -161,3 +161,18 @@ test('edit proposal and confirmation use distinct retry-safe requests', async ()
   assert.equal(calls[1].publication_token, undefined);
   assert.notEqual(calls[0].request_id, calls[1].request_id);
 });
+
+test('saved edit proposal remains confirmable after a follow-up question replaces pending', async () => {
+  const calls = [];
+  const fixture = setup({ turnWithListingAgent: async (id, payload) => {
+    calls.push(payload);
+    return { session_id: id, revision: 8,
+      pending: { type: 'question', question: 'Anything else?' },
+      edit_proposal: { token: 'saved-edit-version', changes: { size: 'US 10.5' } } };
+  } });
+  await fixture.controller.load();
+  await fixture.controller.proposeEdits({ size: 'US 10.5' });
+  await fixture.controller.confirmEdits();
+  assert.equal(calls[1].edit_token, 'saved-edit-version');
+  assert.equal(calls[1].publication_token, undefined);
+});

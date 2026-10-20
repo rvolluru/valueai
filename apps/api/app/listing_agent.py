@@ -671,7 +671,7 @@ class Agent:
             if state['stage'] == 'analyzing':
                 reply = 'Your private draft is saved and analysis is in progress. It has not been published.'
             elif state['stage'] == 'review_ready':
-                reply = action_reply or ('Please confirm the proposed changes below before I save them.' if (state.get('pending') or {}).get('type') == 'confirm_changes' else
+                reply = action_reply or ('Your changes are ready. Choose Save changes to apply them, or Cancel changes to keep the saved listing. Saving does not publish.' if state.get('edit_proposal') else
                          state['pending']['question'] if (state.get('pending') or {}).get('type') == 'question' else
                          'Your analyzed draft is ready. Review it, request corrections, keep it as a draft, or explicitly confirm publication.')
             elif state['stage'] == 'published':

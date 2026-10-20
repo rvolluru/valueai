@@ -8,6 +8,9 @@ export default function ListingAgentChat({ client, getAuth, images, onPickPhotos
   const [text, setText] = useState('');
   const [mannequinChoice, setMannequinChoice] = useState('');
   const [editFields, setEditFields] = useState(null);
+  const [showPhotos, setShowPhotos] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
+  const [showDescription, setShowDescription] = useState(false);
   const auth = useRef(getAuth);
   auth.current = getAuth;
   const controller = useMemo(() => createListingAgentController(client, () => auth.current(), setView), [client, initialListingId]);
@@ -19,17 +22,19 @@ export default function ListingAgentChat({ client, getAuth, images, onPickPhotos
   }, [controller, view.session?.stage]);
   const session = view.session;
   const review = session?.publication_review;
+  const proposal = session?.edit_proposal || (session?.pending?.type === 'confirm_changes' ? session.pending : null);
   const canEdit = !session?.listing_id || session?.stage === 'review_ready';
+  const reviewing = !!session?.listing_id;
   const displayPhotos = session?.listing && !canEdit ? (session.listing.images || []).map((url, index) => ({ image_id: `review-${index}`, url })) : session?.photos || [];
   useEffect(() => { setMannequinChoice(''); }, [review?.token]);
   const button = (label, action, disabled = false) => <TouchableOpacity accessibilityRole="button" style={styles.secondaryBtnCompact} onPress={action} disabled={view.busy || disabled}><Text style={styles.secondaryBtnText}>{label}</Text></TouchableOpacity>;
   return <View style={styles.listingAssistantPanel}>
-    <Text style={styles.listingAssistantTitle}>Jouft Listing Agent</Text>
-    <Text style={styles.helperText}>Create a private draft, review the results, and publish only after your confirmation.</Text>
-    {onExit ? button('Back to assistant', onExit) : null}
+    {!reviewing ? <Text style={styles.helperText}>Add photos to create a private draft. Nothing is published without your confirmation.</Text> : null}
+    {onExit ? button('Back to conversation', onExit) : null}
     {session ? <>
-      <Text style={styles.helperText}>{session.photos.length}/6 saved photos · {session.stage.replaceAll('_', ' ')}</Text>
+      {!reviewing ? <Text style={styles.helperText}>{session.photos.length}/6 saved photos</Text> : button(`${showPhotos ? 'Hide' : 'View or change'} photos (${session.photos.length})`, () => setShowPhotos(!showPhotos))}
       {session.photo_dirty ? <Text style={styles.helperText}>Photo changes are staged only. Confirm them before they are applied to the listing.</Text> : null}
+      {!reviewing || showPhotos ? <View>
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }} accessibilityLabel="Saved photos">
         {displayPhotos.map((photo, index) => <View key={photo.image_id} style={{ width: '30%' }}>
           <Image source={{ uri: new URL(photo.url, apiBaseUrl).href }} accessibilityLabel={`Saved item photo ${index + 1}`} style={{ width: '100%', aspectRatio: 1 }} />
@@ -43,14 +48,10 @@ export default function ListingAgentChat({ client, getAuth, images, onPickPhotos
         {button('Use these photos', () => controller.upload(images, onClearPhotos), !images.length)}
         {images.length ? button('Clear selected photos', onClearPhotos) : null}
       </View> : null}
-      {session.pending?.type === 'confirm_changes' ? <View style={styles.listingChatAssistantBubble}>
-        <Text style={styles.listingAssistantTitle}>Confirm proposed changes</Text>
-        {Object.entries(session.pending.changes).map(([key, value]) => <Text key={key} style={styles.helperText}>{key}: {value}</Text>)}
-        <Text style={styles.helperText}>{session.pending.photo_count} photos. {session.pending.reanalyze ? 'Analysis will run again before publication.' : 'The existing analysis and value will be retained.'}</Text>
-        {button('Confirm changes', () => controller.confirmEdits())}
-        {button('Discard changes', () => controller.send('Discard changes'))}
       </View> : null}
-      {session.messages.map((message, index) => <View key={index} style={styles.listingChatAssistantBubble}><Text style={styles.helperText}>{message.role === 'user' ? 'You' : 'Jouft'}</Text><Text style={styles.listingAssistantMessageText}>{message.content}</Text></View>)}
+      {reviewing ? button(`${showHistory ? 'Hide' : 'View'} conversation history`, () => setShowHistory(!showHistory)) : null}
+      {(!reviewing || showHistory) && session.messages.map((message, index) => <View key={index} style={styles.listingChatAssistantBubble}><Text style={styles.helperText}>{message.role === 'user' ? 'You' : 'Jouft'}</Text><Text style={styles.listingAssistantMessageText}>{message.content}</Text></View>)}
+      {reviewing && !proposal && session.stage === 'review_ready' ? <Text style={styles.helperText}>{session.messages.filter(message => message.role === 'assistant').at(-1)?.content}</Text> : null}
       {session.pending?.type === 'confirm_analysis' ? <View style={styles.listingChatAssistantBubble}>
         <Text style={styles.listingAssistantTitle}>Confirm draft details</Text>
         {Object.entries(session.pending.facts).map(([key, value]) => <Text key={key} style={styles.listingAssistantMessageText}>{key}: {value}</Text>)}
@@ -62,9 +63,11 @@ export default function ListingAgentChat({ client, getAuth, images, onPickPhotos
       {session.listing ? <View style={styles.listingChatAssistantBubble}>
         <Text style={styles.listingAssistantTitle}>{session.listing.title}</Text>
         <Text style={styles.listingAssistantMessageText}>{session.listing.brand} · {session.listing.condition} · {session.listing.size}</Text>
-        <Text style={styles.listingAssistantMessageText}>{session.listing.description}</Text>
+        {button(`${showDescription ? 'Hide' : 'View'} item description`, () => setShowDescription(!showDescription))}
+        {showDescription ? <Text style={styles.listingAssistantMessageText}>{session.listing.description}</Text> : null}
         {session.stage === 'review_ready' ? <View>
-          <Text style={styles.helperText}>{session.listing.estimated_value > 0 ? `Estimated value: $${session.listing.estimated_value}` : 'Value needs review.'} Review the details and photos. Describe corrections below or use Edit details.</Text>
+          <Text style={styles.helperText}>{session.listing.estimated_value > 0 ? `Estimated value: $${session.listing.estimated_value}` : 'Value needs review.'}</Text>
+          {!proposal ? <Text style={styles.helperText}>Everything look right? Publish, or edit the details first.</Text> : null}
           {button('Edit details', () => setEditFields(Object.fromEntries(['title', 'brand', 'category', 'condition', 'size', 'description'].map(key => [key, session.listing[key] || '']))))}
           {button('Keep as draft', () => controller.send('Keep as draft'))}
           {editFields ? <View>
@@ -81,9 +84,15 @@ export default function ListingAgentChat({ client, getAuth, images, onPickPhotos
             {button(`${mannequinChoice === 'include' ? '✓ ' : ''}Include mannequin image`, () => setMannequinChoice('include'))}
             {button(`${mannequinChoice === 'exclude' ? '✓ ' : ''}Use original photos only`, () => setMannequinChoice('exclude'))}
           </View> : null}
-          {review?.reasons.map(reason => <Text key={reason} style={styles.helperText}>{reason}</Text>)}
-          {review ? button('Confirm and publish to Marketplace', () => controller.publish(mannequinChoice || null), !!editFields || !!images.length || !review.publishable || (review.mannequin_choice_required && !mannequinChoice)) : null}
-          {button('Reload saved progress', () => controller.refresh())}
+          {proposal ? <View style={styles.listingChatAssistantBubble}>
+            <Text style={styles.listingAssistantTitle}>Save these changes?</Text>
+            {Object.entries(proposal.changes || {}).map(([key, value]) => <Text key={key} style={styles.helperText}>{key}: {session.listing[key] || 'Not set'} → {value}</Text>)}
+            <Text style={styles.helperText}>{session.photos.length} photos. {proposal.reanalyze ? 'Analysis will run again before publication.' : 'The existing analysis and value will be retained.'}</Text>
+            {button('Save changes', () => controller.confirmEdits(), !!editFields || !!images.length)}
+            {button('Cancel changes', () => controller.send('Discard changes'))}
+          </View> : null}
+          {!proposal && review?.reasons.map(reason => <Text key={reason} style={styles.helperText}>{reason}</Text>)}
+          {!proposal && review?.publishable ? button('Confirm and publish to Marketplace', () => controller.publish(mannequinChoice || null), !!editFields || !!images.length || !review.publishable || (review.mannequin_choice_required && !mannequinChoice)) : null}
         </View> : null}
         {session.stage === 'published' ? <Text style={styles.helperText}>Published to Marketplace.</Text> : null}
         {session.stage === 'failed' ? <Text style={styles.error}>Analysis could not finish. Your draft is saved in My Closet.</Text> : null}
