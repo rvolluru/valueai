@@ -37,9 +37,19 @@ class RemovePhoto(Start):
     image_id: str = Field(min_length=1, max_length=120)
 
 
+class ReviewListing(Start):
+    listing_id: str = Field(min_length=1, max_length=120)
+
+
 def invalidate_photo_evidence(state):
+    if state.get('edit_proposal'):
+        state['staged_changes'] = state['edit_proposal']['changes']
     state.update(evidence=None, waivers=[], approved=None, pending=None)
-    if state.get('fact_provenance', {}).get('category') == 'photo_detection':
+    state.pop('publication_approval', None)
+    state.pop('edit_proposal', None)
+    if state.get('listing_id'):
+        state['photo_dirty'] = True
+    if not state.get('listing_id') and state.get('fact_provenance', {}).get('category') == 'photo_detection':
         state['facts'].pop('category', None)
         state['fact_provenance'].pop('category', None)
 
@@ -166,12 +176,14 @@ class Services:
 
     async def analysis_status(self, state):
         listing = self.listing(state)
-        job = self.db.get_listing_analysis_job(state['job_id'], self.principal.subject)
+        job = self.db.get_listing_analysis_job(state['job_id'], self.principal.subject) if state.get('job_id') else None
+        if not state.get('job_id') and state.get('review_existing'):
+            job = dict(job_id=None, listing_id=listing['listing_id'], status='succeeded' if listing.get('analysis') else 'failed', stage='saved_analysis')
         if not job or job.get('listing_id') != listing['listing_id']:
             raise HTTPException(409, 'Analysis job does not match this draft')
         latest = self.db.get_latest_listing_analysis_job(listing['listing_id'], self.principal.subject)
         current = not latest or latest['job_id'] == state['job_id']
-        if current and job['status'] == 'queued' and listing['status'] in {'Review', 'Analyzing', 'AnalysisFailed'}:
+        if current and not state.get('review_existing') and job['status'] == 'queued' and listing['status'] in {'Review', 'Analyzing', 'AnalysisFailed'}:
             await self.start_analysis(state)
         public = {k: listing.get(k) for k in ('listing_id', 'title', 'brand', 'category', 'condition', 'size',
                     'description', 'estimated_value', 'status', 'image', 'images')}
@@ -184,9 +196,13 @@ class Services:
 
     async def publication_review(self, state):
         listing = self.listing(state)
-        job = self.db.get_listing_analysis_job(state['job_id'], self.principal.subject)
+        job = self.db.get_listing_analysis_job(state['job_id'], self.principal.subject) if state.get('job_id') else None
+        if not job and state.get('review_existing') and not state.get('job_id') and listing.get('analysis'):
+            job = {'status': 'succeeded'}
         latest = self.db.get_latest_listing_analysis_job(listing['listing_id'], self.principal.subject)
         reasons = []
+        if state.get('photo_dirty') or state.get('edit_proposal'):
+            reasons.append('Confirm or discard your proposed changes before publishing.')
         if not job or job['status'] != 'succeeded' or (latest and latest['job_id'] != state['job_id']):
             reasons.append('The current analysis must finish successfully before publishing.')
         if listing['status'] != 'Review':
@@ -202,6 +218,45 @@ class Services:
         assets = [a for a in analysis.get('generated_assets', []) if isinstance(a, dict) and a.get('synthetic')]
         return dict(token=digest({'listing': listing, 'job_id': state['job_id']}), publishable=not reasons,
                     reasons=reasons, mannequin_assets=assets, mannequin_choice_required=bool(assets))
+
+    async def prepare_changes(self, state, changes):
+        listing = self.listing(state)
+        if listing['status'] != 'Review':
+            raise HTTPException(409, 'Only private drafts can be corrected in this chat')
+        proposed = {**listing, **changes}
+        if not valid_size(proposed):
+            raise HTTPException(400, 'Choose a valid size for the selected category')
+        if any(not str(proposed.get(k) or '').strip() for k in ('title', 'brand', 'condition', 'category')):
+            raise HTTPException(400, 'Title, brand, category and condition are required')
+        if not state['photos']:
+            raise HTTPException(400, 'Keep at least one photo before confirming changes')
+        reanalyze = bool(state.get('photo_dirty') or any(proposed.get(k) != listing.get(k)
+                         for k in ('brand', 'category', 'condition', 'size')))
+        base = (await self.publication_review(state))['token']
+        return dict(base=base, changes=changes, reanalyze=reanalyze,
+                    token=digest([base, changes, [p['content_hash'] for p in state['photos']]]))
+
+    async def apply_changes(self, state, proposal):
+        from .main import update_listing
+        listing = self.listing(state)
+        if (await self.publication_review(state))['token'] != proposal['base']:
+            raise HTTPException(409, 'The listing changed. Review and propose the changes again.')
+        if listing['status'] != 'Review':
+            raise HTTPException(409, 'The listing is no longer a private draft')
+        values = {**listing, **proposal['changes'], 'status': 'Analyzing' if proposal['reanalyze'] else 'Review'}
+        if state.get('photo_dirty'):
+            self.files(state)
+            values.update(images=[p['url'] for p in state['photos']], image=state['photos'][0]['url'], listed_images=[])
+        result = update_listing(listing['listing_id'], ListingCreateRequest.model_validate(values), self.tasks,
+            self.principal, self.db, self.settings, get_valuation_service(), get_gpt_item_profiler(),
+            expected_updated_at=listing['updated_at'], expected_analysis_job_id=state.get('job_id'))
+        latest = self.db.get_latest_listing_analysis_job(listing['listing_id'], self.principal.subject)
+        state['job_id'] = latest['job_id'] if latest else None
+        state['review_existing'] = True
+        state['photo_dirty'] = False
+        state['facts'] = {k: getattr(result, k) for k in ('title', 'brand', 'category', 'condition', 'size', 'description')}
+        state['stage'] = 'analyzing' if result.status == 'Analyzing' else 'review_ready'
+        return result.model_dump()
 
     async def publish(self, state, token, mannequin_choice):
         from .main import update_listing
@@ -245,6 +300,52 @@ async def start(payload: Start, tasks: BackgroundTasks, settings: Settings = Dep
         state = agent.store.create(payload.request_id)
         with agent.store.lock(state['session_id']):
             return await agent.public(agent.store.load(state['session_id']))
+    finally:
+        db.close()
+
+
+@router.post('/sessions/review')
+async def open_review(payload: ReviewListing, tasks: BackgroundTasks, settings: Settings = Depends(enabled),
+                      principal: AuthPrincipal = Depends(get_request_principal)):
+    from .main import _normalize_public_image_url, _image_file_from_listing_url
+    db, agent = agent_for(settings, principal, tasks)
+    try:
+        listing = db.get_listing_by_id(payload.listing_id)
+        if not listing or listing.get('owner_subject') != principal.subject:
+            raise HTTPException(404, 'Listing not found')
+        if listing['status'] not in {'Review', 'Analyzing', 'AnalysisFailed'}:
+            raise HTTPException(409, 'This listing is not a private draft')
+        state = agent.store.create('review:' + payload.listing_id)
+        with agent.store.lock(state['session_id']):
+            state = agent.store.load(state['session_id'])
+            latest = db.get_latest_listing_analysis_job(listing['listing_id'], principal.subject)
+            latest_id = latest['job_id'] if latest else None
+            if not state.get('listing_id') or state.get('job_id') != latest_id or state['stage'] == 'closed':
+                if state.get('photo_dirty') and not (state.get('edit_approval') and state['edit_approval'] == (state.get('edit_proposal') or {}).get('token')):
+                    raise HTTPException(409, 'Finish or discard the proposed photo changes before reopening review')
+                analysis = listing.get('analysis') or {}
+                urls = list(dict.fromkeys(filter(None, [_normalize_public_image_url(
+                    (entry.get('p_img') or entry.get('d_img')) if isinstance(entry, dict) else entry)
+                    for entry in listing.get('images') or [listing.get('image')]])))
+                generated = {_normalize_public_image_url(a.get('image_url')) for a in analysis.get('generated_assets', []) if isinstance(a, dict) and a.get('synthetic')}
+                photos = []
+                for index, url in enumerate(urls):
+                    if url in generated:
+                        continue
+                    file = _image_file_from_listing_url(db=db, settings=settings, url=url, index=index, source_item_id=listing.get('source_item_id'))
+                    if not file:
+                        raise HTTPException(400, 'A saved photo could not be read. Please review the photos in My Closet.')
+                    photos.append(dict(image_id=str(uuid.uuid5(uuid.NAMESPACE_URL, state['session_id'] + url)),
+                        item_id=listing.get('source_item_id') or 'agent-' + state['session_id'], url=url,
+                        content_hash=hashlib.sha256(file['data']).hexdigest()))
+                state.update(listing_id=listing['listing_id'], job_id=latest_id, review_existing=True, photos=photos, saved_photos=photos[:],
+                    facts={k: listing.get(k) for k in ('title', 'brand', 'category', 'condition', 'size', 'description')},
+                    pending=None, approved=None, photo_dirty=False, evidence=None, waivers=[], stage='review_ready')
+                state.pop('publication_approval', None)
+                state.pop('edit_proposal', None)
+                state.pop('staged_changes', None)
+                agent.store.save(state)
+            return await agent.public(state)
     finally:
         db.close()
 
@@ -299,7 +400,7 @@ async def photos(session_id: str, tasks: BackgroundTasks,
     try:
         with agent.store.lock(session_id):
             state = agent.store.load(session_id)
-            if state['listing_id']:
+            if state['listing_id'] and state['stage'] != 'review_ready':
                 raise HTTPException(409, 'Use the listing editor to change an existing draft')
             files = []
             for image in images:
@@ -330,6 +431,8 @@ async def photos(session_id: str, tasks: BackgroundTasks,
             stored = list(state['photos'])
             storage = get_storage()
             for data, fmt, content_hash in files:
+                if any(p['content_hash'] == content_hash for p in stored):
+                    continue
                 image_id = str(uuid.uuid5(uuid.NAMESPACE_URL, session_id + ':' + content_hash))
                 mime = {'JPEG': 'image/jpeg', 'PNG': 'image/png', 'WEBP': 'image/webp'}[fmt]
                 filename = image_id + {'JPEG': '.jpg', 'PNG': '.png', 'WEBP': '.webp'}[fmt]
@@ -340,6 +443,8 @@ async def photos(session_id: str, tasks: BackgroundTasks,
                 if not any(p['image_id'] == image_id for p in stored):
                     stored.append(dict(image_id=image_id, item_id=item_id, url='/v1/images/' + image_id, content_hash=content_hash))
             if stored != state['photos']:
+                if state.get('listing_id') and not state.get('photo_dirty'):
+                    state['saved_photos'] = state['photos'][:]
                 state['photos'] = stored
                 invalidate_photo_evidence(state)
             agent.store.save(state)
@@ -358,7 +463,7 @@ async def remove_photo(session_id: str, payload: RemovePhoto, tasks: BackgroundT
     try:
         with agent.store.lock(session_id):
             state = agent.store.load(session_id)
-            if state['listing_id']:
+            if state['listing_id'] and state['stage'] != 'review_ready':
                 raise HTTPException(409, 'Use the listing editor to change an existing draft')
             operation = Turn(request_id=payload.request_id, expected_revision=payload.expected_revision,
                              message='Remove photo: ' + payload.image_id)
@@ -370,6 +475,8 @@ async def remove_photo(session_id: str, payload: RemovePhoto, tasks: BackgroundT
                     state.get('last_photo_removal') == [payload.request_id, payload.image_id]):
                 raise HTTPException(404, 'Photo is not in this conversation')
             if remaining != state['photos']:
+                if state.get('listing_id') and not state.get('photo_dirty'):
+                    state['saved_photos'] = state['photos'][:]
                 state['photos'] = remaining
                 state['last_photo_removal'] = [payload.request_id, payload.image_id]
                 invalidate_photo_evidence(state)

@@ -369,6 +369,7 @@ export function createApiClient(options) {
     getListingAgentSession: (id, auth = {}) => get(`/v1/listing-agent/sessions/${encodeURIComponent(id)}`, auth),
     getActiveListingAgentSession: (auth = {}) => get('/v1/listing-agent/sessions/active', auth),
     startListingAgentSession: (payload, auth = {}) => post('/v1/listing-agent/sessions', payload, auth),
+    openListingAgentReview: (payload, auth = {}) => post('/v1/listing-agent/sessions/review', payload, auth),
     turnWithListingAgent: (id, payload, auth = {}) => post(`/v1/listing-agent/sessions/${encodeURIComponent(id)}/turns`, payload, auth),
     chatWithAppAssistant: (payload, auth = {}) => post("/v1/app-assistant/chat", payload, auth),
     getActiveListingAssistantConversation: (auth = {}) => get("/v1/listing-assistant/conversations/active", auth),

@@ -145,11 +145,12 @@ class AppAssistantRequest(BaseModel):
 class AppAssistantResponse(BaseModel):
     reply: str
     intent: Literal[
-        "create_listing", "publish_listing", "show_closet", "search_marketplace", "show_tradeable_items", "show_matches",
+        "create_listing", "review_listing", "publish_listing", "show_closet", "search_marketplace", "show_tradeable_items", "show_matches",
         "prepare_trade", "confirm_action", "cancel_action", "show_trades",
         "track_shipping", "navigate", "help",
     ] = "help"
     navigation: Literal["create", "closet", "marketplace", "inbox", "profile"] | None = None
+    review_listing_id: str | None = None
     listings: list[dict] = Field(default_factory=list)
     trades: list[dict] = Field(default_factory=list)
     shipments: list[dict] = Field(default_factory=list)

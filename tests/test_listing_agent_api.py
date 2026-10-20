@@ -53,12 +53,188 @@ def review_ready(client, analysis=None):
     return result.json()
 
 
+def test_general_review_handoff_resolves_first_result_and_opens_owned_session(client, monkeypatch):
+    import json
+    from app import main
+    state = review_ready(client)
+    class Response:
+        status_code = 200
+        def json(self):
+            return {'output': [{'content': [{'type': 'output_text', 'text': json.dumps(dict(
+                intent='review_listing', reply='Review it', listing_reference=None, listing_reference_index=1,
+                listing_reference_scope='closet', navigation=None))}]}]}
+    class Model:
+        def __init__(self, *a, **kw): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def post(self, *a, **kw): return Response()
+    monkeypatch.setattr(main.httpx, 'AsyncClient', Model)
+    result = client.post('/v1/app-assistant/chat', headers=AUTH, json=dict(
+        messages=[{'role': 'user', 'content': 'review first one'}], context={
+            'closet_result_ids': [state['listing_id']], 'result_listing_ids': [state['listing_id']]}))
+    assert result.status_code == 200, result.text
+    assert result.json()['review_listing_id'] == state['listing_id']
+    opened = client.post('/v1/listing-agent/sessions/review', headers=AUTH,
+                         json=dict(request_id='review-entry', listing_id=state['listing_id']))
+    assert opened.status_code == 200, opened.text
+    assert opened.json()['listing']['title'] == 'Reviewed coat'
+    assert opened.json()['stage'] == 'review_ready'
+
+
+def test_review_corrections_are_proposed_confirmed_and_invalidate_publication(client):
+    from app.deps import get_db
+    state = review_ready(client)
+    old_token = state['publication_review']['token']
+    path = f'/v1/listing-agent/sessions/{state["session_id"]}/turns'
+    response = client.post(path, headers=AUTH, json=dict(request_id='propose-title', expected_revision=state['revision'],
+        message='Correct the title', edit_fields={'title': 'Corrected coat'}))
+    assert response.status_code == 200, response.text
+    proposal = response.json()
+    assert proposal['pending']['type'] == 'confirm_changes'
+    assert not proposal['pending']['reanalyze']
+    assert not proposal['publication_review']['publishable']
+    assert get_db().get_listing_by_id(state['listing_id'])['title'] == 'Reviewed coat'
+    payload = dict(request_id='save-title', expected_revision=proposal['revision'], message='Confirm changes', edit_token=proposal['pending']['token'])
+    response = client.post(path, headers=AUTH, json=payload)
+    assert response.status_code == 200, response.text
+    saved = response.json()
+    assert saved['listing']['title'] == 'Corrected coat' and saved['listing']['status'] == 'Review'
+    assert saved['listing']['estimated_value'] == 123
+    assert saved['pending'] is None
+    assert client.post(path, headers=AUTH, json=payload).json() == saved
+    assert len(get_db().fetchall('SELECT job_id FROM listing_analysis_jobs')) == 1
+    assert client.post(path, headers=AUTH, json=dict(request_id='old-publish', expected_revision=saved['revision'],
+        message='Publish', publication_token=old_token)).status_code == 409
+
+
+def test_natural_correction_uses_proposal_tool_and_analysis_sensitive_edits_reanalyze(client, monkeypatch):
+    from app import listing_agent, main
+    from app.deps import get_db
+    state = review_ready(client)
+    queued = []
+    monkeypatch.setattr(main, '_enqueue_existing_listing_analysis', lambda **kwargs: queued.append(kwargs))
+    monkeypatch.setattr(listing_agent, 'call_model', scripted(('propose_listing_changes',
+        {'facts': {'condition': 'NewWithTags'}, 'evidence_quote': 'Change condition to NewWithTags'})))
+    path = f'/v1/listing-agent/sessions/{state["session_id"]}/turns'
+    response = client.post(path, headers=AUTH, json=dict(request_id='natural-edit', expected_revision=state['revision'],
+        message='Change condition to NewWithTags'))
+    assert response.status_code == 200, response.text
+    proposal = response.json()
+    assert proposal['pending']['reanalyze']
+    assert queued == []
+    payload = dict(request_id='confirm-condition', expected_revision=proposal['revision'], message='Confirm changes', edit_token=proposal['pending']['token'])
+    response = client.post(path, headers=AUTH, json=payload)
+    assert response.status_code == 200, response.text
+    assert response.json()['stage'] == 'analyzing'
+    assert response.json()['listing']['condition'] == 'NewWithTags'
+    assert len(queued) == 1
+    assert client.post(path, headers=AUTH, json=payload).json() == response.json()
+    assert len(get_db().fetchall('SELECT job_id FROM listing_analysis_jobs')) == 2
+
+
+def test_review_photo_changes_are_staged_and_can_be_discarded(client):
+    from app.deps import get_db
+    state = review_ready(client)
+    original_images = get_db().get_listing_by_id(state['listing_id'])['images']
+    staged = upload(client, state, photo('blue'), 'extra').json()
+    assert staged['photo_dirty'] and len(staged['photos']) == 2
+    assert not staged['publication_review']['publishable']
+    assert get_db().get_listing_by_id(state['listing_id'])['images'] == original_images
+    response = client.post(f'/v1/listing-agent/sessions/{state["session_id"]}/turns', headers=AUTH,
+        json=dict(request_id='discard', expected_revision=staged['revision'], message='Discard changes'))
+    assert response.status_code == 200, response.text
+    assert len(response.json()['photos']) == 1 and not response.json()['photo_dirty']
+    assert get_db().get_listing_by_id(state['listing_id'])['images'] == original_images
+
+
+def test_photo_changes_confirm_once_and_rerun_analysis(client, monkeypatch):
+    from app import main
+    from app.deps import get_db
+    state = review_ready(client)
+    queued = []
+    monkeypatch.setattr(main, '_enqueue_existing_listing_analysis', lambda **kwargs: queued.append(kwargs))
+    staged = upload(client, state, photo('blue'), 'new-photo').json()
+    path = f'/v1/listing-agent/sessions/{state["session_id"]}/turns'
+    result = client.post(path, headers=AUTH, json=dict(request_id='propose-photos', expected_revision=staged['revision'], message='I added a photo'))
+    assert result.status_code == 200, result.text
+    proposal = result.json()
+    assert proposal['pending']['reanalyze'] and proposal['pending']['photo_count'] == 2
+    payload = dict(request_id='confirm-photos', expected_revision=proposal['revision'], message='Confirm changes', edit_token=proposal['pending']['token'])
+    result = client.post(path, headers=AUTH, json=payload)
+    assert result.status_code == 200, result.text
+    assert result.json()['stage'] == 'analyzing' and len(queued) == 1
+    assert len(get_db().get_listing_by_id(state['listing_id'])['images']) == 2
+    assert client.post(path, headers=AUTH, json=payload).json() == result.json()
+    assert len(queued) == 1
+
+
+def test_review_edits_cannot_set_value_or_skip_confirmation(client, monkeypatch):
+    from app import listing_agent
+    from app.deps import get_db
+    state = review_ready(client)
+    path = f'/v1/listing-agent/sessions/{state["session_id"]}/turns'
+    assert client.post(path, headers=AUTH, json=dict(request_id='price', expected_revision=state['revision'],
+        message='Set value', edit_fields={'estimated_value': 9999})).status_code == 422
+    monkeypatch.setattr(listing_agent, 'call_model', scripted(('apply_listing_changes', {}), ('prepare_draft_review', {})))
+    result = client.post(path, headers=AUTH, json=dict(request_id='prose-save', expected_revision=state['revision'], message='yes save and publish'))
+    assert result.status_code == 200
+    assert get_db().get_listing_by_id(state['listing_id'])['estimated_value'] == 123
+    assert get_db().get_listing_by_id(state['listing_id'])['status'] == 'Review'
+
+
+def test_photo_staging_preserves_prior_text_proposal(client):
+    state = review_ready(client)
+    path = f'/v1/listing-agent/sessions/{state["session_id"]}/turns'
+    proposed = client.post(path, headers=AUTH, json=dict(request_id='text-before-photo', expected_revision=state['revision'],
+        message='Correct title', edit_fields={'title': 'Corrected coat'})).json()
+    staged = upload(client, proposed, photo('blue'), 'photo-after-text').json()
+    result = client.post(path, headers=AUTH, json=dict(request_id='merge', expected_revision=staged['revision'], message='I added a photo'))
+    assert result.status_code == 200, result.text
+    assert result.json()['pending']['changes']['title'] == 'Corrected coat'
+    assert result.json()['pending']['photo_count'] == 2
+    assert result.json()['pending']['reanalyze']
+
+
+def test_stale_edit_proposal_cannot_overwrite_external_correction(client):
+    from app.deps import get_db
+    state = review_ready(client)
+    path = f'/v1/listing-agent/sessions/{state["session_id"]}/turns'
+    proposal = client.post(path, headers=AUTH, json=dict(request_id='edit-base', expected_revision=state['revision'],
+        message='Correct title', edit_fields={'title': 'Requested title'})).json()
+    db = get_db()
+    db.execute('UPDATE listings SET title=? WHERE listing_id=?', ('External title', state['listing_id']))
+    db.commit()
+    response = client.post(path, headers=AUTH, json=dict(request_id='stale-edit', expected_revision=proposal['revision'],
+        message='Confirm changes', edit_token=proposal['pending']['token']))
+    assert response.status_code == 409
+    assert db.get_listing_by_id(state['listing_id'])['title'] == 'External title'
+
+
+def test_review_entry_is_owner_scoped_and_never_creates_another_listing(client):
+    from app.auth import AuthPrincipal, get_request_principal
+    from app import main
+    from app.deps import get_db
+    state = review_ready(client)
+    payload = dict(request_id='entry', listing_id=state['listing_id'])
+    main.app.dependency_overrides[get_request_principal] = lambda: AuthPrincipal(auth_type='clerk', subject='other', claims={})
+    try:
+        assert client.post('/v1/listing-agent/sessions/review', headers=AUTH, json=payload).status_code == 404
+    finally:
+        main.app.dependency_overrides.pop(get_request_principal, None)
+    first = client.post('/v1/listing-agent/sessions/review', headers=AUTH, json=payload)
+    second = client.post('/v1/listing-agent/sessions/review', headers=AUTH, json=payload)
+    assert first.status_code == second.status_code == 200
+    assert first.json()['session_id'] == second.json()['session_id']
+    assert len(get_db().list_owner_listings('api-key')) == 1
+    assert len(get_db().fetchall('SELECT job_id FROM listing_analysis_jobs')) == 1
+
+
 def test_review_publish_requires_its_own_approval_and_is_idempotent(client, monkeypatch):
     from app.deps import get_db
     from app import listing_agent
     async def no_model(*args):
         pytest.fail('Review/publication control must not need a model call')
-    monkeypatch.setattr(listing_agent, 'call_model', no_model)
+    monkeypatch.setattr(listing_agent, 'call_model', scripted(('prepare_draft_review', {})))
     state = review_ready(client)
     assert state['stage'] == 'review_ready' and state['publication_review']['publishable']
     path = f'/v1/listing-agent/sessions/{state["session_id"]}/turns'
@@ -330,9 +506,11 @@ def test_real_private_draft_and_job_are_idempotent_and_can_resume(client, monkey
     assert resumed['stage'] == 'review_ready'
     assert resumed['listing']['estimated_value'] == 123
     assert resumed['listing']['status'] != 'Active'
-    assert upload(client, resumed, request='changed-after-draft').status_code == 409
+    staged = upload(client, resumed, request='changed-after-draft')
+    assert staged.status_code == 200
     assert client.post(path + '/photos/remove', headers=AUTH, json=dict(request_id='remove-after-draft',
-        expected_revision=resumed['revision'], image_id=uploaded['photos'][0]['image_id'])).status_code == 409
+        expected_revision=staged.json()['revision'], image_id=uploaded['photos'][0]['image_id'])).status_code == 200
+    assert db.get_listing_by_id(running['listing_id'])['images']  # Staging does not edit saved listing.
     db.create_listing_analysis_job(job_id='external-edit-job', listing_id=running['listing_id'], owner_subject='api-key')
     handed_off = client.get(path, headers=AUTH).json()
     assert handed_off['stage'] == 'closed'

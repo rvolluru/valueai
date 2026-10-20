@@ -3,14 +3,15 @@ import { ActivityIndicator, Image, Text, TextInput, TouchableOpacity, View } fro
 import { createListingAgentController } from '../../../../packages/app-client/src/listingAgent';
 import { MANNEQUIN_DISCLAIMER } from '../../../../packages/app-client/src/mannequinDisclosure';
 
-export default function ListingAgentChat({ client, getAuth, images, onPickPhotos, styles, onClearPhotos, apiBaseUrl }) {
+export default function ListingAgentChat({ client, getAuth, images, onPickPhotos, styles, onClearPhotos, apiBaseUrl, initialListingId = null, onExit = null, onStartNew = null }) {
   const [view, setView] = useState({ session: null, busy: false, error: '' });
   const [text, setText] = useState('');
   const [mannequinChoice, setMannequinChoice] = useState('');
+  const [editFields, setEditFields] = useState(null);
   const auth = useRef(getAuth);
   auth.current = getAuth;
-  const controller = useMemo(() => createListingAgentController(client, () => auth.current(), setView), [client]);
-  useEffect(() => { controller.activate(); controller.load(); return () => controller.dispose(); }, [controller]);
+  const controller = useMemo(() => createListingAgentController(client, () => auth.current(), setView), [client, initialListingId]);
+  useEffect(() => { controller.activate(); controller.load(initialListingId); return () => controller.dispose(); }, [controller, initialListingId]);
   useEffect(() => {
     if (view.session?.stage !== 'analyzing') return undefined;
     const timer = setInterval(() => controller.refresh(), 4000);
@@ -18,26 +19,36 @@ export default function ListingAgentChat({ client, getAuth, images, onPickPhotos
   }, [controller, view.session?.stage]);
   const session = view.session;
   const review = session?.publication_review;
-  const displayPhotos = session?.listing ? (session.listing.images || []).map((url, index) => ({ image_id: `review-${index}`, url })) : session?.photos || [];
+  const canEdit = !session?.listing_id || session?.stage === 'review_ready';
+  const displayPhotos = session?.listing && !canEdit ? (session.listing.images || []).map((url, index) => ({ image_id: `review-${index}`, url })) : session?.photos || [];
   useEffect(() => { setMannequinChoice(''); }, [review?.token]);
   const button = (label, action, disabled = false) => <TouchableOpacity accessibilityRole="button" style={styles.secondaryBtnCompact} onPress={action} disabled={view.busy || disabled}><Text style={styles.secondaryBtnText}>{label}</Text></TouchableOpacity>;
   return <View style={styles.listingAssistantPanel}>
     <Text style={styles.listingAssistantTitle}>Jouft Listing Agent</Text>
     <Text style={styles.helperText}>Create a private draft, review the results, and publish only after your confirmation.</Text>
+    {onExit ? button('Back to assistant', onExit) : null}
     {session ? <>
       <Text style={styles.helperText}>{session.photos.length}/6 saved photos · {session.stage.replaceAll('_', ' ')}</Text>
+      {session.photo_dirty ? <Text style={styles.helperText}>Photo changes are staged only. Confirm them before they are applied to the listing.</Text> : null}
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }} accessibilityLabel="Saved photos">
         {displayPhotos.map((photo, index) => <View key={photo.image_id} style={{ width: '30%' }}>
           <Image source={{ uri: new URL(photo.url, apiBaseUrl).href }} accessibilityLabel={`Saved item photo ${index + 1}`} style={{ width: '100%', aspectRatio: 1 }} />
           {review?.mannequin_assets.some(asset => asset.image_url === photo.url) ? <Text style={styles.helperText}>{MANNEQUIN_DISCLAIMER}</Text> : null}
-          {!session.listing_id ? button(`Remove photo ${index + 1}`, () => controller.removePhoto(photo.image_id)) : null}
+          {canEdit ? button(`Remove photo ${index + 1}`, () => controller.removePhoto(photo.image_id)) : null}
         </View>)}
       </View>
-      {!session.listing_id ? <View>
+      {canEdit ? <View>
         {button(images.length ? 'Add more photos' : 'Choose photos', onPickPhotos, session.photos.length >= 6 || images.length >= 6)}
         <Text style={styles.helperText}>{images.length} selected{images.length ? ', not uploaded yet. Press “Use these photos” before replying.' : '.'} Existing photos stay saved. Up to 6 saved photos total.</Text>
         {button('Use these photos', () => controller.upload(images, onClearPhotos), !images.length)}
         {images.length ? button('Clear selected photos', onClearPhotos) : null}
+      </View> : null}
+      {session.pending?.type === 'confirm_changes' ? <View style={styles.listingChatAssistantBubble}>
+        <Text style={styles.listingAssistantTitle}>Confirm proposed changes</Text>
+        {Object.entries(session.pending.changes).map(([key, value]) => <Text key={key} style={styles.helperText}>{key}: {value}</Text>)}
+        <Text style={styles.helperText}>{session.pending.photo_count} photos. {session.pending.reanalyze ? 'Analysis will run again before publication.' : 'The existing analysis and value will be retained.'}</Text>
+        {button('Confirm changes', () => controller.confirmEdits())}
+        {button('Discard changes', () => controller.send('Discard changes'))}
       </View> : null}
       {session.messages.map((message, index) => <View key={index} style={styles.listingChatAssistantBubble}><Text style={styles.helperText}>{message.role === 'user' ? 'You' : 'Jouft'}</Text><Text style={styles.listingAssistantMessageText}>{message.content}</Text></View>)}
       {session.pending?.type === 'confirm_analysis' ? <View style={styles.listingChatAssistantBubble}>
@@ -53,7 +64,17 @@ export default function ListingAgentChat({ client, getAuth, images, onPickPhotos
         <Text style={styles.listingAssistantMessageText}>{session.listing.brand} · {session.listing.condition} · {session.listing.size}</Text>
         <Text style={styles.listingAssistantMessageText}>{session.listing.description}</Text>
         {session.stage === 'review_ready' ? <View>
-          <Text style={styles.helperText}>{session.listing.estimated_value > 0 ? `Estimated value: $${session.listing.estimated_value}` : 'Value needs review.'} Review the details and saved photos above. To correct them, edit in My Closet and reload saved progress.</Text>
+          <Text style={styles.helperText}>{session.listing.estimated_value > 0 ? `Estimated value: $${session.listing.estimated_value}` : 'Value needs review.'} Review the details and photos. Describe corrections below or use Edit details.</Text>
+          {button('Edit details', () => setEditFields(Object.fromEntries(['title', 'brand', 'category', 'condition', 'size', 'description'].map(key => [key, session.listing[key] || '']))))}
+          {button('Keep as draft', () => controller.send('Keep as draft'))}
+          {editFields ? <View>
+            {['title', 'brand', 'description'].map(key => <TextInput key={key} accessibilityLabel={key} style={styles.input} value={editFields[key]} multiline onChangeText={value => setEditFields({ ...editFields, [key]: value })} />)}
+            {['category', 'condition', 'size'].map(key => <View key={key}><Text style={styles.helperText}>{key}: {editFields[key] || 'Select'}</Text>
+              {(key === 'category' ? ['clothes', 'shoes', 'handbag', 'accessories'] : key === 'condition' ? ['NewWithTags', 'New', 'LikeNew'] : (session.size_options_by_category?.[editFields.category] || session.size_options)).map(value => button(`${editFields[key] === value ? '✓ ' : ''}${value}`, () => setEditFields({ ...editFields, [key]: value, ...(key === 'category' ? { size: '' } : {}) })))}
+            </View>)}
+            {button('Review proposed changes', async () => { if (await controller.proposeEdits(editFields)) setEditFields(null); }, !editFields.size)}
+            {button('Cancel editing', () => setEditFields(null))}
+          </View> : null}
           {review?.mannequin_choice_required ? <View>
             <Text style={styles.helperText}>Include the AI-generated mannequin image?</Text>
             {review.mannequin_assets.map((asset, index) => asset.image_url ? <View key={index}><Image source={{ uri: new URL(asset.image_url, apiBaseUrl).href }} style={{ width: '100%', height: 240, resizeMode: 'contain' }} /><Text style={styles.helperText}>{MANNEQUIN_DISCLAIMER}</Text></View> : null)}
@@ -61,16 +82,18 @@ export default function ListingAgentChat({ client, getAuth, images, onPickPhotos
             {button(`${mannequinChoice === 'exclude' ? '✓ ' : ''}Use original photos only`, () => setMannequinChoice('exclude'))}
           </View> : null}
           {review?.reasons.map(reason => <Text key={reason} style={styles.helperText}>{reason}</Text>)}
-          {review ? button('Confirm and publish to Marketplace', () => controller.publish(mannequinChoice || null), !review.publishable || (review.mannequin_choice_required && !mannequinChoice)) : null}
+          {review ? button('Confirm and publish to Marketplace', () => controller.publish(mannequinChoice || null), !!editFields || !!images.length || !review.publishable || (review.mannequin_choice_required && !mannequinChoice)) : null}
           {button('Reload saved progress', () => controller.refresh())}
         </View> : null}
         {session.stage === 'published' ? <Text style={styles.helperText}>Published to Marketplace.</Text> : null}
         {session.stage === 'failed' ? <Text style={styles.error}>Analysis could not finish. Your draft is saved in My Closet.</Text> : null}
-        {session.stage === 'closed' ? <Text style={styles.helperText}>This listing changed outside this conversation. Continue in My Closet.</Text> : null}
+        {session.stage === 'closed' ? <View><Text style={styles.helperText}>This listing changed. Reopen review to see the current saved version.</Text>
+          {session.photo_dirty ? button('Discard staged changes', () => controller.send('Discard changes')) : null}
+          {button('Reopen review', () => controller.load(session.listing_id))}</View> : null}
       </View> : null}
-      {!session.listing_id ? <View><TextInput accessibilityLabel="Reply to listing agent" style={styles.input} value={text} onChangeText={setText} multiline maxLength={2000} editable={!view.busy} placeholder="Tell me about your item…" />
+      {canEdit ? <View><TextInput accessibilityLabel="Reply to listing agent" style={styles.input} value={text} onChangeText={setText} multiline maxLength={2000} editable={!view.busy} placeholder="Tell me about your item or describe a correction…" />
         {button('Send', () => { controller.send(text); setText(''); }, !text.trim() || !!images.length)}</View> : null}
-      {button('Start another draft', () => { onClearPhotos(); controller.startNew(); })}
+      {button('Start another draft', async () => { onClearPhotos(); if (await controller.startNew()) onStartNew?.(); })}
     </> : null}
     {view.busy ? <ActivityIndicator /> : null}
     {view.error ? <View><Text accessibilityRole="alert" style={styles.error}>{view.error}</Text>{button('Retry', () => controller.retry())}{button('Reload saved progress', () => controller.refresh())}</View> : null}

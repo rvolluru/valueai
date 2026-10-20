@@ -34,6 +34,10 @@ test('agent review uses current gallery and a separate explicit publication cont
     assert.match(source, /review.mannequin_choice_required && !mannequinChoice/);
     assert.match(source, /MANNEQUIN_DISCLAIMER/);
     assert.match(source, /\[review\?\.token\]/);
+    assert.match(source, /Edit details/);
+    assert.match(source, /Keep as draft/);
+    assert.match(source, /controller.confirmEdits\(\)/);
+    assert.match(source, /controller.load\(initialListingId\)/);
   }
 });
 test('photo role labels take their own row instead of covering Set Hero', () => {

@@ -48,8 +48,9 @@ Expo; restart the relevant processes. The API also exposes authenticated
 The agent creates and analyzes one private draft per session, then renders real
 results. Polling/returning to chat resumes job status without another model call;
 it does not yet run a proactive post-analysis model conversation or push callback.
-After a draft is created, corrections use the existing My Closet editor. The agent
-now supports explicit reviewed-version publication, but has no trade tool. A new
+After a draft is created, corrections can now be proposed in chat or its edit form,
+then separately confirmed. The agent supports explicit reviewed-version publication,
+but has no trade tool. A new
 session is an explicit separate draft. Pre-draft uploads add to the saved photo
 set, deduplicated by content hash (up to 6 JPEG/PNG/WebP, 15 MB and 40 MP each).
 Both clients show saved thumbnails and allow explicit removal before draft creation;
@@ -152,8 +153,9 @@ this is an orchestration change, not a model migration.
 
 When the saved analysis job succeeds, the web/mobile review card displays actual
 title, brand, condition, size, description, value and current saved gallery.
-Corrections still use My Closet; reload saved progress afterwards. A different
-analysis job or external non-draft status closes the old agent workflow.
+Corrections now use the tools and edit form below, with My Closet retained as an
+alternative. A different external analysis job or non-draft status closes the old
+workflow; explicitly reopen review to adopt the current saved listing.
 
 The public session includes a publication-review token bound to the persisted
 listing snapshot and job. Publication uses a distinct `publication_token`, not
@@ -179,6 +181,62 @@ build and offline iOS JavaScript export. Publication tests cover prose refusal,
 separate approval, include/exclude choices, stale snapshots, atomic concurrent-edit
 and reanalysis conflicts, manual review/subscription/ownership checks, replay and
 recovery after the listing write but before the tool checkpoint.
+
+## Existing-listing review handoff and corrections (local only)
+
+The general assistant now has a `review_listing` intent for review/edit/correct
+requests. It resolves an owned listing by exact model-selected ID, title, or the
+numbered closet results (including “review first one”), then returns
+`review_listing_id`. With the agent enabled, publication requests also enter review
+instead of bypassing it through the older general-assistant publication action.
+Both clients pass this target to `POST /v1/listing-agent/sessions/review`, rather
+than loading an unrelated latest session. Ambiguous references show candidates.
+The default-off legacy publication path remains available when the flag is off.
+
+Review sessions are owner-scoped and stable per listing; opening one creates no
+new listing or analysis job. It adopts the current latest job. Legacy drafts with
+saved analysis but no job use that persisted result, not a fabricated analysis job;
+drafts without completed/saved analysis cannot publish. Existing gallery originals
+are loaded and hash-checked for staging; generated previews are not evidence.
+
+The model can choose `propose_listing_changes` for explicit corrections. The same
+proposal path accepts edit-form fields (title, description, brand, category,
+condition, category-valid size); neither accepts price or administrative fields.
+`apply_listing_changes` requires its own exact proposal token and confirmation
+control. The base listing snapshot and latest-job/update-time write checks reject
+stale proposals. Proposed metadata edits merge until confirmed/discarded.
+
+| Confirmed change | Behavior |
+| --- | --- |
+| Title or description only | Save private metadata; retain analysis/value |
+| Brand, category, condition, size or photos | Queue ordinary reanalysis; publication waits |
+| Price/admin/unsupported fields | Reject |
+| Keep as draft | Remain private; do not silently save or discard proposals |
+
+Photo additions/removals during review change only session evidence until confirmed.
+Saved listing images remain untouched; changes block publication and invalidate old
+approval. Earlier proposed text corrections survive subsequent photo staging.
+`discard_listing_changes` requires an explicit cancellation and restores staged
+photos without modifying the saved listing. Confirmed changes call the normal
+listing update path (same model routing, identity/reuse, condition pricing, media
+normalization, quota and manual-review rules). After saving, a fresh review and
+separate publication approval are needed. There is no automatic publication or
+trade. Back to assistant permits selecting another listing.
+
+Normal network retries reuse the same operation/proposal IDs. A write that succeeds
+before the session checkpoint is interrupted is protected from being applied a
+second time by snapshot/write checks; an external-change conflict requires
+reopening review rather than silently reapplying a stale edit.
+
+Verification: the full Python suite passed (551 tests), with a subsequent targeted
+API/agent regression run passing (178 tests). Shared-client/web tests passed (44),
+as did the web build and offline iOS JavaScript export. Tests cover named/ordinal
+handoff, owner boundaries, natural tool proposals, edit-form proposals, separate
+edit approval, metadata retention, reanalysis, staged-photo cancellation/merging,
+stale edits, and rejection of price fields. A live local browser request to review
+the Chanel loafers opened the correct listing's review/edit controls, including
+saved `US 10`. Opening/cancelling its edit form left the real listing unchanged;
+no real edit, analysis rerun or publication was performed in that browser check.
 
 ## Current implementation map
 

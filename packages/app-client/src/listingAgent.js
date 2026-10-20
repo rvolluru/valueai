@@ -36,9 +36,10 @@ export function createListingAgentController(client, getAuth, onChange) {
     return async () => client.turnWithListingAgent(session.session_id, payload, await getAuth());
   }
   return {
-    load() {
+    load(listingId = null) {
       const requestId = id();
       return perform(async () => {
+        if (listingId) return client.openListingAgentReview({ request_id: requestId, listing_id: listingId }, await getAuth());
         const existing = await client.getActiveListingAgentSession(await getAuth());
         return existing.session || client.startListingAgentSession({ request_id: requestId }, await getAuth());
       });
@@ -65,6 +66,20 @@ export function createListingAgentController(client, getAuth, onChange) {
         publication_token: review.token, mannequin_choice: mannequinChoice };
       return perform(async () => client.turnWithListingAgent(session.session_id, payload, await getAuth()));
     },
+    proposeEdits(fields) {
+      if (!state.session) return;
+      const session = state.session;
+      const payload = { request_id: id(), expected_revision: session.revision,
+        message: 'Please propose these corrections: ' + JSON.stringify(fields), edit_fields: fields };
+      return perform(async () => client.turnWithListingAgent(session.session_id, payload, await getAuth()));
+    },
+    confirmEdits() {
+      const session = state.session;
+      if (session?.pending?.type !== 'confirm_changes') return;
+      const payload = { request_id: id(), expected_revision: session.revision,
+        message: 'I confirm these proposed changes. Save them, but do not publish.', edit_token: session.pending.token };
+      return perform(async () => client.turnWithListingAgent(session.session_id, payload, await getAuth()));
+    },
     upload(images, onUploaded = () => {}) {
       if (!state.session || !images.length) return;
       const session = state.session;
@@ -85,7 +100,7 @@ export function createListingAgentController(client, getAuth, onChange) {
       return perform(async () => client.getListingAgentSession(state.session.session_id, await getAuth()));
     },
     removePhoto(imageId) {
-      if (!state.session || state.session.listing_id) return;
+      if (!state.session || (state.session.listing_id && state.session.stage !== 'review_ready')) return;
       const session = state.session;
       const requestId = id();
       const turnId = id();

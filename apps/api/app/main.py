@@ -9106,7 +9106,7 @@ async def app_assistant_chat(
         "Also return the one-based card position in listing_reference_index and its domain in listing_reference_scope. "
         "For trade targets use target_reference_index into marketplace_result_ids; for offered items use offered_reference_index into closet_result_ids. "
         "Interpret expressions such as first, second, last, the jacket, or the Saint Laurent item semantically; never place those phrases in an ID field. "
-        "Use create_listing to begin creating an item; publish_listing when the member asks to publish an existing closet listing; "
+        "Use create_listing to begin creating an item; review_listing when the member asks to review, edit, or correct a closet listing (including 'review first one'); publish_listing when they ask to publish; "
         "Creating a listing is always photo-first. For create_listing, ask the member to add clear photos and explain that you will identify the item and guide them through any remaining details. "
         "Never offer manual listing entry and never ask for title, brand, category, price, description, condition, or size on the create_listing turn. "
         "Follow LISTING CREATION WORKFLOW exactly. The application, not you, controls workflow transitions and validates required photos and field values. "
@@ -9127,7 +9127,7 @@ async def app_assistant_chat(
         "type": "object",
         "additionalProperties": False,
         "properties": {
-            "intent": {"type": "string", "enum": ["create_listing", "publish_listing", "show_closet", "search_marketplace", "show_tradeable_items", "show_matches", "prepare_trade", "confirm_action", "cancel_action", "show_trades", "track_shipping", "navigate", "help"]},
+            "intent": {"type": "string", "enum": ["create_listing", "review_listing", "publish_listing", "show_closet", "search_marketplace", "show_tradeable_items", "show_matches", "prepare_trade", "confirm_action", "cancel_action", "show_trades", "track_shipping", "navigate", "help"]},
             "reply": {"type": "string"},
             "listing_reference": {"type": ["string", "null"], "enum": [*all_listing_ids, None]},
             "listing_reference_scope": {"type": ["string", "null"], "enum": ["marketplace", "closet", None]},
@@ -9178,7 +9178,27 @@ async def app_assistant_chat(
     all_listings = [*own_listings, *marketplace]
     selected_context_id = request.context.selected_listing_id
 
-    if intent == "create_listing":
+    review_listing_id = None
+    if intent == "review_listing" or (intent == "publish_listing" and settings.listing_agent_enabled):
+        reference = (parsed.get('listing_reference') or
+                     _app_assistant_indexed_reference(parsed.get('listing_reference_index'), closet_result_ids) or latest_user_text)
+        listing = (None if parsed.get('listing_reference_scope') == 'marketplace' else
+                   _app_assistant_resolve_listing(reference, own_listings, prior_ids))
+        if listing and str(listing.get('status')).casefold() in {'review', 'analyzing', 'analysisfailed'}:
+            result_listings = [listing]
+            if settings.listing_agent_enabled:
+                review_listing_id = listing['listing_id']
+                reply = 'Let’s review this listing. You can correct its details, keep it as a draft, or explicitly confirm publication.'
+            else:
+                navigation = 'closet'
+                reply = 'Open Review and Publish in My Closet to review this listing.'
+        elif listing:
+            result_listings = [listing]
+            reply = 'This listing is not a private draft. You can edit it in My Closet.'
+        else:
+            result_listings = _app_assistant_listing_candidates(reference, own_listings)[:12]
+            reply = 'Which listing would you like to review? Choose by title or the numbered results.'
+    elif intent == "create_listing":
         navigation = "create"
         # The client opens a photo-first workflow for this intent. Keep this
         # transition deterministic so model prose cannot contradict the UI.
@@ -9367,7 +9387,7 @@ async def app_assistant_chat(
     result_ids = [card["listing_id"] for card in cards if card.get("listing_id")]
     if intent in {"search_marketplace", "show_tradeable_items"}:
         marketplace_result_ids = result_ids
-    elif intent == "show_closet" or (intent == "publish_listing" and not requires_confirmation):
+    elif intent in {"show_closet", "review_listing"} or (intent == "publish_listing" and not requires_confirmation):
         closet_result_ids = result_ids
     response_context = {
         "result_listing_ids": result_ids,
@@ -9388,6 +9408,7 @@ async def app_assistant_chat(
         "reply": reply,
         "intent": intent,
         "navigation": navigation,
+        "review_listing_id": review_listing_id,
         "listings": cards,
         "trades": result_trades,
         "shipments": result_shipments,

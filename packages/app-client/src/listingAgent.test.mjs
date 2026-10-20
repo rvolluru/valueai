@@ -136,3 +136,28 @@ test('publication uses separate reviewed-version approval and preserves it on re
   assert.equal(calls[0].confirmation_token, undefined);
   assert.equal(fixture.view.session.stage, 'published');
 });
+
+test('review handoff loads the selected listing instead of an unrelated active session', async () => {
+  const calls = [];
+  const fixture = setup({ openListingAgentReview: async payload => {
+    calls.push(payload); return { session_id: 'review-selected', revision: 2, stage: 'review_ready' };
+  } });
+  await fixture.controller.load('selected-listing');
+  assert.equal(calls[0].listing_id, 'selected-listing');
+  assert.equal(fixture.view.session.session_id, 'review-selected');
+});
+
+test('edit proposal and confirmation use distinct retry-safe requests', async () => {
+  const calls = [];
+  const fixture = setup({ turnWithListingAgent: async (id, payload) => {
+    calls.push(payload);
+    return { session_id: id, revision: 8, pending: { type: 'confirm_changes', token: 'edit-version' } };
+  } });
+  await fixture.controller.load();
+  await fixture.controller.proposeEdits({ title: 'New title' });
+  await fixture.controller.confirmEdits();
+  assert.deepEqual(calls[0].edit_fields, { title: 'New title' });
+  assert.equal(calls[1].edit_token, 'edit-version');
+  assert.equal(calls[1].publication_token, undefined);
+  assert.notEqual(calls[0].request_id, calls[1].request_id);
+});

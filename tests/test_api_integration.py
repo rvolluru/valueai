@@ -4794,6 +4794,7 @@ def test_application_assistant_uses_model_for_natural_language_and_confirms_trad
 
 def test_application_assistant_disambiguates_and_publishes_named_listing(monkeypatch) -> None:
     client = _build_client()
+    monkeypatch.setenv('LISTING_AGENT_ENABLED', 'false')  # Retained legacy publication path.
     os.environ["OPENAI_API_KEY"] = "test-openai-key"
 
     from app import deps, main, settings

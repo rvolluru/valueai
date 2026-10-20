@@ -900,8 +900,7 @@ the existing analysis worker pipeline runs unchanged, including subscription and
 ownership checks, identity/reuse rules, sticky GPT/Sol assignment, source policy,
 manual review and optional parallel imagery. The agent does not invent prices.
 Returning/polling reads the actual job and saved listing without another chat-model
-call. Missing valuation is shown as needs-review. Post-creation corrections remain
-in My Closet. The local review/publication extension shows current listing details,
+call. Missing valuation is shown as needs-review. The local review/publication extension shows current listing details,
 value and saved gallery in chat, plus synthetic previews with the AI disclaimer.
 When generated assets exist, the user must choose include/exclude explicitly.
 
@@ -917,10 +916,37 @@ without these conditions are unchanged.
 Request replay and a persisted publication approval permit post-write recovery
 without duplicate publication. A successful session becomes `published` and shows
 the real Active listing. Manual review blocks publishing; users are not asked to
-set a value. Corrections use My Closet and require a fresh review snapshot.
+set a value. Corrections require a fresh review snapshot.
 This extension is local only; production and evaluation/model routing are unchanged.
 The agent cannot trade and does not proactively resume a model conversation after
 job completion; review cards/status are projected from actual saved state.
+
+Local existing-listing entry: the general assistant's `review_listing` intent
+resolves an owned listing by ID/title or numbered closet results and returns a
+`review_listing_id` handoff. Both clients explicitly open that listing's owner-scoped
+review session; they do not reuse an unrelated last conversation. With this feature
+enabled, general-chat publication requests also enter this review boundary.
+Ambiguous targets require selection. Opening review never creates another listing
+or analysis job. Saved legacy analysis without a job may be reviewed as persisted
+analysis; missing analysis cannot authorize publication.
+
+Before publication, users may describe corrections or use Edit details. The
+`propose_listing_changes` tool stages only explicitly requested editable facts;
+the form follows the same path. Changes are displayed with their reanalysis impact.
+`apply_listing_changes` requires a separate proposal-bound edit confirmation, not
+analysis/publication approval. Title/description-only edits retain the value;
+brand/category/condition/size or confirmed photo changes queue ordinary reanalysis.
+The existing model assignment, identity/reuse and condition-specific pricing rules
+remain in force. No price/admin fields can be edited through these tools.
+
+Review photo uploads/removals are staged until the changes are confirmed. They do
+not immediately alter saved listing images. Pending corrections merge and are
+shown again after photo changes; publication is blocked until changes are confirmed
+or explicitly discarded. Keep as draft never publishes or silently saves unsaved
+changes. Cancel/discard restores staged photos without editing the saved listing.
+Every confirmed edit invalidates publication approval; snapshot/latest-job/write
+checks reject stale edits. A fresh review is required after reanalysis. My Closet
+remains an alternative editor. These handoff and correction changes are local only.
 
 `LISTING_AGENT_ENABLED` on the API, `VITE_LISTING_AGENT_ENABLED` for web and
 `EXPO_PUBLIC_LISTING_AGENT_ENABLED` for mobile are default-off opt-ins. Both client
