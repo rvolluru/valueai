@@ -231,7 +231,7 @@ class Services:
         if not state['photos']:
             raise HTTPException(400, 'Keep at least one photo before confirming changes')
         reanalyze = bool(state.get('photo_dirty') or any(proposed.get(k) != listing.get(k)
-                         for k in ('brand', 'category', 'condition', 'size')))
+                         for k in ('brand', 'category', 'condition')))
         base = (await self.publication_review(state))['token']
         return dict(base=base, changes=changes, reanalyze=reanalyze,
                     token=digest([base, changes, [p['content_hash'] for p in state['photos']]]))

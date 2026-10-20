@@ -8,7 +8,6 @@ export default function ListingAgentChat({ apiBaseUrl, apiKey, getBearerToken, c
   const [text, setText] = useState('')
   const [files, setFiles] = useState([])
   const [mannequinChoice, setMannequinChoice] = useState('')
-  const [editFields, setEditFields] = useState(null)
   const fileInput = useRef(null)
   const auth = useRef(null)
   auth.current = async () => clerkEnabled ? { bearerToken: await getBearerToken() } : { apiKey }
@@ -76,17 +75,8 @@ export default function ListingAgentChat({ apiBaseUrl, apiKey, getBearerToken, c
         <details><summary>Item description</summary><p>{session.listing.description}</p></details>
         {session.stage === 'review_ready' && <>
           <p>{session.listing.estimated_value > 0 ? `Estimated value: $${session.listing.estimated_value}` : 'Value needs review.'}</p>
-          {!proposal && <p>Everything look right? Publish, or edit the details first.</p>}
-          <button disabled={view.busy} onClick={() => setEditFields(Object.fromEntries(['title', 'brand', 'category', 'condition', 'size', 'description'].map(key => [key, session.listing[key] || ''])))}>Edit details</button>
+          {!proposal && <p>To make a correction, tell me below—for example, “Change size to US 10.5.”</p>}
           <button disabled={view.busy} onClick={() => controller.send('Keep as draft')}>Keep as draft</button>
-          {editFields && <form onSubmit={async event => { event.preventDefault(); if (await controller.proposeEdits(editFields)) setEditFields(null) }}>
-            {['title', 'brand', 'description'].map(key => <label key={key}>{key}<textarea value={editFields[key]} maxLength={key === 'description' ? 4000 : key === 'title' ? 300 : 200} onChange={event => setEditFields({ ...editFields, [key]: event.target.value })} /></label>)}
-            {['category', 'condition', 'size'].map(key => <label key={key}>{key}<select required value={editFields[key]} onChange={event => setEditFields({ ...editFields, [key]: event.target.value, ...(key === 'category' ? { size: '' } : {}) })}>
-              <option value="">Select {key}</option>
-              {(key === 'category' ? ['clothes', 'shoes', 'handbag', 'accessories'] : key === 'condition' ? ['NewWithTags', 'New', 'LikeNew'] : (session.size_options_by_category?.[editFields.category] || session.size_options)).map(value => <option key={value} value={value}>{value}</option>)}
-            </select></label>)}
-            <button disabled={view.busy}>Review proposed changes</button><button type="button" onClick={() => setEditFields(null)}>Cancel editing</button>
-          </form>}
           {review?.mannequin_choice_required && <fieldset disabled={view.busy}><legend>Include the AI-generated mannequin image?</legend>
             {review.mannequin_assets.map((asset, index) => asset.image_url && <figure key={index}><img src={new URL(asset.image_url, apiBaseUrl || window.location.origin).href} alt="AI-generated mannequin preview" style={{ width: '100%', maxHeight: 280, objectFit: 'contain' }} /><figcaption>{MANNEQUIN_DISCLAIMER}</figcaption></figure>)}
             {['include', 'exclude'].map(choice => <label key={choice}><input type="radio" name={`mannequin-${session.session_id}`} value={choice} checked={mannequinChoice === choice} onChange={() => setMannequinChoice(choice)} />{choice === 'include' ? 'Include mannequin image' : 'Use original photos only'}</label>)}
@@ -95,11 +85,10 @@ export default function ListingAgentChat({ apiBaseUrl, apiKey, getBearerToken, c
             <h4>Save these changes?</h4>
             {Object.entries(proposal.changes || {}).map(([key, value]) => <p key={key}>{key}: {session.listing[key] || 'Not set'} → {value}</p>)}
             <p>{session.photos.length} photos. {proposal.reanalyze ? 'This will run analysis again before publication.' : 'The existing analysis and value will be retained.'}</p>
-            <button className="primary" disabled={view.busy || !!editFields || !!files.length} onClick={() => controller.confirmEdits()}>Save changes</button>
-            <button className="ghost" disabled={view.busy} onClick={() => controller.send('Discard changes')}>Cancel changes</button>
+            <p>Reply “Save changes” to apply these staged changes, or “Discard changes” to cancel.</p>
           </div>}
           {!proposal && review?.reasons.map(reason => <p key={reason} role="status">{reason}</p>)}
-          {!proposal && review?.publishable && <button className="primary" disabled={view.busy || !!editFields || !!files.length || !review.publishable || (review.mannequin_choice_required && !mannequinChoice)} onClick={() => controller.publish(mannequinChoice || null)}>Confirm and publish to Marketplace</button>}
+          {!proposal && review?.publishable && <button className="primary" disabled={view.busy || !!files.length || !review.publishable || (review.mannequin_choice_required && !mannequinChoice)} onClick={() => controller.publish(mannequinChoice || null)}>Confirm and publish to Marketplace</button>}
         </>}
         {session.stage === 'published' && <p role="status">Published to Marketplace.</p>}
         {session.stage === 'failed' && <p>Analysis did not finish. The draft is saved in My Closet.</p>}

@@ -7,7 +7,6 @@ export default function ListingAgentChat({ client, getAuth, images, onPickPhotos
   const [view, setView] = useState({ session: null, busy: false, error: '' });
   const [text, setText] = useState('');
   const [mannequinChoice, setMannequinChoice] = useState('');
-  const [editFields, setEditFields] = useState(null);
   const [showPhotos, setShowPhotos] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [showDescription, setShowDescription] = useState(false);
@@ -67,17 +66,8 @@ export default function ListingAgentChat({ client, getAuth, images, onPickPhotos
         {showDescription ? <Text style={styles.listingAssistantMessageText}>{session.listing.description}</Text> : null}
         {session.stage === 'review_ready' ? <View>
           <Text style={styles.helperText}>{session.listing.estimated_value > 0 ? `Estimated value: $${session.listing.estimated_value}` : 'Value needs review.'}</Text>
-          {!proposal ? <Text style={styles.helperText}>Everything look right? Publish, or edit the details first.</Text> : null}
-          {button('Edit details', () => setEditFields(Object.fromEntries(['title', 'brand', 'category', 'condition', 'size', 'description'].map(key => [key, session.listing[key] || '']))))}
+          {!proposal ? <Text style={styles.helperText}>Tell me any correction below—for example, “Change size to US 10.5.”</Text> : null}
           {button('Keep as draft', () => controller.send('Keep as draft'))}
-          {editFields ? <View>
-            {['title', 'brand', 'description'].map(key => <TextInput key={key} accessibilityLabel={key} style={styles.input} value={editFields[key]} multiline onChangeText={value => setEditFields({ ...editFields, [key]: value })} />)}
-            {['category', 'condition', 'size'].map(key => <View key={key}><Text style={styles.helperText}>{key}: {editFields[key] || 'Select'}</Text>
-              {(key === 'category' ? ['clothes', 'shoes', 'handbag', 'accessories'] : key === 'condition' ? ['NewWithTags', 'New', 'LikeNew'] : (session.size_options_by_category?.[editFields.category] || session.size_options)).map(value => button(`${editFields[key] === value ? '✓ ' : ''}${value}`, () => setEditFields({ ...editFields, [key]: value, ...(key === 'category' ? { size: '' } : {}) })))}
-            </View>)}
-            {button('Review proposed changes', async () => { if (await controller.proposeEdits(editFields)) setEditFields(null); }, !editFields.size)}
-            {button('Cancel editing', () => setEditFields(null))}
-          </View> : null}
           {review?.mannequin_choice_required ? <View>
             <Text style={styles.helperText}>Include the AI-generated mannequin image?</Text>
             {review.mannequin_assets.map((asset, index) => asset.image_url ? <View key={index}><Image source={{ uri: new URL(asset.image_url, apiBaseUrl).href }} style={{ width: '100%', height: 240, resizeMode: 'contain' }} /><Text style={styles.helperText}>{MANNEQUIN_DISCLAIMER}</Text></View> : null)}
@@ -88,11 +78,10 @@ export default function ListingAgentChat({ client, getAuth, images, onPickPhotos
             <Text style={styles.listingAssistantTitle}>Save these changes?</Text>
             {Object.entries(proposal.changes || {}).map(([key, value]) => <Text key={key} style={styles.helperText}>{key}: {session.listing[key] || 'Not set'} → {value}</Text>)}
             <Text style={styles.helperText}>{session.photos.length} photos. {proposal.reanalyze ? 'Analysis will run again before publication.' : 'The existing analysis and value will be retained.'}</Text>
-            {button('Save changes', () => controller.confirmEdits(), !!editFields || !!images.length)}
-            {button('Cancel changes', () => controller.send('Discard changes'))}
+            <Text style={styles.helperText}>Reply “Save changes” to apply these staged changes, or “Discard changes” to cancel.</Text>
           </View> : null}
           {!proposal && review?.reasons.map(reason => <Text key={reason} style={styles.helperText}>{reason}</Text>)}
-          {!proposal && review?.publishable ? button('Confirm and publish to Marketplace', () => controller.publish(mannequinChoice || null), !!editFields || !!images.length || !review.publishable || (review.mannequin_choice_required && !mannequinChoice)) : null}
+          {!proposal && review?.publishable ? button('Confirm and publish to Marketplace', () => controller.publish(mannequinChoice || null), !!images.length || !review.publishable || (review.mannequin_choice_required && !mannequinChoice)) : null}
         </View> : null}
         {session.stage === 'published' ? <Text style={styles.helperText}>Published to Marketplace.</Text> : null}
         {session.stage === 'failed' ? <Text style={styles.error}>Analysis could not finish. Your draft is saved in My Closet.</Text> : null}

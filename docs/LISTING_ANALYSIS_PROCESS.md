@@ -374,6 +374,9 @@ preferred hybrid path performs identification:
    the required JSON fields without search tools.
 4. **Normalize the profile.** Application code normalizes product names, categories,
    confidence, visual condition, references and other structured fields.
+   Local parser correction: rationale price-range reconciliation requires currency,
+   normalizes Unicode dashes and excludes URLs, so sizes, day ranges and product
+   IDs cannot overwrite a valid numeric estimate as if they were price ranges.
 5. **Persist eligible identity.** A sufficiently identifiable result is saved for
    the listing so later pricing can reuse it.
 
@@ -930,21 +933,24 @@ Ambiguous targets require selection. Opening review never creates another listin
 or analysis job. Saved legacy analysis without a job may be reviewed as persisted
 analysis; missing analysis cannot authorize publication.
 
-Before publication, users may describe corrections or use Edit details. The
-`propose_listing_changes` tool stages only explicitly requested editable facts;
-the form follows the same path. Changes are displayed with their reanalysis impact.
-Web and mobile show the saved edit proposal beside publication controls, even if
-a subsequent chat question replaces the current pending prompt. Confirmation uses
-the saved proposal token; a follow-up question never removes the approval requirement.
+Before publication, users describe corrections in chat; there is no embedded edit
+form. The `propose_listing_changes` tool validates user-quoted fields and saves an
+explicit change/update/set/correct/replace request directly, without a second Save
+step. Questions/hypotheticals, unsaved photo changes and unrelated older staged
+fields are not implicitly approved. Invalid sizes remain rejected. Older/staged
+proposals can be resolved by typing “Save changes” or “Discard changes”; the
+server binds saving to the current proposal, revision and owner, not publication.
 The local review UI collapses photo management, descriptions and prior conversation
 by default, keeping the current saved summary and change action visible. Proposals
-show saved-to-proposed values with Save changes / Cancel changes. Publication is
+show saved-to-proposed values with message-based save/discard instructions. Publication is
 shown only when the review is publishable and no proposal is outstanding. Chat
 replies with an outstanding proposal give the same save/cancel instruction rather
 than another confirmation question. Saving remains distinct from publication.
-`apply_listing_changes` requires a separate proposal-bound edit confirmation, not
-analysis/publication approval. Title/description-only edits retain the value;
-brand/category/condition/size or confirmed photo changes queue ordinary reanalysis.
+Legacy `apply_listing_changes` controls still require proposal-bound approval.
+Title/description/size-only corrections retain the saved value and analysis;
+brand/category/condition or confirmed photo changes queue ordinary reanalysis.
+This size-only preservation rule is scoped to agent corrections; ordinary listing
+creation/evaluation is unchanged. Clear correction requests never authorize publication.
 The existing model assignment, identity/reuse and condition-specific pricing rules
 remain in force. No price/admin fields can be edited through these tools.
 

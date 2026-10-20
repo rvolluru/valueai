@@ -34,9 +34,9 @@ test('agent review uses current gallery and a separate explicit publication cont
     assert.match(source, /review.mannequin_choice_required && !mannequinChoice/);
     assert.match(source, /MANNEQUIN_DISCLAIMER/);
     assert.match(source, /\[review\?\.token\]/);
-    assert.match(source, /Edit details/);
+    assert.doesNotMatch(source, /setEditFields|proposeEdits\(editFields\)/);
     assert.match(source, /Keep as draft/);
-    assert.match(source, /controller.confirmEdits\(\)/);
+    assert.match(source, /Reply “Save changes”/);
     assert.match(source, /controller.load\(initialListingId\)/);
   }
 });
@@ -50,7 +50,7 @@ test('review keeps current actions compact and separates saving from publication
   for (const source of [web, mobile]) {
     assert.match(source, /Save these changes\?/);
     assert.match(source, /Save changes/);
-    assert.match(source, /Cancel changes/);
+    assert.match(source, /Discard changes/);
     assert.match(source, /!proposal && review\?\.publishable/);
     assert.doesNotMatch(source, /<h3>Jouft Listing Agent/);
   }

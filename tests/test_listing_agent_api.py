@@ -139,17 +139,46 @@ def test_natural_correction_uses_proposal_tool_and_analysis_sensitive_edits_rean
     response = client.post(path, headers=AUTH, json=dict(request_id='natural-edit', expected_revision=state['revision'],
         message='Change condition to NewWithTags'))
     assert response.status_code == 200, response.text
-    proposal = response.json()
-    assert proposal['pending']['reanalyze']
-    assert queued == []
-    payload = dict(request_id='confirm-condition', expected_revision=proposal['revision'], message='Confirm changes', edit_token=proposal['pending']['token'])
-    response = client.post(path, headers=AUTH, json=payload)
-    assert response.status_code == 200, response.text
     assert response.json()['stage'] == 'analyzing'
     assert response.json()['listing']['condition'] == 'NewWithTags'
     assert len(queued) == 1
-    assert client.post(path, headers=AUTH, json=payload).json() == response.json()
+    assert client.post(path, headers=AUTH, json=dict(request_id='natural-edit', expected_revision=state['revision'],
+        message='Change condition to NewWithTags')).json() == response.json()
     assert len(get_db().fetchall('SELECT job_id FROM listing_analysis_jobs')) == 2
+
+
+def test_chat_size_correction_saves_without_confirmation_and_preserves_value(client, monkeypatch):
+    from app import listing_agent
+    from app.deps import get_db
+    state = review_ready(client)
+    monkeypatch.setattr(listing_agent, 'call_model', scripted(('propose_listing_changes',
+        {'facts': {'size': 'L'}, 'evidence_quote': 'Change size to L'})))
+    path = f'/v1/listing-agent/sessions/{state["session_id"]}/turns'
+    payload = dict(request_id='size-direct', expected_revision=state['revision'], message='Change size to L')
+    response = client.post(path, headers=AUTH, json=payload)
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert result['listing']['size'] == 'L'
+    assert result['listing']['estimated_value'] == 123
+    assert result['edit_proposal'] is None and result['stage'] == 'review_ready'
+    assert 'Changes saved' in result['messages'][-1]['content']
+    assert result['listing']['status'] == 'Review'
+    assert len(get_db().fetchall('SELECT job_id FROM listing_analysis_jobs')) == 1
+    assert client.post(path, headers=AUTH, json=payload).json() == result
+
+
+def test_hypothetical_correction_is_not_saved(client, monkeypatch):
+    from app import listing_agent
+    state = review_ready(client)
+    monkeypatch.setattr(listing_agent, 'call_model', scripted(('propose_listing_changes',
+        {'facts': {'size': 'L'}, 'evidence_quote': 'Should I change size to L?'})))
+    response = client.post(f'/v1/listing-agent/sessions/{state["session_id"]}/turns', headers=AUTH,
+        json=dict(request_id='hypothetical-size', expected_revision=state['revision'], message='Should I change size to L?'))
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert result['listing']['size'] == 'M'
+    assert result['listing']['estimated_value'] == 123
+    assert result['edit_proposal']['changes'] == {'size': 'L'}
 
 
 def test_review_photo_changes_are_staged_and_can_be_discarded(client):

@@ -10,13 +10,21 @@ legacy path; the new path is described in the implementation status section.
 - Simplified local review presentation: one contextual assistant header; web hides
   the duplicate general-chat handoff while in listing mode (Back restores it).
   Review photos, description and history expand on demand; saved/proposed values
-  and Save/Cancel controls stay together. Publish appears only when eligible.
+  and message-based save/discard instructions stay together. Publish appears only when eligible.
   Outstanding proposals use a deterministic save/cancel reply, not an extra question.
 
 - Review confirmation recovery (local): pending questions no longer hide saved
-  edit proposals. Web/mobile show Confirm changes and Discard changes beside
-  Publish, and the shared controller confirms the durable proposal token.
+  edit proposals. Staged proposals remain visible and can be saved/discarded by
+  message; the shared controller retains legacy durable-token support.
   Regression coverage includes a size proposal followed by a pending question.
+
+- Message-first corrections: no embedded Edit details form. Explicit correction
+  requests save validated fields directly; size/title/description-only changes keep
+  the value, while brand/category/condition/photo changes require normal analysis.
+  Questions and hypothetical changes never auto-save; publication remains separate.
+- Pricing parser fix (local): currency ranges normalize Unicode dashes and exclude
+  URLs. Rationale normalization no longer overwrites a model price using a size,
+  delivery window or numeric product-ID range from a comparable URL.
 
 - `apps/api/app/listing_agent.py`: strict function tools, bounded Responses API
   execution loop, persisted questions/summary confirmation, model usage and redacted
@@ -59,8 +67,8 @@ Expo; restart the relevant processes. The API also exposes authenticated
 The agent creates and analyzes one private draft per session, then renders real
 results. Polling/returning to chat resumes job status without another model call;
 it does not yet run a proactive post-analysis model conversation or push callback.
-After a draft is created, corrections can now be proposed in chat or its edit form,
-then separately confirmed. The agent supports explicit reviewed-version publication,
+After a draft is created, explicit validated corrections are saved from chat messages
+without an edit form or redundant confirmation. The agent supports explicit reviewed-version publication,
 but has no trade tool. A new
 session is an explicit separate draft. Pre-draft uploads add to the saved photo
 set, deduplicated by content hash (up to 6 JPEG/PNG/WebP, 15 MB and 40 MP each).
@@ -210,17 +218,17 @@ saved analysis but no job use that persisted result, not a fabricated analysis j
 drafts without completed/saved analysis cannot publish. Existing gallery originals
 are loaded and hash-checked for staging; generated previews are not evidence.
 
-The model can choose `propose_listing_changes` for explicit corrections. The same
-proposal path accepts edit-form fields (title, description, brand, category,
-condition, category-valid size); neither accepts price or administrative fields.
-`apply_listing_changes` requires its own exact proposal token and confirmation
-control. The base listing snapshot and latest-job/update-time write checks reject
-stale proposals. Proposed metadata edits merge until confirmed/discarded.
+The model chooses `propose_listing_changes` for explicit corrections to title,
+description, brand, category, condition or category-valid size; price/admin fields
+are rejected. A clear correction request saves directly after server validation.
+Hypothetical questions and photo staging do not auto-save. Legacy/staged proposals
+use exact-token controls or the “Save changes” message; snapshot and latest-job/
+update-time write checks reject stale proposals. Publication approval is separate.
 
 | Confirmed change | Behavior |
 | --- | --- |
-| Title or description only | Save private metadata; retain analysis/value |
-| Brand, category, condition, size or photos | Queue ordinary reanalysis; publication waits |
+| Title, description or size only | Save private metadata; retain analysis/value |
+| Brand, category, condition or photos | Queue ordinary reanalysis; publication waits |
 | Price/admin/unsupported fields | Reject |
 | Keep as draft | Remain private; do not silently save or discard proposals |
 

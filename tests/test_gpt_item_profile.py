@@ -14,6 +14,17 @@ def _jpeg_bytes() -> bytes:
     return buf.getvalue()
 
 
+def test_monetary_range_ignores_url_ids_and_normalizes_unicode_dashes():
+    rationale = ('Inferred 30–60-day clearing estimate, approximately $950–$1,450. '
+                 'https://poshmark.com/listing/CHANEL-Loafers-EU-41-6abd7abb')
+    result = _profiler(1)._normalize_price_estimate({'estimated_price': 1100, 'rationale': rationale})
+    assert result['estimated_price'] == 1100
+    assert GptItemProfiler._extract_price_range_from_text(rationale, require_currency=True) == (950, 1450)
+    assert GptItemProfiler._extract_price_range_from_text('https://example.com/item-41-6abc') is None
+    result = _profiler(1)._normalize_price_estimate({'estimated_price': 1100, 'rationale': 'Clears in 30-60 days; shoe size 38-41.'})
+    assert result['estimated_price'] == 1100
+
+
 def _profiler(max_images: int) -> GptItemProfiler:
     return GptItemProfiler(
         enabled=True,

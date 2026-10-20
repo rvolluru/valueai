@@ -2633,7 +2633,7 @@ class GptItemProfiler:
             refs = self._filter_pricing_references(refs)
             rationale = self._as_nullable_str(value.get("rationale")) or ""
             estimated_price = self._coerce_price(value.get("estimated_price"))
-            parsed_range = self._extract_price_range_from_text(rationale) if rationale else None
+            parsed_range = self._extract_price_range_from_text(rationale, require_currency=True) if rationale else None
             if estimated_price is None:
                 range_candidates = [
                     self._coerce_price(value.get("range_low")),
@@ -2870,7 +2870,10 @@ class GptItemProfiler:
 
     @staticmethod
     def _extract_price_range_from_text(text: str, *, require_currency: bool = False) -> tuple[float, float] | None:
-        compact = re.sub(r"\s+", " ", text.strip())
+        # Product IDs, shoe sizes and delivery windows are not monetary ranges.
+        compact = re.sub(r"https?://[^\s)]+", "", text.strip())
+        compact = re.sub(r"[–—−]", "-", compact)
+        compact = re.sub(r"\s+", " ", compact)
         if require_currency:
             range_pattern = r"(?i)(?:between\s*)?\$\s*(\d{1,6}(?:,\d{3})*(?:\.\d+)?)\s*(?:-|to|and)\s*\$?\s*(\d{1,6}(?:,\d{3})*(?:\.\d+)?)"
         else:
