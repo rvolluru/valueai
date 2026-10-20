@@ -89,6 +89,9 @@ export default function ListingAgentChat({ client, getAuth, images, onPickPhotos
           {session.photo_dirty ? button('Discard staged changes', () => controller.send('Discard changes')) : null}
           {button('Reopen review', () => controller.load(session.listing_id))}</View> : null}
       </View> : null}
+      {canEdit && session.pending?.type === 'question' && session.pending.field === 'condition' ? <View accessibilityLabel="Choose item condition" style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+        {['New with tags', 'New', 'Like new'].map(condition => <React.Fragment key={condition}>{button(condition, () => controller.send(condition), !!images.length)}</React.Fragment>)}
+      </View> : null}
       {canEdit ? <View><TextInput accessibilityLabel="Reply to listing agent" style={styles.input} value={text} onChangeText={setText} multiline maxLength={2000} editable={!view.busy} placeholder="Tell me about your item or describe a correction…" />
         {button('Send', () => { controller.send(text); setText(''); }, !text.trim() || !!images.length)}</View> : null}
       {button('Start another draft', async () => { onClearPhotos(); if (await controller.startNew()) onStartNew?.(); })}

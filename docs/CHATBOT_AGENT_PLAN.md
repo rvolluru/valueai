@@ -7,6 +7,10 @@ legacy path; the new path is described in the implementation status section.
 
 ## Implemented local pilot
 
+- Condition questions offer New with tags / New / Like new quick-reply buttons on
+  web and mobile. They send ordinary chat answers through existing validation;
+  typing remains available. Buttons appear only for the current condition question.
+
 - Explicit create requests now start a fresh, retry-safe session instead of loading
   the previous conversation. Web/mobile pass one stable creation request ID per
   new-listing intent; default resume and listing-specific review remain separate.

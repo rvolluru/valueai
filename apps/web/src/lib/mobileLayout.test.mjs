@@ -63,6 +63,16 @@ test('web and mobile create handoffs explicitly request a fresh session', () => 
     assert.match(source, /newSessionRequestId=\{appAssistantNewSessionRequestId\}/);
   }
 });
+
+test('condition quick replies are message-based and scoped to the active question', () => {
+  for (const path of ['../components/ListingAgentChat.jsx', '../../../mobile/src/components/ListingAgentChat.jsx']) {
+    const source = readFileSync(new URL(path, import.meta.url), 'utf8');
+    assert.match(source, /field === 'condition'/);
+    assert.match(source, /\['New with tags', 'New', 'Like new'\]/);
+    assert.match(source, /controller.send\(condition\)/);
+    assert.match(source, /Choose item condition/);
+  }
+});
 test('photo role labels take their own row instead of covering Set Hero', () => {
   const badge = css.match(/\.listing-image-role-badge\s*\{([^}]+)\}/)[1];
   assert.match(badge, /position: static/);

@@ -96,6 +96,9 @@ export default function ListingAgentChat({ apiBaseUrl, apiKey, getBearerToken, c
           {session.photo_dirty && <button disabled={view.busy} onClick={() => controller.send('Discard changes')}>Discard staged changes</button>}
           <button disabled={view.busy} onClick={() => controller.load(session.listing_id)}>Reopen review</button></div>}
       </div>}
+      {canEdit && pending?.type === 'question' && pending.field === 'condition' && <div role="group" aria-label="Choose item condition" className="listing-chat-quick-replies">
+        {['New with tags', 'New', 'Like new'].map(condition => <button key={condition} type="button" className="ghost small" disabled={view.busy || !!files.length} onClick={() => controller.send(condition)}>{condition}</button>)}
+      </div>}
       {canEdit && <form onSubmit={event => { event.preventDefault(); if (!text.trim() || files.length) return; controller.send(text); setText('') }}>
         <label>{reviewing ? 'Ask a question or describe a correction' : 'Your reply'}<textarea value={text} onChange={event => setText(event.target.value)} maxLength={2000} disabled={view.busy} /></label>
         <button disabled={view.busy || !text.trim() || !!files.length}>Send</button>

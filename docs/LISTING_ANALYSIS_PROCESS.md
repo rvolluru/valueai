@@ -967,6 +967,10 @@ Explicit chat create intents start a new session using a stable per-intent reque
 ID, rather than resuming the prior listing conversation. Retries/remounts reuse
 that ID, and old drafts/listings are not modified. Review still opens its selected
 listing, while ordinary resume can return to saved progress (local implementation).
+Current condition questions offer New with tags, New and Like new as quick-reply
+buttons in web/mobile chat. A choice sends the same validated message as typing;
+it does not bypass evidence, analysis or publication approval. Typed replies remain
+available, and quick replies are disabled while busy or photos await upload.
 
 `LISTING_AGENT_ENABLED` on the API, `VITE_LISTING_AGENT_ENABLED` for web and
 `EXPO_PUBLIC_LISTING_AGENT_ENABLED` for mobile are default-off opt-ins. Both client
