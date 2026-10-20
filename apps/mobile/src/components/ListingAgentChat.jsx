@@ -3,7 +3,7 @@ import { ActivityIndicator, Image, Text, TextInput, TouchableOpacity, View } fro
 import { createListingAgentController } from '../../../../packages/app-client/src/listingAgent';
 import { MANNEQUIN_DISCLAIMER } from '../../../../packages/app-client/src/mannequinDisclosure';
 
-export default function ListingAgentChat({ client, getAuth, images, onPickPhotos, styles, onClearPhotos, apiBaseUrl, initialListingId = null, onExit = null, onStartNew = null }) {
+export default function ListingAgentChat({ client, getAuth, images, onPickPhotos, styles, onClearPhotos, apiBaseUrl, initialListingId = null, newSessionRequestId = null, onExit = null, onStartNew = null }) {
   const [view, setView] = useState({ session: null, busy: false, error: '' });
   const [text, setText] = useState('');
   const [mannequinChoice, setMannequinChoice] = useState('');
@@ -12,8 +12,8 @@ export default function ListingAgentChat({ client, getAuth, images, onPickPhotos
   const [showDescription, setShowDescription] = useState(false);
   const auth = useRef(getAuth);
   auth.current = getAuth;
-  const controller = useMemo(() => createListingAgentController(client, () => auth.current(), setView), [client, initialListingId]);
-  useEffect(() => { controller.activate(); controller.load(initialListingId); return () => controller.dispose(); }, [controller, initialListingId]);
+  const controller = useMemo(() => createListingAgentController(client, () => auth.current(), setView), [client, initialListingId, newSessionRequestId]);
+  useEffect(() => { controller.activate(); controller.load(initialListingId, newSessionRequestId); return () => controller.dispose(); }, [controller, initialListingId, newSessionRequestId]);
   useEffect(() => {
     if (view.session?.stage !== 'analyzing') return undefined;
     const timer = setInterval(() => controller.refresh(), 4000);

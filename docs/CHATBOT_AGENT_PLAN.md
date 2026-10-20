@@ -7,6 +7,10 @@ legacy path; the new path is described in the implementation status section.
 
 ## Implemented local pilot
 
+- Explicit create requests now start a fresh, retry-safe session instead of loading
+  the previous conversation. Web/mobile pass one stable creation request ID per
+  new-listing intent; default resume and listing-specific review remain separate.
+
 - Simplified local review presentation: one contextual assistant header; web hides
   the duplicate general-chat handoff while in listing mode (Back restores it).
   Review photos, description and history expand on demand; saved/proposed values

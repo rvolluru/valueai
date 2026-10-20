@@ -37,7 +37,7 @@ test('agent review uses current gallery and a separate explicit publication cont
     assert.doesNotMatch(source, /setEditFields|proposeEdits\(editFields\)/);
     assert.match(source, /Keep as draft/);
     assert.match(source, /Reply “Save changes”/);
-    assert.match(source, /controller.load\(initialListingId\)/);
+    assert.match(source, /controller.load\(initialListingId, newSessionRequestId\)/);
   }
 });
 
@@ -53,6 +53,14 @@ test('review keeps current actions compact and separates saving from publication
     assert.match(source, /Discard changes/);
     assert.match(source, /!proposal && review\?\.publishable/);
     assert.doesNotMatch(source, /<h3>Jouft Listing Agent/);
+  }
+});
+
+test('web and mobile create handoffs explicitly request a fresh session', () => {
+  for (const path of ['../App.jsx', '../../../mobile/App.js']) {
+    const source = readFileSync(new URL(path, import.meta.url), 'utf8');
+    assert.match(source, /setAppAssistantNewSessionRequestId\(`create-/);
+    assert.match(source, /newSessionRequestId=\{appAssistantNewSessionRequestId\}/);
   }
 });
 test('photo role labels take their own row instead of covering Set Hero', () => {

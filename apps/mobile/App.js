@@ -1321,6 +1321,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
   const [appAssistantOpen, setAppAssistantOpen] = useState(false);
   const [appAssistantListingFlow, setAppAssistantListingFlow] = useState(false);
   const [appAssistantReviewListingId, setAppAssistantReviewListingId] = useState(null);
+  const [appAssistantNewSessionRequestId, setAppAssistantNewSessionRequestId] = useState(null);
   const [appAssistantMessages, setAppAssistantMessages] = useState([]);
   const [appAssistantInput, setAppAssistantInput] = useState('');
   const [appAssistantContext, setAppAssistantContext] = useState({ result_listing_ids: [], pending_action: null, active_screen: 'marketplace' });
@@ -1486,10 +1487,12 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
         shipments: result?.shipments || [],
       }].slice(-20));
       if (LISTING_AGENT_ENABLED && result?.review_listing_id) {
+        setAppAssistantNewSessionRequestId(null);
         setImages([]);
         setAppAssistantReviewListingId(result.review_listing_id);
         setAppAssistantListingFlow(true);
       } else if (result?.navigation === 'create') {
+        setAppAssistantNewSessionRequestId(`create-${Date.now()}-${Math.random().toString(36).slice(2)}`);
         setAppAssistantReviewListingId(null);
         resetListingForm();
         setAppAssistantListingFlow(true);
@@ -6516,7 +6519,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                 {(message.shipments || []).map((shipment) => <View key={shipment.shipment_id} style={styles.appAssistantStatusRow}><Text style={styles.listingAssistantTitle}>{shipment.carrier || 'Shipment'} • {shipment.tracking_number || 'Tracking pending'}</Text><Text style={styles.helperText}>{shipment.tracking_status_details || shipment.tracking_status || shipment.status}</Text></View>)}
               </View>
             </View>)}
-            {appAssistantListingFlow && LISTING_AGENT_ENABLED ? <ListingAgentChat initialListingId={appAssistantReviewListingId} onStartNew={() => setAppAssistantReviewListingId(null)} onExit={() => { setAppAssistantListingFlow(false); setAppAssistantReviewListingId(null); }} client={apiClient} apiBaseUrl={apiBaseUrl} getAuth={authContext} images={images} onPickPhotos={pickImages} onClearPhotos={() => setImages([])} styles={styles} /> : null}
+            {appAssistantListingFlow && LISTING_AGENT_ENABLED ? <ListingAgentChat initialListingId={appAssistantReviewListingId} newSessionRequestId={appAssistantNewSessionRequestId} onStartNew={() => { setAppAssistantReviewListingId(null); setAppAssistantNewSessionRequestId(null); }} onExit={() => { setAppAssistantListingFlow(false); setAppAssistantReviewListingId(null); setAppAssistantNewSessionRequestId(null); }} client={apiClient} apiBaseUrl={apiBaseUrl} getAuth={authContext} images={images} onPickPhotos={pickImages} onClearPhotos={() => setImages([])} styles={styles} /> : null}
             {appAssistantListingFlow && !LISTING_AGENT_ENABLED ? <View style={styles.appAssistantListingFlow}>
               {createImageRoleError ? <View style={styles.createGuidanceBlock}><Text style={styles.helperText}>{createImageRoleError}</Text>{renderManualPhotoCategory()}</View> : null}
               <View style={styles.appAssistantTurn}><View style={styles.listingChatAvatar}><LogoJ small /></View><View style={styles.appAssistantBubble}><Text style={styles.listingAssistantMessageText}>{images.length ? `${images.length}/6 photos added.` : 'Add clear photos of the item to begin.'}</Text><TouchableOpacity style={styles.secondaryBtnCompact} onPress={pickImages} disabled={images.length >= 6 || createImageRoleBusy}><Text style={styles.secondaryBtnText}>{images.length ? 'Add More Photos' : 'Choose Photos'}</Text></TouchableOpacity></View></View>

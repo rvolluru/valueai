@@ -36,10 +36,11 @@ export function createListingAgentController(client, getAuth, onChange) {
     return async () => client.turnWithListingAgent(session.session_id, payload, await getAuth());
   }
   return {
-    load(listingId = null) {
-      const requestId = id();
+    load(listingId = null, newSessionRequestId = null) {
+      const requestId = newSessionRequestId || id();
       return perform(async () => {
         if (listingId) return client.openListingAgentReview({ request_id: requestId, listing_id: listingId }, await getAuth());
+        if (newSessionRequestId) return client.startListingAgentSession({ request_id: requestId }, await getAuth());
         const existing = await client.getActiveListingAgentSession(await getAuth());
         return existing.session || client.startListingAgentSession({ request_id: requestId }, await getAuth());
       });

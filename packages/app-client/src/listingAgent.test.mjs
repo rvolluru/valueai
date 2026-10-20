@@ -147,6 +147,23 @@ test('review handoff loads the selected listing instead of an unrelated active s
   assert.equal(fixture.view.session.session_id, 'review-selected');
 });
 
+test('explicit create intent starts fresh instead of resuming a previous conversation, with retry-safe ID', async () => {
+  const calls = [];
+  const fixture = setup({
+    getActiveListingAgentSession: async () => { throw new Error('Must not resume for create intent'); },
+    startListingAgentSession: async payload => {
+      calls.push(payload);
+      if (calls.length === 1) throw new Error('Response lost');
+      return { session_id: 'fresh', revision: 1, photos: [], messages: [] };
+    },
+  });
+  await fixture.controller.load(null, 'explicit-create-one');
+  await fixture.controller.retry();
+  assert.deepEqual(calls, [{ request_id: 'explicit-create-one' }, { request_id: 'explicit-create-one' }]);
+  assert.equal(fixture.view.session.session_id, 'fresh');
+  assert.deepEqual(fixture.view.session.photos, []);
+});
+
 test('edit proposal and confirmation use distinct retry-safe requests', async () => {
   const calls = [];
   const fixture = setup({ turnWithListingAgent: async (id, payload) => {

@@ -963,6 +963,11 @@ Every confirmed edit invalidates publication approval; snapshot/latest-job/write
 checks reject stale edits. A fresh review is required after reanalysis. My Closet
 remains an alternative editor. These handoff and correction changes are local only.
 
+Explicit chat create intents start a new session using a stable per-intent request
+ID, rather than resuming the prior listing conversation. Retries/remounts reuse
+that ID, and old drafts/listings are not modified. Review still opens its selected
+listing, while ordinary resume can return to saved progress (local implementation).
+
 `LISTING_AGENT_ENABLED` on the API, `VITE_LISTING_AGENT_ENABLED` for web and
 `EXPO_PUBLIC_LISTING_AGENT_ENABLED` for mobile are default-off opt-ins. Both client
 and server flags must be enabled for the relevant pilot client. Local API/web/Expo
