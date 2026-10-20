@@ -99,19 +99,29 @@ export default function ListingAgentChat({ apiBaseUrl, apiKey, getBearerToken, c
           {session.photo_dirty && <button disabled={view.busy} onClick={() => controller.send('Discard changes')}>Discard staged changes</button>}
           <button disabled={view.busy} onClick={() => controller.load(session.listing_id)}>Reopen review</button></div>}
       </div>}
-      {session.stage === 'published' && session.marketplace_matches && <section aria-label="Marketplace matches">
+      {session.stage === 'published' && session.marketplace_matches && !session.trade_proposal && <section aria-label="Marketplace matches">
         <h4>Marketplace matches</h4>
-        <p>{session.marketplace_matches.count} matching items based on your item’s saved value and your preferences. No offer has been sent.</p>
+        <p>{session.marketplace_matches.count} matching items based on your item’s saved value and your preferences. Selecting an item only prepares a request; confirmation is required to send.</p>
         {session.marketplace_matches.items.map(item => <article className="panel" key={item.listing_id}>
           {matchPhotoUrls(item, apiBaseUrl || window.location.origin).length > 0 && <button type="button" className="listing-agent-match-photo" aria-label={`View full-size photos of ${item.title}`} onClick={() => onOpenPhotos?.({ images: matchPhotoUrls(item, apiBaseUrl || window.location.origin), title: item.title, listing: item })}>
             <img src={matchPhotoUrls(item, apiBaseUrl || window.location.origin)[0]} alt={item.title} style={{ width: 100, height: 100, objectFit: 'contain' }} />
           </button>}
           <h4>{item.title}</h4><p>{item.brand} · {item.size} · {item.condition} · ${item.estimated_value}</p>
           <a href={`/?tab=market&listing=${encodeURIComponent(item.listing_id)}`}>View in Marketplace</a>
+          <button className="primary" disabled={view.busy} onClick={() => controller.prepareTrade(item.listing_id)}>Request trade</button>
         </article>)}
         {!session.marketplace_matches.count && <p>No matching items right now. Check again later.</p>}
         {session.marketplace_matches.has_more && <p>Showing the first {session.marketplace_matches.items.length} of {session.marketplace_matches.count} matches.</p>}
       </section>}
+      {session.trade_proposal && <section className="panel" aria-label="Confirm trade request">
+        <h4>Send this trade request?</h4>
+        <p>You offer: {session.trade_proposal.offered.title} · {session.trade_proposal.offered.size} · {session.trade_proposal.offered.condition} · ${session.trade_proposal.offered.estimated_value}</p>
+        <p>You request: {session.trade_proposal.target.title} · {session.trade_proposal.target.size} · {session.trade_proposal.target.condition} · ${session.trade_proposal.target.estimated_value}</p>
+        <p>This offers your item to {session.trade_proposal.recipient} and notifies them. It does not complete the trade or charge a payment.</p>
+        <button className="primary" disabled={view.busy} onClick={() => controller.confirmTrade()}>Confirm and send trade request</button>
+        <button className="ghost" disabled={view.busy} onClick={() => controller.send('Cancel trade request')}>Cancel trade request</button>
+      </section>}
+      {session.sent_trade && <p role="status">Trade request sent. Track it in <a href="/?tab=inbox">Trade Inbox</a>.</p>}
       {canEdit && pending?.type === 'question' && pending.field === 'condition' && <div role="group" aria-label="Choose item condition" className="listing-chat-quick-replies">
         {['New with tags', 'New', 'Like new'].map(condition => <button key={condition} type="button" className="ghost small" disabled={view.busy || !!files.length} onClick={() => controller.send(condition)}>{condition}</button>)}
       </div>}

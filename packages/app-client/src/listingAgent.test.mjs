@@ -193,3 +193,21 @@ test('saved edit proposal remains confirmable after a follow-up question replace
   assert.equal(calls[1].edit_token, 'saved-edit-version');
   assert.equal(calls[1].publication_token, undefined);
 });
+
+test('trade preparation and sending are separate, with retry-safe exact trade approval', async () => {
+  const calls = [];
+  const fixture = setup({ turnWithListingAgent: async (id, payload) => {
+    calls.push(payload);
+    if (payload.trade_token && calls.length === 2) throw new Error('Response lost');
+    return { session_id: id, revision: 8, trade_proposal: { token: 'exact-trade-token' } };
+  } });
+  await fixture.controller.load();
+  await fixture.controller.prepareTrade('chosen-match');
+  assert.equal(calls[0].trade_target_id, 'chosen-match');
+  assert.equal(calls[0].trade_token, undefined);
+  await fixture.controller.confirmTrade();
+  await fixture.controller.retry();
+  assert.deepEqual(calls[1], calls[2]);
+  assert.equal(calls[1].trade_token, 'exact-trade-token');
+  assert.equal(calls[1].publication_token, undefined);
+});

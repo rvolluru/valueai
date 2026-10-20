@@ -921,7 +921,7 @@ without duplicate publication. A successful session becomes `published` and show
 the real Active listing. Manual review blocks publishing; users are not asked to
 set a value. Corrections require a fresh review snapshot.
 This extension is local only; production and evaluation/model routing are unchanged.
-The agent cannot trade and does not proactively resume a model conversation after
+The agent cannot complete trades or charge payments and does not proactively resume a model conversation after
 job completion; review cards/status are projected from actual saved state.
 
 Local existing-listing entry: the general assistant's `review_listing` intent
@@ -992,6 +992,25 @@ first; duplicate photo URLs are removed. Refresh/reopen rechecks current availab
 historical message text is not authoritative availability. A private draft gets a
 publication prerequisite, never automatic publication. Matching does not create
 offers or trades. This extension is local only; regular matching logic is unchanged.
+
+Final chat step (local only): selecting Request trade or asking for a specific
+matched item invokes `prepare_trade_request`, which verifies the owned published
+source and a currently displayed eligible match. It shows both items, sizes,
+conditions and values. A distinct `trade_token` confirmation control is required
+for `send_trade_request`; model calls, ordinary chat prose and publication approval
+cannot send. Cancel trade request discards only this unsent preparation. Match
+cards are hidden during confirmation so the two-item summary is the current action.
+Before sending, source/target snapshots and current preferences/match eligibility
+are rechecked; changed/removed/own/out-of-band targets require a fresh selection.
+The normal offer path still checks entitlement, ownership, Active statuses, values
+and duplicate requests, stores normal shipping-profile context and notifies the
+other member. It creates a standard pending offer of this source item (sender-side
+agreement follows existing offer semantics), not final acceptance or a payment.
+The server assigns a stable internal offer ID per approved proposal so a lost
+response can recover the exact committed offer without duplicate insertion or
+notification. Ordinary public offer requests do not expose this internal ID input.
+Chat shows success and Trade Inbox guidance; no accept, cancel-sent-offer, shipping
+purchase or payment tools are added. Normal listing creation/evaluation is unchanged.
 
 `LISTING_AGENT_ENABLED` on the API, `VITE_LISTING_AGENT_ENABLED` for web and
 `EXPO_PUBLIC_LISTING_AGENT_ENABLED` for mobile are default-off opt-ins. Both client

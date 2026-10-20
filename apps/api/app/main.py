@@ -6756,6 +6756,20 @@ def create_offer(
     db: Database = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ):
+    return _create_offer(payload, principal, db, settings)
+
+
+def _create_offer(payload: OfferCreateRequest, principal: AuthPrincipal, db: Database,
+                  settings: Settings, *, stable_offer_id: str | None = None):
+    # Internal retry key: not exposed as a public request parameter.
+    if stable_offer_id:
+        existing = db.get_trade_offer_by_id(stable_offer_id)
+        if existing:
+            expected_ids = set(payload.offered_listing_ids or []) | ({payload.offered_listing_id} if payload.offered_listing_id else set())
+            if (existing['from_subject'] != principal.subject or existing['target_listing_id'] != payload.target_listing_id
+                    or set(existing.get('offered_listing_ids') or [existing.get('offered_listing_id')]) != expected_ids):
+                raise HTTPException(409, 'Trade request retry does not match the original request')
+            return OfferResponse(**existing)
     _require_subscription_entitlement(db, principal)
     offered_ids = [x for x in (payload.offered_listing_ids or []) if isinstance(x, str) and x.strip()]
     if payload.offered_listing_id and payload.offered_listing_id.strip():
@@ -6797,7 +6811,7 @@ def create_offer(
             raise HTTPException(status_code=400, detail="Each offered listing must be within the trade price band")
 
     offer = db.create_trade_offer(
-        offer_id=str(uuid.uuid4()),
+        offer_id=stable_offer_id or str(uuid.uuid4()),
         target_listing_id=payload.target_listing_id,
         offered_listing_id=offered_ids[0] if offered_ids else "",
         offered_listing_ids=offered_ids,

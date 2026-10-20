@@ -7,6 +7,16 @@ legacy path; the new path is described in the implementation status section.
 
 ## Implemented local pilot
 
+- Final trade-request step: Request trade on a current match (or a chat selection)
+  prepares an exact source/target summary. Confirm and send trade request uses a
+  separate proposal token; publication approval and ordinary prose cannot send.
+  Both items, current preferences and matching eligibility are checked again.
+  Cancellation sends nothing. Normal offer/subscription/duplicate/notification
+  rules are reused; a stable internal offer ID recovers a committed send after a
+  lost response without creating another offer. Success points to Trade Inbox.
+  This sends an ordinary pending offer of the user's item, not final acceptance,
+  shipping purchase or payment. Local only; real user offers were not sent in tests.
+
 - Match photos open the existing full-screen viewer directly from chat, with the
   thumbnail image first and all available listing photos in the carousel. Closing
   returns to the existing conversation; no listing navigation or mutation is needed.
@@ -26,7 +36,7 @@ legacy path; the new path is described in the implementation status section.
   show the first 12 actual results, total/empty state and links to item details.
   Session reload refreshes matches against current availability/preferences.
   Private drafts must first be explicitly published; finding matches never publishes
-  or sends offers. Trade execution remains outside this delivery.
+  or sends offers. Sending a request is the separate, confirmed final step described above.
 
 - Condition questions offer New with tags / New / Like new quick-reply buttons on
   web and mobile. They send ordinary chat answers through existing validation;
@@ -98,7 +108,7 @@ results. Polling/returning to chat resumes job status without another model call
 it does not yet run a proactive post-analysis model conversation or push callback.
 After a draft is created, explicit validated corrections are saved from chat messages
 without an edit form or redundant confirmation. The agent supports explicit reviewed-version publication,
-but has no trade tool. A new
+and now supports separately confirmed trade requests. A new
 session is an explicit separate draft. Pre-draft uploads add to the saved photo
 set, deduplicated by content hash (up to 6 JPEG/PNG/WebP, 15 MB and 40 MP each).
 Both clients show saved thumbnails and allow explicit removal before draft creation;
@@ -193,7 +203,7 @@ requests advancing to facts or confirmation. Provider calls remain stubbed.
 
 Create one owner-scoped, private, review-ready listing draft through conversation.
 Publication was outside the first tool set and is now implemented locally below.
-Marketplace matching is now implemented locally below; trade execution remains outside this delivery. Keep the existing chat path available behind a feature
+Marketplace matching and confirmed trade requests are now implemented locally below; accepting trades and payments remain outside this delivery. Keep the existing chat path available behind a feature
 flag while evaluating the replacement. Retain the configured chat model initially;
 this is an orchestration change, not a model migration.
 

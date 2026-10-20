@@ -10,6 +10,108 @@ from test_listing_agent import scripted
 AUTH = {'x-api-key': 'test-key'}
 
 
+def trade_ready(client, monkeypatch):
+    from app import main
+    from app.db import Database
+    from app.deps import get_db
+    notifications = []
+    monkeypatch.setattr(Database, 'get_user_profile_quiz', lambda *args: {'tops_size': 'M', 'category_preferences': ['clothes']})
+    monkeypatch.setattr(main, '_create_user_notification_and_push', lambda **kw: notifications.append(kw))
+    state = review_ready(client)
+    created = client.post('/v1/listings', headers=AUTH, json=dict(title='Matched jacket', brand='Chanel',
+        category='clothes', condition='New', size='M', estimated_value=123, status='Review')).json()
+    db = get_db()
+    db.execute('UPDATE listings SET owner_subject=?,status=? WHERE listing_id=?', ('other-seller', 'Active', created['listing_id']))
+    db.commit()
+    path = f'/v1/listing-agent/sessions/{state["session_id"]}/turns'
+    published = client.post(path, headers=AUTH, json=dict(request_id='trade-publish', expected_revision=state['revision'],
+        message='Publish', publication_token=state['publication_review']['token'])).json()
+    matches = client.post(path, headers=AUTH, json=dict(request_id='trade-matches', expected_revision=published['revision'],
+        message='Find matches')).json()
+    assert matches['marketplace_matches']['count'] == 1
+    prepared = client.post(path, headers=AUTH, json=dict(request_id='trade-prepare', expected_revision=matches['revision'],
+        message='Prepare this request', trade_target_id=created['listing_id']))
+    assert prepared.status_code == 200, prepared.text
+    return path, prepared.json(), notifications
+
+
+def test_trade_request_requires_separate_confirmation_and_retry_sends_once(client, monkeypatch):
+    from app.deps import get_db
+    path, prepared, notifications = trade_ready(client, monkeypatch)
+    db = get_db()
+    assert not db.fetchall('SELECT offer_id FROM trade_offers')
+    wrong = client.post(path, headers=AUTH, json=dict(request_id='bad-trade-token', expected_revision=prepared['revision'],
+        message='Send', trade_token='wrong-token'))
+    assert wrong.status_code == 409
+    prepared = client.get(path.removesuffix('/turns'), headers=AUTH).json()
+    payload = dict(request_id='trade-send', expected_revision=prepared['revision'], message='Confirm and send',
+        trade_token=prepared['trade_proposal']['token'])
+    sent = client.post(path, headers=AUTH, json=payload)
+    assert sent.status_code == 200, sent.text
+    result = sent.json()
+    assert result['trade_proposal'] is None and result['sent_trade']['status'] == 'pending'
+    assert result['sent_trade']['offered_listing_id'] == prepared['listing_id']
+    assert result['sent_trade']['target_listing_id'] == prepared['trade_proposal']['target']['listing_id']
+    assert client.post(path, headers=AUTH, json=payload).json() == result
+    assert len(db.fetchall('SELECT offer_id FROM trade_offers')) == 1
+    assert len([n for n in notifications if n['type'] == 'trade-offer-received']) == 1
+    assert result['marketplace_matches']['count'] == 0
+
+
+@pytest.mark.parametrize('field,value', [('title', 'Changed jacket'), ('estimated_value', 9999), ('status', 'Review'), ('owner_subject', 'api-key')])
+def test_trade_request_stale_snapshot_and_cancel_do_not_send(client, monkeypatch, field, value):
+    from app.deps import get_db
+    path, prepared, _ = trade_ready(client, monkeypatch)
+    db = get_db()
+    db.execute(f'UPDATE listings SET {field}=? WHERE listing_id=?', (value, prepared['trade_proposal']['target']['listing_id']))
+    db.commit()
+    stale = client.post(path, headers=AUTH, json=dict(request_id='stale-trade', expected_revision=prepared['revision'],
+        message='Confirm', trade_token=prepared['trade_proposal']['token']))
+    assert stale.status_code == 409
+    current = client.get(path.removesuffix('/turns'), headers=AUTH).json()
+    cancelled = client.post(path, headers=AUTH, json=dict(request_id='cancel-trade', expected_revision=current['revision'], message='Cancel trade request'))
+    assert cancelled.status_code == 200, cancelled.text
+    assert cancelled.json()['trade_proposal'] is None
+    old_approval = client.post(path, headers=AUTH, json=dict(request_id='cancelled-trade-token',
+        expected_revision=cancelled.json()['revision'], message='Confirm', trade_token=prepared['trade_proposal']['token']))
+    assert old_approval.status_code == 409
+    assert not db.fetchall('SELECT offer_id FROM trade_offers')
+
+
+def test_model_cannot_send_a_trade_from_prose_without_trade_approval(client, monkeypatch):
+    from app import listing_agent
+    from app.deps import get_db
+    path, prepared, _ = trade_ready(client, monkeypatch)
+    monkeypatch.setattr(listing_agent, 'call_model', scripted(('send_trade_request', {}), ('send_trade_request', {})))
+    result = client.post(path, headers=AUTH, json=dict(request_id='prose-trade', expected_revision=prepared['revision'], message='send it'))
+    assert result.status_code == 200, result.text
+    assert result.json()['trade_proposal']['token'] == prepared['trade_proposal']['token']
+    assert not get_db().fetchall('SELECT offer_id FROM trade_offers')
+
+
+def test_trade_send_recovers_offer_committed_before_response_loss(client, monkeypatch):
+    from app import main
+    from app.deps import get_db
+    path, prepared, notifications = trade_ready(client, monkeypatch)
+    original = main._create_offer
+    calls = []
+    def interrupted(*args, **kwargs):
+        result = original(*args, **kwargs)
+        calls.append(result.offer_id)
+        if len(calls) == 1:
+            raise ValueError('Response lost after offer commit')
+        return result
+    monkeypatch.setattr(main, '_create_offer', interrupted)
+    payload = dict(request_id='lost-trade-response', expected_revision=prepared['revision'], message='Confirm', trade_token=prepared['trade_proposal']['token'])
+    failed = client.post(path, headers=AUTH, json=payload)
+    assert failed.status_code == 409
+    recovered = client.post(path, headers=AUTH, json=payload)
+    assert recovered.status_code == 200, recovered.text
+    assert recovered.json()['sent_trade']['offer_id'] == calls[0]
+    assert len(get_db().fetchall('SELECT offer_id FROM trade_offers')) == 1
+    assert len([n for n in notifications if n['type'] == 'trade-offer-received']) == 1
+
+
 def photo(color='red'):
     data = io.BytesIO()
     Image.new('RGB', (32, 32), color).save(data, format='JPEG')

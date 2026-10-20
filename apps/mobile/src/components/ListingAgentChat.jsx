@@ -92,19 +92,29 @@ export default function ListingAgentChat({ client, getAuth, images, onPickPhotos
           {session.photo_dirty ? button('Discard staged changes', () => controller.send('Discard changes')) : null}
           {button('Reopen review', () => controller.load(session.listing_id))}</View> : null}
       </View> : null}
-      {session.stage === 'published' && session.marketplace_matches ? <View accessibilityLabel="Marketplace matches">
+      {session.stage === 'published' && session.marketplace_matches && !session.trade_proposal ? <View accessibilityLabel="Marketplace matches">
         <Text style={styles.listingAssistantTitle}>Marketplace matches</Text>
-        <Text style={styles.helperText}>{session.marketplace_matches.count} matching items based on your item’s saved value and preferences. No offer has been sent.</Text>
+        <Text style={styles.helperText}>{session.marketplace_matches.count} matching items based on your item’s saved value and preferences. Selecting an item only prepares a request; confirmation is required to send.</Text>
         {session.marketplace_matches.items.map(item => <View key={item.listing_id} style={styles.listingChatAssistantBubble}>
           {matchPhotoUrls(item, apiBaseUrl).length ? <TouchableOpacity accessibilityRole="button" accessibilityLabel={`View full-size photos of ${item.title}`} onPress={() => onOpenPhotos?.({ images: matchPhotoUrls(item, apiBaseUrl), title: item.title, listing: item })}>
             <Image source={{ uri: matchPhotoUrls(item, apiBaseUrl)[0] }} accessibilityLabel={item.title} style={{ width: 100, height: 100, resizeMode: 'contain' }} />
           </TouchableOpacity> : null}
           <Text style={styles.listingAssistantTitle}>{item.title}</Text><Text style={styles.helperText}>{item.brand} · {item.size} · {item.condition} · ${item.estimated_value}</Text>
           {onOpenMatch ? button('View in Marketplace', () => onOpenMatch(item)) : null}
+          {button('Request trade', () => controller.prepareTrade(item.listing_id))}
         </View>)}
         {!session.marketplace_matches.count ? <Text style={styles.helperText}>No matching items right now. Check again later.</Text> : null}
         {session.marketplace_matches.has_more ? <Text style={styles.helperText}>Showing the first {session.marketplace_matches.items.length} of {session.marketplace_matches.count} matches.</Text> : null}
       </View> : null}
+      {session.trade_proposal ? <View accessibilityLabel="Confirm trade request" style={styles.listingChatAssistantBubble}>
+        <Text style={styles.listingAssistantTitle}>Send this trade request?</Text>
+        <Text style={styles.helperText}>You offer: {session.trade_proposal.offered.title} · {session.trade_proposal.offered.size} · {session.trade_proposal.offered.condition} · ${session.trade_proposal.offered.estimated_value}</Text>
+        <Text style={styles.helperText}>You request: {session.trade_proposal.target.title} · {session.trade_proposal.target.size} · {session.trade_proposal.target.condition} · ${session.trade_proposal.target.estimated_value}</Text>
+        <Text style={styles.helperText}>This offers your item to {session.trade_proposal.recipient} and notifies them. It does not complete the trade or charge a payment.</Text>
+        {button('Confirm and send trade request', () => controller.confirmTrade())}
+        {button('Cancel trade request', () => controller.send('Cancel trade request'))}
+      </View> : null}
+      {session.sent_trade ? <Text style={styles.helperText}>Trade request sent. Track it in Trade Inbox.</Text> : null}
       {canEdit && session.pending?.type === 'question' && session.pending.field === 'condition' ? <View accessibilityLabel="Choose item condition" style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
         {['New with tags', 'New', 'Like new'].map(condition => <React.Fragment key={condition}>{button(condition, () => controller.send(condition), !!images.length)}</React.Fragment>)}
       </View> : null}

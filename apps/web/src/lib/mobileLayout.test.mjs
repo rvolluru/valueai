@@ -80,7 +80,7 @@ test('published listing chat offers read-only Marketplace matching on both clien
     assert.match(source, /controller.send\('Find marketplace matches'\)/);
     assert.match(source, /session.marketplace_matches.items.map/);
     assert.match(source, /View in Marketplace/);
-    assert.match(source, /No offer has been sent/);
+    assert.match(source, /confirmation is required to send/);
     assert.match(source, /No matching items right now/);
   }
 });
@@ -97,6 +97,19 @@ test('match photos open existing full-screen viewers without navigating away fro
   const mobileApp = readFileSync(new URL('../../../mobile/App.js', import.meta.url), 'utf8');
   assert.match(app, /onOpenPhotos=.*openZoomedListingImage/);
   assert.match(mobileApp, /onOpenPhotos=.*openExpandedGallery\(images, 0\)/);
+});
+
+test('matched-item trade requests show both items and require a separate send control', () => {
+  for (const path of ['../components/ListingAgentChat.jsx', '../../../mobile/src/components/ListingAgentChat.jsx']) {
+    const source = readFileSync(new URL(path, import.meta.url), 'utf8');
+    assert.match(source, /controller.prepareTrade\(item.listing_id\)/);
+    assert.match(source, /session.trade_proposal.offered.title/);
+    assert.match(source, /session.trade_proposal.target.title/);
+    assert.match(source, /Confirm and send trade request/);
+    assert.match(source, /controller.confirmTrade\(\)/);
+    assert.match(source, /Cancel trade request/);
+    assert.match(source, /Track it in/);
+  }
 });
 test('photo role labels take their own row instead of covering Set Hero', () => {
   const badge = css.match(/\.listing-image-role-badge\s*\{([^}]+)\}/)[1];

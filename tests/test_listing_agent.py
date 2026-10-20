@@ -371,10 +371,10 @@ def test_coverage_timeout_requires_category_but_does_not_skip_full_analysis(fixt
     assert services.assessed == 0  # Selecting category does not retry timed-out coverage.
 
 
-def test_publication_tool_is_separate_and_no_trade_tools_exist():
+def test_publication_and_trade_tools_have_separate_confirmation_boundaries():
     schemas = tools()
     assert [t['name'] for t in schemas if 'publish' in t['name']] == ['publish_listing']
-    assert not any('trade' in t['name'] for t in schemas)
+    assert {'prepare_trade_request', 'send_trade_request', 'cancel_trade_request'} <= {t['name'] for t in schemas}
     for tool in schemas:
         schema = tool['parameters']
         assert schema['additionalProperties'] is False

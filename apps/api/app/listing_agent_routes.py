@@ -234,6 +234,38 @@ class Services:
         return dict(token=digest({'listing': listing, 'job_id': state['job_id']}), publishable=not reasons,
                     reasons=reasons, mannequin_assets=assets, mannequin_choice_required=bool(assets))
 
+    async def _trade_context(self, state, target_id):
+        source = self.listing(state)
+        matches = await self.find_matches(state)
+        if not state.get('matches_requested') or not any(item['listing_id'] == target_id for item in matches['items']):
+            raise HTTPException(409, 'That item is no longer among your current matches. Refresh matches and choose again.')
+        target = self.db.get_listing_by_id(target_id)
+        base = digest([source, target, self.db.get_user_profile_quiz(self.principal.subject)])
+        return source, target, base
+
+    async def prepare_trade(self, state, target_id):
+        source, target, base = await self._trade_context(state, target_id)
+        token = digest([base, str(uuid.uuid4())])
+        def summary(item):
+            return {k: item.get(k) for k in ('listing_id', 'title', 'brand', 'size', 'condition', 'estimated_value')}
+        return dict(token=token, base=base, offered=summary(source), target=summary(target),
+                    recipient=target.get('owner_name') or 'the other member',
+                    offer_id=str(uuid.uuid5(uuid.NAMESPACE_URL, f'jouft-agent-trade:{state["session_id"]}:{token}')))
+
+    async def send_trade(self, state, proposal):
+        from .main import _create_offer
+        from .schemas import OfferCreateRequest
+        # Recover a committed send before checking matches (sent pairs disappear from matches).
+        existing = self.db.get_trade_offer_by_id(proposal['offer_id'])
+        if not existing:
+            _, _, current_base = await self._trade_context(state, proposal['target']['listing_id'])
+            if current_base != proposal['base']:
+                raise HTTPException(409, 'These items changed. Select the match again and review a new trade request.')
+        result = _create_offer(OfferCreateRequest(target_listing_id=proposal['target']['listing_id'],
+            offered_listing_ids=[proposal['offered']['listing_id']]), self.principal, self.db, self.settings,
+            stable_offer_id=proposal['offer_id'])
+        return {k: getattr(result, k) for k in ('offer_id', 'target_listing_id', 'offered_listing_id', 'status')}
+
     async def prepare_changes(self, state, changes):
         listing = self.listing(state)
         if listing['status'] != 'Review':

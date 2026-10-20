@@ -82,6 +82,20 @@ export function createListingAgentController(client, getAuth, onChange) {
         message: 'I confirm these proposed changes. Save them, but do not publish.', edit_token: proposal.token };
       return perform(async () => client.turnWithListingAgent(session.session_id, payload, await getAuth()));
     },
+    prepareTrade(targetListingId) {
+      const session = state.session;
+      if (!session || !targetListingId) return;
+      const payload = { request_id: id(), expected_revision: session.revision,
+        message: 'Prepare a trade request for this matched item.', trade_target_id: targetListingId };
+      return perform(async () => client.turnWithListingAgent(session.session_id, payload, await getAuth()));
+    },
+    confirmTrade() {
+      const session = state.session;
+      if (!session?.trade_proposal?.token) return;
+      const payload = { request_id: id(), expected_revision: session.revision,
+        message: 'I reviewed both items. Confirm and send this trade request.', trade_token: session.trade_proposal.token };
+      return perform(async () => client.turnWithListingAgent(session.session_id, payload, await getAuth()));
+    },
     upload(images, onUploaded = () => {}) {
       if (!state.session || !images.length) return;
       const session = state.session;
