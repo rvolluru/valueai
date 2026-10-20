@@ -9143,7 +9143,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                 {message.shipments?.length > 0 && <div className="app-assistant-status-list">{message.shipments.map((shipment) => <article key={shipment.shipment_id}><strong>{shipment.carrier || 'Shipment'} · {shipment.tracking_number || 'Tracking pending'}</strong><span>{shipment.tracking_status_details || shipment.tracking_status || shipment.status}</span></article>)}</div>}
               </div>
             </div>)}
-            {LISTING_AGENT_ENABLED && appAssistantListingFlow && <ListingAgentChat initialListingId={appAssistantReviewListingId} newSessionRequestId={appAssistantNewSessionRequestId} onStartNew={() => { setAppAssistantReviewListingId(null); setAppAssistantNewSessionRequestId(null) }} onExit={() => { setAppAssistantListingFlow(false); setAppAssistantReviewListingId(null); setAppAssistantNewSessionRequestId(null) }} apiBaseUrl={apiBaseUrl} apiKey={apiKey} getBearerToken={getBearerToken} clerkEnabled={clerkEnabled} />}
+            {LISTING_AGENT_ENABLED && appAssistantListingFlow && <ListingAgentChat onOpenPhotos={({ images, title, listing }) => openZoomedListingImage({ src: images[0], images, alt: title, disclosureListing: listing })} initialListingId={appAssistantReviewListingId} newSessionRequestId={appAssistantNewSessionRequestId} onStartNew={() => { setAppAssistantReviewListingId(null); setAppAssistantNewSessionRequestId(null) }} onExit={() => { setAppAssistantListingFlow(false); setAppAssistantReviewListingId(null); setAppAssistantNewSessionRequestId(null) }} apiBaseUrl={apiBaseUrl} apiKey={apiKey} getBearerToken={getBearerToken} clerkEnabled={clerkEnabled} />}
             {appAssistantListingFlow && !LISTING_AGENT_ENABLED && <div className="app-assistant-listing-flow">
               <div className="app-assistant-turn assistant"><span aria-hidden="true"><LogoJ small /></span><div><p>{createImageSlots.filter(Boolean).length ? `${createImageSlots.filter(Boolean).length}/6 photos added.` : 'Add clear photos of the item to begin.'}</p><label className="ghost small listing-chat-upload"><span>{createImageSlots.filter(Boolean).length ? 'Add more photos' : 'Choose photos'}</span><input type="file" accept="image/*" multiple onChange={(event) => { handleCreatePhotoFiles(event.target.files); event.target.value = '' }} /></label></div></div>
               {createSlotPreviewUrls.filter(Boolean).length > 0 && <div className="app-assistant-photo-row">{createSlotPreviewUrls.filter(Boolean).map((url, index) => {
@@ -9590,7 +9590,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
 
             </div>}
 
-            {createListingMode === 'chat' && LISTING_AGENT_ENABLED && <ListingAgentChat apiBaseUrl={apiBaseUrl} apiKey={apiKey} getBearerToken={getBearerToken} clerkEnabled={clerkEnabled} />}
+            {createListingMode === 'chat' && LISTING_AGENT_ENABLED && <ListingAgentChat onOpenPhotos={({ images, title, listing }) => openZoomedListingImage({ src: images[0], images, alt: title, disclosureListing: listing })} apiBaseUrl={apiBaseUrl} apiKey={apiKey} getBearerToken={getBearerToken} clerkEnabled={clerkEnabled} />}
             {createListingMode === 'chat' && !LISTING_AGENT_ENABLED && <section className="listing-assistant is-open listing-chat-create">
               {createImageRoleError && <div role="status"><p>{createImageRoleError}</p>{renderManualPhotoCategory()}</div>}
                 <div className="listing-chat-header">

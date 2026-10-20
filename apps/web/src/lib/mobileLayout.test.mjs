@@ -84,6 +84,20 @@ test('published listing chat offers read-only Marketplace matching on both clien
     assert.match(source, /No matching items right now/);
   }
 });
+
+test('match photos open existing full-screen viewers without navigating away from chat', () => {
+  const web = readFileSync(new URL('../components/ListingAgentChat.jsx', import.meta.url), 'utf8');
+  const mobile = readFileSync(new URL('../../../mobile/src/components/ListingAgentChat.jsx', import.meta.url), 'utf8');
+  for (const source of [web, mobile]) {
+    assert.match(source, /View full-size photos of/);
+    assert.match(source, /onOpenPhotos\?\.\(/);
+    assert.match(source, /matchPhotoUrls\(item,/);
+  }
+  const app = readFileSync(new URL('../App.jsx', import.meta.url), 'utf8');
+  const mobileApp = readFileSync(new URL('../../../mobile/App.js', import.meta.url), 'utf8');
+  assert.match(app, /onOpenPhotos=.*openZoomedListingImage/);
+  assert.match(mobileApp, /onOpenPhotos=.*openExpandedGallery\(images, 0\)/);
+});
 test('photo role labels take their own row instead of covering Set Hero', () => {
   const badge = css.match(/\.listing-image-role-badge\s*\{([^}]+)\}/)[1];
   assert.match(badge, /position: static/);

@@ -2,8 +2,9 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Image, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { createListingAgentController } from '../../../../packages/app-client/src/listingAgent';
 import { MANNEQUIN_DISCLAIMER } from '../../../../packages/app-client/src/mannequinDisclosure';
+import { matchPhotoUrls } from '../../../../packages/app-client/src/matchPhotos';
 
-export default function ListingAgentChat({ client, getAuth, images, onPickPhotos, styles, onClearPhotos, apiBaseUrl, initialListingId = null, newSessionRequestId = null, onExit = null, onStartNew = null, onOpenMatch = null }) {
+export default function ListingAgentChat({ client, getAuth, images, onPickPhotos, styles, onClearPhotos, apiBaseUrl, initialListingId = null, newSessionRequestId = null, onExit = null, onStartNew = null, onOpenMatch = null, onOpenPhotos = null }) {
   const [view, setView] = useState({ session: null, busy: false, error: '' });
   const [text, setText] = useState('');
   const [mannequinChoice, setMannequinChoice] = useState('');
@@ -95,7 +96,9 @@ export default function ListingAgentChat({ client, getAuth, images, onPickPhotos
         <Text style={styles.listingAssistantTitle}>Marketplace matches</Text>
         <Text style={styles.helperText}>{session.marketplace_matches.count} matching items based on your item’s saved value and preferences. No offer has been sent.</Text>
         {session.marketplace_matches.items.map(item => <View key={item.listing_id} style={styles.listingChatAssistantBubble}>
-          {item.image ? <Image source={{ uri: new URL(item.image, apiBaseUrl).href }} accessibilityLabel={item.title} style={{ width: 100, height: 100, resizeMode: 'contain' }} /> : null}
+          {matchPhotoUrls(item, apiBaseUrl).length ? <TouchableOpacity accessibilityRole="button" accessibilityLabel={`View full-size photos of ${item.title}`} onPress={() => onOpenPhotos?.({ images: matchPhotoUrls(item, apiBaseUrl), title: item.title, listing: item })}>
+            <Image source={{ uri: matchPhotoUrls(item, apiBaseUrl)[0] }} accessibilityLabel={item.title} style={{ width: 100, height: 100, resizeMode: 'contain' }} />
+          </TouchableOpacity> : null}
           <Text style={styles.listingAssistantTitle}>{item.title}</Text><Text style={styles.helperText}>{item.brand} · {item.size} · {item.condition} · ${item.estimated_value}</Text>
           {onOpenMatch ? button('View in Marketplace', () => onOpenMatch(item)) : null}
         </View>)}

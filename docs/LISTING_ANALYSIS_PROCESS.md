@@ -986,7 +986,9 @@ existing target-value tolerance applies, and targets must fit the viewer's saved
 category and category-specific size preferences. Already-sent offer pairs are
 excluded. Cross-category matches use the target category's sizes, not the source's.
 Web/mobile display up to 12 real results with total/empty-state information and
-item-detail navigation. Refresh/reopen rechecks current availability/preferences;
+item-detail navigation. Clicking a match photo opens the existing full-screen image
+viewer/carousel without leaving chat, using original URLs and the thumbnail image
+first; duplicate photo URLs are removed. Refresh/reopen rechecks current availability/preferences;
 historical message text is not authoritative availability. A private draft gets a
 publication prerequisite, never automatic publication. Matching does not create
 offers or trades. This extension is local only; regular matching logic is unchanged.

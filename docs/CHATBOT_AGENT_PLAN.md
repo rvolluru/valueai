@@ -7,6 +7,10 @@ legacy path; the new path is described in the implementation status section.
 
 ## Implemented local pilot
 
+- Match photos open the existing full-screen viewer directly from chat, with the
+  thumbnail image first and all available listing photos in the carousel. Closing
+  returns to the existing conversation; no listing navigation or mutation is needed.
+
 - Invalid saved sizes now prompt for a correction in chat, list canonical allowed
   sizes and give a “Change size to …” example, rather than redirecting to My Closet.
   Publication remains blocked until corrected; size-only edits retain value.

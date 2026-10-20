@@ -2,8 +2,9 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { createWebApiClient } from '../lib/apiClient'
 import { createListingAgentController } from '../../../../packages/app-client/src/listingAgent'
 import { MANNEQUIN_DISCLAIMER } from '../../../../packages/app-client/src/mannequinDisclosure'
+import { matchPhotoUrls } from '../../../../packages/app-client/src/matchPhotos'
 
-export default function ListingAgentChat({ apiBaseUrl, apiKey, getBearerToken, clerkEnabled, initialListingId = null, newSessionRequestId = null, onExit = null, onStartNew = null }) {
+export default function ListingAgentChat({ apiBaseUrl, apiKey, getBearerToken, clerkEnabled, initialListingId = null, newSessionRequestId = null, onExit = null, onStartNew = null, onOpenPhotos = null }) {
   const [view, setView] = useState({ session: null, busy: false, error: '' })
   const [text, setText] = useState('')
   const [files, setFiles] = useState([])
@@ -102,7 +103,9 @@ export default function ListingAgentChat({ apiBaseUrl, apiKey, getBearerToken, c
         <h4>Marketplace matches</h4>
         <p>{session.marketplace_matches.count} matching items based on your item’s saved value and your preferences. No offer has been sent.</p>
         {session.marketplace_matches.items.map(item => <article className="panel" key={item.listing_id}>
-          {item.image && <img src={new URL(item.image, apiBaseUrl || window.location.origin).href} alt={item.title} style={{ width: 100, height: 100, objectFit: 'contain' }} />}
+          {matchPhotoUrls(item, apiBaseUrl || window.location.origin).length > 0 && <button type="button" className="listing-agent-match-photo" aria-label={`View full-size photos of ${item.title}`} onClick={() => onOpenPhotos?.({ images: matchPhotoUrls(item, apiBaseUrl || window.location.origin), title: item.title, listing: item })}>
+            <img src={matchPhotoUrls(item, apiBaseUrl || window.location.origin)[0]} alt={item.title} style={{ width: 100, height: 100, objectFit: 'contain' }} />
+          </button>}
           <h4>{item.title}</h4><p>{item.brand} · {item.size} · {item.condition} · ${item.estimated_value}</p>
           <a href={`/?tab=market&listing=${encodeURIComponent(item.listing_id)}`}>View in Marketplace</a>
         </article>)}
