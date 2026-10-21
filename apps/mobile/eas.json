@@ -9,6 +9,11 @@
       "distribution": "internal"
     },
     "preview": {
+      "env": {
+        "EXPO_PUBLIC_API_BASE_URL": "https://api.jouft.com",
+        "EXPO_PUBLIC_LISTING_AGENT_ENABLED": "true",
+        "EXPO_PUBLIC_ASSISTANT_CONVERSATIONS_ENABLED": "true"
+      },
       "autoIncrement": true,
       "distribution": "internal",
       "ios": {
@@ -22,7 +27,12 @@
       "autoIncrement": true
     },
     "production": {
-      "autoIncrement": true
+      "autoIncrement": true,
+      "env": {
+        "EXPO_PUBLIC_API_BASE_URL": "https://api.jouft.com",
+        "EXPO_PUBLIC_LISTING_AGENT_ENABLED": "true",
+        "EXPO_PUBLIC_ASSISTANT_CONVERSATIONS_ENABLED": "true"
+      }
     }
   },
   "submit": {

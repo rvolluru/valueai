@@ -22,3 +22,6 @@ ios/Pods/
 ios/build/
 android/build/
 *.log
+.env*
+artifacts/
+tmp/
