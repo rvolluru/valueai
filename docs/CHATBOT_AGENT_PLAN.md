@@ -1,9 +1,13 @@
 # Listing chatbot: current flow and agent implementation plan
 
-Release candidate October 21, 2026: production deployment requested. Migration
-0010 and explicit web/API conversation/listing-agent flags are included in the
-release procedure. All local-only notes remain pending production verification.
-This deploy ships the API and hosted web app, not a new mobile-store binary.
+Production verified October 21, 2026: release `7775fd0`, workflow `39646442566`,
+passed migrations, API/worker stability and post-deploy smoke checks. Conversation
+and listing-agent features are enabled in the hosted web build and API. Earlier
+local-only implementation notes below are historical for those web/API features;
+mobile source is not a new mobile-store binary. The deployed web bundle contains
+the threaded UI, choice cards and corrected status-row layout; public health is OK
+and the conversation endpoint returns 401 without sign-in. No listing reanalysis,
+publication or trade send was initiated by deployment verification.
 
 Local status-row layout fix: image-less trade/shipment results use a full-width
 text column instead of placing titles in the 58px thumbnail column. Result sections

@@ -1,12 +1,17 @@
 # Jouft listing analysis: complete process
 
-Release candidate — October 21, 2026: the threaded assistant, listing tools and
-chronological review UI described below are being prepared for production rollout.
-Migration `0010_assistant_conversations` runs before application rollout; the web
-build and API flags enable both assistant conversations and the listing agent.
-Production verification is pending; local-only notes below are not yet a claim
-of production availability. Existing form creation/evaluation and pricing-model
-routing remain unchanged.
+Production verified — October 21, 2026: release `7775fd0`, deployment workflow
+`39646442566`, deployed the threaded assistant, guarded listing tools, chronological
+review UI and pending-only trade reads to the API and hosted web app. Pre-rollout
+migrations and API/worker stability checks passed. The deployed smoke task verified
+both assistant flags, conversation/listing-agent tables and existing model routing;
+the public health endpoint is OK and the conversation endpoint requires sign-in.
+Earlier local-only labels below record development history and are superseded by
+this status for web/API features. Mobile-source changes have not been distributed
+as a new mobile-store binary. Existing form creation/evaluation and pricing-model
+routing remain unchanged. This post-verification document status is versioned in
+Git; the image built for this rollout contains the pre-verification release-candidate
+guide, and will pick up this status text on the next documentation/application rollout.
 
 Local next-step guidance (not deployed): chat exposes missing required facts and
 the next specific question from saved state, including after a context/status read.
