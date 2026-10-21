@@ -70,6 +70,8 @@ jobs:
             --cache-to type=gha,mode=max \
             -f apps/api/Dockerfile \
             --build-arg VITE_CLERK_PUBLISHABLE_KEY="${VITE_CLERK_PUBLISHABLE_KEY}" \
+            --build-arg VITE_LISTING_AGENT_ENABLED=true \
+            --build-arg VITE_ASSISTANT_CONVERSATIONS_ENABLED=true \
             -t "${IMAGE_URI}" \
             --push \
             .
@@ -293,6 +295,8 @@ jobs:
                   | upsert_env("GPT_PRICING_MODEL_ROUTING_ENABLED"; "true")
                   | upsert_env("GPT_NEW_LISTING_PRICING_MODEL"; "gpt-6.1-sol")
                   | upsert_env("GPT_CONTROLLED_RESEARCH_ENABLED"; "false")
+                  | upsert_env("LISTING_AGENT_ENABLED"; "true")
+                  | upsert_env("ASSISTANT_CONVERSATIONS_ENABLED"; "true")
                   | upsert_env("GPT_ITEM_PROFILE_TIMEOUT_S"; "240")
                   | upsert_env("LISTING_ANALYSIS_ATTEMPT_TIMEOUT_S"; "300")
                   | upsert_env("STRIPE_SECRET_KEY"; $STRIPE_SECRET_KEY)
@@ -382,11 +386,17 @@ jobs:
           result = {"openai_key_configured": bool(key), "status_code": None, "error": None}
           from app.deps import get_settings, get_db
           settings = get_settings()
+          assert settings.listing_agent_enabled is True
+          assert settings.assistant_conversations_enabled is True
           assert settings.gpt_pricing_model_routing_enabled is True
           assert settings.gpt_new_listing_pricing_model == "gpt-6.1-sol"
           assert settings.gpt_item_profile_model == "gpt-5"
           assert settings.gpt_controlled_research_enabled is False
           db = get_db()
+          db.fetchone("SELECT COUNT(*) FROM assistant_conversations")
+          db.fetchone("SELECT COUNT(*) FROM assistant_conversation_turns")
+          db.fetchone("SELECT COUNT(*) FROM listing_agent_sessions")
+          result["assistant_flags_and_tables_verified"] = True
           row = db.fetchone("SELECT COUNT(*) FROM listing_pricing_models")
           result["persisted_model_assignments"] = row[0]
           result["new_listing_model"] = settings.gpt_new_listing_pricing_model

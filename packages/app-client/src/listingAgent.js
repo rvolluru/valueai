@@ -1,4 +1,33 @@
 // Shared web/mobile orchestration adapter: workflow decisions live on the server.
+export function photoCoverageSummary(session) {
+  if (!session?.photos?.length) return [];
+  const evidence = session.evidence;
+  if (!evidence) return ['Photo coverage has not been assessed for the current saved photos yet.'];
+  if (evidence.status !== 'checked') return [
+    evidence.status === 'timed_out' ? 'Photo coverage check timed out.' : 'Photo coverage check is unavailable.',
+    'Coverage was not verified. Full item analysis and valuation still run after confirmation.',
+  ];
+  const labels = { full_front: 'Full front', full_back: 'Full back', side_or_profile: 'Side/profile',
+    brand_label: 'Brand label', size_or_material_label: 'Size/material label',
+    condition_or_wear: 'Condition/wear', shoe_sole: 'Shoe sole (bottom)', other: 'Other view' };
+  const label = role => labels[role] || String(role).replaceAll('_', ' ');
+  const lines = evidence.category ? [`Detected category: ${label(evidence.category)}.`] : [];
+  for (const photo of evidence.images || []) {
+    if (!Number.isInteger(photo.image_index) || photo.image_index < 0 || photo.image_index >= session.photos.length) continue;
+    const roles = [...new Set([photo.role, ...(photo.additional_roles || [])].filter(Boolean))];
+    if (roles.length) lines.push(`Photo ${photo.image_index + 1}: ${roles.map(label).join(', ')}.`);
+  }
+  const waived = new Set(session.waivers || []);
+  const missing = (evidence.missing_required || []).filter(role => !waived.has(role));
+  if (missing.length) lines.push(`Required before continuing: ${missing.map(label).join(', ')}.`);
+  else if (Array.isArray(evidence.missing_required)) lines.push(waived.size ? 'Required views are covered or recorded as unavailable.' : 'All required photo views are covered.');
+  if (waived.size) lines.push(`Recorded as unavailable: ${[...waived].map(label).join(', ')}.`);
+  if (evidence.missing_recommended?.length) lines.push(`Optional recommendations (not required): ${evidence.missing_recommended.map(label).join(', ')}.`);
+  if (evidence.warning) lines.push(`Assessment note: ${evidence.warning}`);
+  lines.push('This checks photo coverage only. Full item analysis and valuation run after confirmation.');
+  return lines;
+}
+
 function id() {
   return globalThis.crypto?.randomUUID?.() || `agent-${Date.now()}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
 }
@@ -36,9 +65,10 @@ export function createListingAgentController(client, getAuth, onChange) {
     return async () => client.turnWithListingAgent(session.session_id, payload, await getAuth());
   }
   return {
-    load(listingId = null, newSessionRequestId = null) {
+    load(listingId = null, newSessionRequestId = null, initialSessionId = null) {
       const requestId = newSessionRequestId || id();
       return perform(async () => {
+        if (initialSessionId) return client.getListingAgentSession(initialSessionId, await getAuth());
         if (listingId) return client.openListingAgentReview({ request_id: requestId, listing_id: listingId }, await getAuth());
         if (newSessionRequestId) return client.startListingAgentSession({ request_id: requestId }, await getAuth());
         const existing = await client.getActiveListingAgentSession(await getAuth());
@@ -87,6 +117,13 @@ export function createListingAgentController(client, getAuth, onChange) {
       if (!session || !targetListingId) return;
       const payload = { request_id: id(), expected_revision: session.revision,
         message: 'Prepare a trade request for this matched item.', trade_target_id: targetListingId };
+      return perform(async () => client.turnWithListingAgent(session.session_id, payload, await getAuth()));
+    },
+    viewPhotos(listingId) {
+      const session = state.session;
+      if (!session || !listingId) return;
+      const payload = { request_id: id(), expected_revision: session.revision,
+        message: 'Show photos of this item.', photo_listing_id: listingId };
       return perform(async () => client.turnWithListingAgent(session.session_id, payload, await getAuth()));
     },
     confirmTrade() {

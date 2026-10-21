@@ -1661,6 +1661,13 @@ class Database:
         finally:
             cur.close()
 
+    def rollback(self) -> None:
+        if self._sqlite_conn is not None:
+            with self._sqlite_lock:
+                self._sqlite_conn.rollback()
+        else:
+            self._ensure_pg_connection().rollback()
+
     def commit(self) -> None:
         if self._sqlite_conn is not None:
             with self._sqlite_lock:

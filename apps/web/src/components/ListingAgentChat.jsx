@@ -1,22 +1,43 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createWebApiClient } from '../lib/apiClient'
-import { createListingAgentController } from '../../../../packages/app-client/src/listingAgent'
+import { createListingAgentController, photoCoverageSummary } from '../../../../packages/app-client/src/listingAgent'
 import { MANNEQUIN_DISCLAIMER } from '../../../../packages/app-client/src/mannequinDisclosure'
 import { matchPhotoUrls } from '../../../../packages/app-client/src/matchPhotos'
 
-export default function ListingAgentChat({ apiBaseUrl, apiKey, getBearerToken, clerkEnabled, initialListingId = null, newSessionRequestId = null, onExit = null, onStartNew = null, onOpenPhotos = null }) {
+export default function ListingAgentChat({ apiBaseUrl, apiKey, getBearerToken, clerkEnabled, initialListingId = null, initialSessionId = null, newSessionRequestId = null, onExit = null, onStartNew = null, onOpenPhotos = null, onContext = null, onBusyChange = null, hideComposer = false, onTranscript = null, onPhotoPanel = null }) {
   const [view, setView] = useState({ session: null, busy: false, error: '' })
   const [text, setText] = useState('')
+  const transcriptCallback = useRef(onTranscript)
+  transcriptCallback.current = onTranscript
+  useEffect(() => { if (view.session) {
+    const question = view.session.pending?.type === 'question' ? view.session.pending : !view.session.pending ? view.session.next_step : null
+    transcriptCallback.current?.({ session_id: view.session.session_id, stage: view.session.stage, messages: view.session.messages, timeline_events: view.session.timeline_events, conditionQuestion: question?.question, conditionRequested: question?.field === 'condition' })
+  } }, [view.session])
   const [files, setFiles] = useState([])
+  const busyCallback = useRef(onBusyChange)
+  busyCallback.current = onBusyChange
+  useEffect(() => { busyCallback.current?.(view.busy); return () => busyCallback.current?.(false) }, [view.busy])
   const [mannequinChoice, setMannequinChoice] = useState('')
   const fileInput = useRef(null)
+  const contextCallback = useRef(onContext)
+  const photoCallback = useRef(onOpenPhotos)
+  const openedPhotoRequest = useRef(null)
+  contextCallback.current = onContext
+  photoCallback.current = onOpenPhotos
+  useEffect(() => { if (view.session?.conversation_context) contextCallback.current?.(view.session.conversation_context) }, [view.session?.conversation_context])
+  useEffect(() => {
+    const photo = view.session?.photo_view
+    if (!photo?.images?.length || openedPhotoRequest.current === photo.request_id) return
+    openedPhotoRequest.current = photo.request_id
+    photoCallback.current?.({ images: matchPhotoUrls(photo, apiBaseUrl || window.location.origin), title: photo.title, listing: photo })
+  }, [view.session?.photo_view, apiBaseUrl])
   const auth = useRef(null)
   auth.current = async () => clerkEnabled ? { bearerToken: await getBearerToken() } : { apiKey }
   const { controller } = useMemo(() => {
     const { client } = createWebApiClient({ apiBaseUrl, apiKey, getBearerToken })
     return { controller: createListingAgentController(client, () => auth.current(), setView) }
-  }, [apiBaseUrl, apiKey, getBearerToken, initialListingId, newSessionRequestId])
-  useEffect(() => { controller.activate(); controller.load(initialListingId, newSessionRequestId); return () => controller.dispose() }, [controller, initialListingId, newSessionRequestId])
+  }, [apiBaseUrl, apiKey, getBearerToken, initialListingId, newSessionRequestId, initialSessionId])
+  useEffect(() => { controller.activate(); controller.load(initialListingId, newSessionRequestId, initialSessionId); return () => controller.dispose() }, [controller, initialListingId, newSessionRequestId, initialSessionId])
   useEffect(() => {
     if (view.session?.stage !== 'analyzing') return undefined
     const timer = setInterval(() => controller.refresh(), 4000)
@@ -30,11 +51,7 @@ export default function ListingAgentChat({ apiBaseUrl, apiKey, getBearerToken, c
   const reviewing = !!session?.listing_id
   const displayPhotos = session?.listing && !canEdit ? (session.listing.images || []).map((url, index) => ({ image_id: `review-${index}`, url })) : session?.photos || []
   useEffect(() => { setMannequinChoice('') }, [review?.token])
-  return <section className="panel listing-assistant listing-agent-chat is-open" aria-label="Listing draft agent">
-    {!reviewing && <p>Add photos to create a private draft. Nothing is published without your confirmation.</p>}
-    {onExit && <button className="ghost small" disabled={view.busy} onClick={onExit}>Back to conversation</button>}
-    {!session && !view.busy && <button onClick={() => controller.retry()}>Connect</button>}
-    {session && <>
+  const photoPanel = session && <>
       {!reviewing && <p>{session.photos.length}/6 photos saved</p>}
       {session.photo_dirty && <p role="status">Photo changes are staged only. Confirm the proposed changes before they are applied to the listing.</p>}
       <details className="listing-agent-photo-details" open={!reviewing || undefined}>
@@ -56,16 +73,30 @@ export default function ListingAgentChat({ apiBaseUrl, apiKey, getBearerToken, c
         {!!files.length && <button type="button" disabled={view.busy} onClick={() => { setFiles([]); if (fileInput.current) fileInput.current.value = '' }}>Clear selected photos</button>}
       </div>}
       </details>
-      <details className="listing-agent-history" open={!reviewing || undefined}>
+      {!onPhotoPanel && !!photoCoverageSummary(session).length && <section aria-label="Photo coverage" className="listing-photo-coverage" role="status">
+        <h4>Photo coverage</h4>
+        {photoCoverageSummary(session).map((line, index) => <p key={index}>{line}</p>)}
+      </section>}
+  </>
+  const panelCallback = useRef(onPhotoPanel)
+  panelCallback.current = onPhotoPanel
+  useEffect(() => { if (session) panelCallback.current?.({ session_id: session.session_id, node: photoPanel }) }, [session, view.busy, files])
+  return <section className="panel listing-assistant listing-agent-chat is-open" aria-label="Listing draft agent">
+    {!hideComposer && !reviewing && <p>Add photos to create a private draft. Nothing is published without your confirmation.</p>}
+    {onExit && <button className="ghost small" disabled={view.busy} onClick={onExit}>{hideComposer ? 'Hide listing photos and review' : 'Back to conversation'}</button>}
+    {!session && !view.busy && <button onClick={() => controller.retry()}>Connect</button>}
+    {session && <>
+      {!onPhotoPanel && photoPanel}
+      {!hideComposer && <details className="listing-agent-history" open={!reviewing || undefined}>
       <summary>Conversation history</summary>
       <div className="listing-assistant-messages">
         {session.messages.map((message, index) => <div key={index} className={`listing-assistant-message ${message.role}`}><p>{message.content}</p></div>)}
       </div>
-      </details>
-      {reviewing && !proposal && session.stage === 'review_ready' && <p role="status">{session.messages.filter(message => message.role === 'assistant').at(-1)?.content}</p>}
+      </details>}
+      {!hideComposer && reviewing && !proposal && session.stage === 'review_ready' && <p role="status">{session.messages.filter(message => message.role === 'assistant').at(-1)?.content}</p>}
       {pending?.type === 'confirm_analysis' && <div className="panel">
         <h4>Confirm your draft details</h4>
-        <dl>{Object.entries(pending.facts).map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{value}</dd></div>)}</dl>
+        <dl className="listing-confirm-facts">{Object.entries(pending.facts).map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{value}</dd></div>)}</dl>
         {!!pending.waived_views.length && <p>Unavailable views: {pending.waived_views.join(', ')}</p>}
         <button className="primary" disabled={view.busy} onClick={() => controller.confirm()}>Confirm and analyze private draft</button>
       </div>}
@@ -76,11 +107,17 @@ export default function ListingAgentChat({ apiBaseUrl, apiKey, getBearerToken, c
         <details><summary>Item description</summary><p>{session.listing.description}</p></details>
         {session.stage === 'review_ready' && <>
           <p>{session.listing.estimated_value > 0 ? `Estimated value: $${session.listing.estimated_value}` : 'Value needs review.'}</p>
-          {!proposal && <p>To make a correction, tell me below—for example, “Change size to US 10.5.”</p>}
-          <button disabled={view.busy} onClick={() => controller.send('Keep as draft')}>Keep as draft</button>
-          {review?.mannequin_choice_required && <fieldset disabled={view.busy}><legend>Include the AI-generated mannequin image?</legend>
-            {review.mannequin_assets.map((asset, index) => asset.image_url && <figure key={index}><img src={new URL(asset.image_url, apiBaseUrl || window.location.origin).href} alt="AI-generated mannequin preview" style={{ width: '100%', maxHeight: 280, objectFit: 'contain' }} /><figcaption>{MANNEQUIN_DISCLAIMER}</figcaption></figure>)}
-            {['include', 'exclude'].map(choice => <label key={choice}><input type="radio" name={`mannequin-${session.session_id}`} value={choice} checked={mannequinChoice === choice} onChange={() => setMannequinChoice(choice)} />{choice === 'include' ? 'Include mannequin image' : 'Use original photos only'}</label>)}
+          {!proposal && <p>To make a correction, tell me what you would like to change below.</p>}
+          <button className="ghost small" disabled={view.busy} onClick={() => controller.send('Keep as draft')}>Keep as draft</button>
+          {review?.mannequin_choice_required && <fieldset className="listing-mannequin-choice" disabled={view.busy}><legend>Choose your listing photos</legend>
+            <p className="listing-control-hint">Include the AI styling preview, or use only your original photos.</p>
+            <div className="listing-mannequin-layout">
+            <div className="listing-mannequin-previews">{review.mannequin_assets.map((asset, index) => asset.image_url && <figure key={index}><img src={new URL(asset.image_url, apiBaseUrl || window.location.origin).href} alt="AI-generated mannequin preview" /><figcaption>{MANNEQUIN_DISCLAIMER}</figcaption></figure>)}</div>
+            <div className="listing-mannequin-options">{['include', 'exclude'].map(choice => <label className={`listing-choice-card${mannequinChoice === choice ? ' is-selected' : ''}`} key={choice}>
+              <input type="radio" name={`mannequin-${session.session_id}`} value={choice} checked={mannequinChoice === choice} onChange={() => setMannequinChoice(choice)} />
+              <span><strong>{choice === 'include' ? 'Include mannequin image' : 'Use original photos only'}</strong><small>{choice === 'include' ? 'Add the AI styling preview alongside your photos.' : 'Show only the photos you uploaded.'}</small></span>
+            </label>)}</div>
+            </div>
           </fieldset>}
           {proposal && <div className="panel" aria-label="Proposed listing changes">
             <h4>Save these changes?</h4>
@@ -91,7 +128,7 @@ export default function ListingAgentChat({ apiBaseUrl, apiKey, getBearerToken, c
           {!proposal && review?.reasons.map(reason => <p key={reason} role="status">{reason}</p>)}
           {!proposal && review?.publishable && <button className="primary" disabled={view.busy || !!files.length || !review.publishable || (review.mannequin_choice_required && !mannequinChoice)} onClick={() => controller.publish(mannequinChoice || null)}>Confirm and publish to Marketplace</button>}
         </>}
-        {session.stage === 'published' && <><p role="status">{session.marketplace_matches ? 'Published to Marketplace.' : session.messages.filter(message => message.role === 'assistant').at(-1)?.content || 'Published to Marketplace.'}</p>
+        {session.stage === 'published' && <><p role="status">{session.marketplace_matches && session.last_tool === 'find_marketplace_matches' ? 'Published to Marketplace.' : session.messages.filter(message => message.role === 'assistant').at(-1)?.content || 'Published to Marketplace.'}</p>
           <button className="primary" disabled={view.busy} onClick={() => controller.send('Find marketplace matches')}>{session.marketplace_matches ? 'Refresh matches' : 'Find matching items'}</button>
         </>}
         {session.stage === 'failed' && <p>Analysis did not finish. The draft is saved in My Closet.</p>}
@@ -103,7 +140,7 @@ export default function ListingAgentChat({ apiBaseUrl, apiKey, getBearerToken, c
         <h4>Marketplace matches</h4>
         <p>{session.marketplace_matches.count} matching items based on your item’s saved value and your preferences. Selecting an item only prepares a request; confirmation is required to send.</p>
         {session.marketplace_matches.items.map(item => <article className="panel" key={item.listing_id}>
-          {matchPhotoUrls(item, apiBaseUrl || window.location.origin).length > 0 && <button type="button" className="listing-agent-match-photo" aria-label={`View full-size photos of ${item.title}`} onClick={() => onOpenPhotos?.({ images: matchPhotoUrls(item, apiBaseUrl || window.location.origin), title: item.title, listing: item })}>
+          {matchPhotoUrls(item, apiBaseUrl || window.location.origin).length > 0 && <button type="button" className="listing-agent-match-photo" aria-label={`View full-size photos of ${item.title}`} disabled={view.busy} onClick={() => controller.viewPhotos(item.listing_id)}>
             <img src={matchPhotoUrls(item, apiBaseUrl || window.location.origin)[0]} alt={item.title} style={{ width: 100, height: 100, objectFit: 'contain' }} />
           </button>}
           <h4>{item.title}</h4><p>{item.brand} · {item.size} · {item.condition} · ${item.estimated_value}</p>
@@ -122,14 +159,14 @@ export default function ListingAgentChat({ apiBaseUrl, apiKey, getBearerToken, c
         <button className="ghost" disabled={view.busy} onClick={() => controller.send('Cancel trade request')}>Cancel trade request</button>
       </section>}
       {session.sent_trade && <p role="status">Trade request sent. Track it in <a href="/?tab=inbox">Trade Inbox</a>.</p>}
-      {canEdit && pending?.type === 'question' && pending.field === 'condition' && <div role="group" aria-label="Choose item condition" className="listing-chat-quick-replies">
+      {!hideComposer && canEdit && pending?.type === 'question' && pending.field === 'condition' && <div role="group" aria-label="Choose item condition" className="listing-chat-quick-replies">
         {['New with tags', 'New', 'Like new'].map(condition => <button key={condition} type="button" className="ghost small" disabled={view.busy || !!files.length} onClick={() => controller.send(condition)}>{condition}</button>)}
       </div>}
-      {(canEdit || session.stage === 'published') && <form onSubmit={event => { event.preventDefault(); if (!text.trim() || files.length) return; controller.send(text); setText('') }}>
+      {!hideComposer && (canEdit || session.stage === 'published') && <form onSubmit={event => { event.preventDefault(); if (!text.trim() || files.length) return; controller.send(text); setText('') }}>
         <label>{reviewing ? 'Ask a question or describe a correction' : 'Your reply'}<textarea value={text} onChange={event => setText(event.target.value)} maxLength={2000} disabled={view.busy} /></label>
         <button disabled={view.busy || !text.trim() || !!files.length}>Send</button>
       </form>}
-      <button disabled={view.busy} onClick={async () => { setFiles([]); if (fileInput.current) fileInput.current.value = ''; if (await controller.startNew()) onStartNew?.() }}>Start another draft</button>
+      {!initialSessionId && <button disabled={view.busy} onClick={async () => { setFiles([]); if (fileInput.current) fileInput.current.value = ''; if (await controller.startNew()) onStartNew?.() }}>Start another draft</button>}
     </>}
     {view.busy && <p role="status">Working…</p>}
     {view.error && <div role="alert"><p>{view.error}</p><button disabled={view.busy} onClick={() => controller.retry()}>Retry</button><button disabled={view.busy} onClick={() => controller.refresh()}>Reload saved progress</button></div>}

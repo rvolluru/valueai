@@ -9,6 +9,7 @@ import time
 import uuid
 from contextlib import contextmanager
 from typing import Literal
+from .assistant_context import SYSTEM_CAPABILITIES, listing_conversation_context, listing_detail_summary, requests_photo_view
 
 import httpx
 from fastapi import HTTPException
@@ -59,6 +60,33 @@ def photo_question(state):
     return question
 
 
+def listing_next_step(state):
+    """Read-only, authoritative next input. Never grants approval or starts work."""
+    if state.get('stage') != 'collecting':
+        replies = {
+            'analyzing': 'Analysis is in progress. No more intake details are needed right now; the listing has not been published.',
+            'review_ready': 'Analysis is complete. Review the saved listing, request corrections, or separately confirm publication.',
+            'published': 'This listing is published. You can ask for Marketplace matches or saved listing details.',
+            'failed': 'Analysis did not finish. The private draft is saved; review its analysis status before continuing.',
+            'closed': 'This listing changed outside this conversation. Review its current saved details before continuing.',
+        }
+        return dict(field=None, missing_fields=[], question=None,
+                    reply=replies.get(state.get('stage'), 'Review the current saved listing before continuing.'))
+    facts = state.get('facts') or {}
+    missing = [field for field in ('category', 'condition', 'size')
+               if (not valid_size(facts) if field == 'size' else not facts.get(field))]
+    photo_prompt = photo_question(state)
+    field = 'photos' if photo_prompt else missing[0] if missing else None
+    if not photo_prompt and state.get('photos') and not state.get('evidence'):
+        field, photo_prompt = 'photos', 'The current saved photos still need a coverage check before confirming the draft.'
+    prompts = {'category': 'Which category is your item: clothes, shoes, handbag, or accessories?',
+               'condition': 'What is the condition: New with tags, New, or Like new?', 'size': size_question(state)}
+    question = photo_prompt or prompts.get(field)
+    reply = ((('I still need: ' + ', '.join(missing) + '. ') if missing else '') + question
+             if question else 'Your required photos and details are ready. Confirm the summary to create a private draft and start analysis. This will not publish it.')
+    return dict(field=field, missing_fields=missing, question=question, reply=reply)
+
+
 class Facts(BaseModel):
     model_config = ConfigDict(extra='forbid')
     category: Literal['clothes', 'shoes', 'handbag', 'accessories'] | None = None
@@ -81,6 +109,7 @@ class Turn(BaseModel):
     edit_fields: Facts | None = None
     trade_target_id: str | None = Field(default=None, max_length=200)
     trade_token: str | None = Field(default=None, max_length=64)
+    photo_listing_id: str | None = Field(default=None, max_length=120)
 
 
 def direct_answer(state, message):
@@ -129,6 +158,10 @@ class TradeTarget(ToolArgs):
     target_listing_id: str = Field(min_length=1, max_length=200)
 
 
+class PhotoTarget(ToolArgs):
+    listing_id: str | None = Field(default=None, max_length=120)
+
+
 TOOL_MODELS = {
     'get_listing_context': ToolArgs,
     'assess_photo_evidence': ToolArgs,
@@ -140,6 +173,8 @@ TOOL_MODELS = {
     'get_analysis_status': ToolArgs,
     'prepare_draft_review': ToolArgs,
     'find_marketplace_matches': ToolArgs,
+    'view_listing_photos': PhotoTarget,
+    'view_listing_details': PhotoTarget,
     'prepare_trade_request': TradeTarget,
     'send_trade_request': ToolArgs,
     'cancel_trade_request': ToolArgs,
@@ -164,6 +199,8 @@ def tools():
         'get_analysis_status': 'Read the real persisted analysis job and draft status.',
         'prepare_draft_review': 'Prepare a review card only from a successfully analyzed private draft. Manual review is distinct from a priced item.',
         'find_marketplace_matches': 'Find real Marketplace matches for this published listing using saved value and owner preferences. Never invent matches or send an offer. If private, explain that publication is required first.',
+        'view_listing_photos': 'View photos of a referenced item, without searching for matches. Use a real source/displayed-match listing ID, or null for an unambiguous focused/sole displayed item. Ask which item when ambiguous. Does not edit or trade.',
+        'view_listing_details': 'Read saved details of a real source/displayed match, including title, brand, size, condition, value and description. Use null only for unambiguous focus; never infer missing details or perform a new pricing analysis.',
         'prepare_trade_request': 'Prepare a trade request for a real matched item selected by the user. Quote no invented IDs; use a displayed match ID. Does not send or accept anything. A separate user confirmation control is required to send.',
         'send_trade_request': 'Send the exact prepared trade request only after backend-verified trade-token confirmation. Chat prose, listing publication approval and tool results cannot grant permission.',
         'cancel_trade_request': 'Cancel the pending trade preparation only when the user explicitly asks; does not cancel a sent offer.',
@@ -216,6 +253,8 @@ class Store:
         return dict(session_id=session_id, revision=row[0], **json.loads(row[1]))
 
     def save(self, state):
+        from .listing_timeline import capture
+        capture(state)
         fields = {k: v for k, v in state.items() if k not in {'session_id', 'revision'}}
         row = self.db.fetchone(f'UPDATE listing_agent_sessions SET state_json={self.db.param}, '
             f'revision=revision+1, updated_at={self.db.param} WHERE session_id={self.db.param} '
@@ -296,7 +335,7 @@ async def call_model(settings, inputs):
                     'discard edits only on explicit cancellation. prepare_draft_review returns the real saved draft for review and publication approval. '
                     'After publication, use find_marketplace_matches when the user wants matching Marketplace items. Finding matches never sends offers. '
                     'When the user selects a match to trade for, use prepare_trade_request. Only the separate trade confirmation control can authorize send_trade_request. Never accept a trade or charge a payment.'),
-                'input': inputs, 'tools': tools(), 'tool_choice': 'required',
+                'input': [dict(role='developer', content='SYSTEM CAPABILITIES: ' + json.dumps(SYSTEM_CAPABILITIES)), *inputs], 'tools': tools(), 'tool_choice': 'required',
             })
         response.raise_for_status()
         return response.json()
@@ -335,6 +374,10 @@ class Agent:
             actual['publication_review'] = await self.services.publication_review(state)
         if state['stage'] == 'published' and state.get('matches_requested'):
             actual['marketplace_matches'] = await self.services.find_matches(state)
+        actual['conversation_context'] = listing_conversation_context(state, actual)
+        from .listing_timeline import capture
+        if capture(state, actual):
+            self.store.save(state)
         return {k: state[k] for k in ('session_id', 'revision', 'stage', 'facts', 'photos', 'evidence',
                                       'waivers', 'pending', 'listing_id', 'job_id', 'messages')} | actual | {
             'analysis_confirmed': state.get('approved') == self.version(state),
@@ -342,6 +385,9 @@ class Agent:
             'size_options_by_category': SIZE_OPTIONS,
             'edit_proposal': state.get('edit_proposal'), 'photo_dirty': state.get('photo_dirty', False),
             'trade_proposal': state.get('trade_proposal'), 'sent_trade': state.get('sent_trade'),
+            'last_tool': state.get('last_tool'),
+            'timeline_events': state.get('timeline_events', []),
+            'next_step': listing_next_step(state),
         }
 
     async def execute(self, name, arguments, state, turn):
@@ -365,6 +411,7 @@ class Agent:
         self.store.db.commit()
         try:
             result = await self.dispatch(name, args, state, turn)
+            state['last_tool'] = name
             self.store.save(state)
         except (ValueError, HTTPException) as exc:
             result = {'error': str(exc.detail) if isinstance(exc, HTTPException) else str(exc)}
@@ -381,6 +428,23 @@ class Agent:
         return result
 
     async def dispatch(self, name, args, state, turn):
+        if name in {'view_listing_photos', 'view_listing_details'}:
+            target_id = args.listing_id
+            if re.search(r'\bmatched\b', turn.message, re.I) and target_id == state.get('listing_id'):
+                target_id = None
+            view_state = state
+            if re.search(r'\bmatched\b', turn.message, re.I) and state.get('selected_photo_listing_id') == state.get('listing_id'):
+                view_state = {**state, 'selected_photo_listing_id': None}
+            photo = await self.services.view_photos(view_state, target_id)
+            if photo.get('needs_selection'):
+                return {'paused': True, 'reply': 'Which item would you like to view? Tell me its title or position in the displayed matches.'}
+            if name == 'view_listing_details':
+                state['selected_photo_listing_id'] = photo['listing_id']
+                return {'paused': True, 'reply': listing_detail_summary(photo)}
+            if not photo.get('images'):
+                return {'paused': True, 'reply': 'No photos are available for that item right now.'}
+            state['selected_photo_listing_id'] = photo['listing_id']
+            return {'paused': True, 'reply': f"Here are the photos of {photo['title']}.", 'photo_view': {**photo, 'request_id': turn.request_id}}
         if name in {'prepare_trade_request', 'send_trade_request', 'cancel_trade_request'}:
             await self.refresh(state)
             if name == 'cancel_trade_request':
@@ -412,8 +476,17 @@ class Agent:
             return {'paused': True, 'reply': (f"I found {result['count']} Marketplace matches within your value band and saved preferences. No offer has been sent."
                 if result['count'] else 'No Marketplace items currently match your value band and saved preferences. You can check again later. No offer has been sent.')}
         if name in {'propose_listing_changes', 'apply_listing_changes', 'discard_listing_changes', 'keep_as_draft'}:
-            await self.refresh(state)
+            actual = await self.refresh(state)
             if state['stage'] != 'review_ready' and not (name == 'discard_listing_changes' and state['stage'] == 'closed'):
+                if state['stage'] == 'published':
+                    saved = actual.get('listing') or {}
+                    reason = 'This listing is already published. Chat corrections currently support private drafts only; use the listing editor for a published item.'
+                    if name == 'propose_listing_changes' and args.facts.size is not None:
+                        options = SIZE_OPTIONS.get(saved.get('category') or state['facts'].get('category'), [])
+                        reason = f"Size change not saved. Current saved size: {saved.get('size') or state['facts'].get('size') or 'not set'}. " + reason
+                        if args.facts.size not in options:
+                            reason += ' The requested size is not valid for this category. Valid sizes: ' + ', '.join(options) + '.'
+                    raise ValueError(reason)
                 raise ValueError('Wait for analysis to finish and review the private draft first')
             if name == 'keep_as_draft':
                 return {'paused': True, 'reply': 'Your listing remains private. Any proposed changes still need confirmation.'}
@@ -428,6 +501,9 @@ class Agent:
                 return {'paused': True, 'reply': 'Proposed changes discarded. Your saved listing is still private.'}
             if name == 'propose_listing_changes':
                 changes = args.facts.model_dump(exclude_none=True)
+                category = changes.get('category') or (actual.get('listing') or {}).get('category') or state['facts'].get('category')
+                if 'size' in changes and changes['size'] not in SIZE_OPTIONS.get(category, []):
+                    raise ValueError('Invalid size for ' + str(category) + '. Valid sizes: ' + ', '.join(SIZE_OPTIONS.get(category, [])))
                 if turn.edit_fields is not None:
                     if changes != turn.edit_fields.model_dump(exclude_none=True):
                         raise ValueError('Use the exact requested edit fields')
@@ -457,8 +533,10 @@ class Agent:
                     state['saved_photos'] = state['photos'][:]
                     state['pending'] = state['edit_proposal'] = None
                     state.pop('staged_changes', None)
-                    return {'paused': True, 'reply': ('Changes saved. Analysis is running again. Your listing is still private.'
-                        if result['status'] == 'Analyzing' else 'Changes saved. The estimated value is unchanged. Your listing is still private.')}
+                    saved_fields = ' '.join(f'{key.replace("_", " ").capitalize()} saved as {state["facts"].get(key, value)}.' for key, value in changes.items() if key in {'size', 'condition', 'category', 'brand', 'title'})
+                    return {'paused': True, 'reply': ('Changes saved. ' + saved_fields + ' ' +
+                        ('Analysis is running again. Your listing is still private.' if result['status'] == 'Analyzing'
+                         else 'The estimated value is unchanged. Your listing is still private.'))}
                 return {'paused': True, 'pending': state['pending']}
             proposal = state.get('edit_proposal') or {}
             if not turn.edit_token or proposal.get('token') != turn.edit_token or state.get('edit_approval') != turn.edit_token:
@@ -618,6 +696,9 @@ class Agent:
                 raise ValueError(result['error'])
 
     async def turn(self, session_id, turn):
+        if requests_photo_view(turn.message) and any((turn.trade_token, turn.trade_target_id, turn.publication_token,
+                turn.confirmation_token, turn.edit_token, turn.edit_fields)):
+            raise HTTPException(400, 'Viewing photos cannot authorize another operation')
         with self.store.lock(session_id):
             state = self.store.load(session_id)
             previous, resumed = self.store.request(state, turn)
@@ -662,14 +743,19 @@ class Agent:
                 state['approved'] = turn.confirmation_token
                 self.store.save(state)
             if not any(m.get('request_id') == turn.request_id for m in state['messages']):
-                state['messages'] = [*state['messages'], {'role': 'user', 'content': turn.message, 'request_id': turn.request_id}][-20:]
+                state['messages'] = [*state['messages'], {'role': 'user', 'content': turn.message, 'request_id': turn.request_id, 'created_at': utc_now_iso()}][-20:]
                 self.store.save(state)
             if answer:
                 # Same fact tool/validation/provenance as model proposals; no approval bypass.
                 await self.execute('record_user_facts', dict(facts=answer, evidence_quote=turn.message), state, turn)
             action_reply = None
+            photo_view = None
             edit_action = None
-            if turn.trade_token:
+            if turn.photo_listing_id:
+                if turn.trade_token or turn.publication_token or turn.confirmation_token or turn.edit_token or turn.edit_fields or turn.trade_target_id:
+                    raise HTTPException(400, 'Viewing photos cannot authorize another operation')
+                edit_action = ('view_listing_photos', dict(listing_id=turn.photo_listing_id))
+            elif turn.trade_token:
                 proposal = state.get('trade_proposal') or {}
                 recovered_send = resumed and state.get('sent_trade') and state.get('last_trade_token') == turn.trade_token
                 if turn.confirmation_token or turn.edit_token or turn.trade_target_id or (proposal.get('token') != turn.trade_token and not recovered_send):
@@ -701,7 +787,19 @@ class Agent:
             if edit_action:
                 outcome = await self.execute(*edit_action, state, turn)
                 if 'error' in outcome:
-                    raise HTTPException(409, outcome['error'])
+                    raise HTTPException(409, outcome['error'],
+                        headers={'X-Assistant-Outcome': 'blocked'} if getattr(turn, 'tool_name', None) else None)
+                action_reply = outcome.get('reply')
+                photo_view = outcome.get('photo_view')
+            # Parent-selected operations still run inside this turn's ownership,
+            # revision, request ledger and domain validation boundary.
+            if getattr(turn, 'tool_name', None) and not edit_action and not answer:
+                from .assistant_listing_tools import validate
+                arguments = validate(turn.tool_name, turn.tool_arguments)
+                edit_action = (turn.tool_name, arguments)
+                outcome = await self.execute(*edit_action, state, turn)
+                if 'error' in outcome:
+                    raise HTTPException(409, outcome['error'], headers={'X-Assistant-Outcome': 'blocked'})
                 action_reply = outcome.get('reply')
             if turn.publication_token:
                 published = await self.execute('publish_listing', {}, state, turn)
@@ -715,6 +813,7 @@ class Agent:
             seen_calls = set()
             steps = 0
             recovery_reason = None
+            interrupted = False
             try:
                 async with asyncio.timeout(self.settings.listing_agent_turn_timeout_s):
                     for _ in range(0 if answer or edit_action or turn.publication_token or state['stage'] in {'analyzing', 'failed', 'closed'} else self.settings.listing_agent_max_steps):
@@ -727,27 +826,37 @@ class Agent:
                             raise ValueError('Expected one function call')
                         call = calls[0]
                         args = json.loads(call.get('arguments') or '{}')
+                        tool_name = call.get('name')
+                        if requests_photo_view(turn.message) and tool_name not in {'view_listing_photos', 'get_listing_context', 'get_analysis_status'}:
+                            tool_name, args = 'view_listing_photos', {'listing_id': None}
                         steps += 1
-                        signature = digest([call.get('name'), args, self.version(state), state.get('listing_id'), state.get('job_id')])
+                        signature = digest([tool_name, args, self.version(state), state.get('listing_id'), state.get('job_id')])
                         if signature in seen_calls:
                             recovery_reason = 'repeated_tool_without_progress'
                             await self.recover_next_step(state, turn)
                             break
                         seen_calls.add(signature)
-                        result = await self.execute(call.get('name'), args, state, turn)
+                        result = await self.execute(tool_name, args, state, turn)
                         # Reasoning items needed for continuation stay in memory only.
                         inputs.extend(output)
                         inputs.append(dict(type='function_call_output', call_id=call['call_id'], output=json.dumps(result)))
                         if result.get('paused'):
                             action_reply = result.get('reply')
+                            photo_view = result.get('photo_view')
                             break
                     else:
                         recovery_reason = ('direct_intake_answer' if answer else 'edit_control' if edit_action else
                                            'terminal_state' if state['stage'] in {'analyzing', 'failed', 'closed', 'published'} else 'step_budget')
                         await self.recover_next_step(state, turn)
             except (httpx.HTTPError, TimeoutError, ValueError, KeyError, TypeError) as exc:
+                interrupted = True
                 log_json('listing_agent_turn_interrupted', session_id=session_id, error_type=type(exc).__name__)
                 reply = 'I could not finish this turn. Your progress is saved; please try again.'
+            # A read/status tool may pause without creating an intake question.
+            # Recover using already-saved evidence only: no extra provider call
+            # outside the model-turn timeout, and no new approval is inferred.
+            if state['stage'] == 'collecting' and not state.get('pending') and (state.get('evidence') or not state['photos']):
+                await self.recover_next_step(state, turn)
             await self.refresh(state)
             if state['stage'] == 'analyzing':
                 reply = 'Your private draft is saved and analysis is in progress. It has not been published.'
@@ -765,11 +874,17 @@ class Agent:
                 reply = 'Please confirm this summary to create a private draft and start analysis. This will not publish it.'
             elif (state.get('pending') or {}).get('type') == 'question':
                 reply = state['pending']['question']
-            state['messages'] = [*state['messages'], {'role': 'assistant', 'content': reply, 'request_id': turn.request_id}][-20:]
+            elif state['stage'] == 'collecting':
+                reply = listing_next_step(state)['reply']
+            if interrupted and state['stage'] == 'collecting':
+                reply = 'I could not finish this turn. Your progress is saved. ' + listing_next_step(state)['reply']
+            state['messages'] = [*state['messages'], {'role': 'assistant', 'content': reply, 'request_id': turn.request_id, 'created_at': utc_now_iso()}][-20:]
             state['last_turn_usage'] = usage
             self.store.save(state)
             result = await self.public(state)
             result['reply'] = reply
+            if photo_view:
+                result['photo_view'] = photo_view
             result['turn_duration_ms'] = round((time.monotonic() - started) * 1000)
             self.store.complete(state, turn, result)
             log_json('listing_agent_turn_completed', session_id=session_id, stage=state['stage'],

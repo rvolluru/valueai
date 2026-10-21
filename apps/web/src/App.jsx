@@ -21,6 +21,8 @@ import PhotoNavigation from './components/PhotoNavigation'
 import NotificationsPage from './components/NotificationsPage'
 import AnalysisGuidePage from './components/AnalysisGuidePage'
 import ListingAgentChat from './components/ListingAgentChat'
+import AssistantConversation from './components/AssistantConversation'
+import { matchPhotoUrls } from '../../../packages/app-client/src/matchPhotos'
 import jouftLogo from './assets/jouft-logo.png'
 
 const API_DEFAULT =
@@ -28,8 +30,9 @@ const API_DEFAULT =
   (typeof window !== 'undefined' ? window.location.origin : 'http://127.0.0.1:8000')
 const CLERK_ENABLED = Boolean(import.meta.env.VITE_CLERK_PUBLISHABLE_KEY)
 const LISTING_AGENT_ENABLED = import.meta.env.VITE_LISTING_AGENT_ENABLED === 'true'
+const CONVERSATION_PILOT_ENABLED = import.meta.env.VITE_ASSISTANT_CONVERSATIONS_ENABLED === 'true'
 const IS_PROD = Boolean(import.meta.env.PROD)
-const VALID_TABS = new Set(['market', 'portfolio', 'closet_matches', 'inbox', 'sender_items', 'profile', 'profile_setup', 'admin', 'trade', 'edit_listing', 'review_listing', 'notifications'])
+const VALID_TABS = new Set(['market', 'portfolio', 'closet_matches', 'inbox', 'sender_items', 'profile', 'profile_setup', 'admin', 'trade', 'edit_listing', 'review_listing', 'notifications', 'assistant'])
 const TEMP_SHOW_PROFILE_QUESTIONNAIRE_ON_LOGIN = false
 const LISTINGS_PAGE_SIZE = 24
 
@@ -2861,6 +2864,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   const [appAssistantReviewListingId, setAppAssistantReviewListingId] = useState(null)
   const [appAssistantNewSessionRequestId, setAppAssistantNewSessionRequestId] = useState(null)
   const [appAssistantMessages, setAppAssistantMessages] = useState([])
+  const conversationClient = useMemo(() => createWebApiClient({ apiBaseUrl, apiKey }), [apiBaseUrl, apiKey])
   const [appAssistantInput, setAppAssistantInput] = useState('')
   const [appAssistantContext, setAppAssistantContext] = useState({ result_listing_ids: [], pending_action: null, active_screen: 'marketplace' })
   const [appAssistantBusy, setAppAssistantBusy] = useState(false)
@@ -5595,6 +5599,13 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     setZoomedListingImageScale(0.5)
   }
 
+  function openAssistantListingPhotos(listing) {
+    const images = matchPhotoUrls(listing, apiBaseUrl || window.location.origin)
+    if (!images.length) return
+    setAppAssistantContext(previous => ({ ...previous, selected_listing_id: listing.listing_id }))
+    openZoomedListingImage({ src: images[0], images, alt: listing.title, disclosureListing: listing })
+  }
+
   function moveZoomedListingImage(step) {
     setZoomedListingImage(current => movePhotoCarousel(current, step))
     setZoomedListingImageScale(0.5)
@@ -6136,8 +6147,8 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     }
   }
 
-  async function sendAppAssistantMessage() {
-    const content = appAssistantInput.trim()
+  async function sendAppAssistantMessage(quickReply) {
+    const content = (typeof quickReply === 'string' ? quickReply : appAssistantInput).trim()
     if (!content || appAssistantBusy) return
     const userMessage = { role: 'user', content, message_id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `app-${Date.now()}` }
     const nextMessages = [...appAssistantMessages, userMessage].slice(-20)
@@ -6149,6 +6160,10 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
       const { client, authContext } = createWebApiClient({ apiBaseUrl, apiKey })
       const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : ''
       const result = await client.chatWithAppAssistant({ messages: nextMessages, context: appAssistantContext }, authContext(bearerToken))
+      if (result.photo_view?.images?.length) {
+        const photos = matchPhotoUrls(result.photo_view, apiBaseUrl || window.location.origin)
+        openZoomedListingImage({ src: photos[0], images: photos, alt: result.photo_view.title, disclosureListing: result.photo_view })
+      }
       setAppAssistantContext(result.context || appAssistantContext)
       setAppAssistantMessages((current) => [...current, {
         role: 'assistant',
@@ -6158,6 +6173,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
         listings: result.listings || [],
         trades: result.trades || [],
         shipments: result.shipments || [],
+        requires_confirmation: !!result.requires_confirmation,
       }].slice(-20))
       const tabMap = { marketplace: 'market', closet: 'portfolio', inbox: 'inbox', profile: 'profile' }
       if (LISTING_AGENT_ENABLED && result.review_listing_id) {
@@ -6183,6 +6199,10 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     } finally {
       setAppAssistantBusy(false)
     }
+  }
+
+  function renderConversationWorkflow(id, onExit, onBusyChange, onTranscript, onPhotoPanel) {
+    return <ListingAgentChat key={id} hideComposer onPhotoPanel={onPhotoPanel} onTranscript={onTranscript} initialSessionId={id} apiBaseUrl={apiBaseUrl} apiKey={apiKey} getBearerToken={getBearerToken} clerkEnabled={clerkEnabled} onExit={onExit} onBusyChange={onBusyChange} onOpenPhotos={({ images, title, listing }) => openZoomedListingImage({ src: images[0], images, alt: title, disclosureListing: listing })} />
   }
 
   function applyListingAssistantSuggestions(suggestions = {}) {
@@ -9129,21 +9149,26 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
         </main>
       )}
 
-      <button className="app-assistant-launcher" type="button" aria-label={appAssistantOpen ? 'Close Jouft assistant' : 'Open Jouft assistant'} title="Jouft assistant" onClick={() => setAppAssistantOpen((open) => !open)}><span className="app-assistant-logo-j" aria-hidden="true"><img src={jouftLogo} alt="" /></span></button>
-      {appAssistantOpen && (
+      {CONVERSATION_PILOT_ENABLED && activeTab === 'assistant' && <section className="assistant-page"><header><h1>Jouft assistant</h1><button className="ghost small" onClick={() => navigateBack('market')}>Back</button></header><AssistantConversation key={session.id || session.email || 'local'} client={conversationClient.client} getAuth={async () => conversationClient.authContext(clerkEnabled && getBearerToken ? await getBearerToken() : '')} onPhotos={openAssistantListingPhotos} renderWorkflow={LISTING_AGENT_ENABLED ? renderConversationWorkflow : null} /></section>}
+      {activeTab !== 'assistant' && <button className="app-assistant-launcher" type="button" aria-label={appAssistantOpen ? 'Close Jouft assistant' : 'Open Jouft assistant'} title="Jouft assistant" onClick={() => CONVERSATION_PILOT_ENABLED ? navigateToTab('assistant') : setAppAssistantOpen((open) => !open)}><span className="app-assistant-logo-j" aria-hidden="true"><img src={jouftLogo} alt="" /></span></button>}
+      {appAssistantOpen && !CONVERSATION_PILOT_ENABLED && (
         <aside className="app-assistant-panel" aria-label="Jouft assistant">
           <header><div><small>JOUFT ASSISTANT</small><strong>{LISTING_AGENT_ENABLED && appAssistantListingFlow ? (appAssistantReviewListingId ? 'Review your listing' : 'Create your listing') : 'What would you like to do?'}</strong></div><button type="button" aria-label="Close assistant" onClick={() => setAppAssistantOpen(false)}>×</button></header>
+          {CONVERSATION_PILOT_ENABLED ? <AssistantConversation key={session.id || session.email || 'local'} client={conversationClient.client} getAuth={async () => conversationClient.authContext(clerkEnabled && getBearerToken ? await getBearerToken() : '')} onPhotos={openAssistantListingPhotos} /> : <>
           <div ref={listingAssistantMessagesRef} className="app-assistant-transcript" aria-live="polite">
             {appAssistantMessages.length === 0 && <div className="app-assistant-turn assistant"><span aria-hidden="true"><LogoJ small /></span><p>I can help create a listing, find matches, start a trade, or check shipping. Just tell me what you need.</p></div>}
             {!(LISTING_AGENT_ENABLED && appAssistantListingFlow) && appAssistantMessages.map((message, index) => <div className={`app-assistant-turn ${message.role}`} key={message.message_id || `${message.role}-${index}`}>
               {message.role === 'assistant' && <span aria-hidden="true"><LogoJ small /></span>}
               <div><p>{message.content}</p>
-                {message.listings?.length > 0 && <div className="app-assistant-results">{message.listings.map((listing, listingIndex) => <article key={listing.listing_id}>{listing.image && <img src={listing.image} alt={listing.title || 'Listing'} />}<div><small>{listingIndex + 1} · {listing.brand || 'Unknown brand'}</small><strong>{listing.title}</strong><span>{listing.size || 'Size not provided'} · {displayConditionLabel(listing.condition)}</span></div></article>)}</div>}
+                {message.listings?.length > 0 && <div className="app-assistant-results">{message.listings.map((listing, listingIndex) => <Fragment key={`${listing.match_source_listing_id || ''}-${listing.listing_id}`}>
+                  {listing.match_source_title && listing.match_source_listing_id !== message.listings[listingIndex - 1]?.match_source_listing_id && <h4>Matches for {listing.match_source_title}</h4>}
+                  <article>{listing.image && <button type="button" className="app-assistant-photo-button" aria-label={`View photos of ${listing.title}`} onClick={() => openAssistantListingPhotos(listing)}><img src={listing.image} alt={listing.title || 'Listing'} /></button>}<div><small>{listingIndex + 1} · {listing.brand || 'Unknown brand'}</small><strong>{listing.title}</strong><span>{listing.size || 'Size not provided'} · {displayConditionLabel(listing.condition)}</span></div></article></Fragment>)}</div>}
                 {message.trades?.length > 0 && <div className="app-assistant-status-list">{message.trades.map((trade) => <article key={trade.offer_id}><strong>{trade.target_listing?.title || 'Trade offer'}</strong><span>Status: {trade.status}</span></article>)}</div>}
                 {message.shipments?.length > 0 && <div className="app-assistant-status-list">{message.shipments.map((shipment) => <article key={shipment.shipment_id}><strong>{shipment.carrier || 'Shipment'} · {shipment.tracking_number || 'Tracking pending'}</strong><span>{shipment.tracking_status_details || shipment.tracking_status || shipment.status}</span></article>)}</div>}
+                {message.requires_confirmation && index === appAssistantMessages.length - 1 && appAssistantContext.pending_action && <div className="listing-chat-quick-replies" role="group" aria-label="Confirm action"><button type="button" className="primary small" disabled={appAssistantBusy} onClick={() => sendAppAssistantMessage('Yes')}>Yes</button><button type="button" className="ghost small" disabled={appAssistantBusy} onClick={() => sendAppAssistantMessage('No')}>No</button></div>}
               </div>
             </div>)}
-            {LISTING_AGENT_ENABLED && appAssistantListingFlow && <ListingAgentChat onOpenPhotos={({ images, title, listing }) => openZoomedListingImage({ src: images[0], images, alt: title, disclosureListing: listing })} initialListingId={appAssistantReviewListingId} newSessionRequestId={appAssistantNewSessionRequestId} onStartNew={() => { setAppAssistantReviewListingId(null); setAppAssistantNewSessionRequestId(null) }} onExit={() => { setAppAssistantListingFlow(false); setAppAssistantReviewListingId(null); setAppAssistantNewSessionRequestId(null) }} apiBaseUrl={apiBaseUrl} apiKey={apiKey} getBearerToken={getBearerToken} clerkEnabled={clerkEnabled} />}
+            {LISTING_AGENT_ENABLED && appAssistantListingFlow && <ListingAgentChat onContext={context => setAppAssistantContext(previous => ({ ...previous, ...context, pending_action: null }))} onOpenPhotos={({ images, title, listing }) => openZoomedListingImage({ src: images[0], images, alt: title, disclosureListing: listing })} initialListingId={appAssistantReviewListingId} newSessionRequestId={appAssistantNewSessionRequestId} onStartNew={() => { setAppAssistantReviewListingId(null); setAppAssistantNewSessionRequestId(null) }} onExit={() => { setAppAssistantListingFlow(false); setAppAssistantReviewListingId(null); setAppAssistantNewSessionRequestId(null) }} apiBaseUrl={apiBaseUrl} apiKey={apiKey} getBearerToken={getBearerToken} clerkEnabled={clerkEnabled} />}
             {appAssistantListingFlow && !LISTING_AGENT_ENABLED && <div className="app-assistant-listing-flow">
               <div className="app-assistant-turn assistant"><span aria-hidden="true"><LogoJ small /></span><div><p>{createImageSlots.filter(Boolean).length ? `${createImageSlots.filter(Boolean).length}/6 photos added.` : 'Add clear photos of the item to begin.'}</p><label className="ghost small listing-chat-upload"><span>{createImageSlots.filter(Boolean).length ? 'Add more photos' : 'Choose photos'}</span><input type="file" accept="image/*" multiple onChange={(event) => { handleCreatePhotoFiles(event.target.files); event.target.value = '' }} /></label></div></div>
               {createSlotPreviewUrls.filter(Boolean).length > 0 && <div className="app-assistant-photo-row">{createSlotPreviewUrls.filter(Boolean).map((url, index) => {
@@ -9192,6 +9217,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
           </div>
           {!(LISTING_AGENT_ENABLED && appAssistantListingFlow) && <>
           <form className="app-assistant-compose" onSubmit={(event) => { event.preventDefault(); if (appAssistantListingFlow) { const value = appAssistantInput; setAppAssistantInput(''); void sendListingAssistantMessage(value) } else { void sendAppAssistantMessage() } }}><textarea value={appAssistantInput} onChange={(event) => setAppAssistantInput(event.target.value)} placeholder={appAssistantListingFlow ? (listingChatStage === 'review' ? 'Describe a change or say “publish it”' : listingChatStage === 'published' ? 'Choose a match or ask what to do next' : 'Reply about your listing') : 'Ask Jouft anything'} rows={2} disabled={appAssistantBusy || listingAssistantBusy || createImageRoleBusy || listingChatStage === 'analyzing'} /><button className="primary small" type="submit" disabled={!appAssistantInput.trim() || appAssistantBusy || listingAssistantBusy || createImageRoleBusy || listingChatStage === 'analyzing'}>Send</button></form>
+          </>}
           </>}
         </aside>
       )}
@@ -9590,7 +9616,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
 
             </div>}
 
-            {createListingMode === 'chat' && LISTING_AGENT_ENABLED && <ListingAgentChat onOpenPhotos={({ images, title, listing }) => openZoomedListingImage({ src: images[0], images, alt: title, disclosureListing: listing })} apiBaseUrl={apiBaseUrl} apiKey={apiKey} getBearerToken={getBearerToken} clerkEnabled={clerkEnabled} />}
+            {createListingMode === 'chat' && LISTING_AGENT_ENABLED && <ListingAgentChat onContext={context => setAppAssistantContext(previous => ({ ...previous, ...context, pending_action: null }))} onOpenPhotos={({ images, title, listing }) => openZoomedListingImage({ src: images[0], images, alt: title, disclosureListing: listing })} apiBaseUrl={apiBaseUrl} apiKey={apiKey} getBearerToken={getBearerToken} clerkEnabled={clerkEnabled} />}
             {createListingMode === 'chat' && !LISTING_AGENT_ENABLED && <section className="listing-assistant is-open listing-chat-create">
               {createImageRoleError && <div role="status"><p>{createImageRoleError}</p>{renderManualPhotoCategory()}</div>}
                 <div className="listing-chat-header">

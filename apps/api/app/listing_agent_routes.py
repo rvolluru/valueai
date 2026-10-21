@@ -243,6 +243,28 @@ class Services:
         base = digest([source, target, self.db.get_user_profile_quiz(self.principal.subject)])
         return source, target, base
 
+    async def view_photos(self, state, target_id):
+        from .main import _app_assistant_listing_card
+        source = self.listing(state)
+        targets = (await self.find_matches(state))['items'] if state['stage'] == 'published' and state.get('matches_requested') else []
+        allowed_ids = [item['listing_id'] for item in targets]
+        if not target_id:
+            focus = state.get('selected_photo_listing_id') or (state.get('trade_proposal') or {}).get('target', {}).get('listing_id')
+            if focus and focus in [source['listing_id'], *allowed_ids]:
+                target_id = focus
+            elif len(targets) == 1:
+                target_id = targets[0]['listing_id']
+            elif state.get('matches_requested'):
+                return {'needs_selection': True}
+            else:
+                target_id = source['listing_id']
+        if target_id != source['listing_id'] and target_id not in allowed_ids:
+            raise HTTPException(404, 'This item is not an available displayed match')
+        from .assistant_reads import saved_listing
+        item = saved_listing(target_id, subject=self.principal.subject, db=self.db)
+        return {**_app_assistant_listing_card(item, self.settings), 'description': item.get('description'),
+                'estimated_value': item.get('estimated_value')}
+
     async def prepare_trade(self, state, target_id):
         source, target, base = await self._trade_context(state, target_id)
         token = digest([base, str(uuid.uuid4())])

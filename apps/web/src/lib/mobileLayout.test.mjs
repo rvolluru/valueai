@@ -3,6 +3,43 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+test('trade and shipment rows without images use the full text column', () => {
+  const source = readFileSync(new URL('../components/AssistantConversation.jsx', import.meta.url), 'utf8');
+  assert.match(source, /className=\{item.image \? 'has-image' : 'is-text-only'\}/);
+  assert.match(css, /\.app-assistant-results article\.is-text-only\s*\{[^}]*grid-template-columns: minmax\(0, 1fr\)/);
+  assert.match(css, /\.app-assistant-results article\s*\{[^}]*grid-template-columns: 58px minmax\(0, 1fr\)/);
+});
+test('listing photo choices use Jouft cards with compact accessible radio controls', () => {
+  const web = readFileSync(new URL('../components/ListingAgentChat.jsx', import.meta.url), 'utf8');
+  const mobile = readFileSync(new URL('../../../mobile/src/components/ListingAgentChat.jsx', import.meta.url), 'utf8');
+  assert.match(web, /fieldset className="listing-mannequin-choice" disabled=\{view.busy\}/);
+  assert.match(web, /listing-choice-card.*is-selected/);
+  assert.match(web, /type="radio".*checked=\{mannequinChoice === choice\}/);
+  assert.match(css, /\.listing-choice-card input\[type="radio"\][^{]*\{[^}]*flex: 0 0 18px;[^}]*width: 18px;[^}]*height: 18px/);
+  assert.match(css, /\.listing-mannequin-layout\s*\{[^}]*grid-template-columns: minmax\(0, 1fr\);/);
+  assert.match(mobile, /accessibilityRole="radio" accessibilityState=\{\{ checked: mannequinChoice === choice/);
+});
+test('threaded listing messages use the main transcript and inline condition choices on both clients', () => {
+  for (const client of ['web', 'mobile']) {
+    const parent = readFileSync(new URL(`../../../${client}/src/components/AssistantConversation.jsx`, import.meta.url), 'utf8');
+    const child = readFileSync(new URL(`../../../${client}/src/components/ListingAgentChat.jsx`, import.meta.url), 'utf8');
+    assert.match(parent, /chronologicalChat/);
+    assert.match(parent, /setWorkflowBusy, setListingTranscript/);
+    assert.match(parent, /setListingTranscript, setPhotoPanel/);
+    assert.match(parent, /index === panelIndex.*inlinePhotos/);
+    assert.doesNotMatch(parent, /index === panelIndex.*listingPanel/);
+    assert.match(parent, /renderResults\(message.result_sets\)/);
+    assert.match(parent, /timeline_kind === 'actions' && message.isCurrent/);
+    assert.match(parent, /linkedTranscript\?\.conditionRequested/);
+    assert.doesNotMatch(parent, /guided workflow|Continue listing workflow/);
+    assert.match(child, /transcriptCallback\.current\?\./);
+    assert.match(child, /!hideComposer.*(?:listing-agent-history|showHistory)/);
+  }
+});
+test('short user replies have a full-width row and do not shrink to single-character bubbles', () => {
+  assert.match(css, /\.assistant-conversation-main \.app-assistant-turn\s*\{[^}]*width: 100%/);
+  assert.match(css, /\.app-assistant-turn\.user \.assistant-message-body\s*\{[^}]*flex: 0 0 auto;[^}]*min-width: 3\.5em/);
+});
 test('agent content stays in the assistant transcript scroll area without card clipping', () => {
   const transcript = css.match(/\.app-assistant-transcript\s*\{([^}]+)\}/)[1];
   assert.match(transcript, /grid-auto-rows: max-content/);
@@ -37,7 +74,7 @@ test('agent review uses current gallery and a separate explicit publication cont
     assert.doesNotMatch(source, /setEditFields|proposeEdits\(editFields\)/);
     assert.match(source, /Keep as draft/);
     assert.match(source, /Reply “Save changes”/);
-    assert.match(source, /controller.load\(initialListingId, newSessionRequestId\)/);
+    assert.match(source, /controller.load\(initialListingId, newSessionRequestId, initialSessionId\)/);
   }
 });
 
@@ -90,13 +127,28 @@ test('match photos open existing full-screen viewers without navigating away fro
   const mobile = readFileSync(new URL('../../../mobile/src/components/ListingAgentChat.jsx', import.meta.url), 'utf8');
   for (const source of [web, mobile]) {
     assert.match(source, /View full-size photos of/);
-    assert.match(source, /onOpenPhotos\?\.\(/);
+    assert.match(source, /photoCallback.current\?\.\(/);
+    assert.match(source, /controller.viewPhotos\(item.listing_id\)/);
     assert.match(source, /matchPhotoUrls\(item,/);
   }
   const app = readFileSync(new URL('../App.jsx', import.meta.url), 'utf8');
   const mobileApp = readFileSync(new URL('../../../mobile/App.js', import.meta.url), 'utf8');
   assert.match(app, /onOpenPhotos=.*openZoomedListingImage/);
   assert.match(mobileApp, /onOpenPhotos=.*openExpandedGallery\(images, 0\)/);
+});
+
+test('listing chat exports context without transferring mutation approvals', () => {
+  for (const path of ['../components/ListingAgentChat.jsx', '../../../mobile/src/components/ListingAgentChat.jsx']) {
+    const source = readFileSync(new URL(path, import.meta.url), 'utf8');
+    assert.match(source, /conversation_context/);
+    assert.match(source, /openedPhotoRequest/);
+  }
+  for (const path of ['../App.jsx', '../../../mobile/App.js']) {
+    const source = readFileSync(new URL(path, import.meta.url), 'utf8');
+    assert.match(source, /onContext=.*pending_action: null/);
+    assert.match(source, /result\??\.photo_view/);
+    assert.match(source, /openAssistantListingPhotos/);
+  }
 });
 
 test('matched-item trade requests show both items and require a separate send control', () => {
@@ -122,6 +174,15 @@ test('mobile landing header replaces desktop grid columns instead of flex direct
   const header = responsive.match(/\.auth-hero-topbar\s*\{([^}]+)\}/)[1];
   assert.match(header, /grid-template-columns:\s*minmax\(0, 1fr\)/);
   assert.doesNotMatch(header, /flex-direction/);
+});
+
+test('chat confirmations offer Yes and No only on the latest pending action', () => {
+  for (const path of ['../App.jsx', '../../../mobile/App.js']) {
+    const app = readFileSync(new URL(path, import.meta.url), 'utf8');
+    assert.match(app, /message.requires_confirmation && index === appAssistantMessages.length - 1 && appAssistantContext.pending_action/);
+    assert.match(app, /sendAppAssistantMessage\('Yes'\)/);
+    assert.match(app, /sendAppAssistantMessage\('No'\)/);
+  }
 });
 
 test('profile layout can respond to mobile widths instead of an inline desktop grid', () => {

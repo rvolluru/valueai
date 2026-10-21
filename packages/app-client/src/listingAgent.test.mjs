@@ -1,6 +1,33 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createListingAgentController } from './listingAgent.js';
+import { createListingAgentController, photoCoverageSummary } from './listingAgent.js';
+
+test('coverage summary uses saved roles, distinguishes requirements and recommendations, and respects waivers', () => {
+  const summary = photoCoverageSummary({ photos: [{}, {}], waivers: ['brand_label'], evidence: {
+    status: 'checked', category: 'shoes', images: [
+      { image_index: 0, role: 'full_front', additional_roles: ['full_front', 'side_or_profile'] },
+      { image_index: 1, role: 'brand_label' }, { image_index: 9, role: 'shoe_sole' }],
+    missing_required: ['brand_label', 'shoe_sole'], missing_recommended: ['condition_or_wear'], warning: 'Low light',
+  }});
+  assert.ok(summary.includes('Photo 1: Full front, Side/profile.'));
+  assert.ok(summary.includes('Photo 2: Brand label.'));
+  assert.ok(summary.includes('Required before continuing: Shoe sole (bottom).'));
+  assert.ok(summary.includes('Recorded as unavailable: Brand label.'));
+  assert.ok(summary.includes('Optional recommendations (not required): Condition/wear.'));
+  assert.ok(summary.includes('Assessment note: Low light'));
+  assert.ok(!summary.some(line => line.startsWith('Photo 10:')));
+});
+
+test('coverage summary never presents skipped or invalidated assessment as success', () => {
+  assert.deepEqual(photoCoverageSummary({ photos: [] }), []);
+  assert.match(photoCoverageSummary({ photos: [{}], evidence: null }).join(' '), /not been assessed/);
+  for (const status of ['timed_out', 'unavailable']) {
+    const text = photoCoverageSummary({ photos: [{}], evidence: { status, missing_required: [] } }).join(' ');
+    assert.match(text, /Coverage was not verified/);
+    assert.doesNotMatch(text, /All required/);
+  }
+  assert.ok(photoCoverageSummary({ photos: [{}], evidence: { status: 'checked', missing_required: [] } }).includes('All required photo views are covered.'));
+});
 
 function setup(overrides = {}) {
   const session = { session_id: 'one', revision: 4, stage: 'collecting', messages: [], photos: [] };
@@ -14,6 +41,18 @@ function setup(overrides = {}) {
   return { controller: createListingAgentController(client, async () => ({ bearerToken: 'token' }), next => { view = next; }),
     get view() { return view; }, session };
 }
+
+test('parent-linked workflow loads its exact session instead of latest or creating another', async () => {
+  const calls = [];
+  const fixture = setup({
+    getActiveListingAgentSession: async () => { throw Error('Must not adopt latest'); },
+    startListingAgentSession: async () => { throw Error('Must not create'); },
+    getListingAgentSession: async id => { calls.push(id); return { session_id: id, revision: 2 }; },
+  });
+  await fixture.controller.load(null, null, 'thread-owned-child');
+  assert.deepEqual(calls, ['thread-owned-child']);
+  assert.equal(fixture.view.session.session_id, 'thread-owned-child');
+});
 
 test('network retry reuses exact message ID, revision and payload', async () => {
   const calls = [];
@@ -210,4 +249,17 @@ test('trade preparation and sending are separate, with retry-safe exact trade ap
   assert.deepEqual(calls[1], calls[2]);
   assert.equal(calls[1].trade_token, 'exact-trade-token');
   assert.equal(calls[1].publication_token, undefined);
+});
+
+test('photo read requests identify the item without carrying mutation approvals', async () => {
+  const calls = [];
+  const fixture = setup({ turnWithListingAgent: async (id, payload) => {
+    calls.push(payload); return { session_id: id, revision: 8 };
+  } });
+  await fixture.controller.load();
+  await fixture.controller.viewPhotos('displayed-match');
+  assert.equal(calls[0].photo_listing_id, 'displayed-match');
+  assert.equal(calls[0].trade_token, undefined);
+  assert.equal(calls[0].publication_token, undefined);
+  assert.equal(calls[0].edit_token, undefined);
 });

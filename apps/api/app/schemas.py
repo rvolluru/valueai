@@ -133,6 +133,11 @@ class AppAssistantContext(BaseModel):
     marketplace_result_ids: list[str] = Field(default_factory=list, max_length=20)
     closet_result_ids: list[str] = Field(default_factory=list, max_length=20)
     selected_listing_id: str | None = Field(default=None, max_length=120)
+    source_listing_id: str | None = Field(default=None, max_length=120)
+    listing_agent_session_id: str | None = Field(default=None, max_length=120)
+    listing_stage: str | None = Field(default=None, max_length=40)
+    pending_operation: str | None = Field(default=None, max_length=40)
+    displayed_domain: Literal['closet', 'marketplace'] | None = None
     pending_action: dict | None = None
     active_screen: str | None = Field(default=None, max_length=80)
 
@@ -147,10 +152,11 @@ class AppAssistantResponse(BaseModel):
     intent: Literal[
         "create_listing", "review_listing", "publish_listing", "show_closet", "search_marketplace", "show_tradeable_items", "show_matches",
         "prepare_trade", "confirm_action", "cancel_action", "show_trades",
-        "track_shipping", "navigate", "help",
+        "track_shipping", "navigate", "help", "view_photos", "view_item",
     ] = "help"
     navigation: Literal["create", "closet", "marketplace", "inbox", "profile"] | None = None
     review_listing_id: str | None = None
+    photo_view: dict | None = None
     listings: list[dict] = Field(default_factory=list)
     trades: list[dict] = Field(default_factory=list)
     shipments: list[dict] = Field(default_factory=list)

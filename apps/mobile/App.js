@@ -28,6 +28,9 @@ import { appendListingPhotos, remainingPhotoSlots } from './src/lib/listingPhoto
 import * as ImageManipulator from 'expo-image-manipulator';
 import NotificationsScreen from './src/components/NotificationsScreen';
 import ListingAgentChat from './src/components/ListingAgentChat';
+import AssistantConversation from './src/components/AssistantConversation';
+import ThreadListingWorkflow from './src/components/ThreadListingWorkflow';
+import { matchPhotoUrls } from '../../packages/app-client/src/matchPhotos';
 import { nextGalleryIndex } from './src/lib/galleryPaging.mjs';
 import { withPhotoCheckTimeout } from '../../packages/app-client/src/photoCheck';
 import * as WebBrowser from 'expo-web-browser';
@@ -51,6 +54,7 @@ WebBrowser.maybeCompleteAuthSession();
 
 const API_DEFAULT = process.env.EXPO_PUBLIC_API_BASE_URL || Constants.expoConfig?.extra?.apiBaseUrl || 'http://127.0.0.1:8000';
 const LISTING_AGENT_ENABLED = process.env.EXPO_PUBLIC_LISTING_AGENT_ENABLED === 'true';
+const CONVERSATION_PILOT_ENABLED = process.env.EXPO_PUBLIC_ASSISTANT_CONVERSATIONS_ENABLED === 'true';
 const CLERK_PUBLISHABLE_KEY = Constants.expoConfig?.extra?.clerkPublishableKey || process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY || '';
 const TEMP_SHOW_PROFILE_QUESTIONNAIRE_ON_LOGIN = false;
 const ANALYSIS_FAILED_MESSAGE = 'Analysis failed. Please manually update the listing details.';
@@ -1467,8 +1471,8 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     }
   }
 
-  async function sendAppAssistantMessage() {
-    const content = appAssistantInput.trim();
+  async function sendAppAssistantMessage(quickReply) {
+    const content = (typeof quickReply === 'string' ? quickReply : appAssistantInput).trim();
     if (!content || appAssistantBusy) return;
     const userMessage = { role: 'user', content, message_id: `app-${Date.now()}-${Math.random().toString(36).slice(2, 10)}` };
     const nextMessages = [...appAssistantMessages, userMessage].slice(-20);
@@ -1478,6 +1482,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     setAppAssistantError('');
     try {
       const result = await apiClient.chatWithAppAssistant({ messages: nextMessages, context: appAssistantContext }, await authContext());
+      if (result?.photo_view?.images?.length) openExpandedGallery(matchPhotoUrls(result.photo_view, apiBaseUrl), 0);
       setAppAssistantContext(result?.context || appAssistantContext);
       setAppAssistantMessages((current) => [...current, {
         role: 'assistant',
@@ -1485,6 +1490,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
         listings: result?.listings || [],
         trades: result?.trades || [],
         shipments: result?.shipments || [],
+        requires_confirmation: !!result?.requires_confirmation,
       }].slice(-20));
       if (LISTING_AGENT_ENABLED && result?.review_listing_id) {
         setAppAssistantNewSessionRequestId(null);
@@ -1505,6 +1511,10 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     } finally {
       setAppAssistantBusy(false);
     }
+  }
+
+  function renderConversationWorkflow(id, onExit, onBusyChange, onTranscript, onPhotoPanel) {
+    return <ThreadListingWorkflow key={id} onPhotoPanel={onPhotoPanel} onTranscript={onTranscript} initialSessionId={id} client={apiClient} apiBaseUrl={apiBaseUrl} getAuth={authContext} styles={styles} onExit={onExit} onBusyChange={onBusyChange} onOpenPhotos={({ images: urls }) => openExpandedGallery(urls, 0)} />;
   }
 
   function applyListingAssistantSuggestions(suggestions = {}) {
@@ -1710,6 +1720,13 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     setSelectedGalleryImages(gallery);
     setSelectedGalleryIndex(safeIndex);
     setSelectedGalleryImage(gallery[safeIndex]);
+  }
+
+  function openAssistantListingPhotos(listing) {
+    const photos = matchPhotoUrls(listing, apiBaseUrl);
+    if (!photos.length) return;
+    setAppAssistantContext(previous => ({ ...previous, selected_listing_id: listing.listing_id }));
+    openExpandedGallery(photos, 0);
   }
 
   function closeExpandedGallery() {
@@ -4902,7 +4919,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                 </View>
             )}
 
-            {!editingListingId && createListingMode === 'chat' && LISTING_AGENT_ENABLED ? <ListingAgentChat client={apiClient} apiBaseUrl={apiBaseUrl} getAuth={authContext} images={images} onPickPhotos={pickImages} onClearPhotos={() => setImages([])} styles={styles} /> : null}
+            {!editingListingId && createListingMode === 'chat' && LISTING_AGENT_ENABLED ? <ListingAgentChat onContext={context => setAppAssistantContext(previous => ({ ...previous, ...context, pending_action: null }))} onOpenPhotos={({ images }) => openExpandedGallery(images, 0)} client={apiClient} apiBaseUrl={apiBaseUrl} getAuth={authContext} images={images} onPickPhotos={pickImages} onClearPhotos={() => setImages([])} styles={styles} /> : null}
             {!editingListingId && createListingMode === 'chat' && !LISTING_AGENT_ENABLED ? (
               <View style={styles.listingAssistantPanel}>
                 <View style={styles.listingChatHeader}>
@@ -6508,18 +6525,22 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
             <View><Text style={styles.offerLaneLabel}>JOUFT ASSISTANT</Text><Text style={styles.appAssistantTitle}>What would you like to do?</Text></View>
             <TouchableOpacity style={styles.secondaryBtnCompact} onPress={() => setAppAssistantOpen(false)} accessibilityLabel="Close assistant"><Ionicons name="close" size={22} color={theme.text} /></TouchableOpacity>
           </View>
+          {CONVERSATION_PILOT_ENABLED ? <AssistantConversation key={clerkUserProfile?.id || clerkUserProfile?.email || 'local'} client={apiClient} getAuth={authContext} onPhotos={openAssistantListingPhotos} styles={styles} renderWorkflow={LISTING_AGENT_ENABLED ? renderConversationWorkflow : null} /> : <>
           <ScrollView style={styles.appAssistantTranscript} contentContainerStyle={styles.appAssistantTranscriptContent} keyboardShouldPersistTaps="handled">
             {appAssistantMessages.length === 0 ? <View style={styles.appAssistantTurn}><View style={styles.listingChatAvatar}><LogoJ small /></View><View style={styles.appAssistantBubble}><Text style={styles.listingAssistantMessageText}>I can help create a listing, find matches, start a trade, or check shipping. Just tell me what you need.</Text></View></View> : null}
             {appAssistantMessages.map((message, index) => <View key={message.message_id || `${message.role}-${index}`} style={[styles.appAssistantTurn, message.role === 'user' && styles.appAssistantUserTurn]}>
               {message.role === 'assistant' ? <View style={styles.listingChatAvatar}><LogoJ small /></View> : null}
               <View style={[styles.appAssistantBubble, message.role === 'user' && styles.appAssistantUserBubble]}>
                 <Text style={[styles.listingAssistantMessageText, message.role === 'user' && styles.listingAssistantUserMessageText]}>{message.content}</Text>
-                {(message.listings || []).map((listing, listingIndex) => <View key={listing.listing_id} style={styles.appAssistantResultRow}>{listing.image ? <Image source={{ uri: listing.image }} style={styles.appAssistantResultImage} /> : null}<View style={styles.tradeTargetCopy}><Text style={styles.offerLaneLabel}>{listingIndex + 1} • {listing.brand || 'Unknown brand'}</Text><Text style={styles.listingAssistantTitle} numberOfLines={2}>{listing.title}</Text><Text style={styles.helperText}>{listing.size || 'Size not provided'} • {displayConditionLabel(listing.condition)}</Text></View></View>)}
+                {(message.listings || []).map((listing, listingIndex) => <View key={`${listing.match_source_listing_id || ''}-${listing.listing_id}`}>
+                  {listing.match_source_title && listing.match_source_listing_id !== message.listings[listingIndex - 1]?.match_source_listing_id ? <Text style={styles.listingAssistantTitle}>Matches for {listing.match_source_title}</Text> : null}
+                  <View style={styles.appAssistantResultRow}>{listing.image ? <TouchableOpacity accessibilityRole="button" accessibilityLabel={`View photos of ${listing.title}`} onPress={() => openAssistantListingPhotos(listing)}><Image source={{ uri: listing.image }} style={styles.appAssistantResultImage} /></TouchableOpacity> : null}<View style={styles.tradeTargetCopy}><Text style={styles.offerLaneLabel}>{listingIndex + 1} • {listing.brand || 'Unknown brand'}</Text><Text style={styles.listingAssistantTitle} numberOfLines={2}>{listing.title}</Text><Text style={styles.helperText}>{listing.size || 'Size not provided'} • {displayConditionLabel(listing.condition)}</Text></View></View></View>)}
                 {(message.trades || []).map((trade) => <View key={trade.offer_id} style={styles.appAssistantStatusRow}><Text style={styles.listingAssistantTitle}>{trade.target_listing?.title || 'Trade offer'}</Text><Text style={styles.helperText}>Status: {trade.status}</Text></View>)}
                 {(message.shipments || []).map((shipment) => <View key={shipment.shipment_id} style={styles.appAssistantStatusRow}><Text style={styles.listingAssistantTitle}>{shipment.carrier || 'Shipment'} • {shipment.tracking_number || 'Tracking pending'}</Text><Text style={styles.helperText}>{shipment.tracking_status_details || shipment.tracking_status || shipment.status}</Text></View>)}
+                {message.requires_confirmation && index === appAssistantMessages.length - 1 && appAssistantContext.pending_action ? <View accessibilityLabel="Confirm action"><TouchableOpacity accessibilityRole="button" style={styles.primaryBtn} disabled={appAssistantBusy} onPress={() => sendAppAssistantMessage('Yes')}><Text style={styles.primaryBtnText}>Yes</Text></TouchableOpacity><TouchableOpacity accessibilityRole="button" style={styles.secondaryBtnCompact} disabled={appAssistantBusy} onPress={() => sendAppAssistantMessage('No')}><Text style={styles.secondaryBtnText}>No</Text></TouchableOpacity></View> : null}
               </View>
             </View>)}
-            {appAssistantListingFlow && LISTING_AGENT_ENABLED ? <ListingAgentChat onOpenPhotos={({ images }) => openExpandedGallery(images, 0)} initialListingId={appAssistantReviewListingId} newSessionRequestId={appAssistantNewSessionRequestId} onOpenMatch={item => { setAppAssistantOpen(false); openListingDetails(item, 'marketplace'); }} onStartNew={() => { setAppAssistantReviewListingId(null); setAppAssistantNewSessionRequestId(null); }} onExit={() => { setAppAssistantListingFlow(false); setAppAssistantReviewListingId(null); setAppAssistantNewSessionRequestId(null); }} client={apiClient} apiBaseUrl={apiBaseUrl} getAuth={authContext} images={images} onPickPhotos={pickImages} onClearPhotos={() => setImages([])} styles={styles} /> : null}
+            {appAssistantListingFlow && LISTING_AGENT_ENABLED ? <ListingAgentChat onContext={context => setAppAssistantContext(previous => ({ ...previous, ...context, pending_action: null }))} onOpenPhotos={({ images }) => openExpandedGallery(images, 0)} initialListingId={appAssistantReviewListingId} newSessionRequestId={appAssistantNewSessionRequestId} onOpenMatch={item => { setAppAssistantOpen(false); openListingDetails(item, 'marketplace'); }} onStartNew={() => { setAppAssistantReviewListingId(null); setAppAssistantNewSessionRequestId(null); }} onExit={() => { setAppAssistantListingFlow(false); setAppAssistantReviewListingId(null); setAppAssistantNewSessionRequestId(null); }} client={apiClient} apiBaseUrl={apiBaseUrl} getAuth={authContext} images={images} onPickPhotos={pickImages} onClearPhotos={() => setImages([])} styles={styles} /> : null}
             {appAssistantListingFlow && !LISTING_AGENT_ENABLED ? <View style={styles.appAssistantListingFlow}>
               {createImageRoleError ? <View style={styles.createGuidanceBlock}><Text style={styles.helperText}>{createImageRoleError}</Text>{renderManualPhotoCategory()}</View> : null}
               <View style={styles.appAssistantTurn}><View style={styles.listingChatAvatar}><LogoJ small /></View><View style={styles.appAssistantBubble}><Text style={styles.listingAssistantMessageText}>{images.length ? `${images.length}/6 photos added.` : 'Add clear photos of the item to begin.'}</Text><TouchableOpacity style={styles.secondaryBtnCompact} onPress={pickImages} disabled={images.length >= 6 || createImageRoleBusy}><Text style={styles.secondaryBtnText}>{images.length ? 'Add More Photos' : 'Choose Photos'}</Text></TouchableOpacity></View></View>
@@ -6536,6 +6557,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
           {!(LISTING_AGENT_ENABLED && appAssistantListingFlow) ? <>
           <View style={styles.appAssistantComposer}><TextInput style={[styles.input, styles.appAssistantInput]} value={appAssistantInput} onChangeText={setAppAssistantInput} placeholder={appAssistantListingFlow ? 'Reply about your listing' : 'Ask Jouft anything'} multiline editable={!appAssistantBusy && !listingAssistantBusy} /><TouchableOpacity style={[styles.primaryBtnCompact, (!appAssistantInput.trim() || appAssistantBusy || listingAssistantBusy) && styles.primaryBtnDisabled]} onPress={() => { if (appAssistantListingFlow) { const value = appAssistantInput; setAppAssistantInput(''); sendListingAssistantMessage(value); } else sendAppAssistantMessage(); }} disabled={!appAssistantInput.trim() || appAssistantBusy || listingAssistantBusy}><Ionicons name="arrow-up" size={20} color="#fff" /></TouchableOpacity></View>
           </> : null}
+          </>}
         </SafeAreaView>
       </Modal>
       <Modal

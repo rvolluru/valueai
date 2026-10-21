@@ -111,6 +111,18 @@ def test_deployment_gate_precedes_both_rollout_modes_and_uses_new_image():
     assert original["containerDefinitions"][0]["image"] == "old"
 
 
+def test_assistant_release_enables_build_and_api_flags_and_smokes_migrated_tables():
+    root = Path(__file__).resolve().parents[1]
+    workflow = (root / '.github/workflows/deploy-prod.yml').read_text()
+    docker = (root / 'apps/api/Dockerfile').read_text()
+    for flag in ('VITE_LISTING_AGENT_ENABLED', 'VITE_ASSISTANT_CONVERSATIONS_ENABLED'):
+        assert '--build-arg ' + flag + '=true' in workflow
+        assert 'ARG ' + flag + '="false"' in docker
+    for flag in ('LISTING_AGENT_ENABLED', 'ASSISTANT_CONVERSATIONS_ENABLED'):
+        assert 'upsert_env("' + flag + '"; "true")' in workflow
+    assert 'SELECT COUNT(*) FROM assistant_conversations' in workflow
+
+
 @pytest.mark.parametrize("exit_code", [0, 1, None])
 def test_deployment_runner_requires_successful_migration_task(monkeypatch, exit_code):
     root = Path(__file__).resolve().parents[1]

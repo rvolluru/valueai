@@ -1,6 +1,85 @@
 # Jouft listing analysis: complete process
 
-Updated October 20, 2026. This document explains the functional process: inputs,
+Release candidate — October 21, 2026: the threaded assistant, listing tools and
+chronological review UI described below are being prepared for production rollout.
+Migration `0010_assistant_conversations` runs before application rollout; the web
+build and API flags enable both assistant conversations and the listing agent.
+Production verification is pending; local-only notes below are not yet a claim
+of production availability. Existing form creation/evaluation and pricing-model
+routing remain unchanged.
+
+Local next-step guidance (not deployed): chat exposes missing required facts and
+the next specific question from saved state, including after a context/status read.
+Required evidence is requested before facts; optional recommendations do not block
+progress. If a model turn stops after a read without a pending intake question,
+bounded recovery uses existing saved evidence to set the next question. It does not
+repeat a provider coverage call outside the turn timeout or infer approval. Old
+sessions with no pending question still receive concrete read-only guidance.
+
+Current local chat timeline (October 21; not deployed): messages, uploaded photo
+sets, coverage results and review/confirmation states are ordered by saved event
+times, not current listing stage. Session JSON keeps up to 80 deduplicated,
+allowlisted presentation snapshots, including photo/coverage invalidation and
+subsequent assessments. Parent replies retain their produced result cards. Old
+untimed records use message-anchor inference (marked `inferred_time`), so exact
+historical timing is not claimed where unavailable. Historical review/trade cards
+are read-only; only the latest action card renders existing version-bound controls.
+Approval tokens are not stored in timeline snapshots, and normal listing analysis,
+valuation, ownership checks and confirmation rules are unchanged. This supersedes
+the earlier local panel-placement descriptions below.
+
+Local-only October 21, 2026: the threaded parent assistant can directly select
+guarded operations on its linked, owner-checked listing session: evidence assessment/
+removal, validated facts/corrections, analysis preparation/start/status, review and
+trade preparation/cancellation. Real uploads still use the upload control. These
+adapters reuse child request/tool ledgers, domain validation and bounded recovery;
+they do not create new pricing/coverage rules. Final approvals remain separate
+version-bound UI controls; model arguments cannot contain approval tokens or select
+publication/trade-send/edit-confirmation operations. The parent composer is shared
+with embedded upload/review controls, but child control history remains separate.
+No production deployment, regular form change or automatic revaluation is included.
+The local threaded UI now projects linked listing messages into the main transcript,
+without nested history. Shared messages are deduplicated, uploads display as “Added
+photos,” and current condition choices send normal parent-chat messages. New event
+timestamps aid ordering; older records use shared-message anchors. This presentation
+does not merge approval ledgers or change analysis/publication authorization.
+During intake the photo panel follows the upload message before the next evidence/
+fact question; condition choices are attached to their question. Review and approval
+controls remain at the current end rather than at an old upload.
+Local web/mobile photo panels show the persisted coverage assessment: category,
+per-photo roles, missing required views, waived/unavailable views, optional
+recommendations and warnings. Invalidated evidence is shown as not assessed;
+timeouts/unavailable checks are not presented as successful coverage. The summary
+explicitly distinguishes coverage from full item analysis/valuation, and adds no
+model call or change to requirements. Not deployed to production.
+Local confirmation placement uses separate photo/coverage and action-control
+slots from the same listing controller. Photos stay at the upload step; current
+analysis/publication/trade confirmation controls follow the latest message, after
+the user's fact answers. This is presentation only, not a new approval path.
+Local correction validation explicitly checks category-specific allowed sizes and
+shows domain rejections in chat without mislabeling them as stale revisions. The
+universal shoe-size example was removed. Rejected corrections do not save changes
+or rerun valuation; actual revision conflicts still require reload/review.
+Local chat correction replies explicitly report saved field values on success.
+For an already-published listing, size correction rejection reports “not saved,”
+the actual saved size, and the published-item editing limitation rather than asking
+the user to wait for analysis. Invalid sizes still follow category allowlists.
+
+Local threaded-chat entry point (not production): when both assistant-conversation
+and listing-agent flags are enabled, chat may start a new listing session or resume
+its owner-checked linked session/private-listing review. Opening a session does not
+create a listing, run analysis, publish or trade. The existing photo/fact collection,
+explicit analysis confirmation, worker dispatch, review and separate publication/
+trade approvals remain authoritative. Web/mobile reuse the existing listing-agent
+workflow inside the selected thread; parent state holds a session link, not copied
+approval tokens. Ordinary form creation/evaluation, pricing and reuse are unchanged.
+
+Local-only chat confirmation UX: general assistant publication and trade prompts
+provide Yes/No buttons for the current pending action. Yes follows the existing
+signed confirmation path; No cancels it. This does not bypass publication checks
+or change analysis or pricing.
+
+Updated October 21, 2026. This document explains the functional process: inputs,
 model calls, decisions, outputs and user review—not a reliability assessment.
 
 **Admin guide access (live-site verified October 19, 2026):** `/docs/listing-analysis`
@@ -935,6 +1014,26 @@ shows recent owned drafts, or a clear no-listing message if none exist; the user
 never asked to choose from empty results. Opening review never creates another listing
 or analysis job. Saved legacy analysis without a job may be reviewed as persisted
 analysis; missing analysis cannot authorize publication.
+
+Local shared context/capability layer: both model paths receive the same Jouft
+capability guide covering Closet, Marketplace, listing analysis, images, trades,
+shipping, profile and notifications, including unsupported-operation limits.
+Listing chat exports its source listing, displayed result IDs/domain, focused item,
+session ID, stage and pending-operation type to general chat on web/mobile. It does
+not export approval tokens/signatures. General chat owner-checks session metadata
+and rechecks referenced record visibility; private other-owner IDs cannot reveal
+details/photos. Handoffs clear old general pending-action approvals.
+
+The source owned item and focused Marketplace target are separate. General chat
+uses `view_photos` / `view_item`, and the listing agent uses read-only
+`view_listing_photos` / `view_listing_details`. A request for an already displayed
+matched item's photos cannot reverse the matching direction; an ambiguous group
+requires selection. Available photo reads return a gallery action to the existing
+full-screen viewer; transient request IDs prevent duplicate opens/reopening on
+ordinary session reload. Reads preserve price/analysis and do not grant publication
+or trade permission. General own-item matching delegates to the same matching
+service as listing chat. This is a shared context contract, not a merger of the
+general structured router/client transcript with the persisted listing-tool loop.
 
 Before publication, users describe corrections in chat; there is no embedded edit
 form. The `propose_listing_changes` tool validates user-quoted fields and saves an

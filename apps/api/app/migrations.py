@@ -91,6 +91,19 @@ def _listing_agent_sessions(db):
     db.commit()
 
 
+def _assistant_conversations(db):
+    db.execute('''CREATE TABLE IF NOT EXISTS assistant_conversations (
+        conversation_id TEXT PRIMARY KEY, owner_subject TEXT NOT NULL,
+        revision INTEGER NOT NULL, state_json TEXT NOT NULL,
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL)''')
+    db.execute('''CREATE TABLE IF NOT EXISTS assistant_conversation_turns (
+        conversation_id TEXT NOT NULL, request_id TEXT NOT NULL,
+        input_hash TEXT NOT NULL, result_json TEXT NOT NULL, created_at TEXT NOT NULL,
+        PRIMARY KEY (conversation_id, request_id))''')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_assistant_conversation_owner ON assistant_conversations (owner_subject, updated_at)')
+    db.commit()
+
+
 MIGRATIONS = (
     ("0001_application_schema", _baseline),
     ("0002_analysis_listing_links", _analysis_history),
@@ -101,6 +114,7 @@ MIGRATIONS = (
     ("0007_pricing_research_snapshots", _pricing_research_snapshots),
     ("0008_listing_pricing_models", _listing_pricing_models),
     ("0009_listing_agent_sessions", _listing_agent_sessions),
+    ("0010_assistant_conversations", _assistant_conversations),
 )
 
 

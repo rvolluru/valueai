@@ -129,6 +129,7 @@ class Settings(BaseSettings):
     openai_api_key: str | None = None
     listing_assistant_model: str = "gpt-5-mini"
     listing_agent_enabled: bool = False
+    assistant_conversations_enabled: bool = False
     listing_agent_max_steps: int = Field(default=6, ge=1, le=12)
     listing_agent_turn_timeout_s: float = Field(default=90, ge=10, le=180)
     listing_assistant_reasoning_effort: str = "low"

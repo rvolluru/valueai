@@ -19,7 +19,8 @@ def trade_ready(client, monkeypatch):
     monkeypatch.setattr(main, '_create_user_notification_and_push', lambda **kw: notifications.append(kw))
     state = review_ready(client)
     created = client.post('/v1/listings', headers=AUTH, json=dict(title='Matched jacket', brand='Chanel',
-        category='clothes', condition='New', size='M', estimated_value=123, status='Review')).json()
+        category='clothes', condition='New', size='M', estimated_value=123, status='Review',
+        image=state['photos'][0]['url'], images=[state['photos'][0]['url']])).json()
     db = get_db()
     db.execute('UPDATE listings SET owner_subject=?,status=? WHERE listing_id=?', ('other-seller', 'Active', created['listing_id']))
     db.commit()
@@ -283,6 +284,7 @@ def test_chat_size_correction_saves_without_confirmation_and_preserves_value(cli
     assert result['listing']['estimated_value'] == 123
     assert result['edit_proposal'] is None and result['stage'] == 'review_ready'
     assert 'Changes saved' in result['messages'][-1]['content']
+    assert 'Size saved as L.' in result['messages'][-1]['content']
     assert result['listing']['status'] == 'Review'
     assert len(get_db().fetchall('SELECT job_id FROM listing_analysis_jobs')) == 1
     assert client.post(path, headers=AUTH, json=payload).json() == result

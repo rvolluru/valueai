@@ -120,6 +120,8 @@ from .trade_match_agent import build_trade_match_suggestions
 
 app = FastAPI(title="ValueAI Fashion Analyzer", version="0.1.0")
 app.include_router(listing_agent_router)
+from .assistant_conversation_routes import router as assistant_conversation_router
+app.include_router(assistant_conversation_router)
 
 IMAGE_ROLE_VALUES = [
     "full_front", "full_back", "side_or_profile", "brand_label",
@@ -5971,61 +5973,19 @@ def list_closet_listing_marketplace_matches(
     db: Database = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ):
-    candidate = db.get_listing_by_id(listing_id)
-    if not candidate or str(candidate.get("owner_subject") or "") != principal.subject:
-        raise HTTPException(status_code=404, detail="Listing not found")
-
-    safe_limit = max(1, min(limit, 100))
-    safe_offset = max(0, offset)
-    viewer_profile = db.get_user_profile_quiz(principal.subject)
-    sent_offer_pairs = _sent_offer_match_pairs(db, principal.subject)
-    candidate_value = float(candidate.get("estimated_value") or 0)
-    matches: list[dict] = []
-    if str(candidate.get("status") or "").lower() == "active" and candidate_value > 0:
-        marketplace = db.list_recent_listings(
-            limit=5000,
-            include_analysis=False,
-            include_media=True,
-            active_only=True,
-        )
-        for target in marketplace:
-            target_id = str(target.get("listing_id") or "")
-            if not target_id or target_id == listing_id:
-                continue
-            if str(target.get("owner_subject") or "") == principal.subject:
-                continue
-            if (target_id, listing_id) in sent_offer_pairs:
-                continue
-            if not _listing_matches_viewer_preferences(target, viewer_profile):
-                continue
-            target_value = float(target.get("estimated_value") or 0)
-            if target_value <= 0:
-                continue
-            tolerance, _ = _trade_match_tolerance(target_value)
-            if abs(candidate_value - target_value) > tolerance:
-                continue
-            hydrated = _hydrate_listing_owner_name(db, target)
-            image = hydrated.get("image")
-            if isinstance(image, str) and image.startswith("s3://"):
-                hydrated["image"] = _presign_s3_uri(image, settings)
-            hydrated["images"] = [
-                _presign_s3_uri(value, settings) if isinstance(value, str) and value.startswith("s3://") else value
-                for value in (hydrated.get("images") or [])
-            ]
-            matches.append(hydrated)
-
-    total = len(matches)
-    page = matches[safe_offset:safe_offset + safe_limit]
-    next_offset = safe_offset + len(page)
-    has_more = next_offset < total
-    return {
-        "count": total,
-        "limit": safe_limit,
-        "offset": safe_offset,
-        "next_offset": next_offset if has_more else None,
-        "has_more": has_more,
-        "items": page,
-    }
+    from .assistant_reads import marketplace_matches
+    def hydrate(target):
+        hydrated = _hydrate_listing_owner_name(db, target)
+        image = hydrated.get('image')
+        if isinstance(image, str) and image.startswith('s3://'):
+            hydrated['image'] = _presign_s3_uri(image, settings)
+        hydrated['images'] = [
+            _presign_s3_uri(value, settings) if isinstance(value, str) and value.startswith('s3://') else value
+            for value in (hydrated.get('images') or [])]
+        return hydrated
+    return marketplace_matches(listing_id, subject=principal.subject, db=db, limit=limit, offset=offset,
+        matches_preferences=_listing_matches_viewer_preferences, tolerance_for=_trade_match_tolerance,
+        sent_pairs=_sent_offer_match_pairs, hydrate=hydrate)
 
 
 @app.get("/v1/listings/{listing_id}/offer-candidates")
@@ -8953,23 +8913,8 @@ def _app_assistant_listing_card(listing: dict, settings: Settings) -> dict:
                 return None
         return None
 
-    gallery: list[str] = []
-    for value in [listing.get("image"), *(listing.get("images") or [])]:
-        image_url = public_image(value)
-        if image_url and image_url not in gallery:
-            gallery.append(image_url)
-    return {
-        "listing_id": str(listing.get("listing_id") or listing.get("id") or ""),
-        "title": listing.get("title") or "Listing",
-        "brand": listing.get("brand") or "Unknown brand",
-        "category": listing.get("category"),
-        "condition": listing.get("condition"),
-        "size": listing.get("size"),
-        "status": listing.get("status"),
-        "owner_name": listing.get("owner_name"),
-        "image": gallery[0] if gallery else None,
-        "images": gallery[:6],
-    }
+    from .assistant_reads import listing_card
+    return listing_card(listing, public_image=public_image)
 
 
 APP_ASSISTANT_REFERENCE_STOP_WORDS = {
@@ -9008,6 +8953,44 @@ def _app_assistant_listing_candidates(reference: object, listings: list[dict]) -
         item for item in listings
         if all(term in " ".join(str(item.get(key) or "") for key in ("brand", "title", "category", "size")).casefold() for term in terms)
     ]
+
+
+def _app_assistant_photo_target(parsed, context, listings, message):
+    by_id = {item['listing_id']: item for item in listings}
+    displayed = [by_id[key] for key in context.result_listing_ids if key in by_id]
+    if re.search(r'\bmatched\b', message, re.I):
+        displayed = [by_id[key] for key in (context.marketplace_result_ids or context.result_listing_ids)
+                     if key in by_id and key != context.source_listing_id]
+    scope = parsed.get('listing_reference_scope')
+    scoped_ids = context.marketplace_result_ids if scope == 'marketplace' else context.closet_result_ids if scope == 'closet' else context.result_listing_ids
+    reference = parsed.get('listing_reference') or _app_assistant_indexed_reference(parsed.get('listing_reference_index'), scoped_ids)
+    # "Matched item" denotes the displayed target, never the source closet item.
+    if re.search(r'\bmatched\b', message, re.I) and reference == context.source_listing_id:
+        reference = None
+    if (re.search(r'\bmatched\s+(item|listing)\b', message, re.I)
+            and not parsed.get('listing_reference_index')):
+        reference = None  # Resolve generic references from actual focus/results, not a guessed ID.
+    if reference in by_id:
+        return by_id[reference], []
+    if reference:
+        return None, []
+    terms = [term for term in _app_assistant_reference_terms(message) if term not in {
+        'photos', 'photo', 'images', 'image', 'pictures', 'picture', 'of', 'for', 'view', 'see', 'open',
+        'enlarge', 'zoom', 'in', 'matched', 'match', 'that', 'this', 'its', 'their', 'them', 'it', 'full', 'size',
+        'details', 'detail', 'about',
+        'can', 'could', 'would', 'will', 'you', 'i', 'like', 'to', 'all', 'more',
+    }]
+    if terms:
+        candidates = _app_assistant_listing_candidates(' '.join(terms), listings)
+        return (candidates[0], []) if len(candidates) == 1 else (None, candidates)
+    if re.search(r'\bmy\s+(item|listing)\b', message, re.I) and context.source_listing_id in by_id:
+        return by_id[context.source_listing_id], []
+    focused = by_id.get(context.selected_listing_id)
+    if re.search(r'\bmatched\b', message, re.I) and focused and focused['listing_id'] == context.source_listing_id:
+        focused = None
+    if focused:
+        return focused, []
+    return (displayed[0], []) if len(displayed) == 1 else (None, displayed)
 
 
 def _app_assistant_action_signature(action: dict, subject: str, settings: Settings) -> str:
@@ -9081,6 +9064,18 @@ async def app_assistant_chat(
         raise HTTPException(status_code=503, detail="Application assistant is temporarily unavailable")
 
     own_listings = db.list_owner_listings(principal.subject, limit=100)
+    if request.context.listing_agent_session_id:
+        row = db.fetchone('SELECT state_json FROM listing_agent_sessions WHERE session_id=' + db.param + ' AND owner_subject=' + db.param,
+            (request.context.listing_agent_session_id, principal.subject)) if settings.listing_agent_enabled else None
+        if row:
+            saved = json.loads(row[0])
+            request.context.source_listing_id = saved.get('listing_id')
+            request.context.listing_stage = saved.get('stage')
+            request.context.pending_operation = ('trade_confirmation' if saved.get('trade_proposal') else
+                'edit_confirmation' if saved.get('edit_proposal') else 'analysis_confirmation' if
+                (saved.get('pending') or {}).get('type') == 'confirm_analysis' else None)
+        else:
+            request.context.listing_agent_session_id = request.context.listing_stage = request.context.pending_operation = None
     marketplace_payload = list_recent_listings(
         limit=100,
         offset=0,
@@ -9094,6 +9089,15 @@ async def app_assistant_chat(
         item for item in marketplace_payload.get("items") or []
         if str(item.get("owner_subject") or "") != principal.subject and bool(item.get("matches"))
     ]
+    # Conversation IDs are hints only: hydrate them through current visibility rules.
+    context_ids = list(dict.fromkeys([*request.context.result_listing_ids, *request.context.marketplace_result_ids,
+        *request.context.closet_result_ids, request.context.selected_listing_id, request.context.source_listing_id]))
+    known_ids = {item['listing_id'] for item in [*own_listings, *marketplace]}
+    for item in db.get_listings_by_ids([key for key in context_ids if key and key not in known_ids]).values():
+        if item.get('owner_subject') == principal.subject:
+            own_listings.append(item)
+        elif str(item.get('status')).casefold() == 'active':
+            marketplace.append(item)
     offers = db.list_trade_offers_for_subject(principal.subject, limit=50)
     inventory_summary = {
         "closet": [
@@ -9127,7 +9131,9 @@ async def app_assistant_chat(
         "Follow LISTING CREATION WORKFLOW exactly. The application, not you, controls workflow transitions and validates required photos and field values. "
         "show_closet only when the member asks to browse or see their closet; search_marketplace for browsing or filtering; "
         "use show_tradeable_items when they ask broadly what marketplace items they can trade for using any active closet listing; "
-        "show_matches whenever the member asks for matched listings or matches for one of their listings, including requests mentioning images or photos; "
+        "show_matches for finding or refreshing matches, including plural requests for my items/listings; plural requests must not pick one source. view_photos for viewing images, view_item for reading saved details of an item already shown; never reverse the match direction for either request. "
+        "source_listing_id is the member's offered item; selected_listing_id is the item currently in focus. They are not interchangeable. "
+        "For 'matched item' prefer the displayed Marketplace results; for 'my item' use the owned source. If multiple items fit, ask which one and show choices. "
         "prepare_trade when they want to trade for a marketplace item; "
         "show_trades for offer status; track_shipping for shipment status; navigate for a named screen; help when unclear. "
         "A trade must never be sent on the prepare_trade turn. prepare_trade only creates a confirmation summary. "
@@ -9142,7 +9148,7 @@ async def app_assistant_chat(
         "type": "object",
         "additionalProperties": False,
         "properties": {
-            "intent": {"type": "string", "enum": ["create_listing", "review_listing", "publish_listing", "show_closet", "search_marketplace", "show_tradeable_items", "show_matches", "prepare_trade", "confirm_action", "cancel_action", "show_trades", "track_shipping", "navigate", "help"]},
+            "intent": {"type": "string", "enum": ["create_listing", "review_listing", "publish_listing", "show_closet", "search_marketplace", "show_tradeable_items", "show_matches", "view_photos", "view_item", "prepare_trade", "confirm_action", "cancel_action", "show_trades", "track_shipping", "navigate", "help"]},
             "reply": {"type": "string"},
             "listing_reference": {"type": ["string", "null"], "enum": [*all_listing_ids, None]},
             "listing_reference_scope": {"type": ["string", "null"], "enum": ["marketplace", "closet", None]},
@@ -9157,6 +9163,8 @@ async def app_assistant_chat(
         "required": ["intent", "reply", "listing_reference", "listing_reference_scope", "listing_reference_index", "target_reference", "target_reference_index", "offered_reference", "offered_reference_index", "search_terms", "navigation"],
     }
     try:
+        from .assistant_context import SYSTEM_CAPABILITIES
+        instructions += ' SYSTEM CAPABILITIES (only claim supported operations): ' + json.dumps(SYSTEM_CAPABILITIES)
         async with httpx.AsyncClient(timeout=settings.listing_assistant_timeout_s) as client:
             response = await client.post(
                 "https://api.openai.com/v1/responses",
@@ -9180,6 +9188,15 @@ async def app_assistant_chat(
         raise HTTPException(status_code=502, detail="Application assistant could not respond. Please try again.") from exc
 
     intent = str(parsed.get("intent") or "help")
+    from .assistant_context import requests_all_listing_matches
+    all_listing_matches = requests_all_listing_matches(latest_user_text)
+    if all_listing_matches:
+        intent = 'show_matches'
+    if request.context.pending_action and latest_user_text.strip().lower() in {'yes', 'no'}:
+        intent = 'confirm_action' if latest_user_text.strip().lower() == 'yes' else 'cancel_action'
+    from .assistant_context import requests_photo_view
+    if requests_photo_view(latest_user_text):
+        intent = 'view_photos'
     reply = str(parsed.get("reply") or "How can I help with your closet or trades?").strip()
     navigation = parsed.get("navigation")
     result_listings: list[dict] = []
@@ -9192,14 +9209,43 @@ async def app_assistant_chat(
     closet_result_ids = list(request.context.closet_result_ids)
     all_listings = [*own_listings, *marketplace]
     selected_context_id = request.context.selected_listing_id
+    source_context_id = request.context.source_listing_id
+    if source_context_id not in {item['listing_id'] for item in own_listings}:
+        source_context_id = None
+    displayed_domain = request.context.displayed_domain
+    photo_view = None
 
     review_listing_id = None
-    if intent == "review_listing" or (intent == "publish_listing" and settings.listing_agent_enabled):
+    if intent in {'view_photos', 'view_item'}:
+        item, choices = _app_assistant_photo_target(parsed, request.context, all_listings, latest_user_text)
+        navigation = None
+        if item:
+            from .assistant_reads import saved_listing
+            item = saved_listing(item['listing_id'], subject=principal.subject, db=db)
+            card = _app_assistant_listing_card(item, settings)
+            result_listings = [item]
+            selected_context_id = item['listing_id']
+            if intent == 'view_item':
+                from .assistant_context import listing_detail_summary
+                reply = listing_detail_summary(item)
+            elif card['images']:
+                photo_view = card
+                reply = f"Here are the photos of {card['title']}."
+            else:
+                reply = 'This item has no available photos right now.'
+        else:
+            result_listings = choices[:12]
+            selected_context_id = None
+            reply = ('Which item’s photos would you like to see? Choose a numbered item or its title.' if choices
+                     else 'Which item would you like photos of? Show or name an available listing first.')
+    elif intent == "review_listing" or (intent == "publish_listing" and settings.listing_agent_enabled):
         reference = (parsed.get('listing_reference') or
                      _app_assistant_indexed_reference(parsed.get('listing_reference_index'), closet_result_ids) or latest_user_text)
         listing = (None if parsed.get('listing_reference_scope') == 'marketplace' else
                    _app_assistant_resolve_listing(reference, own_listings, prior_ids))
         if listing and str(listing.get('status')).casefold() in {'review', 'analyzing', 'analysisfailed'}:
+            source_context_id = selected_context_id = listing['listing_id']
+            pending_action = None
             result_listings = [listing]
             if settings.listing_agent_enabled:
                 review_listing_id = listing['listing_id']
@@ -9208,6 +9254,7 @@ async def app_assistant_chat(
                 navigation = 'closet'
                 reply = 'Open Review and Publish in My Closet to review this listing.'
         elif listing:
+            source_context_id = selected_context_id = listing['listing_id']
             result_listings = [listing]
             reply = 'This listing is not a private draft. You can edit it in My Closet.'
         else:
@@ -9220,6 +9267,7 @@ async def app_assistant_chat(
                 reply = ('I could not find that title. Here are your recent drafts; choose one by title or number.'
                          if result_listings else 'I could not find that listing in your closet. Tell me its exact title, or create a new listing.')
     elif intent == "create_listing":
+        pending_action = None
         navigation = "create"
         # The client opens a photo-first workflow for this intent. Keep this
         # transition deterministic so model prose cannot contradict the UI.
@@ -9253,15 +9301,10 @@ async def app_assistant_chat(
         reply = f"You have {len(own_listings)} listings in your closet." if own_listings else "Your closet is empty."
     elif intent == "search_marketplace":
         navigation = "marketplace"
-        terms = [str(term).strip().casefold() for term in parsed.get("search_terms") or [] if str(term).strip()]
-        filtered = marketplace
-        if terms:
-            filtered = [
-                item for item in marketplace
-                if all(term in " ".join(str(item.get(key) or "") for key in ("brand", "title", "category", "condition", "size")).casefold() for term in terms)
-            ]
-        result_listings = filtered[:12]
-        reply = f"I found {len(filtered)} marketplace listings that match." if filtered else "I couldn’t find marketplace listings matching that description."
+        from .assistant_reads import search_marketplace
+        found = search_marketplace(marketplace, parsed.get('search_terms') or [])
+        result_listings = found['items']
+        reply = f"I found {found['count']} marketplace listings that match." if found['count'] else "I couldn’t find marketplace listings matching that description."
     elif intent == "show_tradeable_items":
         navigation = "marketplace"
         active_own = [
@@ -9275,6 +9318,19 @@ async def app_assistant_chat(
             reply = f"I found {len(result_listings)} marketplace items compatible with your active closet listings."
         else:
             reply = "There aren’t any compatible marketplace items right now. I’ll keep matching as inventory changes."
+    elif intent == 'show_matches' and all_listing_matches:
+        source_context_id = selected_context_id = None
+        from .assistant_reads import MatchRead, grouped_matches
+        groups = grouped_matches(MatchRead(scope='all_eligible'), owned_listings=own_listings,
+            read_source=lambda source_id, limit: list_closet_listing_marketplace_matches(
+                source_id, limit=limit, offset=0, principal=principal, db=db, settings=settings))
+        for group in groups:
+            for match in group['items']:
+                result_listings.append({**match, 'match_source_title': group['source_title'],
+                    'match_source_listing_id': group['source_listing_id']})
+        reply = (f"Here are current Marketplace matches grouped by your items (up to 3 per item, checking your 12 most recent eligible listings)."
+            if result_listings else "There are no current matches for your eligible published items yet."
+            if groups else "Publish a listing with a saved value first, then I can find Marketplace matches for your items.")
     elif intent == "show_matches":
         reference_scope = parsed.get("listing_reference_scope")
         scoped_result_ids = marketplace_result_ids if reference_scope == "marketplace" else closet_result_ids
@@ -9298,14 +9354,10 @@ async def app_assistant_chat(
                 else f"You don’t have an eligible closet listing to offer for {source.get('title') or 'that marketplace item'} right now."
             )
         else:
-            selected_context_id = str(source.get("listing_id") or "")
-            source_value = float(source.get("estimated_value") or 0)
-            tolerance, _ = _trade_match_tolerance(source_value)
-            result_listings = [
-                item for item in marketplace
-                if source_value > 0 and float(item.get("estimated_value") or 0) > 0
-                and abs(float(item.get("estimated_value") or 0) - source_value) <= tolerance
-            ][:12]
+            source_context_id = str(source.get("listing_id") or "")
+            selected_context_id = None
+            result_listings = list_closet_listing_marketplace_matches(source_context_id, limit=12, offset=0,
+                principal=principal, db=db, settings=settings)['items']
             reply = (
                 f"I found {len(result_listings)} matches for {source.get('title') or 'your listing'}."
                 if result_listings
@@ -9405,11 +9457,48 @@ async def app_assistant_chat(
             reply = f"You have {len(offers)} trade offers." if offers else "You don’t have any trade offers yet."
 
     cards = [_app_assistant_listing_card(item, settings) for item in result_listings]
+    for card, item in zip(cards, result_listings):
+        if item.get('match_source_listing_id'):
+            card.update(match_source_listing_id=item['match_source_listing_id'], match_source_title=item['match_source_title'])
     result_ids = [card["listing_id"] for card in cards if card.get("listing_id")]
-    if intent in {"search_marketplace", "show_tradeable_items"}:
+    displays_results = bool(cards) or intent in {'search_marketplace', 'show_tradeable_items', 'show_closet', 'review_listing', 'show_matches', 'view_photos', 'view_item'}
+    if intent in {"search_marketplace", "show_tradeable_items"} or (intent == 'show_matches' and cards and all(
+            item.get('owner_subject') != principal.subject for item in result_listings)):
         marketplace_result_ids = result_ids
+        displayed_domain = 'marketplace'
     elif intent in {"show_closet", "review_listing"} or (intent == "publish_listing" and not requires_confirmation):
         closet_result_ids = result_ids
+        displayed_domain = 'closet'
+    elif intent == 'show_matches' and cards:
+        closet_result_ids = result_ids
+        displayed_domain = 'closet'
+    elif intent in {'view_photos', 'view_item'} and cards:
+        is_closet = all(item.get('owner_subject') == principal.subject for item in result_listings)
+        displayed_domain = 'closet' if is_closet else 'marketplace'
+        visible_ids = {item['listing_id'] for item in all_listings}
+        group = [key for key in (closet_result_ids if is_closet else marketplace_result_ids) if key in visible_ids]
+        group = group if set(result_ids).issubset(group) else result_ids
+        if is_closet:
+            closet_result_ids = group
+        else:
+            marketplace_result_ids = group
+    elif intent in {'view_photos', 'view_item'} and not cards:
+        if displayed_domain == 'marketplace':
+            marketplace_result_ids = []
+        elif displayed_domain == 'closet':
+            closet_result_ids = []
+    elif intent == 'show_matches' and not cards:
+        if 'source' in locals() and source and source.get('owner_subject') == principal.subject:
+            marketplace_result_ids = []
+            displayed_domain = 'marketplace'
+        else:
+            closet_result_ids = []
+            displayed_domain = 'closet'
+    if not displays_results:
+        result_ids = list(request.context.result_listing_ids)
+    if intent == 'create_listing':
+        source_context_id = selected_context_id = None
+        result_ids = []
     response_context = {
         "result_listing_ids": result_ids,
         "marketplace_result_ids": marketplace_result_ids,
@@ -9424,12 +9513,18 @@ async def app_assistant_chat(
         ),
         "pending_action": pending_action,
         "active_screen": navigation or request.context.active_screen,
+        "source_listing_id": source_context_id,
+        "displayed_domain": displayed_domain,
+        "listing_agent_session_id": request.context.listing_agent_session_id if intent != 'create_listing' and not review_listing_id else None,
+        "listing_stage": request.context.listing_stage if intent != 'create_listing' and not review_listing_id else None,
+        "pending_operation": request.context.pending_operation if intent != 'create_listing' and not review_listing_id else None,
     }
     return AppAssistantResponse.model_validate({
         "reply": reply,
         "intent": intent,
         "navigation": navigation,
         "review_listing_id": review_listing_id,
+        "photo_view": photo_view,
         "listings": cards,
         "trades": result_trades,
         "shipments": result_shipments,

@@ -372,6 +372,11 @@ export function createApiClient(options) {
     openListingAgentReview: (payload, auth = {}) => post('/v1/listing-agent/sessions/review', payload, auth),
     turnWithListingAgent: (id, payload, auth = {}) => post(`/v1/listing-agent/sessions/${encodeURIComponent(id)}/turns`, payload, auth),
     chatWithAppAssistant: (payload, auth = {}) => post("/v1/app-assistant/chat", payload, auth),
+    startAssistantConversation: (payload, auth = {}) => post('/v1/assistant-conversations', payload, auth),
+    listAssistantConversations: (auth = {}) => get('/v1/assistant-conversations', auth),
+    getAssistantConversation: (id, auth = {}) => get(`/v1/assistant-conversations/${encodeURIComponent(id)}`, auth),
+    messageAssistantConversation: (id, payload, auth = {}) => post(`/v1/assistant-conversations/${encodeURIComponent(id)}/messages`, payload, auth),
+    readAssistantConversation: (id, payload, auth = {}) => post(`/v1/assistant-conversations/${encodeURIComponent(id)}/turns`, payload, auth),
     getActiveListingAssistantConversation: (auth = {}) => get("/v1/listing-assistant/conversations/active", auth),
     updateListingAssistantConversation: (conversationId, payload, auth = {}) => patch(`/v1/listing-assistant/conversations/${encodeURIComponent(conversationId)}`, payload, auth),
     listListings: (params = {}, auth = {}) => {
