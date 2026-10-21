@@ -8,7 +8,12 @@ both assistant flags, conversation/listing-agent tables and existing model routi
 the public health endpoint is OK and the conversation endpoint requires sign-in.
 Earlier local-only labels below record development history and are superseded by
 this status for web/API features. Mobile-source changes have not been distributed
-as a new mobile-store binary. Existing form creation/evaluation and pricing-model
+as a new mobile-store binary at web rollout verification. Mobile release `98bde12`
+now enables both assistant flags against `https://api.jouft.com` and excludes local
+environment files from build archives. iOS build 60 has finished; submission
+`58c26866-93e1-4ff1-926a-d5011b0e284f` is in progress. Android APK build 5
+(`1c6b2687-ec00-4134-b03d-c78a379626e6`) is in progress. This is not a verified
+TestFlight availability or public store release. Existing form creation/evaluation and pricing-model
 routing remain unchanged. This post-verification document status is versioned in
 Git; the image built for this rollout contains the pre-verification release-candidate
 guide, and will pick up this status text on the next documentation/application rollout.
