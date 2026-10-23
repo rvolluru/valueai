@@ -1,12 +1,21 @@
 # Jouft listing analysis: complete process
 
-Release candidate — October 23, 2026: the locally implemented fixes below are
-being validated for deployment: deterministic analysis confirmation, existing-trade
+Production verified — October 23, 2026: release `b8ae42b`, workflow `39986312059`,
+passed migrations, API/worker rollout stability and post-deploy smoke checks.
+Public health is OK; the live web bundle includes existing-trade status and removes
+the duplicate match summary. This supersedes the local-only labels below for
+deterministic analysis confirmation, existing-trade
 recovery, mobile API wiring, modal safe areas and nonduplicated status summaries.
 Mobile Facebook sharing now opens Facebook's web sharing screen on iOS rather
 than a generic share sheet; Android keeps its direct native target. No new Meta
-credentials or automatic personal-profile posting are introduced. Deployment and
-mobile distribution are not yet verified for this candidate.
+credentials or automatic personal-profile posting are introduced. iOS build 61
+(`769cdc39-c6fc-4b0a-9799-456254e239c5`) and its App Store Connect submission
+(`0cf688ed-067e-4143-954e-e7b101cc3b88`) finished successfully. Android APK build 6
+(`ad30ea7e-bb68-4d40-9fb0-8703b646459e`) finished and is available for installation.
+Apple processing/TestFlight availability and public store release are not verified.
+No listings, publications or trade requests were created by rollout verification.
+The deployed image contains the release-candidate guide; this verified status is
+versioned in Git and will ship with the next documentation/application rollout.
 
 Existing-trade recovery — October 22, 2026 (local only, not deployed): listing
 chat checks the sender's existing active requests (requested/proposed/pending,
