@@ -385,10 +385,17 @@ class Agent:
             'size_options_by_category': SIZE_OPTIONS,
             'edit_proposal': state.get('edit_proposal'), 'photo_dirty': state.get('photo_dirty', False),
             'trade_proposal': state.get('trade_proposal'), 'sent_trade': state.get('sent_trade'),
+            'existing_trade': state.get('existing_trade'),
             'last_tool': state.get('last_tool'),
             'timeline_events': state.get('timeline_events', []),
             'next_step': listing_next_step(state),
         }
+
+    @staticmethod
+    def existing_trade_reply(trade):
+        items = 'these exact two items' if trade['same_items'] else 'this requested item, offering different items'
+        return (f"You already have an active trade request for {items}. Its saved status is {trade['status']}. "
+                'No new request was sent. View the existing request in Trade Inbox.')
 
     async def execute(self, name, arguments, state, turn):
         if name not in TOOL_MODELS:
@@ -456,13 +463,27 @@ class Agent:
             if state['stage'] != 'published':
                 raise ValueError('Publish your reviewed listing before requesting a trade')
             if name == 'prepare_trade_request':
-                state['trade_proposal'] = await self.services.prepare_trade(state, args.target_listing_id)
+                prepared = await self.services.prepare_trade(state, args.target_listing_id)
+                if prepared.get('existing'):
+                    state['existing_trade'] = prepared
+                    state['trade_proposal'] = None
+                    state.pop('trade_approval', None)
+                    return {'paused': True, 'reply': self.existing_trade_reply(prepared)}
+                state.pop('existing_trade', None)
+                state['trade_proposal'] = prepared
                 state.pop('trade_approval', None)
                 return {'paused': True, 'reply': 'Review the two items below. Confirm and send trade request will notify the other member; nothing has been sent yet.'}
             proposal = state.get('trade_proposal') or {}
             if not turn.trade_token or proposal.get('token') != turn.trade_token or state.get('trade_approval') != turn.trade_token:
                 raise ValueError('Separate confirmation of this exact trade request is required')
-            state['sent_trade'] = await self.services.send_trade(state, proposal)
+            result = await self.services.send_trade(state, proposal)
+            if result.get('existing'):
+                state['existing_trade'] = result
+                state['trade_proposal'] = None
+                state.pop('trade_approval', None)
+                return {'paused': True, 'reply': self.existing_trade_reply(result)}
+            state.pop('existing_trade', None)
+            state['sent_trade'] = result
             state['last_trade_token'] = turn.trade_token
             state['trade_proposal'] = None
             state.pop('trade_approval', None)
@@ -805,6 +826,11 @@ class Agent:
                 published = await self.execute('publish_listing', {}, state, turn)
                 if 'error' in published:
                     raise HTTPException(409, published['error'])
+            # Approval has already passed the version-bound token checks above.
+            # Execute its bounded operation now, rather than asking the model to
+            # decide whether to honor it (a status read can pause the model loop).
+            if turn.confirmation_token:
+                await self.recover_next_step(state, turn)
             inputs = [dict(role='user', content='AUTHORITATIVE STATE:\n' + json.dumps(await self.public(state))),
                       *[{k: m[k] for k in ('role', 'content')} for m in state['messages']]]
             reply = 'Please continue with the remaining details.'

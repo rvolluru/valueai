@@ -265,7 +265,19 @@ class Services:
         return {**_app_assistant_listing_card(item, self.settings), 'description': item.get('description'),
                 'estimated_value': item.get('estimated_value')}
 
+    def existing_trade(self, target_id, offered_id):
+        for offer in self.db.list_trade_offers_for_subject(self.principal.subject, limit=200, status=None):
+            if (offer.get('from_subject') == self.principal.subject and offer.get('target_listing_id') == target_id
+                    and str(offer.get('status') or '').lower() in {'requested', 'proposed', 'pending'}):
+                offered_ids = offer.get('offered_listing_ids') or [offer.get('offered_listing_id')]
+                return {**{k: offer.get(k) for k in ('offer_id', 'target_listing_id', 'offered_listing_id', 'status')},
+                        'existing': True, 'same_items': set(offered_ids) == {offered_id}}
+        return None
+
     async def prepare_trade(self, state, target_id):
+        existing = self.existing_trade(target_id, state['listing_id'])
+        if existing:
+            return existing
         source, target, base = await self._trade_context(state, target_id)
         token = digest([base, str(uuid.uuid4())])
         def summary(item):
@@ -277,6 +289,9 @@ class Services:
     async def send_trade(self, state, proposal):
         from .main import _create_offer
         from .schemas import OfferCreateRequest
+        active = self.existing_trade(proposal['target']['listing_id'], proposal['offered']['listing_id'])
+        if active and active['offer_id'] != proposal['offer_id']:
+            return active
         # Recover a committed send before checking matches (sent pairs disappear from matches).
         existing = self.db.get_trade_offer_by_id(proposal['offer_id'])
         if not existing:

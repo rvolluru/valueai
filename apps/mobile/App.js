@@ -3280,6 +3280,10 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
       target, payload, platform: Platform.OS, nativeShare,
       systemShare: (content, options) => Share.share(content, options),
       browserFallback,
+      openFacebook: async url => {
+        try { await WebBrowser.openBrowserAsync(url); }
+        catch (error) { setError(error.message || 'Unable to open Facebook sharing. Please try again.'); }
+      },
     });
   }
 
@@ -6520,7 +6524,8 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
         </View>
       </TouchableOpacity>}
       <Modal visible={appAssistantOpen} animationType="slide" onRequestClose={() => setAppAssistantOpen(false)}>
-        <SafeAreaView style={styles.appAssistantRoot}>
+        <SafeAreaProvider>
+        <SafeAreaView style={styles.appAssistantRoot} edges={['top', 'right', 'bottom', 'left']}>
           <View style={styles.appAssistantHeader}>
             <View><Text style={styles.offerLaneLabel}>JOUFT ASSISTANT</Text><Text style={styles.appAssistantTitle}>What would you like to do?</Text></View>
             <TouchableOpacity style={styles.secondaryBtnCompact} onPress={() => setAppAssistantOpen(false)} accessibilityLabel="Close assistant"><Ionicons name="close" size={22} color={theme.text} /></TouchableOpacity>
@@ -6559,6 +6564,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
           </> : null}
           </>}
         </SafeAreaView>
+        </SafeAreaProvider>
       </Modal>
       <Modal
         visible={Boolean(selectedGalleryImage)}

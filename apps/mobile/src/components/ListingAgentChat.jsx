@@ -118,7 +118,7 @@ export default function ListingAgentChat({ client, getAuth, images, onPickPhotos
           {!proposal && review?.reasons.map(reason => <Text key={reason} style={styles.helperText}>{reason}</Text>)}
           {!proposal && review?.publishable ? button('Confirm and publish to Marketplace', () => controller.publish(mannequinChoice || null), !!images.length || !review.publishable || (review.mannequin_choice_required && !mannequinChoice)) : null}
         </View> : null}
-        {session.stage === 'published' ? <View><Text style={styles.helperText}>{session.marketplace_matches && session.last_tool === 'find_marketplace_matches' ? 'Published to Marketplace.' : session.messages.filter(message => message.role === 'assistant').at(-1)?.content || 'Published to Marketplace.'}</Text>
+        {session.stage === 'published' ? <View><Text style={styles.helperText}>Published to Marketplace.</Text>
           {button(session.marketplace_matches ? 'Refresh matches' : 'Find matching items', () => controller.send('Find marketplace matches'))}
         </View> : null}
         {session.stage === 'failed' ? <Text style={styles.error}>Analysis could not finish. Your draft is saved in My Closet.</Text> : null}
@@ -128,7 +128,7 @@ export default function ListingAgentChat({ client, getAuth, images, onPickPhotos
       </View> : null}
       {session.stage === 'published' && session.marketplace_matches && !session.trade_proposal ? <View accessibilityLabel="Marketplace matches">
         <Text style={styles.listingAssistantTitle}>Marketplace matches</Text>
-        <Text style={styles.helperText}>{session.marketplace_matches.count} matching items based on your item’s saved value and preferences. Selecting an item only prepares a request; confirmation is required to send.</Text>
+        <Text style={styles.helperText}>Selecting an item only prepares a request; confirmation is required to send.</Text>
         {session.marketplace_matches.items.map(item => <View key={item.listing_id} style={styles.listingChatAssistantBubble}>
           {matchPhotoUrls(item, apiBaseUrl).length ? <TouchableOpacity accessibilityRole="button" accessibilityLabel={`View full-size photos of ${item.title}`} disabled={view.busy} onPress={() => controller.viewPhotos(item.listing_id)}>
             <Image source={{ uri: matchPhotoUrls(item, apiBaseUrl)[0] }} accessibilityLabel={item.title} style={{ width: 100, height: 100, resizeMode: 'contain' }} />
@@ -149,6 +149,7 @@ export default function ListingAgentChat({ client, getAuth, images, onPickPhotos
         {button('Cancel trade request', () => controller.send('Cancel trade request'))}
       </View> : null}
       {session.sent_trade ? <Text style={styles.helperText}>Trade request sent. Track it in Trade Inbox.</Text> : null}
+      {session.existing_trade ? <Text style={styles.helperText}>Existing trade request · {session.existing_trade.status}. {session.existing_trade.same_items ? 'Same two items.' : 'Different offered items.'} View Trade Inbox.</Text> : null}
       {!hideComposer && canEdit && session.pending?.type === 'question' && session.pending.field === 'condition' ? <View accessibilityLabel="Choose item condition" style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
         {['New with tags', 'New', 'Like new'].map(condition => <React.Fragment key={condition}>{button(condition, () => controller.send(condition), !!images.length)}</React.Fragment>)}
       </View> : null}

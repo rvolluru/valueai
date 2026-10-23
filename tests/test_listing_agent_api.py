@@ -36,6 +36,31 @@ def trade_ready(client, monkeypatch):
     return path, prepared.json(), notifications
 
 
+@pytest.mark.parametrize('same_items', [True, False])
+def test_existing_trade_is_reported_without_retry_or_false_send(client, monkeypatch, same_items):
+    from app.deps import get_db
+    path, prepared, notifications = trade_ready(client, monkeypatch)
+    db = get_db()
+    proposal = prepared['trade_proposal']
+    offered = proposal['offered']['listing_id'] if same_items else 'different-offered-item'
+    db.create_trade_offer(offer_id='existing-request', target_listing_id=proposal['target']['listing_id'],
+        offered_listing_id=offered, offered_listing_ids=[offered], from_subject='api-key',
+        to_subject='other-seller', message='', status='pending')
+    payload = dict(request_id='existing-confirm', expected_revision=prepared['revision'],
+        message='Confirm', trade_token=proposal['token'])
+    response = client.post(path, headers=AUTH, json=payload)
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert result['trade_proposal'] is None
+    assert result['existing_trade']['offer_id'] == 'existing-request'
+    assert result['existing_trade']['same_items'] is same_items
+    assert not result['sent_trade']
+    assert 'No new request was sent' in result['reply']
+    assert client.post(path, headers=AUTH, json=payload).json() == result
+    assert len(db.fetchall('SELECT offer_id FROM trade_offers')) == 1
+    assert not notifications
+
+
 def test_trade_request_requires_separate_confirmation_and_retry_sends_once(client, monkeypatch):
     from app.deps import get_db
     path, prepared, notifications = trade_ready(client, monkeypatch)
@@ -732,7 +757,9 @@ def test_real_private_draft_and_job_are_idempotent_and_can_resume(client, monkey
         expected_revision=uploaded['revision'], message='New, size M'))
     assert response.status_code == 200, response.text
     prepared = response.json()
-    monkeypatch.setattr(listing_agent, 'call_model', scripted(('create_private_draft', {}), ('start_listing_analysis', {})))
+    async def no_model_after_confirmation(*args, **kwargs):
+        raise AssertionError('Validated approval must start analysis without another model decision')
+    monkeypatch.setattr(listing_agent, 'call_model', no_model_after_confirmation)
     confirmation = dict(request_id='confirm', expected_revision=prepared['revision'], message='Confirm private draft',
                         confirmation_token=prepared['pending']['token'])
     response = client.post(path + '/turns', headers=AUTH, json=confirmation)

@@ -45,13 +45,35 @@ async function requestJson({ apiBaseUrl, path, method = 'GET', auth = {}, body, 
   }
   const payload = await parseJsonOrNull(resp);
   if (!resp.ok) {
-    throw new Error(errorDetail(payload) || `API error (${resp.status})`);
+    throw Object.assign(new Error(errorDetail(payload) || `API error (${resp.status})`), { status: resp.status });
   }
   return payload;
 }
 
 export function createMobileApiClient({ apiBaseUrl }) {
+  const conversationPost = (path, payload, auth) => requestJson({ apiBaseUrl, path, method: 'POST', auth,
+    headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
   return {
+    getListingAgentSession: (id, auth = {}) => requestJson({ apiBaseUrl, path: `/v1/listing-agent/sessions/${encodeURIComponent(id)}`, auth }),
+    getActiveListingAgentSession: (auth = {}) => requestJson({ apiBaseUrl, path: '/v1/listing-agent/sessions/active', auth }),
+    startListingAgentSession: (payload, auth = {}) => conversationPost('/v1/listing-agent/sessions', payload, auth),
+    openListingAgentReview: (payload, auth = {}) => conversationPost('/v1/listing-agent/sessions/review', payload, auth),
+    turnWithListingAgent: (id, payload, auth = {}) => conversationPost(`/v1/listing-agent/sessions/${encodeURIComponent(id)}/turns`, payload, auth),
+    removeListingAgentPhoto: (id, payload, auth = {}) => conversationPost(`/v1/listing-agent/sessions/${encodeURIComponent(id)}/photos/remove`, payload, auth),
+    uploadListingAgentPhotos: ({ sessionId, requestId, expectedRevision, images }, auth = {}) => {
+      const fd = new FormData();
+      fd.append('request_id', requestId);
+      fd.append('expected_revision', String(expectedRevision));
+      images.forEach((img, index) => fd.append('images', {
+        uri: img.uri, name: img.fileName || `upload-${index + 1}.jpg`, type: img.mimeType || 'image/jpeg',
+      }));
+      return requestJson({ apiBaseUrl, path: `/v1/listing-agent/sessions/${encodeURIComponent(sessionId)}/photos`, method: 'POST', auth, body: fd });
+    },
+    listAssistantConversations: (auth = {}) => requestJson({ apiBaseUrl, path: '/v1/assistant-conversations', auth }),
+    startAssistantConversation: (payload, auth = {}) => conversationPost('/v1/assistant-conversations', payload, auth),
+    getAssistantConversation: (id, auth = {}) => requestJson({ apiBaseUrl, path: `/v1/assistant-conversations/${encodeURIComponent(id)}`, auth }),
+    messageAssistantConversation: (id, payload, auth = {}) => conversationPost(`/v1/assistant-conversations/${encodeURIComponent(id)}/messages`, payload, auth),
+    readAssistantConversation: (id, payload, auth = {}) => conversationPost(`/v1/assistant-conversations/${encodeURIComponent(id)}/turns`, payload, auth),
     chatWithListingAssistant({ conversation_id = null, messages = [], context = {} }, auth = {}) {
       return requestJson({
         apiBaseUrl,

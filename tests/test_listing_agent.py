@@ -101,7 +101,7 @@ def test_explicit_confirmation_starts_one_draft_and_replay_calls_no_model(fixtur
     assert 'not been published' in result['reply']
     assert run(agent.turn(state['session_id'], request)) == result
     assert services.created == services.started == 1
-    assert len(model.captured) == 2
+    assert len(model.captured) == 0  # Validated approval executes without another model decision.
 
 
 def test_prose_confirmation_does_not_authorize_side_effects(fixture):

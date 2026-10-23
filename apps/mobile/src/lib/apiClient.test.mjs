@@ -1,6 +1,78 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createMobileApiClient } from './apiClient.js';
+import { readFileSync } from 'node:fs';
+
+test('mobile implements every API method used by both assistant controllers', () => {
+  const client = createMobileApiClient({ apiBaseUrl: 'https://example.test' });
+  for (const file of ['listingAgent.js', 'assistantConversation.js']) {
+    const source = readFileSync(new URL(`../../../../packages/app-client/src/${file}`, import.meta.url), 'utf8');
+    for (const [, method] of source.matchAll(/client\.([A-Za-z0-9_]+)/g)) {
+      assert.equal(typeof client[method], 'function', `${file} requires ${method}`);
+    }
+  }
+});
+
+test('listing agent supports session, review, turns, removal and multipart native photos', async () => {
+  const originalFetch = global.fetch;
+  const OriginalForm = global.FormData;
+  const requests = [];
+  try {
+    global.FormData = class { entries = []; append(...args) { this.entries.push(args); } };
+    global.fetch = async (url, options) => { requests.push({ url, ...options }); return { ok: true, json: async () => ({}) }; };
+    const client = createMobileApiClient({ apiBaseUrl: 'https://example.test' });
+    const auth = { bearerToken: 'token' };
+    await client.getListingAgentSession('a/b', auth);
+    await client.getActiveListingAgentSession(auth);
+    await client.startListingAgentSession({ request_id: 'new' }, auth);
+    await client.openListingAgentReview({ listing_id: 'listing' }, auth);
+    await client.turnWithListingAgent('a/b', { message: 'New' }, auth);
+    await client.removeListingAgentPhoto('a/b', { photo_id: 'photo' }, auth);
+    await client.uploadListingAgentPhotos({ sessionId: 'a/b', requestId: 'upload', expectedRevision: 2,
+      images: [{ uri: 'file:///photo.jpg', fileName: 'photo.jpg', mimeType: 'image/jpeg' }] }, auth);
+    assert.deepEqual(requests.map(r => new URL(r.url).pathname), [
+      '/v1/listing-agent/sessions/a%2Fb', '/v1/listing-agent/sessions/active',
+      '/v1/listing-agent/sessions', '/v1/listing-agent/sessions/review',
+      '/v1/listing-agent/sessions/a%2Fb/turns', '/v1/listing-agent/sessions/a%2Fb/photos/remove',
+      '/v1/listing-agent/sessions/a%2Fb/photos',
+    ]);
+    for (const request of requests) assert.equal(request.headers.Authorization, 'Bearer token');
+    assert.deepEqual(requests[6].body.entries, [['request_id', 'upload'], ['expected_revision', '2'],
+      ['images', { uri: 'file:///photo.jpg', name: 'photo.jpg', type: 'image/jpeg' }]]);
+    assert.equal(requests[6].headers['Content-Type'], undefined);
+  } finally { global.fetch = originalFetch; global.FormData = OriginalForm; }
+});
+
+test('mobile conversation client supports thread and turn endpoints with authentication', async () => {
+  const original = global.fetch;
+  const requests = [];
+  try {
+    global.fetch = async (url, options) => { requests.push({ url, ...options }); return { ok: true, json: async () => ({}) }; };
+    const client = createMobileApiClient({ apiBaseUrl: 'https://example.test' });
+    const auth = { bearerToken: 'test-token' };
+    await client.listAssistantConversations(auth);
+    await client.startAssistantConversation({ request_id: 'new' }, auth);
+    await client.getAssistantConversation('a/b', auth);
+    await client.messageAssistantConversation('a/b', { message: 'hello' }, auth);
+    await client.readAssistantConversation('a/b', { action: 'closet' }, auth);
+    assert.deepEqual(requests.map(r => [new URL(r.url).pathname, r.method]), [
+      ['/v1/assistant-conversations', 'GET'], ['/v1/assistant-conversations', 'POST'],
+      ['/v1/assistant-conversations/a%2Fb', 'GET'], ['/v1/assistant-conversations/a%2Fb/messages', 'POST'],
+      ['/v1/assistant-conversations/a%2Fb/turns', 'POST'],
+    ]);
+    for (const request of requests) assert.equal(request.headers.Authorization, 'Bearer test-token');
+    assert.deepEqual(JSON.parse(requests[3].body), { message: 'hello' });
+  } finally { global.fetch = original; }
+});
+
+test('mobile preserves HTTP status for conversation conflict and access handling', async () => {
+  const original = global.fetch;
+  try {
+    global.fetch = async () => ({ ok: false, status: 409, json: async () => ({ detail: 'Conversation changed' }) });
+    const client = createMobileApiClient({ apiBaseUrl: 'https://example.test' });
+    await assert.rejects(client.getAssistantConversation('id'), { status: 409, message: 'Conversation changed' });
+  } finally { global.fetch = original; }
+});
 
 test('marketplace and closet search carry encoded query through pagination', async () => {
   const original = global.fetch;

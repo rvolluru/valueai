@@ -1,5 +1,39 @@
 # Jouft listing analysis: complete process
 
+Release candidate — October 23, 2026: the locally implemented fixes below are
+being validated for deployment: deterministic analysis confirmation, existing-trade
+recovery, mobile API wiring, modal safe areas and nonduplicated status summaries.
+Mobile Facebook sharing now opens Facebook's web sharing screen on iOS rather
+than a generic share sheet; Android keeps its direct native target. No new Meta
+credentials or automatic personal-profile posting are introduced. Deployment and
+mobile distribution are not yet verified for this candidate.
+
+Existing-trade recovery — October 22, 2026 (local only, not deployed): listing
+chat checks the sender's existing active requests (requested/proposed/pending,
+using the same 200-recent-offer scope as normal offer creation) before preparation
+and send. An existing request clears the unsent proposal and reports its actual
+status, distinguishing the exact offered-item set from different offered items.
+No new offer or notification is created. Exact stable-offer-ID recovery after a
+committed send still uses the existing idempotent send path. Web/mobile show an
+existing-request status rather than leaving confirmation controls and a retry error.
+
+Analysis confirmation reliability — October 22, 2026 (implemented locally, not
+deployed): after validating the current version-bound analysis confirmation token,
+the backend directly advances the approved draft through existing guarded draft
+creation and analysis-start operations. It does not ask the model to choose these
+operations again. Required evidence/facts, ownership and request-ledger checks
+still apply; replay creates neither a duplicate listing nor a duplicate job.
+This approval never publishes the listing. The API regression test verifies that
+confirmation starts analysis with the model unavailable and exact replay is safe.
+
+Mobile API wiring correction — October 21, 2026 (local only, not distributed):
+the native client now implements the parent conversation and child listing-agent
+session/read/turn/review/photo endpoints used by the shared controllers. Native
+photos use authenticated multipart uploads with request ID and expected revision;
+HTTP error status is retained for conflict/access handling. A controller-contract
+test checks all required methods exist. This fixes missing-method failures before
+requests reached the API; server analysis, pricing and approval rules are unchanged.
+
 Production verified — October 21, 2026: release `7775fd0`, deployment workflow
 `39646442566`, deployed the threaded assistant, guarded listing tools, chronological
 review UI and pending-only trade reads to the API and hosted web app. Pre-rollout

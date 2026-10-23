@@ -10,8 +10,15 @@ export function shareWasCancelled(error) {
   return /cancel|dismiss|did not share|user did not/i.test(String(error?.message || error?.code || error || ''));
 }
 
-export async function shareSocialListing({ target, payload, platform, nativeShare, systemShare, browserFallback }) {
+export async function shareSocialListing({ target, payload, platform, nativeShare, systemShare, browserFallback, openFacebook }) {
   const url = payload.shareUrl || payload.imageUrl;
+  // Personal-profile posting remains a user action in Facebook's composer.
+  // iOS's generic share sheet cannot select Facebook's extension for the user.
+  if (target === 'facebook' && platform === 'ios') {
+    const facebookUrl = socialWebUrl(target, payload);
+    if (!facebookUrl) return;
+    return openFacebook(facebookUrl);
+  }
   try {
     if (platform === 'android' && nativeShare && url) {
       const packageName = target === 'facebook' ? 'com.facebook.katana' : 'com.pinterest';

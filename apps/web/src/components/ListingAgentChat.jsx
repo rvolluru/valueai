@@ -128,7 +128,7 @@ export default function ListingAgentChat({ apiBaseUrl, apiKey, getBearerToken, c
           {!proposal && review?.reasons.map(reason => <p key={reason} role="status">{reason}</p>)}
           {!proposal && review?.publishable && <button className="primary" disabled={view.busy || !!files.length || !review.publishable || (review.mannequin_choice_required && !mannequinChoice)} onClick={() => controller.publish(mannequinChoice || null)}>Confirm and publish to Marketplace</button>}
         </>}
-        {session.stage === 'published' && <><p role="status">{session.marketplace_matches && session.last_tool === 'find_marketplace_matches' ? 'Published to Marketplace.' : session.messages.filter(message => message.role === 'assistant').at(-1)?.content || 'Published to Marketplace.'}</p>
+        {session.stage === 'published' && <><p role="status">Published to Marketplace.</p>
           <button className="primary" disabled={view.busy} onClick={() => controller.send('Find marketplace matches')}>{session.marketplace_matches ? 'Refresh matches' : 'Find matching items'}</button>
         </>}
         {session.stage === 'failed' && <p>Analysis did not finish. The draft is saved in My Closet.</p>}
@@ -138,7 +138,7 @@ export default function ListingAgentChat({ apiBaseUrl, apiKey, getBearerToken, c
       </div>}
       {session.stage === 'published' && session.marketplace_matches && !session.trade_proposal && <section aria-label="Marketplace matches">
         <h4>Marketplace matches</h4>
-        <p>{session.marketplace_matches.count} matching items based on your item’s saved value and your preferences. Selecting an item only prepares a request; confirmation is required to send.</p>
+        <p>Selecting an item only prepares a request; confirmation is required to send.</p>
         {session.marketplace_matches.items.map(item => <article className="panel" key={item.listing_id}>
           {matchPhotoUrls(item, apiBaseUrl || window.location.origin).length > 0 && <button type="button" className="listing-agent-match-photo" aria-label={`View full-size photos of ${item.title}`} disabled={view.busy} onClick={() => controller.viewPhotos(item.listing_id)}>
             <img src={matchPhotoUrls(item, apiBaseUrl || window.location.origin)[0]} alt={item.title} style={{ width: 100, height: 100, objectFit: 'contain' }} />
@@ -159,6 +159,7 @@ export default function ListingAgentChat({ apiBaseUrl, apiKey, getBearerToken, c
         <button className="ghost" disabled={view.busy} onClick={() => controller.send('Cancel trade request')}>Cancel trade request</button>
       </section>}
       {session.sent_trade && <p role="status">Trade request sent. Track it in <a href="/?tab=inbox">Trade Inbox</a>.</p>}
+      {session.existing_trade && <p role="status">Existing trade request · {session.existing_trade.status}. {session.existing_trade.same_items ? 'Same two items.' : 'Different offered items.'} <a href="/?tab=inbox">View Trade Inbox</a>.</p>}
       {!hideComposer && canEdit && pending?.type === 'question' && pending.field === 'condition' && <div role="group" aria-label="Choose item condition" className="listing-chat-quick-replies">
         {['New with tags', 'New', 'Like new'].map(condition => <button key={condition} type="button" className="ghost small" disabled={view.busy || !!files.length} onClick={() => controller.send(condition)}>{condition}</button>)}
       </div>}

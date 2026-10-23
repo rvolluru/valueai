@@ -14,10 +14,15 @@ for (const target of ['facebook', 'pinterest']) {
     assert.equal(called.social, target);
     assert.equal(called.url, payload.shareUrl);
   });
-  test(`iOS ${target} uses native system sharing without forcing browser`, async () => {
+  test(`iOS ${target} uses its intended sharing destination`, async () => {
     let called;
-    await shareSocialListing({ target, payload, platform: 'ios', systemShare: async options => { called = options; }, browserFallback: () => assert.fail() });
-    assert.equal(called.url, payload.shareUrl);
+    await shareSocialListing({ target, payload, platform: 'ios',
+      openFacebook: async url => { assert.equal(target, 'facebook'); called = url; },
+      systemShare: async options => { assert.equal(target, 'pinterest'); called = options; }, browserFallback: () => assert.fail() });
+    if (target === 'facebook') {
+      assert.equal(new URL(called).hostname, 'www.facebook.com');
+      assert.equal(new URL(called).searchParams.get('u'), payload.shareUrl);
+    } else assert.equal(called.url, payload.shareUrl);
   });
 }
 test('missing app offers browser fallback and cancelled native sharing does not', async () => {
@@ -33,4 +38,15 @@ test('browser sharing encodes listing and image URLs', () => {
   const url = new URL(socialWebUrl('pinterest', payload));
   assert.equal(url.searchParams.get('url'), payload.shareUrl);
   assert.equal(url.searchParams.get('media'), payload.imageUrl);
+});
+
+test('iOS Facebook does not open a generic share sheet or another destination on dismissal', async () => {
+  let opened = 0;
+  await shareSocialListing({ target: 'facebook', payload, platform: 'ios',
+    openFacebook: async () => { opened++; return { type: 'cancel' }; },
+    systemShare: () => assert.fail('Must not open generic share sheet'),
+    browserFallback: () => assert.fail('Must not reopen on dismissal') });
+  assert.equal(opened, 1);
+  await shareSocialListing({ target: 'facebook', payload: {}, platform: 'ios',
+    openFacebook: () => assert.fail('No URL to share') });
 });
