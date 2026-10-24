@@ -9,6 +9,7 @@ import {
   Linking,
   Modal,
   Platform,
+  KeyboardAvoidingView,
   RefreshControl,
   Share,
   ScrollView,
@@ -6525,6 +6526,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
       </TouchableOpacity>}
       <Modal visible={appAssistantOpen} animationType="slide" onRequestClose={() => setAppAssistantOpen(false)}>
         <SafeAreaProvider>
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={0}>
         <SafeAreaView style={styles.appAssistantRoot} edges={['top', 'right', 'bottom', 'left']}>
           <View style={styles.appAssistantHeader}>
             <View><Text style={styles.offerLaneLabel}>JOUFT ASSISTANT</Text><Text style={styles.appAssistantTitle}>What would you like to do?</Text></View>
@@ -6564,6 +6566,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
           </> : null}
           </>}
         </SafeAreaView>
+        </KeyboardAvoidingView>
         </SafeAreaProvider>
       </Modal>
       <Modal
