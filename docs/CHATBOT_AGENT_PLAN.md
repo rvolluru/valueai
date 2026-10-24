@@ -1,5 +1,13 @@
 # Listing chatbot: current flow and agent implementation plan
 
+Mobile keyboard release verified October 24, 2026: source `b099b26` adds
+keyboard avoidance around the assistant modal, retaining its safe-area boundary.
+All 32 mobile tests passed. iOS build 62 (`d9c98018-8feb-4dd8-b12d-61bd30b39566`)
+and App Store Connect submission `c71e9ccb-d6f9-4cc6-8819-66e9cb99169c` finished
+successfully; Apple processing/TestFlight availability is not verified. Android
+APK build 7 (`334ee852-3cf8-4e7f-825e-be99c4eea7e5`) finished successfully.
+No web/backend rollout was needed; listing analysis and trade rules are unchanged.
+
 Production verified October 21, 2026: release `7775fd0`, workflow `39646442566`,
 passed migrations, API/worker stability and post-deploy smoke checks. Conversation
 and listing-agent features are enabled in the hosted web build and API. Earlier
