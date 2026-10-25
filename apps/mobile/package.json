@@ -5,15 +5,18 @@
   "main": "expo/AppEntry",
   "scripts": {
     "start": "expo start",
-    "ios": "expo run:ios",
-    "android": "expo run:android",
+    "ios": "node scripts/run-native.cjs ios",
+    "android": "node scripts/run-native.cjs android",
     "web": "expo start --web",
-    "eas:build:ios:preview": "eas build --platform ios --profile preview",
-    "eas:build:android:preview": "eas build --platform android --profile preview",
+    "eas:build:ios:development": "eas build --platform ios --profile development",
+    "eas:build:android:development": "eas build --platform android --profile development",
+    "eas:build:ios:staging": "eas build --platform ios --profile staging",
+    "eas:build:android:staging": "eas build --platform android --profile staging",
     "eas:build:ios:production": "eas build --platform ios --profile production",
     "eas:build:android:production": "eas build --platform android --profile production",
-    "eas:submit:ios": "eas submit --platform ios --profile production",
-    "eas:submit:android": "eas submit --platform android --profile production"
+    "eas:submit:ios:staging": "eas submit --platform ios --profile staging",
+    "eas:submit:ios": "node scripts/submit-production.cjs ios",
+    "eas:submit:android": "node scripts/submit-production.cjs android"
   },
   "dependencies": {
     "@clerk/clerk-expo": "^2.19.31",
@@ -26,6 +29,7 @@
     "expo-build-properties": "~1.0.10",
     "expo-camera": "~17.0.10",
     "expo-constants": "~18.0.13",
+    "expo-dev-client": "~6.0.21",
     "expo-device": "~8.0.10",
     "expo-font": "~14.0.12",
     "expo-image-manipulator": "~14.0.8",

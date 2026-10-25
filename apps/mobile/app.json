@@ -73,8 +73,6 @@
       ]
     ],
     "extra": {
-      "apiBaseUrl": "https://api.jouft.com",
-      "clerkPublishableKey": "pk_test_ZmlybS1taW5rLTM1LmNsZXJrLmFjY291bnRzLmRldiQ",
       "eas": {
         "projectId": "9fea2985-7a8a-477e-ae73-335fdcb4a048"
       }

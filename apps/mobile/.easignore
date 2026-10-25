@@ -21,6 +21,9 @@ node_modules/
 ios/Pods/
 ios/build/
 android/build/
+# Generate native projects from app.config.js for each cloud build variant.
+ios/
+android/
 *.log
 .env*
 artifacts/

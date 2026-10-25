@@ -46,44 +46,78 @@ Use the right URL for your runtime:
 
 You can also edit the API Base URL in the app UI.
 
-## Share Builds With Testers (EAS)
+## Build environments and app variants
 
-Use these steps to share the app without requiring local dev setup on tester devices.
+Implemented October 25, 2026; not yet cloud-built or distributed in this configuration.
 
-1. Install and login to EAS CLI:
+| Profile | App | iOS bundle / Android package / URL scheme | API | EAS environment |
+| --- | --- | --- | --- | --- |
+| development | Jouft Testing | com.jouft.app.dev | Local, configurable | development |
+| staging | Jouft Testing | com.jouft.app.dev | Required staging origin | preview |
+| production | JOUFT | com.jouft.app | https://api.jouft.com | production |
+
+Development and staging intentionally replace one another on a device. Testing and
+production coexist. The old Android testing APK used `com.jouft.app`: its next
+testing release uses `.dev`. Existing iOS testing retains its identifier.
+
+`app.config.js` is authoritative. Cloud archives exclude native directories so EAS
+generates the chosen identity from config. Existing tracked native files are kept
+as a development reference; `npm run ios` / `npm run android` regenerates development
+configuration before running, without `--clean`. Do not run raw `expo run` to build
+a different variant from stale native files. Review any resulting native diffs.
+
+### Configure before building
+
+Copy `.env.example` to `.env.local` for local development and provide your test
+Clerk publishable key. Release profiles disable dotenv loading and omit local env
+files from archives. Configure the following public values in EAS:
+
+- **preview environment:** `JOUFT_STAGING_API_URL` and
+  `JOUFT_STAGING_CLERK_PUBLISHABLE_KEY` (`pk_test_…`).
+- **production environment:** `JOUFT_PRODUCTION_CLERK_PUBLISHABLE_KEY` (`pk_live_…`).
+
+Use plain-text or sensitive visibility, not secret visibility: dynamic config must
+read these publishable values locally during build resolution. They are bundled
+in the app; never supply Clerk secret keys here. Missing configuration fails closed.
+For submit commands that need these environment values locally, run them through
+`eas env:exec --environment production 'npm run eas:submit:ios -- --id BUILD_ID'`
+(use `preview` and the staging command for testing submissions).
+Staging rejects Jouft production hosts, localhost, insecure origins and live Clerk
+keys. Production rejects test Clerk keys and conflicting public API/key overrides.
+
+This does NOT provision a staging backend. It must use a separate database, image
+storage, queues and test-mode payment credentials; a different hostname alone is
+not proof of data isolation. Configure Clerk OAuth redirects, push credentials and
+Apple Pay capabilities for each identity before physical-device release testing.
+
+### Build and distribute
+
+From `apps/mobile`, with EAS CLI authenticated:
 
 ```bash
-npm install -g eas-cli
-eas login
-```
-
-2. Link this app to your Expo project (first time only):
-
-```bash
-cd apps/mobile
-eas init
-```
-
-3. Build internal testing artifacts:
-
-```bash
-npm run eas:build:ios:preview
-npm run eas:build:android:preview
-```
-
-4. Share the generated install links/QR from Expo build output.
-
-5. For app-store style testing:
-
-```bash
+npm run eas:build:ios:development
+npm run eas:build:android:development
+npm run eas:build:ios:staging
+npm run eas:build:android:staging
+npm run eas:submit:ios:staging
 npm run eas:build:ios:production
 npm run eas:build:android:production
-npm run eas:submit:ios
-npm run eas:submit:android
 ```
 
-Notes:
+Development iOS builds target the simulator; development Android includes the dev
+client. Staging iOS uses TestFlight; staging Android is an installable APK.
+Production Android produces a store AAB. No OTA updates are configured.
 
-- iOS internal installs may require registering tester UDIDs unless using TestFlight.
-- Android preview profile builds an APK for easiest direct install.
-- `apps/mobile/eas.json` contains the build profiles.
+The existing App Store Connect record `6791465341` is staging/testing ONLY.
+Create a NEW production record with bundle ID `com.jouft.app`, then set its numeric
+ID in `eas.json` → `submit.production.ios.ascAppId`. Until then,
+`npm run eas:submit:ios` deliberately refuses submission. Do not reuse the testing
+record or assume the new identifier is registered. Production app version is
+`1.0.0`; align the new store version accordingly. Build counters remain remote.
+
+Test production release candidates via TestFlight on the production record, then
+explicitly submit for App Review. Build/upload does not publish to the App Store.
+Existing App Store compliance findings still apply; this separation does not fix
+account deletion, Apple login, subscription billing or moderation.
+
+Expo reference: https://docs.expo.dev/build-reference/variants/

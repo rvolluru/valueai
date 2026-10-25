@@ -39,3 +39,8 @@ apps/mobile/.expo/
 apps/mobile/ios/Pods/
 apps/mobile/ios/build/
 apps/mobile/android/build/
+# Variant identities are generated from the selected Expo config, not checked-in native files.
+apps/mobile/ios/
+apps/mobile/android/
+artifacts/
+tmp/

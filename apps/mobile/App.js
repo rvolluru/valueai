@@ -53,7 +53,7 @@ import { BodoniModa_700Bold } from '@expo-google-fonts/bodoni-moda/700Bold';
 
 WebBrowser.maybeCompleteAuthSession();
 
-const API_DEFAULT = process.env.EXPO_PUBLIC_API_BASE_URL || Constants.expoConfig?.extra?.apiBaseUrl || 'http://127.0.0.1:8000';
+const API_DEFAULT = Constants.expoConfig?.extra?.apiBaseUrl || process.env.EXPO_PUBLIC_API_BASE_URL || 'http://127.0.0.1:8000';
 const LISTING_AGENT_ENABLED = process.env.EXPO_PUBLIC_LISTING_AGENT_ENABLED === 'true';
 const CONVERSATION_PILOT_ENABLED = process.env.EXPO_PUBLIC_ASSISTANT_CONVERSATIONS_ENABLED === 'true';
 const CLERK_PUBLISHABLE_KEY = Constants.expoConfig?.extra?.clerkPublishableKey || process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY || '';

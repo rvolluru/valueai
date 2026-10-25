@@ -1,50 +1,30 @@
 {
-  "cli": {
-    "version": ">= 14.0.0",
-    "appVersionSource": "remote"
-  },
+  "cli": { "version": ">= 14.0.0", "appVersionSource": "remote" },
   "build": {
     "development": {
+      "environment": "development",
       "developmentClient": true,
-      "distribution": "internal"
-    },
-    "preview": {
-      "env": {
-        "EXPO_PUBLIC_API_BASE_URL": "https://api.jouft.com",
-        "EXPO_PUBLIC_LISTING_AGENT_ENABLED": "true",
-        "EXPO_PUBLIC_ASSISTANT_CONVERSATIONS_ENABLED": "true"
-      },
-      "autoIncrement": true,
       "distribution": "internal",
-      "ios": {
-        "simulator": false
-      },
-      "android": {
-        "buildType": "apk"
-      }
+      "ios": { "simulator": true },
+      "android": { "buildType": "apk" },
+      "env": { "APP_ENV": "development", "EXPO_PUBLIC_LISTING_AGENT_ENABLED": "true", "EXPO_PUBLIC_ASSISTANT_CONVERSATIONS_ENABLED": "true" }
     },
-    "testing": {
-      "autoIncrement": true
+    "staging": {
+      "environment": "preview",
+      "distribution": "store",
+      "autoIncrement": true,
+      "android": { "buildType": "apk" },
+      "env": { "APP_ENV": "staging", "EXPO_NO_DOTENV": "1", "EXPO_PUBLIC_LISTING_AGENT_ENABLED": "true", "EXPO_PUBLIC_ASSISTANT_CONVERSATIONS_ENABLED": "true" }
     },
     "production": {
+      "environment": "production",
+      "distribution": "store",
       "autoIncrement": true,
-      "env": {
-        "EXPO_PUBLIC_API_BASE_URL": "https://api.jouft.com",
-        "EXPO_PUBLIC_LISTING_AGENT_ENABLED": "true",
-        "EXPO_PUBLIC_ASSISTANT_CONVERSATIONS_ENABLED": "true"
-      }
+      "env": { "APP_ENV": "production", "EXPO_NO_DOTENV": "1", "EXPO_PUBLIC_LISTING_AGENT_ENABLED": "true", "EXPO_PUBLIC_ASSISTANT_CONVERSATIONS_ENABLED": "true" }
     }
   },
   "submit": {
-    "testing": {
-      "ios": {
-        "ascAppId": "6791465341"
-      }
-    },
-    "production": {
-      "ios": {
-        "ascAppId": "6791465341"
-      }
-    }
+    "staging": { "ios": { "ascAppId": "6791465341" } },
+    "production": { "ios": {} }
   }
 }
