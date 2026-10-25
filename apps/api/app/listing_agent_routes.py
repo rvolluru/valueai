@@ -265,14 +265,19 @@ class Services:
         return {**_app_assistant_listing_card(item, self.settings), 'description': item.get('description'),
                 'estimated_value': item.get('estimated_value')}
 
+    def refresh_existing_trade(self, snapshot):
+        offer = self.db.get_trade_offer_by_id(snapshot['offer_id'])
+        if not offer or offer.get('from_subject') != self.principal.subject:
+            return None
+        return {**snapshot, 'status': offer['status']}
+
     def existing_trade(self, target_id, offered_id):
-        for offer in self.db.list_trade_offers_for_subject(self.principal.subject, limit=200, status=None):
-            if (offer.get('from_subject') == self.principal.subject and offer.get('target_listing_id') == target_id
-                    and str(offer.get('status') or '').lower() in {'requested', 'proposed', 'pending'}):
-                offered_ids = offer.get('offered_listing_ids') or [offer.get('offered_listing_id')]
-                return {**{k: offer.get(k) for k in ('offer_id', 'target_listing_id', 'offered_listing_id', 'status')},
-                        'existing': True, 'same_items': set(offered_ids) == {offered_id}}
-        return None
+        offer = self.db.find_active_trade_request(self.principal.subject, target_id)
+        if not offer:
+            return None
+        offered_ids = offer.get('offered_listing_ids') or [offer.get('offered_listing_id')]
+        return {**{k: offer.get(k) for k in ('offer_id', 'target_listing_id', 'offered_listing_id', 'status')},
+                'existing': True, 'same_items': set(offered_ids) == {offered_id}}
 
     async def prepare_trade(self, state, target_id):
         existing = self.existing_trade(target_id, state['listing_id'])
@@ -298,9 +303,15 @@ class Services:
             _, _, current_base = await self._trade_context(state, proposal['target']['listing_id'])
             if current_base != proposal['base']:
                 raise HTTPException(409, 'These items changed. Select the match again and review a new trade request.')
-        result = _create_offer(OfferCreateRequest(target_listing_id=proposal['target']['listing_id'],
-            offered_listing_ids=[proposal['offered']['listing_id']]), self.principal, self.db, self.settings,
-            stable_offer_id=proposal['offer_id'])
+        try:
+            result = _create_offer(OfferCreateRequest(target_listing_id=proposal['target']['listing_id'],
+                offered_listing_ids=[proposal['offered']['listing_id']]), self.principal, self.db, self.settings,
+                stable_offer_id=proposal['offer_id'])
+        except HTTPException as exc:
+            active = self.existing_trade(proposal['target']['listing_id'], proposal['offered']['listing_id'])
+            if exc.status_code == 409 and active and active['offer_id'] != proposal['offer_id']:
+                return active
+            raise
         return {k: getattr(result, k) for k in ('offer_id', 'target_listing_id', 'offered_listing_id', 'status')}
 
     async def prepare_changes(self, state, changes):

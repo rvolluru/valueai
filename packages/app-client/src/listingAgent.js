@@ -148,9 +148,17 @@ export function createListingAgentController(client, getAuth, onChange) {
         }, await getAuth());
       });
     },
-    refresh() {
-      if (!state.session) return;
-      return perform(async () => client.getListingAgentSession(state.session.session_id, await getAuth()));
+    async refresh() {
+      if (!state.session || state.busy || disposed) return;
+      // Polling/reloading must never replace a failed mutation's exact retry payload.
+      emit({ busy: true });
+      try {
+        const session = await client.getListingAgentSession(state.session.session_id, await getAuth());
+        emit({ session, ...(!retryOperation ? { error: '' } : {}) });
+        return session;
+      } catch (error) {
+        if (!retryOperation) emit({ error: error.message || 'Unable to refresh saved progress.' });
+      } finally { emit({ busy: false }); }
     },
     removePhoto(imageId) {
       if (!state.session || (state.session.listing_id && state.session.stage !== 'review_ready')) return;

@@ -64,6 +64,8 @@ test('network retry reuses exact message ID, revision and payload', async () => 
   await fixture.controller.load();
   await fixture.controller.send('New, size M');
   assert.match(fixture.view.error, /Connection lost/);
+  await fixture.controller.refresh(); // Background polling must not erase this retry.
+  assert.match(fixture.view.error, /Connection lost/);
   await fixture.controller.retry();
   assert.deepEqual(calls[0], calls[1]);
   assert.equal(fixture.view.session.revision, 9);

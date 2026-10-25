@@ -21,6 +21,10 @@ class TradeListingUnavailableError(RuntimeError):
     """Raised when either side of a trade was committed to another trade."""
 
 
+class ActiveTradeRequestError(RuntimeError):
+    """A sender already has an active request, or creation is in progress."""
+
+
 def validate_listing_condition(value: object) -> str:
     condition = str(value or "").strip()
     if condition not in VALID_LISTING_CONDITIONS:
@@ -1088,7 +1092,27 @@ class Database:
         matches = self.list_trade_matches_by_ids([match_id])
         return matches[0] if matches else None
 
-    def create_trade_offer(
+    def find_active_trade_request(self, from_subject, target_listing_id):
+        row = self.fetchone(f'SELECT offer_id FROM trade_offers WHERE from_subject={self.param} '
+            f'AND target_listing_id={self.param} AND lower(status) IN (\'requested\',\'proposed\',\'pending\') '
+            'ORDER BY created_at DESC,offer_id LIMIT 1', (from_subject, target_listing_id))
+        self.commit()
+        return self.get_trade_offer_by_id(row[0]) if row else None
+
+    def create_trade_offer(self, **kwargs):
+        if str(kwargs.get('status', 'pending')).lower() not in {'requested', 'proposed', 'pending'}:
+            return self._insert_trade_offer(**kwargs)
+        # Database-scoped advisory/file lock serializes different sessions and
+        # processes, not just retries with the same offer ID. Hold through commit.
+        key = json.dumps(['active-trade', kwargs['from_subject'], kwargs['target_listing_id']])
+        with self.analysis_execution_lock(key) as acquired:
+            if not acquired:
+                raise ActiveTradeRequestError('Another trade request is being created. Retry shortly.')
+            if self.find_active_trade_request(kwargs['from_subject'], kwargs['target_listing_id']):
+                raise ActiveTradeRequestError('You already have an active trade request for this listing')
+            return self._insert_trade_offer(**kwargs)
+
+    def _insert_trade_offer(
         self,
         *,
         offer_id: str,

@@ -59,6 +59,11 @@ def test_existing_trade_is_reported_without_retry_or_false_send(client, monkeypa
     assert client.post(path, headers=AUTH, json=payload).json() == result
     assert len(db.fetchall('SELECT offer_id FROM trade_offers')) == 1
     assert not notifications
+    db.execute('UPDATE trade_offers SET status=? WHERE offer_id=?', ('declined', 'existing-request'))
+    db.commit()
+    reloaded = client.get(path.removesuffix('/turns'), headers=AUTH).json()
+    assert reloaded['existing_trade']['status'] == 'declined'
+    assert reloaded['trade_proposal'] is None
 
 
 def test_trade_request_requires_separate_confirmation_and_retry_sends_once(client, monkeypatch):

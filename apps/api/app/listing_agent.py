@@ -351,6 +351,11 @@ class Agent:
                            facts=state['facts'], waivers=state['waivers'], evidence=state['evidence']))
 
     async def refresh(self, state):
+        if state.get('existing_trade') and hasattr(self.services, 'refresh_existing_trade'):
+            current = self.services.refresh_existing_trade(state['existing_trade'])
+            if current != state['existing_trade']:
+                state['existing_trade'] = current
+                self.store.save(state)
         if state.get('listing_id') and not state.get('job_id') and not state.get('review_existing') and hasattr(self.services, 'find_analysis_job'):
             recovered = await self.services.find_analysis_job(state)
             if recovered:

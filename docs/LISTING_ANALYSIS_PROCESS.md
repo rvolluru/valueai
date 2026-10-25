@@ -1,5 +1,19 @@
 # Jouft listing analysis: complete process
 
+Reliability review fixes — October 25, 2026 (implemented locally, not deployed):
+active trade-request lookup is now an exact sender/target query without a recent-
+offer limit. Normal/API/agent offer creation rechecks that query while holding a
+database-scoped sender/target lock through insertion and commit (PostgreSQL
+advisory lock; local SQLite cross-process file lock). Competing creation returns a
+conflict rather than inserting a duplicate; existing legacy duplicates are not
+deleted or rewritten. This guards creation paths, not arbitrary SQL writes.
+The agent reloads the referenced existing offer's status and verifies sender
+ownership on refresh, clearing unavailable records. Polling/reloading no longer
+replaces a failed child mutation's exact retry operation or clears its error.
+Historical mobile photo URLs resolve against the configured API base just like
+current photos. Analysis/model routing, pricing and publication approval rules
+are unchanged. No production rollout or mobile distribution is included.
+
 Production verified — October 23, 2026: release `b8ae42b`, workflow `39986312059`,
 passed migrations, API/worker rollout stability and post-deploy smoke checks.
 Public health is OK; the live web bundle includes existing-trade status and removes

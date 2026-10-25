@@ -39,7 +39,7 @@ from .auth import AuthPrincipal, create_impersonation_token, get_request_princip
 from .analysis_execution import guard_analysis_job, recover_analysis_success
 from .pipeline_results import StalePipelineResult, merge_result, mark_pricing_failure, original_urls, photo_key
 from .analysis_queue import enqueue_listing_analysis
-from .db import Database, PersistedImage, TradeListingUnavailableError, utc_now_iso
+from .db import Database, PersistedImage, TradeListingUnavailableError, ActiveTradeRequestError, utc_now_iso
 from .deps import (
     get_db,
     get_gpt_item_profiler,
@@ -6742,13 +6742,7 @@ def _create_offer(payload: OfferCreateRequest, principal: AuthPrincipal, db: Dat
         raise HTTPException(status_code=404, detail="Target listing not found")
     if target["owner_subject"] == principal.subject:
         raise HTTPException(status_code=400, detail="Cannot create a trade offer on your own listing")
-    existing_requests = db.list_trade_offers_for_subject(principal.subject, limit=200, status=None)
-    if any(
-        str(existing.get("from_subject") or "") == principal.subject
-        and str(existing.get("target_listing_id") or "") == payload.target_listing_id
-        and str(existing.get("status") or "").lower() in {"requested", "proposed", "pending"}
-        for existing in existing_requests
-    ):
+    if db.find_active_trade_request(principal.subject, payload.target_listing_id):
         raise HTTPException(status_code=409, detail="You already have an active trade request for this listing")
     if str(target.get("status", "")).lower() != "active":
         raise HTTPException(status_code=400, detail="Target listing is not active")
@@ -6770,17 +6764,20 @@ def _create_offer(payload: OfferCreateRequest, principal: AuthPrincipal, db: Dat
         if abs(offered_value - target_value) > tolerance:
             raise HTTPException(status_code=400, detail="Each offered listing must be within the trade price band")
 
-    offer = db.create_trade_offer(
-        offer_id=stable_offer_id or str(uuid.uuid4()),
-        target_listing_id=payload.target_listing_id,
-        offered_listing_id=offered_ids[0] if offered_ids else "",
-        offered_listing_ids=offered_ids,
-        from_subject=principal.subject,
-        to_subject=target["owner_subject"],
-        from_receive_address=_profile_primary_shipping_address_for_offer(db, principal.subject, settings),
-        message=(payload.message or "").strip(),
-        status="pending" if offered_ids else "requested",
-    )
+    try:
+        offer = db.create_trade_offer(
+            offer_id=stable_offer_id or str(uuid.uuid4()),
+            target_listing_id=payload.target_listing_id,
+            offered_listing_id=offered_ids[0] if offered_ids else "",
+            offered_listing_ids=offered_ids,
+            from_subject=principal.subject,
+            to_subject=target["owner_subject"],
+            from_receive_address=_profile_primary_shipping_address_for_offer(db, principal.subject, settings),
+            message=(payload.message or "").strip(),
+            status="pending" if offered_ids else "requested",
+        )
+    except ActiveTradeRequestError as exc:
+        raise HTTPException(409, str(exc)) from exc
     offer["from_name"] = _profile_subject_first_name(db, offer.get("from_subject"))
     offer["to_name"] = _profile_subject_first_name(db, offer.get("to_subject"))
     target_title = str(target.get("title") or "your listing").strip() or "your listing"

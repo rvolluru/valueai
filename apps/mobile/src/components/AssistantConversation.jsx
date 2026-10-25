@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, TextInput, ScrollView, TouchableOpacity, Image } from 'react-native';
 import { createConversationController, conversationBlocks, conversationSpans, assistantOutcomeLabel, resultSetHeading, chronologicalChat, listingPanelPosition, conversationText } from '../../../../packages/app-client/src/assistantConversation';
 
-export default function AssistantConversation({ client, getAuth, onPhotos, styles, renderWorkflow = null }) {
+export default function AssistantConversation({ client, getAuth, onPhotos, styles, apiBaseUrl, renderWorkflow = null }) {
   const [view, setView] = useState({ busy: true });
   const [input, setInput] = useState('');
   const [workflowOpen, setWorkflowOpen] = useState(false);
@@ -57,7 +57,7 @@ export default function AssistantConversation({ client, getAuth, onPhotos, style
         {!hasPhotoEvents && index === panelIndex ? inlinePhotos : null}
         {message.timeline_kind === 'photos' && message.isCurrent ? inlinePhotos : message.timeline_kind === 'actions' && message.isCurrent ? listingPanel : <View style={styles.appAssistantTurn}><View style={{ flex: 1 }}>
           {conversationBlocks(message).map((block, n) => <Text key={n} style={[styles.listingAssistantMessageText, { marginBottom: 10 }, block.kind === 'heading' && { fontWeight: '700' }]}>{block.kind === 'bullet' ? '• ' : ''}{conversationSpans(block.text).map((span, i) => <Text key={i} style={span.bold ? { fontWeight: '700' } : undefined}>{span.text}</Text>)}</Text>)}
-          {message.timeline_kind === 'photos' ? <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>{(message.snapshot.photos || []).map(photo => <Image key={photo.image_id} source={{ uri: photo.url }} accessibilityLabel="Previously uploaded item photo" style={{ width: 120, height: 140, resizeMode: 'contain' }} />)}</View> : null}
+          {message.timeline_kind === 'photos' ? <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>{(message.snapshot.photos || []).map(photo => <Image key={photo.image_id} source={{ uri: new URL(photo.url, apiBaseUrl).href }} accessibilityLabel="Previously uploaded item photo" style={{ width: 120, height: 140, resizeMode: 'contain' }} />)}</View> : null}
           {index === questionIndex ? conditionButtons : null}
         </View></View>}
         {renderResults(message.result_sets)}
