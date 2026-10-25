@@ -10,13 +10,13 @@
     "web": "expo start --web",
     "eas:build:ios:development": "eas build --platform ios --profile development",
     "eas:build:android:development": "eas build --platform android --profile development",
-    "eas:build:ios:staging": "eas build --platform ios --profile staging",
-    "eas:build:android:staging": "eas build --platform android --profile staging",
-    "eas:build:ios:production": "eas build --platform ios --profile production",
-    "eas:build:android:production": "eas build --platform android --profile production",
-    "eas:submit:ios:staging": "eas submit --platform ios --profile staging",
-    "eas:submit:ios": "node scripts/submit-production.cjs ios",
-    "eas:submit:android": "node scripts/submit-production.cjs android"
+    "eas:build:ios:staging": "node scripts/eas-release.cjs build ios staging",
+    "eas:build:android:staging": "node scripts/eas-release.cjs build android staging",
+    "eas:build:ios:production": "node scripts/eas-release.cjs build ios production",
+    "eas:build:android:production": "node scripts/eas-release.cjs build android production",
+    "eas:submit:ios:staging": "node scripts/eas-release.cjs submit ios staging",
+    "eas:submit:ios": "node scripts/eas-release.cjs submit ios production",
+    "eas:submit:android": "node scripts/eas-release.cjs submit android production"
   },
   "dependencies": {
     "@clerk/clerk-expo": "^2.19.31",

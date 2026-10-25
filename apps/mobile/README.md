@@ -50,6 +50,13 @@ You can also edit the API Base URL in the app UI.
 
 Implemented October 25, 2026; not yet cloud-built or distributed in this configuration.
 
+Environment setup verified October 25: EAS preview now has the staging API origin
+(`https://staging.jouft.com`) and matching test Clerk publishable key. AWS staging
+has a separate RDS database and upload bucket; its existing task has no Stripe or
+Shippo keys configured. Staging still runs an older backend image and its assistant
+endpoint returns 404; updating staging is required before assistant release tests.
+Production EAS configuration and a new production App Store record remain pending.
+
 | Profile | App | iOS bundle / Android package / URL scheme | API | EAS environment |
 | --- | --- | --- | --- | --- |
 | development | Jouft Testing | com.jouft.app.dev | Local, configurable | development |
@@ -79,9 +86,10 @@ files from archives. Configure the following public values in EAS:
 Use plain-text or sensitive visibility, not secret visibility: dynamic config must
 read these publishable values locally during build resolution. They are bundled
 in the app; never supply Clerk secret keys here. Missing configuration fails closed.
-For submit commands that need these environment values locally, run them through
-`eas env:exec --environment production 'npm run eas:submit:ios -- --id BUILD_ID'`
-(use `preview` and the staging command for testing submissions).
+The npm release commands use `eas env:exec preview 'COMMAND'` or
+`eas env:exec production 'COMMAND'` so public environment values are available
+before dynamic config is evaluated. Local dotenv loading is disabled first.
+For custom commands use that positional syntax (not `--environment`).
 Staging rejects Jouft production hosts, localhost, insecure origins and live Clerk
 keys. Production rejects test Clerk keys and conflicting public API/key overrides.
 
