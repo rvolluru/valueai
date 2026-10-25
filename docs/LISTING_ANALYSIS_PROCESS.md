@@ -1,6 +1,15 @@
 # Jouft listing analysis: complete process
 
-Reliability review fixes — October 25, 2026 (implemented locally, not deployed):
+Staging verified — October 25, 2026: source `ec13811`, image
+`valueai-staging-api:staging-ec13811`, passed database migrations and API/worker
+rollout stability checks (task revisions 10 and 3). At `https://staging.jouft.com`,
+health passed, unauthenticated assistant reads require authentication and an
+authenticated conversation read returned 200. Both assistant flags are enabled.
+Verification created no chats, listings, analysis jobs or trades. Production was
+not changed; no new mobile build was distributed. This deploys the backend/web
+reliability changes below to staging only, not production.
+
+Reliability review fixes — October 25, 2026 (deployed to staging; not production):
 active trade-request lookup is now an exact sender/target query without a recent-
 offer limit. Normal/API/agent offer creation rechecks that query while holding a
 database-scoped sender/target lock through insertion and commit (PostgreSQL

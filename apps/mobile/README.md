@@ -53,8 +53,10 @@ Implemented October 25, 2026; not yet cloud-built or distributed in this configu
 Environment setup verified October 25: EAS preview now has the staging API origin
 (`https://staging.jouft.com`) and matching test Clerk publishable key. AWS staging
 has a separate RDS database and upload bucket; its existing task has no Stripe or
-Shippo keys configured. Staging still runs an older backend image and its assistant
-endpoint returns 404; updating staging is required before assistant release tests.
+Shippo keys configured. Staging backend source `ec13811` was deployed October 25:
+migrations, API/worker stability and health checks passed; the assistant endpoint
+returns 200 with staging authentication and requires authentication otherwise.
+No mobile build was distributed by this backend rollout.
 Production EAS configuration and a new production App Store record remain pending.
 
 | Profile | App | iOS bundle / Android package / URL scheme | API | EAS environment |
