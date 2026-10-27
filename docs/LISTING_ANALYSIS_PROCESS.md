@@ -1,5 +1,10 @@
 # Jouft listing analysis: complete process
 
+October 27, 2026 — implemented locally, not deployed: background cleanup uses
+Photoroom only for the selected original hero image. Other photos remain unchanged;
+Photoroom failure retains the original rather than falling back to rembg.
+Mannequin generation remains an independent branch with unchanged review rules.
+
 Staging verified — October 25, 2026: source `ec13811`, image
 `valueai-staging-api:staging-ec13811`, passed database migrations and API/worker
 rollout stability checks (task revisions 10 and 3). At `https://staging.jouft.com`,
@@ -913,13 +918,15 @@ the public gallery.
 
 “Image staging” is optional background cleanup—not mannequin generation.
 
-When requested and configured, the system opens/orients the original, obtains a
-foreground mask using segmentation such as Photoroom or configured rembg, composites
+When requested and configured, the system opens/orients the selected original hero,
+obtains a foreground mask using Photoroom only, composites
 the **original product pixels** over white, and saves a linked display variant.
 
 This path does not use generative replacement to redesign the product. Gallery data
 keeps original (`p_img`) and display (`d_img`) images separate. Photo order and hero
-selection are preserved. Disabled/unavailable providers can leave originals unchanged;
+selection are preserved. Detail/evidence photos are not sent for cleanup. Disabled,
+unavailable or failed Photoroom processing leaves the original unchanged (no rembg
+or generative replacement fallback in this branch);
 a cleaned version is not required for listing review.
 
 ## 13. Assemble the listing for owner review

@@ -1690,75 +1690,13 @@ def _stage_item_image(raw: bytes, content_type: str, settings: Settings) -> tupl
             except Exception as exc:
                 photoroom_debug["composite"] = {"reason": "exception", "error": str(exc)[:500]}
 
-    if not settings.condition_rembg_enabled:
-        return oriented_raw, oriented_content_type, {
-            "applied": False,
-            "provider": None,
-            "reason": "no_staging_provider_succeeded",
-            "synthetic_shadow": False,
-            "exif_orientation_applied": orientation_applied,
-            "photoroom": photoroom_debug,
-            "gemini_edit": gemini_debug,
-        }
-
-    fg = src_rgba
-    used_rembg = False
-    rembg_effective = False
-    try:
-        from rembg import remove  # type: ignore
-
-        removed = remove(
-            oriented_raw,
-            alpha_matting=True,
-            alpha_matting_foreground_threshold=245,
-            alpha_matting_background_threshold=10,
-            alpha_matting_erode_size=8,
-        )
-        with Image.open(BytesIO(removed)) as rembg_img:
-            fg = rembg_img.convert("RGBA")
-        alpha = fg.split()[-1]
-        coverage = sum(1 for px in alpha.getdata() if px > 20) / max(fg.size[0] * fg.size[1], 1)
-        rembg_effective = coverage < 0.95
-        if not rembg_effective:
-            # Fallback: ask rembg for a raw mask and apply aggressive thresholding.
-            mask_bytes = remove(oriented_raw, only_mask=True)
-            with Image.open(BytesIO(mask_bytes)) as m:
-                mask = ImageOps.autocontrast(m.convert("L"))
-            mask = mask.point(lambda p: 255 if p >= 140 else 0)
-            mask = mask.filter(ImageFilter.MinFilter(3)).filter(ImageFilter.GaussianBlur(1.2))
-            candidate = src_rgba.copy()
-            candidate.putalpha(mask)
-            alpha2 = candidate.split()[-1]
-            coverage2 = sum(1 for px in alpha2.getdata() if px > 20) / max(candidate.size[0] * candidate.size[1], 1)
-            if coverage2 < coverage:
-                fg = candidate
-                rembg_effective = coverage2 < 0.95
-        used_rembg = True
-    except Exception:
-        fg = src_rgba
-
-    composited, composite_debug = _composite_original_over_white(src_rgba, fg)
-    if composited is None:
-        return oriented_raw, oriented_content_type, {
-            "applied": False,
-            "provider": None,
-            "reason": "invalid_local_segmentation_mask",
-            "mask": composite_debug,
-            "exif_orientation_applied": orientation_applied,
-            "photoroom": photoroom_debug,
-            "gemini_edit": gemini_debug,
-        }
-    return composited, "image/png", {
-        "applied": True,
-        "provider": "rembg_mask_original_composite",
-        "synthetic": False,
-        "product_pixels_preserved": True,
-        "used_rembg": used_rembg,
-        "rembg_effective": rembg_effective,
-        "forced_padding": False,
+    # Listing display cleanup is Photoroom-only; condition segmentation is separate.
+    return oriented_raw, oriented_content_type, {
+        "applied": False,
+        "provider": None,
+        "reason": "no_staging_provider_succeeded",
         "synthetic_shadow": False,
         "exif_orientation_applied": orientation_applied,
-        "mask": composite_debug,
         "photoroom": photoroom_debug,
         "gemini_edit": gemini_debug,
     }
@@ -10427,6 +10365,17 @@ async def _run_listing_image_staging_job(
         entry for entry in files
         if isinstance(entry.get("data"), bytes)
     ][: settings.max_images_per_request]
+    # Only the selected original hero receives a display variant. Never send
+    # detail/evidence photos (or generated mannequin images) for cleanup.
+    gallery = current.get("listed_images") or current.get("images") or []
+    hero = next((entry for entry in gallery if isinstance(entry, dict) and entry.get("is_hero")), None)
+    hero_url = (hero.get("p_img") or hero.get("d_img")) if hero else current.get("image")
+    if not hero:
+        hero = next((entry for entry in gallery if isinstance(entry, dict)
+                     and current.get("image") in (entry.get("p_img"), entry.get("d_img"))), None)
+        if hero:
+            hero_url = hero.get("p_img") or hero.get("d_img")
+    stage_inputs = [entry for entry in stage_inputs if entry.get("source_url") == hero_url][:1] if hero_url else stage_inputs[:1]
     if not stage_inputs:
         job_db.close()
         return
@@ -10505,13 +10454,25 @@ async def _run_listing_image_staging_job(
         current = next((r for r in job_db.list_owner_listings(owner_subject, limit=500) if r["listing_id"] == listing_id), current)
         current_analysis = dict(current.get("analysis")) if isinstance(current.get("analysis"), dict) else {}
         current_analysis["presentation_assets"] = presentation_assets
+        # Keep all other originals/display variants in their existing order.
+        replacement = listed_images[0]
+        listed_images = [
+            {**entry, "d_img": replacement["d_img"]} if isinstance(entry, dict)
+            and (entry.get("p_img") or entry.get("d_img")) == replacement["p_img"]
+            else {"p_img": entry, "d_img": replacement["d_img"], "is_hero": True}
+            if isinstance(entry, str) and entry == replacement["p_img"]
+            else entry for entry in (current.get("listed_images") or current.get("images") or [])
+        ]
         for asset in current_analysis.get("generated_assets") or []:
             if not isinstance(asset, dict) or not asset.get("synthetic"):
                 continue
             if asset.get("review_decision") == "exclude" or (str(current.get("status") or "").lower() == "active" and asset.get("review_decision") == "pending"):
                 continue
             generated_url = str(asset.get("image_url") or "").strip()
-            if not generated_url or generated_url in staged_urls:
+            if not generated_url or generated_url in staged_urls or any(
+                (entry.get("d_img") if isinstance(entry, dict) else entry) == generated_url
+                for entry in listed_images
+            ):
                 continue
             staged_urls.append(generated_url)
             listed_images.append({"p_img": generated_url, "d_img": generated_url, "is_hero": False})

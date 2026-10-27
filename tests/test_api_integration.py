@@ -3096,6 +3096,47 @@ def test_listing_media_repair_does_not_append_analysis_uploads_to_existing_galle
     assert len(listing["images"]) == 4
 
 
+def test_background_cleanup_only_processes_selected_hero(monkeypatch):
+    import asyncio
+    from app import main
+    from app.settings import Settings
+
+    listing = {"listing_id": "hero-test", "image": "/display-hero", "listed_images": [
+        {"p_img": "/detail", "d_img": "/detail", "is_hero": False},
+        {"p_img": "/hero", "d_img": "/display-hero", "is_hero": True},
+    ]}
+    class FakeDB:
+        def __init__(self, *args): pass
+        def list_owner_listings(self, *args, **kwargs): return [listing]
+        def commit(self): pass
+        def close(self): pass
+    calls = []
+    def stage(raw, content_type, settings):
+        calls.append(raw)
+        return raw, content_type, {"applied": False}
+    monkeypatch.setattr(main, "Database", FakeDB)
+    monkeypatch.setattr(main, "build_storage", lambda settings: object())
+    monkeypatch.setattr(main, "_stage_item_image", stage)
+    asyncio.run(main._run_listing_image_staging_job(
+        listing_id="hero-test", owner_subject="owner", settings=Settings(image_staging_enabled=True),
+        files=[{"data": b"detail", "source_url": "/detail"},
+               {"data": b"hero", "source_url": "/hero"}]))
+    assert calls == [b"hero"]
+
+
+def test_photoroom_failure_does_not_use_local_segmentation(monkeypatch):
+    from app import main
+    from app.settings import Settings
+    monkeypatch.setattr(main, "_remove_background_with_photoroom",
+                        lambda *args, **kwargs: (b"", "image/png", {"reason": "failed"}))
+    original = _make_image("PRODUCT")
+    out, _, debug = main._stage_item_image(original, "image/jpeg", Settings(
+        image_staging_enabled=True, image_staging_photoroom_enabled=True,
+        condition_rembg_enabled=True))
+    assert out == original
+    assert debug["applied"] is False
+
+
 def test_photoroom_staging_uses_segment_api(monkeypatch) -> None:
     monkeypatch.setenv("PHOTOROOM_API_KEY", "photoroom-test-key")
 
