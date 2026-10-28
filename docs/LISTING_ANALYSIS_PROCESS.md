@@ -4,6 +4,8 @@ October 27, 2026 — implemented locally, not deployed: background cleanup uses
 Photoroom only for the selected original hero image. Other photos remain unchanged;
 Photoroom failure retains the original rather than falling back to rembg.
 Mannequin generation remains an independent branch with unchanged review rules.
+The production rollout configuration now enables Photoroom on API and worker;
+deployment verification is pending. Provider credentials are supplied separately.
 
 Staging verified — October 25, 2026: source `ec13811`, image
 `valueai-staging-api:staging-ec13811`, passed database migrations and API/worker
