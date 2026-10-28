@@ -1,11 +1,20 @@
 # Jouft listing analysis: complete process
 
-October 27, 2026 — implemented locally, not deployed: background cleanup uses
+Production verified October 27, 2026 — release `c927955`, workflow `40625671003`:
+database migrations, API revision 182/worker revision 52 stability and workflow
+smoke checks passed. Public API health returned 200. Both deployed task definitions
+have Photoroom enabled with credentials configured. No real photo processing or
+listing/trade creation was performed for verification; provider output was tested
+with mocks, not a paid production image request. No mobile build was distributed.
+The deployed image includes the pre-verification guide; this verified status is
+recorded in Git for the next rollout.
+
+Background cleanup uses
 Photoroom only for the selected original hero image. Other photos remain unchanged;
 Photoroom failure retains the original rather than falling back to rembg.
 Mannequin generation remains an independent branch with unchanged review rules.
-The production rollout configuration now enables Photoroom on API and worker;
-deployment verification is pending. Provider credentials are supplied separately.
+The production rollout configuration enables Photoroom on API and worker;
+provider credentials are supplied separately.
 
 Staging verified — October 25, 2026: source `ec13811`, image
 `valueai-staging-api:staging-ec13811`, passed database migrations and API/worker
