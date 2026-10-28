@@ -23,3 +23,5 @@ runs
 samples
 docs/*
 !docs/listing-analysis-guide.html
+!docs/index.html
+!docs/system-architecture-guide.html
