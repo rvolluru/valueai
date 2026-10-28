@@ -8,7 +8,13 @@ Regenerate both with `python3 scripts/build_docs_site.py`; use `--check` to veri
 Standalone pages can be opened locally. Hosted integration is implemented at
 `/docs/home`, `/docs/system-architecture` and `/docs/listing-analysis`; these serve
 the sign-in shell only. HTML bytes require an administrator through matching
-`/v1/admin/docs/*` endpoints. Hosted integration deployment is pending.
+`/v1/admin/docs/*` endpoints. Hosted integration was deployed October 28, 2026,
+release `afeb5a3`, workflow `40743473819`: migrations, API revision 183/worker
+revision 53 stability and workflow smoke checks passed. Live shells returned 200,
+unauthenticated document endpoints returned 401 and direct HTML URLs returned 404.
+Admin rendering was verified in local API tests; a signed-in production browser
+session was not exercised. This post-deploy status is versioned in Git; the
+deployed guide contains the preceding deployment-pending status until its next rollout.
 
 This document describes the implemented system, not a proposed redesign. Source
 code and Terraform define the architecture; the deployment snapshot below records
@@ -271,8 +277,7 @@ of a new production binary, live Clerk migration or App Store approval.
 Update this document when adding/removing a service, changing a deployment/data
 boundary or enabling a previously optional integration. Recheck runtime settings
 before labeling a service active. Provider-health and transaction tests are separate
-from configuration inspection. No implementation or deployment is performed by
-this documentation update.
+from configuration inspection. Documentation-only updates do not authorize deployments.
 
 - [AWS deployment](DEPLOY_AWS.md), [staging operations](../infra/terraform/STAGING.md)
 - [Database migrations](DATABASE_MIGRATIONS.md)
