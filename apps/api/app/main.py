@@ -2816,17 +2816,29 @@ def data_deletion_page():
 
 
 @app.get("/docs/listing-analysis")
+@app.get("/docs/home")
+@app.get("/docs/system-architecture")
 def analysis_guide_page():
     # Only the authentication shell is public; document bytes require admin auth.
     return _spa_index_response()
 
 
 @app.get("/v1/admin/docs/listing-analysis", response_class=HTMLResponse)
-def admin_analysis_guide(principal: AuthPrincipal = Depends(require_admin_user)):
-    guide = Path(__file__).resolve().parents[3] / "docs" / "listing-analysis-guide.html"
+@app.get("/v1/admin/docs/home", response_class=HTMLResponse)
+@app.get("/v1/admin/docs/system-architecture", response_class=HTMLResponse)
+def admin_analysis_guide(request: Request, principal: AuthPrincipal = Depends(require_admin_user)):
+    filename = {"home": "index.html", "system-architecture": "system-architecture-guide.html",
+                "listing-analysis": "listing-analysis-guide.html"}[request.url.path.rsplit("/", 1)[-1]]
+    guide = Path(__file__).resolve().parents[3] / "docs" / filename
     if not guide.is_file():
         raise HTTPException(status_code=404, detail="Analysis guide unavailable")
-    return HTMLResponse(guide.read_text(encoding="utf-8"), headers={
+    content = guide.read_text(encoding="utf-8")
+    if filename == "listing-analysis-guide.html":
+        content = content.replace('<div class="top-actions">', '<div class="top-actions"><a href="/docs/home" target="_parent">Docs home</a>', 1)
+    for local, hosted in {"index.html": "home", "system-architecture-guide.html": "system-architecture",
+                          "listing-analysis-guide.html": "listing-analysis"}.items():
+        content = content.replace(f'href="{local}"', f'href="/docs/{hosted}" target="_parent"')
+    return HTMLResponse(content, headers={
         "Cache-Control": "private, no-store",
         "Vary": "Authorization",
         "X-Content-Type-Options": "nosniff",

@@ -85,11 +85,12 @@ def _build_client():
     return TestClient(app)
 
 
-def test_analysis_guide_is_admin_only_and_not_public_static():
+@pytest.mark.parametrize('document', ['listing-analysis', 'home', 'system-architecture'])
+def test_analysis_guide_is_admin_only_and_not_public_static(document):
     from app.auth import AuthPrincipal, require_clerk_user
     from app.main import app
     client = _build_client()
-    url = '/v1/admin/docs/listing-analysis'
+    url = '/v1/admin/docs/' + document
     try:
         assert client.get(url).status_code == 401
         assert client.get(url, headers={'x-api-key': 'test-key'}).status_code == 401

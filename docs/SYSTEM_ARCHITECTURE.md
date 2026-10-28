@@ -5,7 +5,10 @@ Updated: October 28, 2026.
 Reader editions: [documentation home](index.html) ·
 [styled architecture guide](system-architecture-guide.html).
 Regenerate both with `python3 scripts/build_docs_site.py`; use `--check` to verify.
-These are standalone repository pages, not newly deployed public API routes.
+Standalone pages can be opened locally. Hosted integration is implemented at
+`/docs/home`, `/docs/system-architecture` and `/docs/listing-analysis`; these serve
+the sign-in shell only. HTML bytes require an administrator through matching
+`/v1/admin/docs/*` endpoints. Hosted integration deployment is pending.
 
 This document describes the implemented system, not a proposed redesign. Source
 code and Terraform define the architecture; the deployment snapshot below records

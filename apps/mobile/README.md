@@ -57,7 +57,9 @@ Shippo keys configured. Staging backend source `ec13811` was deployed October 25
 migrations, API/worker stability and health checks passed; the assistant endpoint
 returns 200 with staging authentication and requires authentication otherwise.
 No mobile build was distributed by this backend rollout.
-Production EAS configuration and a new production App Store record remain pending.
+Production Clerk/EAS environment configuration remains pending. The production
+App Store Connect record was created by the owner and its supplied Apple ID
+`6826942359` is configured for submissions; no build/upload is implied.
 
 | Profile | App | iOS bundle / Android package / URL scheme | API | EAS environment |
 | --- | --- | --- | --- | --- |
@@ -119,10 +121,10 @@ client. Staging iOS uses TestFlight; staging Android is an installable APK.
 Production Android produces a store AAB. No OTA updates are configured.
 
 The existing App Store Connect record `6791465341` is staging/testing ONLY.
-Create a NEW production record with bundle ID `com.jouft.app`, then set its numeric
-ID in `eas.json` → `submit.production.ios.ascAppId`. Until then,
-`npm run eas:submit:ios` deliberately refuses submission. Do not reuse the testing
-record or assume the new identifier is registered. Production app version is
+Production submissions target the owner-supplied record `6826942359`, configured
+in `eas.json` → `submit.production.ios.ascAppId`, for bundle ID `com.jouft.app`.
+The submission guard rejects a missing ID or reuse of the testing record.
+The record's bundle ID must match the production build. Production app version is
 `1.0.0`; align the new store version accordingly. Build counters remain remote.
 
 Test production release candidates via TestFlight on the production record, then

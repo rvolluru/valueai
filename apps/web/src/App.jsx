@@ -1552,8 +1552,8 @@ async function fetchShippingLabelDocumentRemote({ apiBaseUrl, apiKey, bearerToke
 }
 
 export default function App() {
-  if (typeof window !== 'undefined' && window.location.pathname === '/docs/listing-analysis') {
-    return CLERK_ENABLED ? <AnalysisGuidePage apiBaseUrl={API_DEFAULT} /> : <p>Sign-in is required to access this guide.</p>
+  if (typeof window !== 'undefined' && ['/docs/home', '/docs/system-architecture', '/docs/listing-analysis'].includes(window.location.pathname)) {
+    return CLERK_ENABLED ? <AnalysisGuidePage apiBaseUrl={API_DEFAULT} document={window.location.pathname.split('/').pop()} /> : <p>Sign-in is required to access this guide.</p>
   }
   if (typeof window !== 'undefined' && window.location.pathname === '/terms') {
     return <TermsPage />
@@ -1758,7 +1758,7 @@ const TERMS_SECTIONS = [
   },
   {
     title: '21. Contact',
-    contact: 'Email: JOUFTllc@gmail.com',
+    contact: 'Email: admin@jouft.com · Phone: (949) 354-4133',
   },
 ]
 
@@ -1794,7 +1794,7 @@ const PRIVACY_POLICY_SECTIONS = [
   {
     title: '5. Your Rights (California Residents)',
     body: ['You may request access or request deletion.'],
-    contact: 'Contact: JOUFTllc@gmail.com',
+    contact: 'Contact: admin@jouft.com',
   },
   {
     title: '6. Cookies',
@@ -1806,7 +1806,7 @@ const PRIVACY_POLICY_SECTIONS = [
   },
   {
     title: '8. Contact',
-    contact: 'Email: admin@jouft.com',
+    contact: 'Email: admin@jouft.com · Phone: (949) 354-4133',
   },
 ]
 
@@ -1822,6 +1822,11 @@ const CONTACT_DETAILS = [
   {
     title: 'Contact Email',
     contact: 'admin@jouft.com',
+  },
+  {
+    title: 'Phone',
+    phone: '(949) 354-4133',
+    phoneHref: 'tel:+19493544133',
   },
 ]
 const CONTACT_MAP_QUERY = '120 Vantis Dr Suite 300, Aliso Viejo, CA 92656, US'
@@ -2726,6 +2731,7 @@ function AuthShell({ children, actions = null }) {
                   <h3>{section.title}</h3>
                   {section.body?.map((paragraph) => <p key={paragraph}>{paragraph}</p>)}
                   {section.contact ? <a href={`mailto:${section.contact}`}>{section.contact}</a> : null}
+                  {section.phone ? <a href={section.phoneHref}>{section.phone}</a> : null}
                 </div>
               ))}
               <a className="contact-directions-link" href={CONTACT_DIRECTIONS_URL} target="_blank" rel="noreferrer">
@@ -8987,7 +8993,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                   <h2>Support Operations</h2>
                 </div>
                 <div className="market-controls">
-                  <a className="ghost" href="/docs/listing-analysis" target="_blank" rel="noopener noreferrer">Analysis guide</a>
+                  <a className="ghost" href="/docs/home" target="_blank" rel="noopener noreferrer">Documentation</a>
                   <input value={adminSearch} onChange={(e) => setAdminSearch(e.target.value)} placeholder="Search item, brand, category..." />
                   <button className="primary" onClick={loadAdminAnalyses} disabled={adminLoading}>{adminLoading ? 'Loading...' : 'Refresh'}</button>
                 </div>
