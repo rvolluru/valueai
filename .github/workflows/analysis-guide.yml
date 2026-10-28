@@ -3,15 +3,17 @@ name: Verify analysis guide
 on:
   push:
     paths:
-      - docs/LISTING_ANALYSIS_PROCESS.md
-      - docs/listing-analysis-guide.html
-      - scripts/build_analysis_guide.py
+      - '**/*.md'
+      - docs/*.html
+      - scripts/build*guide.py
+      - scripts/build_docs_site.py
       - .github/workflows/analysis-guide.yml
   pull_request:
     paths:
-      - docs/LISTING_ANALYSIS_PROCESS.md
-      - docs/listing-analysis-guide.html
-      - scripts/build_analysis_guide.py
+      - '**/*.md'
+      - docs/*.html
+      - scripts/build*guide.py
+      - scripts/build_docs_site.py
       - .github/workflows/analysis-guide.yml
 
 permissions:
@@ -26,3 +28,4 @@ jobs:
         with:
           python-version: '3.11'
       - run: python scripts/build_analysis_guide.py --check
+      - run: python scripts/build_docs_site.py --check
