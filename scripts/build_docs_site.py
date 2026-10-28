@@ -20,7 +20,8 @@ EXTRA = '''
 .node{padding:14px 18px;border:1px solid var(--line);background:var(--white);text-align:center;font-size:13px;flex:1;min-width:150px}.node strong{display:block;color:var(--wine)}
 .connector{text-align:center;color:var(--muted);font-size:12px;padding:10px}.map figcaption{padding:0 0 16px;margin-bottom:20px}.featured{background:var(--wine);color:white}.featured h3,.featured p,.featured small{color:white}
 [hidden]{display:none!important}.home section{border:0}.home .number{display:none}
-@media(max-width:700px){.cards{grid-template-columns:1fr}.map{padding:16px}.node{min-width:120px}.top-actions{flex-wrap:wrap}}
+.hero>*,.card{min-width:0}.card h3{overflow-wrap:anywhere}
+@media(max-width:700px){.cards{grid-template-columns:minmax(0,1fr)}.map{padding:16px}.node{min-width:120px}.topbar{flex-wrap:wrap}.top-actions{flex-wrap:wrap}.hero{grid-template-columns:minmax(0,1fr)}.hero h1{overflow-wrap:anywhere}.home{width:100%;min-width:0}}
 @media print{.cards{display:block}.card{break-inside:avoid;margin-bottom:12px}.home input{display:none}.map{break-inside:avoid}}
 '''
 
