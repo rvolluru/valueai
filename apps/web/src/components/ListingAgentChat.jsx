@@ -139,13 +139,23 @@ export default function ListingAgentChat({ apiBaseUrl, apiKey, getBearerToken, c
       {session.stage === 'published' && session.marketplace_matches && !session.trade_proposal && <section aria-label="Marketplace matches">
         <h4>Marketplace matches</h4>
         <p>Selecting an item only prepares a request; confirmation is required to send.</p>
-        {session.marketplace_matches.items.map(item => <article className="panel" key={item.listing_id}>
+        {session.marketplace_matches.items.map(item => <article className="panel listing-agent-match-card" key={item.listing_id}>
           {matchPhotoUrls(item, apiBaseUrl || window.location.origin).length > 0 && <button type="button" className="listing-agent-match-photo" aria-label={`View full-size photos of ${item.title}`} disabled={view.busy} onClick={() => controller.viewPhotos(item.listing_id)}>
-            <img src={matchPhotoUrls(item, apiBaseUrl || window.location.origin)[0]} alt={item.title} style={{ width: 100, height: 100, objectFit: 'contain' }} />
+            <img src={matchPhotoUrls(item, apiBaseUrl || window.location.origin)[0]} alt={item.title} loading="lazy" />
           </button>}
-          <h4>{item.title}</h4><p>{item.brand} · {item.size} · {item.condition} · ${item.estimated_value}</p>
-          <a href={`/?tab=market&listing=${encodeURIComponent(item.listing_id)}`}>View in Marketplace</a>
-          <button className="primary" disabled={view.busy} onClick={() => controller.prepareTrade(item.listing_id)}>Request trade</button>
+          <div className="listing-agent-match-details">
+            <p className="listing-agent-match-brand">{item.brand}</p>
+            <h4>{item.title}</h4>
+            <div className="listing-agent-match-meta">
+              {item.size && <span>Size {item.size}</span>}
+              {item.condition && <span>{({ LikeNew: 'Like new', NewWithTags: 'New with tags' })[item.condition] || item.condition}</span>}
+              <span className="listing-agent-match-value">${item.estimated_value}</span>
+            </div>
+            <div className="listing-agent-match-actions">
+              <a href={`/?tab=market&listing=${encodeURIComponent(item.listing_id)}`}>View in Marketplace</a>
+              <button className="primary" disabled={view.busy} onClick={() => controller.prepareTrade(item.listing_id)}>Request trade</button>
+            </div>
+          </div>
         </article>)}
         {!session.marketplace_matches.count && <p>No matching items right now. Check again later.</p>}
         {session.marketplace_matches.has_more && <p>Showing the first {session.marketplace_matches.items.length} of {session.marketplace_matches.count} matches.</p>}

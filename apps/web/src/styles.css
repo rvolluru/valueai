@@ -5296,6 +5296,27 @@ textarea:focus-visible,
 .listing-agent-chat details { margin: 12px 0; }
 .listing-agent-chat summary { cursor: pointer; padding: 10px 0; font-weight: 600; }
 .listing-agent-chat .panel { padding: 16px; margin: 12px 0; }
+.listing-agent-chat .listing-agent-match-card { display: flex; align-items: flex-start; gap: 22px; padding: 22px; background: #fffdf9; border: 1px solid #ded5cc; }
+.listing-agent-chat .listing-agent-match-photo { flex: 0 0 120px; width: 120px; height: 150px; margin: 0; padding: 8px; border: 1px solid #e6dfd7; border-radius: 4px; background: #f2eee8; cursor: zoom-in; }
+.listing-agent-chat .listing-agent-match-photo img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.listing-agent-match-details { flex: 1; min-width: 0; }
+.listing-agent-chat .listing-agent-match-brand { margin: 0 0 6px; color: #776d65; font-size: .76rem; font-weight: 600; letter-spacing: .05em; }
+.listing-agent-chat .listing-agent-match-details h4 { margin: 0 0 12px; font-size: 1.2rem; line-height: 1.3; overflow-wrap: anywhere; }
+.listing-agent-match-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; color: #625950; font-size: .8rem; }
+.listing-agent-match-meta span { padding: 4px 9px; background: #f3eee7; border-radius: 3px; }
+.listing-agent-match-meta .listing-agent-match-value { background: transparent; color: #29231f; font-weight: 600; padding-left: 4px; }
+.listing-agent-match-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-top: 18px; }
+.listing-agent-chat .listing-agent-match-actions a { display: inline-flex; align-items: center; justify-content: center; min-height: 42px; padding: 10px 14px; border: 1px solid #cfc4bc; color: #5b1720; background: #fffdf9; font-size: .75rem; font-weight: 600; line-height: 1.4; text-decoration: none; }
+.listing-agent-chat .listing-agent-match-actions a:hover { background: #f1e8e2; border-color: #5b1720; }
+.listing-agent-chat .listing-agent-match-actions .primary { min-height: 42px; margin: 0; padding: 10px 16px; font-size: .75rem; line-height: 1.4; }
+.listing-agent-match-actions a:focus-visible, .listing-agent-match-photo:focus-visible { outline: 2px solid #5b1720; outline-offset: 3px; }
+@media (max-width: 560px) {
+  .listing-agent-chat .listing-agent-match-card { padding: 16px; gap: 14px; }
+  .listing-agent-chat .listing-agent-match-photo { flex-basis: 80px; width: 80px; height: 106px; padding: 5px; }
+  .listing-agent-chat .listing-agent-match-details h4 { font-size: 1.05rem; }
+  .listing-agent-match-actions { gap: 8px; }
+  .listing-agent-match-actions > * { flex: 1 1 160px; text-align: center; }
+}
 .listing-agent-chat button { margin: 4px 8px 4px 0; }
 .listing-agent-chat .listing-agent-photos img { max-height: 160px; object-fit: contain; }
 .listing-agent-chat button:not(.primary):not(.app-assistant-photo-button):not(.listing-agent-match-photo) { appearance: none; min-height: 42px; padding: 10px 16px; border: 1px solid #cfc4bc; border-radius: 0; background: #fffdf9; color: #5b1720; font-size: .75rem; font-weight: 600; letter-spacing: .06em; line-height: 1.4; cursor: pointer; transition: background-color .15s, border-color .15s; }
