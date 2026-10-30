@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { SignInButton, useAuth } from '@clerk/clerk-react'
+import { documentFrameHtml } from '../lib/documentFrame.mjs'
 
 export default function AnalysisGuidePage({ apiBaseUrl, document = 'listing-analysis' }) {
   const title = document === 'home' ? 'Jouft documentation' : document === 'system-architecture' ? 'System architecture' : 'Listing analysis guide'
@@ -19,7 +20,7 @@ export default function AnalysisGuidePage({ apiBaseUrl, document = 'listing-anal
           })
           if (!response.ok) throw new Error(response.status === 403 ? 'This guide is available to administrators only.' : response.status === 401 ? 'Please sign in again to access this guide.' : 'Unable to load the guide.')
           const content = await response.text()
-          if (!controller.signal.aborted) setHtml(content)
+          if (!controller.signal.aborted) setHtml(documentFrameHtml(content))
         } catch (err) {
           if (!controller.signal.aborted) setError(err.message)
         }

@@ -3,7 +3,6 @@ import argparse
 import html
 from pathlib import Path
 import re
-import subprocess
 
 from build_analysis_guide import STYLE, render
 
@@ -67,39 +66,10 @@ def architecture():
 <div class="layout"><nav class="sidebar" aria-label="Table of contents"><details open><summary>Explore · {len(toc)} sections</summary><ul class="toc-list">{nav}</ul></details></nav><main id="guide">{content}</main></div>''')
 
 
-def document_paths():
-    tracked = subprocess.check_output(['git', 'ls-files', '*.md'], cwd=ROOT, text=True).splitlines()
-    # Include the architecture source before its first commit; never crawl ignored artifacts.
-    return sorted(set(tracked) | {'docs/SYSTEM_ARCHITECTURE.md'})
-
-
 def home():
-    groups = {'Platform & product': [], 'AI & listing analysis': [], 'Operations & releases': [], 'Repository & development': []}
-    for path in document_paths():
-        source = ROOT / path
-        if not source.is_file():
-            continue
-        markdown = source.read_text()
-        title = next((line.lstrip('# ').strip() for line in markdown.splitlines() if line.startswith('# ')), source.stem)
-        if any(key in path for key in ('ANALYSIS', 'analysis-', 'AI_MODEL', 'LABELING', 'CHATBOT')):
-            group = 'AI & listing analysis'
-        elif any(key in path for key in ('DEPLOY', 'MIGRATION', 'STAGING', 'RELEASE', 'apps/mobile/README')):
-            group = 'Operations & releases'
-        elif path.startswith('docs/'):
-            group = 'Platform & product'
-        else:
-            group = 'Repository & development'
-        groups[group].append((path, title))
-    sections = []
-    for group, entries in groups.items():
-        cards = ''.join(f'<a class="card document" href="{GITHUB}{html.escape(path, quote=True)}"><small>{html.escape(path)}</small><h3>{html.escape(title)}</h3><p>Read the versioned Markdown reference ↗</p></a>' for path, title in entries)
-        sections.append(f'<section class="category"><h2>{group}</h2><div class="cards">{cards}</div></section>')
     return page('Documentation', '''
-<div class="hero"><div><span class="eyebrow">The Jouft documentation library</span><h1>Understand the system.<br>Build with confidence.</h1><p>Your starting point for platform architecture, listing intelligence, API contracts and release operations.</p></div><aside class="hero-aside"><span class="eyebrow">A living library</span><p>Guides open as portable HTML.<br>Reference documents link to GitHub.<br><strong>Check each document’s status and date.</strong></p></aside></div>
-<main id="guide" class="home"><div class="cards"><a class="card featured" href="system-architecture-guide.html"><small>START HERE · PLATFORM</small><h3>System architecture</h3><p>Components, request flows, infrastructure and the complete third-party service inventory.</p></a><a class="card featured" href="listing-analysis-guide.html"><small>DEEP DIVE · FUNCTIONAL PROCESS</small><h3>The listing analysis guide</h3><p>From original-photo evidence to identity, pricing, image presentation and publication.</p></a></div>
-<label for="search" class="eyebrow">Find a reference</label><input id="search" type="search" placeholder="Search titles or file paths…" autocomplete="off"><p id="count" role="status" aria-live="polite"></p>
-''' + ''.join(sections) + '''<noscript><p>All documents are listed above. Search requires JavaScript.</p></noscript></main>
-<script>const input=document.getElementById('search');const cards=[...document.querySelectorAll('.document')];function filter(){const q=input.value.toLowerCase();let n=0;cards.forEach(c=>{c.hidden=!c.textContent.toLowerCase().includes(q);if(!c.hidden)n++});document.querySelectorAll('.category').forEach(s=>{s.hidden=![...s.querySelectorAll('.document')].some(c=>!c.hidden)});document.getElementById('count').textContent=n+' documents';}input.addEventListener('input',filter);filter();</script>''')
+<div class="hero"><div><span class="eyebrow">The Jouft documentation library</span><h1>Understand the system.<br>Build with confidence.</h1><p>Explore Jouft’s platform architecture and listing intelligence through reader-friendly guides.</p></div><aside class="hero-aside"><span class="eyebrow">A living library</span><p>Styled guides, ready to read.<br>Print or save a copy as PDF.<br><strong>Check each guide’s status and date.</strong></p></aside></div>
+<main id="guide" class="home"><div class="cards"><a class="card featured" href="system-architecture-guide.html"><small>START HERE · PLATFORM</small><h3>System architecture</h3><p>Components, request flows, infrastructure and the complete third-party service inventory.</p></a><a class="card featured" href="listing-analysis-guide.html"><small>DEEP DIVE · FUNCTIONAL PROCESS</small><h3>The listing analysis guide</h3><p>From original-photo evidence to identity, pricing, image presentation and publication.</p></a></div></main>''')
 
 
 if __name__ == '__main__':

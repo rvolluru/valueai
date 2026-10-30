@@ -126,6 +126,127 @@ The system can report an existing request rather than sending another one.
 Trade/shipping/payment operations and notifications remain separate effects;
 sending a proposal does not itself complete a trade or charge a payment.
 
+### Marketplace matching: a listing to eligible items
+
+The normal listing/chat matching flow calls
+`GET /v1/listings/{listing_id}/marketplace-matches`. The HTTP route and assistant
+share `assistant_reads.marketplace_matches`; the model selects the source/scope,
+not the matching policy. This is a read operation: it does not revalue an item,
+create a trade or notify another member.
+
+1. **Resolve and authorize the source.** Reload the saved listing and require the
+   current member to own it; otherwise return 404. Only an active source with a
+   positive saved `estimated_value` can produce matches. Drafts and unvalued
+   sources return an empty result.
+2. **Load preferences and prior sends.** Read the member’s profile quiz and the
+   source/target pairs already offered by that member. Match-result suppression
+   currently inspects up to 200 recent offers in `requested`, `proposed`, `pending`,
+   `accepted` or `countered` status. This bounded display filter is distinct from
+   the uncapped active-request check used when actually preparing/sending a trade.
+3. **Read marketplace candidates.** Examine up to 5,000 recent active listings.
+   Exclude the source itself, records without a listing ID and listings owned by
+   the current member. Exclude an already-offered exact source/target pair.
+4. **Apply the member’s category and size preferences to the target.** For
+   handbags, shoes and accessories, category aliases are supported. For clothing,
+   title patterns identify dresses, skirts, jackets, bottoms or tops; the profile
+   can allow all clothing or those subtypes. Empty category preferences impose
+   no category restriction, but do not bypass clothing/shoe size checks.
+5. **Apply the value band.** Require a positive target valuation and compare the
+   absolute saved-value difference against the tolerance calculated from the
+   **marketplace target’s value**, not the source value. Boundary equality passes.
+6. **Hydrate and paginate.** Add owner display information and usable image URLs,
+   then return matching items in database retrieval order. This path does not
+   apply an AI relevance score or rerank by value distance. Return `count`, `items`,
+   `limit`, `offset`, `has_more` and `next_offset`; default limit is 50, capped at
+   100, with nonnegative offsets. Count covers the scanned candidate set, not
+   necessarily all marketplace inventory beyond the 5,000-record scan limit.
+
+The eligibility sequence is:
+
+**Owned active source + saved value → other-owner active inventory → prior-pair
+exclusion → category/size preferences → target-based value band → paged results.**
+
+### Value-tolerance rules
+
+For source value `S` and marketplace target value `T`, eligibility requires
+`abs(S - T) <= tolerance(T)`:
+
+| Target saved value (USD) | Allowed difference from target value |
+| --- | --- |
+| Greater than $0 and below $250 | ±30% |
+| $250 to below $500 | ±25% |
+| $500 to below $1,000 | ±20% |
+| $1,000 to below $1,500 | ±15% |
+| $1,500 to below $3,000 | ±12% |
+| $3,000 to below $5,000 | ±10% |
+| $5,000 to below $10,000 | ±7.5% |
+| $10,000 and above | ±5%, with the absolute tolerance capped at $1,000 |
+
+Example: a $650 source can match a $740 target because the difference is $90 and
+the target’s tolerance is $148 (20% of $740), provided the other filters pass.
+The policy is directional: reversing source and target can produce a different
+answer around thresholds. Brand, condition similarity and geographic proximity
+are not extra hard filters in this shared listing-specific matching read.
+
+### Clothing and shoe size handling
+
+Clothing/shoe targets must have a size and a matching saved size preference;
+missing profile sizes exclude those targets. Tokens are case-insensitive with
+whitespace removed, and profile entries can be separated by commas, newlines,
+semicolons, slashes or pipes. This is exact token comparison, not international
+size conversion: `US 10` normalizes to `us10`, not `10`.
+
+Clothing uses `dresses_size` for dresses, `bottoms_size` for skirts/bottoms and
+`tops_size` for jackets/tops. If the title does not identify a subtype, it uses
+the union of tops/dresses/bottoms preferences. Shoes use `shoes_size`. Other
+categories do not receive this size filter. These are the viewing member’s
+preferences, not a two-way check of the target owner’s desired sizes.
+
+### Chat presentation and the trade handoff
+
+For “matches for this listing,” chat preserves the exact source listing ID. For
+an all-eligible-items request, the grouped reader selects active, positively valued
+owned sources and keeps each source’s targets grouped separately (up to 12 sources
+and 12 results per source; defaults are 12 sources and 3 results per source).
+The child listing workflow requests its first 12 targets through the same shared
+route. A title/gallery follow-up must retain the selected result’s identity, not
+silently switch to another owned item.
+
+An empty result does not authorize the model to broaden the matching criteria.
+The user can inspect saved facts/preferences or choose another source; the agent
+must not invent a configurable value band. A general marketplace keyword search
+is a different operation and must not be represented as a compatible trade match.
+
+Selecting an eligible target only prepares the exact trade proposal. The send
+path reloads/revalidates the relevant state, checks existing active requests and
+requires explicit confirmation. Read-time matching is neither a reservation nor
+a guarantee that the target will still be available when the request is sent.
+
+### Separate scored trade-match agent
+
+`POST /v1/trade-match-agent/run` uses `build_trade_match_suggestions` in
+`trade_match_agent.py`. It is not the authoritative listing-specific reader above.
+It considers bounded recent active marketplace targets and active owned candidates
+(defaults: up to 100 targets, 200 owned items, 3 suggestions per target; request
+output defaults to 50 and is capped at 200). Both items need positive values;
+same-owner matches are excluded and the target-based tolerance still applies.
+
+It ranks eligible pairs with value fit (up to 55 points), same/cross category
+(15/6), condition (up to 10), preferred target category (8), same brand (5) and
+images on both items (7). Scores are bounded to 0–100; the reported confidence is
+a score-derived number bounded to 0.35–0.95, not a calibrated probability.
+Risk flags identify a large in-band value gap, cross-category trades and
+size-sensitive clothes/shoes. Unlike the listing reader, this scorer does not
+enforce exact profile size/category eligibility: category preference is a scoring
+bonus and size sensitivity is a flag. Do not present these two outputs as identical.
+
+Running this endpoint expires prior suggested records and persists new scored
+suggestions, so it is not a read-only match lookup. It still does not send offers.
+The marketplace-intelligence report is another distinct administrative view:
+its value-compatible inventory counts are not personalized, preference-filtered
+matches. Source: `assistant_reads.py`, the matching helpers/routes in `main.py`,
+`trade_match_agent.py` and `marketplace_intelligence_agent.py`.
+
 ### Storage and consistency
 
 - PostgreSQL stores listings, image metadata, analyses/jobs/components, conversation
