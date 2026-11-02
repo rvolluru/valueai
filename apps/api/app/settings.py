@@ -196,6 +196,8 @@ class Settings(BaseSettings):
     shippo_default_contact_email: str | None = None
     shippo_default_contact_phone: str | None = None
     email_provider: str = "auto"  # auto|ses|smtp
+    daily_match_feed_enabled: bool = False
+    daily_match_feed_utc_hour: int = Field(default=14, ge=0, le=23)
     public_app_url: str = "http://localhost:5173"
     public_api_url: str = "http://127.0.0.1:8000"
     ses_region: str | None = None

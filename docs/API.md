@@ -211,3 +211,19 @@ Returns:
 ```json
 {"version":"0.1.0"}
 ```
+
+# Email update preferences
+
+
+Implemented locally November 2, 2026; not deployed.
+
+- `GET /v1/me/email-updates`: authenticated; returns `{ "subscribed": true|false }`
+  for the account's saved profile email. Missing profile email returns 409.
+- `PUT /v1/me/email-updates`: authenticated; accepts `{ "subscribed": true|false }`.
+  A strict boolean is required. The server resolves the address from the profile.
+- `GET /v1/email-updates/unsubscribe?token=…`: token-authenticated confirmation page;
+  does not modify preferences. Invalid tokens return 404.
+- `POST /v1/email-updates/unsubscribe?token=…`: token-authenticated, idempotent opt-out;
+  also supports one-click email-client POSTs.
+
+See [daily match feed behavior and rollout](DAILY_MATCH_FEED.md).

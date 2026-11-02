@@ -310,7 +310,7 @@ resource "aws_iam_role_policy" "ecs_task_ses" {
       {
         Sid      = "ReadSesQuota"
         Effect   = "Allow"
-        Action   = ["ses:GetSendQuota"]
+        Action   = ["ses:GetSendQuota", "ses:GetSuppressedDestination"]
         Resource = "*"
       },
       {
@@ -446,6 +446,8 @@ resource "aws_ecs_task_definition" "api" {
         { name = "SHIPPO_DEFAULT_CONTACT_EMAIL", value = var.shippo_default_contact_email },
         { name = "SHIPPO_DEFAULT_CONTACT_PHONE", value = var.shippo_default_contact_phone },
         { name = "EMAIL_PROVIDER", value = var.email_provider },
+        { name = "DAILY_MATCH_FEED_ENABLED", value = tostring(var.daily_match_feed_enabled) },
+        { name = "DAILY_MATCH_FEED_UTC_HOUR", value = tostring(var.daily_match_feed_utc_hour) },
         { name = "SES_REGION", value = var.ses_region },
         { name = "SES_FROM_EMAIL", value = var.ses_from_email },
         { name = "NOTIFICATION_FROM_EMAIL", value = var.notification_from_email },

@@ -45,7 +45,10 @@ def prepare(definition, image):
             raise RuntimeError('Live payment/shipping credentials are not allowed in staging')
         if container.get('secrets'):
             raise RuntimeError('Review secret references for isolation before deployment')
-        env.update(LISTING_AGENT_ENABLED='true', ASSISTANT_CONVERSATIONS_ENABLED='true')
+        env.update(LISTING_AGENT_ENABLED='true', ASSISTANT_CONVERSATIONS_ENABLED='true',
+                   DAILY_MATCH_FEED_ENABLED='true', DAILY_MATCH_FEED_UTC_HOUR='14',
+                   SES_REGION='us-east-1', SES_FROM_EMAIL='notifications@jouft.com',
+                   NOTIFICATION_FROM_EMAIL='notifications@jouft.com')
         container['environment'] = [{'name': key, 'value': value} for key, value in env.items()]
         container['image'] = image
     return result

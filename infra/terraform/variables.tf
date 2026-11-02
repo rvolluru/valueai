@@ -569,3 +569,18 @@ variable "google_places_api_key" {
   default   = ""
   sensitive = true
 }
+variable "daily_match_feed_enabled" {
+  description = "Enable worker match observations and daily digest delivery after migrations and email verification."
+  type        = bool
+  default     = false
+}
+
+variable "daily_match_feed_utc_hour" {
+  description = "Daily digest UTC cutoff/send hour (0-23)."
+  type        = number
+  default     = 14
+  validation {
+    condition     = var.daily_match_feed_utc_hour >= 0 && var.daily_match_feed_utc_hour <= 23 && floor(var.daily_match_feed_utc_hour) == var.daily_match_feed_utc_hour
+    error_message = "Digest hour must be an integer from 0 to 23."
+  }
+}

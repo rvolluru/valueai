@@ -104,6 +104,21 @@ def _assistant_conversations(db):
     db.commit()
 
 
+def _daily_match_feed(db):
+    db.execute('''CREATE TABLE IF NOT EXISTS email_update_preferences (
+        email TEXT PRIMARY KEY, unsubscribed INTEGER NOT NULL DEFAULT 0,
+        token TEXT NOT NULL, updated_at TEXT NOT NULL)''')
+    db.execute('''CREATE TABLE IF NOT EXISTS match_feed_observations (
+        owner_subject TEXT NOT NULL, source_id TEXT NOT NULL, target_id TEXT NOT NULL,
+        first_seen_at TEXT NOT NULL, PRIMARY KEY (owner_subject, source_id, target_id))''')
+    db.execute('''CREATE TABLE IF NOT EXISTS match_feed_baselines (
+        owner_subject TEXT PRIMARY KEY, created_at TEXT NOT NULL)''')
+    db.execute('''CREATE TABLE IF NOT EXISTS match_feed_deliveries (
+        email TEXT NOT NULL, day TEXT NOT NULL, status TEXT NOT NULL,
+        created_at TEXT NOT NULL, PRIMARY KEY (email, day))''')
+    db.commit()
+
+
 MIGRATIONS = (
     ("0001_application_schema", _baseline),
     ("0002_analysis_listing_links", _analysis_history),
@@ -115,6 +130,7 @@ MIGRATIONS = (
     ("0008_listing_pricing_models", _listing_pricing_models),
     ("0009_listing_agent_sessions", _listing_agent_sessions),
     ("0010_assistant_conversations", _assistant_conversations),
+    ("0011_daily_match_feed", _daily_match_feed),
 )
 
 

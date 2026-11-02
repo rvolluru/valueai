@@ -120,6 +120,8 @@ jobs:
             echo 'listing_analysis_attempt_timeout_s = 300' >> "${TF_DIR}/terraform.tfvars"
           fi
           for setting in \
+            'daily_match_feed_enabled = true' \
+            'daily_match_feed_utc_hour = 14' \
             'analysis_worker_desired_count = 3' \
             'analysis_worker_autoscaling_enabled = true' \
             'analysis_worker_min_count = 2' \

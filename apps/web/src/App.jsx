@@ -19,6 +19,7 @@ import TradeItemPicker from './components/TradeItemPicker'
 import ListingPhotoEditor from './components/ListingPhotoEditor'
 import PhotoNavigation from './components/PhotoNavigation'
 import NotificationsPage from './components/NotificationsPage'
+import EmailUpdatesPreference from './components/EmailUpdatesPreference'
 import AnalysisGuidePage from './components/AnalysisGuidePage'
 import ListingAgentChat from './components/ListingAgentChat'
 import AssistantConversation from './components/AssistantConversation'
@@ -7378,6 +7379,8 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                 </aside>
 	                <div>
                   {profileHydrationError && <p className="error-text">{profileHydrationError}</p>}
+                  {profileSection === 'general' && <EmailUpdatesPreference apiBaseUrl={apiBaseUrl}
+                    apiKey={apiKey} clerkEnabled={clerkEnabled} getBearerToken={getBearerToken} />}
                   {profileSection === 'general' && (
                     <div className="field-grid two">
                       <label>

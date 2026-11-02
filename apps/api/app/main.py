@@ -122,6 +122,8 @@ app = FastAPI(title="ValueAI Fashion Analyzer", version="0.1.0")
 app.include_router(listing_agent_router)
 from .assistant_conversation_routes import router as assistant_conversation_router
 app.include_router(assistant_conversation_router)
+from .match_feed import router as match_feed_router
+app.include_router(match_feed_router)
 
 IMAGE_ROLE_VALUES = [
     "full_front", "full_back", "side_or_profile", "brand_label",

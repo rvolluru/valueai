@@ -111,9 +111,23 @@ def run() -> None:
     sqs = boto3.client("sqs", region_name=settings.aws_region)
     log_json("analysis_worker_started", queue_url=queue_url)
     next_shipping_reminder_at = 0.0
+    next_match_feed_at = 0.0
+    match_feed_thread = None
+
+    def process_match_feed():
+        try:
+            from .match_feed import tick
+            log_json('daily_match_feed_tick', **tick(settings))
+        except Exception:
+            log_json('daily_match_feed_tick_failed')
 
     while not _stopping:
         now = time.monotonic()
+        if (settings.daily_match_feed_enabled and now >= next_match_feed_at
+                and (match_feed_thread is None or not match_feed_thread.is_alive())):
+            match_feed_thread = threading.Thread(target=process_match_feed, name='daily-match-feed', daemon=True)
+            match_feed_thread.start()
+            next_match_feed_at = now + 300
         if settings.shipping_reminder_enabled and now >= next_shipping_reminder_at:
             try:
                 _process_shipping_reminders_once(settings=settings)
