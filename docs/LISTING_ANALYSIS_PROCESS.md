@@ -175,19 +175,19 @@ or change analysis or pricing.
 Updated November 2, 2026. This document explains the functional process: inputs,
 model calls, decisions, outputs and user review—not a reliability assessment.
 
-**Implemented locally November 1, 2026; not deployed:** shoe mannequin previews
+**Deployed November 2, 2026 to staging and production (release `f973c82`):** shoe mannequin previews
 now use legs-and-feet-only framing and shoe-type-appropriate supporting clothing.
-The shoe behavior described in section 11 is pending deployment; existing previews
-are not regenerated automatically.
-**Local correction November 2, 2026; not deployed:** the parallel pipeline's
+The shoe behavior described in section 11 is enabled for new analyses; existing
+previews are not regenerated automatically.
+**Pipeline correction deployed November 2, 2026:** the parallel pipeline's
 mannequin eligibility check now includes shoes. The initial shoe prompt change
 did not update this check, so shoe jobs were marked skipped without generation.
 Existing skipped jobs are not automatically retried by this code change.
-**Local UI correction November 2, 2026; not deployed:** Active cards in the owner's
+**Owner-preview UI deployed November 2, 2026:** Active cards in the owner's
 web closet offer an expandable “View AI preview” section for available generated
 images. This lets the owner inspect a pending preview without adding it to the
 public gallery or changing its review decision.
-**Local review navigation correction November 2, 2026; not deployed:** web review
+**Review navigation correction deployed November 2, 2026:** web review
 lookup also checks closet search results and retains the clicked listing as a
 fallback. Listings found beyond the initial closet page can therefore open for
 review without the “No listing selected” state. Initially loaded closet data takes
@@ -899,7 +899,7 @@ the item's need for review. Clerk supplies admin identities, not email transport
 ## 11. Parallel branch: create the mannequin styling preview
 
 This optional branch applies to **clothes, handbags and shoes**, when enabled.
-Shoe support is implemented locally and not yet deployed.
+Shoe support is deployed to staging and production as of November 2, 2026.
 It does not need the final valuation or pricing-generated description.
 
 ### Plan from original photos
@@ -926,7 +926,7 @@ background, preserving visible product construction and appearance. Styling depe
 - **Tops/open jackets:** add appropriate supporting clothing/underlayers while preserving the listed item.
 - **Dresses/jumpsuits:** preserve intentional shoulders, cutouts, straps and exposed legs.
 - **Handbags:** use existing handles/straps on a simply dressed mannequin.
-- **Shoes (local, not deployed):** generate `mannequin_shoes` on matte white
+- **Shoes:** generate `mannequin_shoes` on matte white
   mannequin legs and feet only, generally cropped from lower thigh/knee to floor;
   widen upward as needed to show tall boots completely. No full body or upper
   torso. Use athletic cropped trousers for sneakers, tailored cropped trousers
@@ -945,7 +945,8 @@ Supporting clothing is not part of the listed product.
 Gemini compares the candidate against original photos and planned constraints.
 Clothing coverage must explicitly pass. For bottoms, inadequate upper-body coverage
 triggers stronger corrective instructions and, if needed, a **lower-body-only mannequin**.
-Shoes use the `shoe_legs` review mode with one generation attempt. Coverage review
+Shoes use the `shoe_legs` review mode with one generation attempt per generation
+invocation; the background component can retry a failed invocation once. Coverage review
 requires legs/feet-only framing, complete visible footwear and appropriate supporting
 clothing; bare matte mannequin legs are allowed and no top is required. Failed or
 uncertain coverage yields no saved preview. Shoe construction differences remain

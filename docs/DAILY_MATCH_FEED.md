@@ -9,9 +9,9 @@ is configured at 14:00 UTC daily (09:00 EST / 10:00 EDT).
 The feature was isolated from unrelated local changes: staging image
 `valueai-staging-api:daily-feed-7bb7910` builds on `ec13811`; production image
 `valueai-mvp-api:daily-feed-68f54db` builds on `5932db5`. Source and persistent
-rollout configuration are committed in `8ce1a8d`. Staging API revision 11 and
-worker revision 5 are deployed; production API revision 186 and worker revision
-57 are deployed. Both worker configurations enable the feed; API task flags remain
+rollout configuration are committed in `8ce1a8d`. The initial feed rollout used staging API revision 11 /
+worker revision 5 and production API revision 186 / worker revision 57. Subsequent
+application releases can advance these revisions while preserving feed configuration. Both worker configurations enable the feed; API task flags remain
 false because scheduling runs only in the workers. Future deployments inherit
 explicit enabled configuration from the staging deployment script / production
 workflow. Local `.env.example` remains disabled by default.
