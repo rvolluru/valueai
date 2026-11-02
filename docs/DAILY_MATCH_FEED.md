@@ -1,7 +1,20 @@
 # Daily marketplace match feed
 
-Implemented locally November 2, 2026. **Not deployed or enabled in production.
-No feed emails have been sent.** Local migration `0011_daily_match_feed` is applied.
+Implemented and deployed November 2, 2026 to **staging and production**. Migration
+`0011_daily_match_feed` succeeded in both environments. Unsubscribe confirmation,
+one-click opt-out and SES mailbox-simulator delivery passed in both. Initial
+baseline scans sent zero user emails and reported zero failures. Worker activation
+is configured at 14:00 UTC daily (09:00 EST / 10:00 EDT).
+
+The feature was isolated from unrelated local changes: staging image
+`valueai-staging-api:daily-feed-7bb7910` builds on `ec13811`; production image
+`valueai-mvp-api:daily-feed-68f54db` builds on `5932db5`. Source and persistent
+rollout configuration are committed in `8ce1a8d`. Staging API revision 11 and
+worker revision 5 are deployed; production API revision 186 and worker revision
+57 are deployed. Both worker configurations enable the feed; API task flags remain
+false because scheduling runs only in the workers. Future deployments inherit
+explicit enabled configuration from the staging deployment script / production
+workflow. Local `.env.example` remains disabled by default.
 
 The analysis worker observes current matches every five minutes in a separate
 thread, using the same preferences, value tolerance, owner exclusion and sent-offer
@@ -66,5 +79,12 @@ historical catch-up campaign. The first enabled day is baseline-only.
 5. Check baseline observations and subsequent tick/delivery results. Disable the
    flag to stop scanning and delivery without deleting unsubscribe preferences.
 
-No Terraform apply, production deployment, production migration or bulk send was
-performed by the local implementation.
+This rollout used targeted ECS service updates, one-off migration/verification
+tasks, and narrowly scoped IAM role policies (`JouftDailyMatchFeed`). No full
+Terraform apply was performed. Only mailbox-simulator test messages were sent;
+real users receive later scheduled feeds when qualifying new observations exist.
+
+Verification: 17 migration/feed tests passed against each isolated release,
+staging-deployment regression tests passed, both web builds succeeded, and public
+preference endpoints require authentication. Runtime feed summaries and ECS service
+stability were checked after enabling.

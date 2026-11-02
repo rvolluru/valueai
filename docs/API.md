@@ -211,11 +211,9 @@ Returns:
 ```json
 {"version":"0.1.0"}
 ```
-
 # Email update preferences
 
-
-Implemented locally November 2, 2026; not deployed.
+Deployed to staging and production November 2, 2026.
 
 - `GET /v1/me/email-updates`: authenticated; returns `{ "subscribed": true|false }`
   for the account's saved profile email. Missing profile email returns 409.
