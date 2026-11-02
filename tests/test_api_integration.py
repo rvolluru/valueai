@@ -996,7 +996,9 @@ def test_mannequin_generation_prompt_is_limited_to_handbags_and_dresses() -> Non
     legacy_bag = _mannequin_generation_prompt(category="bags", title="Leather tote", description="")
     assert legacy_bag is not None
     assert legacy_bag[0] == "mannequin_handbag"
-    assert _mannequin_generation_prompt(category="shoes", title="Leather pumps", description="Black") is None
+    shoes = _mannequin_generation_prompt(category="shoes", title="Leather pumps", description="Black")
+    assert shoes[0] == "mannequin_shoes"
+    assert "legs and feet ONLY" in shoes[1]
 
 
 def test_listing_status_after_analysis_preserves_published_listings() -> None:

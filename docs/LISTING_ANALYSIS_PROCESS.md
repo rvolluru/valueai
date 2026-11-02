@@ -172,8 +172,26 @@ provide Yes/No buttons for the current pending action. Yes follows the existing
 signed confirmation path; No cancels it. This does not bypass publication checks
 or change analysis or pricing.
 
-Updated October 21, 2026. This document explains the functional process: inputs,
+Updated November 2, 2026. This document explains the functional process: inputs,
 model calls, decisions, outputs and user review—not a reliability assessment.
+
+**Implemented locally November 1, 2026; not deployed:** shoe mannequin previews
+now use legs-and-feet-only framing and shoe-type-appropriate supporting clothing.
+The shoe behavior described in section 11 is pending deployment; existing previews
+are not regenerated automatically.
+**Local correction November 2, 2026; not deployed:** the parallel pipeline's
+mannequin eligibility check now includes shoes. The initial shoe prompt change
+did not update this check, so shoe jobs were marked skipped without generation.
+Existing skipped jobs are not automatically retried by this code change.
+**Local UI correction November 2, 2026; not deployed:** Active cards in the owner's
+web closet offer an expandable “View AI preview” section for available generated
+images. This lets the owner inspect a pending preview without adding it to the
+public gallery or changing its review decision.
+**Local review navigation correction November 2, 2026; not deployed:** web review
+lookup also checks closet search results and retains the clicked listing as a
+fallback. Listings found beyond the initial closet page can therefore open for
+review without the “No listing selected” state. Initially loaded closet data takes
+precedence when available; this does not change publication validation.
 
 **Admin guide access (live-site verified October 19, 2026):** `/docs/listing-analysis`
 loads a sign-in shell. The guide itself is fetched from
@@ -880,7 +898,8 @@ the item's need for review. Clerk supplies admin identities, not email transport
 
 ## 11. Parallel branch: create the mannequin styling preview
 
-This optional branch currently applies to **clothes and handbags**, when enabled.
+This optional branch applies to **clothes, handbags and shoes**, when enabled.
+Shoe support is implemented locally and not yet deployed.
 It does not need the final valuation or pricing-generated description.
 
 ### Plan from original photos
@@ -907,6 +926,17 @@ background, preserving visible product construction and appearance. Styling depe
 - **Tops/open jackets:** add appropriate supporting clothing/underlayers while preserving the listed item.
 - **Dresses/jumpsuits:** preserve intentional shoulders, cutouts, straps and exposed legs.
 - **Handbags:** use existing handles/straps on a simply dressed mannequin.
+- **Shoes (local, not deployed):** generate `mannequin_shoes` on matte white
+  mannequin legs and feet only, generally cropped from lower thigh/knee to floor;
+  widen upward as needed to show tall boots completely. No full body or upper
+  torso. Use athletic cropped trousers for sneakers, tailored cropped trousers
+  for loafers/formal shoes, a skirt/dress hem for dress heels/sandals, casual
+  cropped trousers for flats/casual sandals, and tucked trousers or a hem above
+  boots. Ambiguous styles use neutral cropped trousers. Supporting clothing stays
+  secondary and must not cover the footwear; complete toes, heels and shafts stay
+  in frame. Preserve visible shoe construction, logos and wear without inventing
+  hidden details. A complete usable front or three-quarter shoe view qualifies
+  as front evidence; outsole-only and label-only crops do not.
 
 Supporting clothing is not part of the listed product.
 
@@ -915,6 +945,11 @@ Supporting clothing is not part of the listed product.
 Gemini compares the candidate against original photos and planned constraints.
 Clothing coverage must explicitly pass. For bottoms, inadequate upper-body coverage
 triggers stronger corrective instructions and, if needed, a **lower-body-only mannequin**.
+Shoes use the `shoe_legs` review mode with one generation attempt. Coverage review
+requires legs/feet-only framing, complete visible footwear and appropriate supporting
+clothing; bare matte mannequin legs are allowed and no top is required. Failed or
+uncertain coverage yields no saved preview. Shoe construction differences remain
+subject to the same owner review as other previews.
 
 Construction-fidelity differences are recorded for owner review; they are not an
 unconditional rejection once clothing coverage passes. The preview is therefore

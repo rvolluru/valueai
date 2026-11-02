@@ -1324,9 +1324,9 @@ async function runAdminIncidentEvaluation({ apiBaseUrl, bearerToken, incidentId,
   return payload
 }
 
-async function fetchMyListings({ apiBaseUrl, apiKey, bearerToken, limit = 100, offset = 0 }) {
+async function fetchMyListings({ apiBaseUrl, apiKey, bearerToken, limit = 100, offset = 0, q = '' }) {
   const { client, authContext } = createWebApiClient({ apiBaseUrl, apiKey })
-  const payload = await client.listMyListings(limit, authContext(bearerToken), { offset })
+  const payload = await client.listMyListings(limit, authContext(bearerToken), { offset, q })
   return {
     items: payload?.items || [],
     hasMore: Boolean(payload?.has_more),
@@ -2851,6 +2851,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   const [receiptPromptDismissed, setReceiptPromptDismissed] = useState(false)
   const [editingListingId, setEditingListingId] = useState(null)
   const [reviewListingId, setReviewListingId] = useState(null)
+  const [selectedReviewListing, setSelectedReviewListing] = useState(null)
   const [mannequinFeedback, setMannequinFeedback] = useState('')
   const [reviewPublishBusy, setReviewPublishBusy] = useState(false)
   const [showCreateListingModal, setShowCreateListingModal] = useState(false)
@@ -2974,6 +2975,10 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   const zoomSwipeStart = useRef(null)
   const [offerStatusFilter, setOfferStatusFilter] = useState('active')
   const [closetFilter, setClosetFilter] = useState('all')
+  const [closetSearch, setClosetSearch] = useState('')
+  const [closetSearchResults, setClosetSearchResults] = useState([])
+  const [closetSearchLoading, setClosetSearchLoading] = useState(false)
+  const [closetSearchError, setClosetSearchError] = useState('')
   const [profileSection, setProfileSection] = useState(TEMP_SHOW_PROFILE_QUESTIONNAIRE_ON_LOGIN ? 'style' : 'general')
   const [shippingLabelsByOffer, setShippingLabelsByOffer] = useState({})
   const [offerReceiveAddressById, setOfferReceiveAddressById] = useState({})
@@ -5191,8 +5196,37 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     }
   }, [myListings, incomingOffers])
 
+  useEffect(() => {
+    if (activeTab !== 'portfolio' || !closetSearch.trim()) return undefined
+    let cancelled = false
+    setClosetSearchLoading(true)
+    setClosetSearchError('')
+    const timer = window.setTimeout(async () => {
+      try {
+        const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
+        const matches = []
+        let offset = 0
+        while (!cancelled) {
+          const page = await fetchMyListings({ apiBaseUrl, apiKey: clerkEnabled ? '' : apiKey.trim(),
+            bearerToken, limit: 100, offset, q: closetSearch.trim() })
+          if (cancelled) return
+          matches.push(...page.items.map(fromRemoteListing).filter(Boolean))
+          if (!page.hasMore || page.nextOffset === null || page.nextOffset <= offset) break
+          offset = page.nextOffset
+        }
+        if (!cancelled) setClosetSearchResults(matches)
+      } catch {
+        if (!cancelled) setClosetSearchError('Could not search your closet. Please try again.')
+      } finally {
+        if (!cancelled) setClosetSearchLoading(false)
+      }
+    }, 300)
+    return () => { cancelled = true; window.clearTimeout(timer) }
+  }, [activeTab, closetSearch, apiBaseUrl, apiKey, clerkEnabled, getBearerToken, myListings])
+
   const filteredClosetListings = useMemo(() => {
-    if (closetFilter === 'all') return myListings
+    const listings = closetSearch.trim() ? closetSearchResults : myListings
+    if (closetFilter === 'all') return listings
     if (closetFilter === 'offers') {
       const targetIds = new Set(
         incomingOffers
@@ -5200,18 +5234,18 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
           .map((o) => o?.target_listing?.listing_id)
           .filter(Boolean)
       )
-      return myListings.filter((x) => targetIds.has(x.id))
+      return listings.filter((x) => targetIds.has(x.id))
     }
-    if (closetFilter === 'active') return myListings.filter((x) => String(x?.status || '').toLowerCase() === 'active')
-    if (closetFilter === 'traded') return myListings.filter((x) => String(x?.status || '').toLowerCase() === 'traded')
+    if (closetFilter === 'active') return listings.filter((x) => String(x?.status || '').toLowerCase() === 'active')
+    if (closetFilter === 'traded') return listings.filter((x) => String(x?.status || '').toLowerCase() === 'traded')
     if (closetFilter === 'draft') {
-      return myListings.filter((x) => {
+      return listings.filter((x) => {
         const s = String(x?.status || '').toLowerCase()
         return s !== 'active' && s !== 'traded'
       })
     }
-    return myListings
-  }, [myListings, incomingOffers, closetFilter])
+    return listings
+  }, [myListings, incomingOffers, closetFilter, closetSearch, closetSearchResults])
 
   useEffect(() => {
     if (activeTab !== 'portfolio' || closetFilter !== 'all') return
@@ -5244,8 +5278,10 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   const reviewListing = useMemo(() => {
     const requestedId = reviewListingId || (activeTab === 'review_listing' ? listingIdFromLocation() : '')
     if (!requestedId) return null
-    return myListings.find((item) => String(item?.id || '') === String(requestedId)) || null
-  }, [activeTab, myListings, reviewListingId])
+    return myListings.find((item) => String(item?.id || '') === String(requestedId))
+      || closetSearchResults.find((item) => String(item?.id || '') === String(requestedId))
+      || (String(selectedReviewListing?.id || '') === String(requestedId) ? selectedReviewListing : null)
+  }, [activeTab, myListings, closetSearchResults, selectedReviewListing, reviewListingId])
 
   const reviewListingGallery = useMemo(
     () => (reviewListing ? getListingGallery(reviewListing) : []),
@@ -6689,6 +6725,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
 
   function openReviewListing(listing) {
     if (!listing?.id) return
+    setSelectedReviewListing(listing)
     setReviewListingId(listing.id)
     setAnalysisError('')
     setSavedListingNotice('')
@@ -8368,29 +8405,38 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
 
           {activeTab === 'portfolio' && (
             <section className="panel">
-	              <div className="panel-header">
-	                <div>
-	                  <p className="eyebrow">Portfolio</p>
-	                  <div className="button-row" style={{ marginTop: 6 }}>
-                    <button className={closetFilter === 'all' ? 'primary' : 'ghost small'} type="button" onClick={() => setClosetFilter('all')}>All ({myListings.length})</button>
-                    <button className={closetFilter === 'active' ? 'primary' : 'ghost small'} type="button" onClick={() => setClosetFilter('active')}>Active ({closetBreakdown.active})</button>
-                    <button className={closetFilter === 'draft' ? 'primary' : 'ghost small'} type="button" onClick={() => setClosetFilter('draft')}>Draft ({closetBreakdown.draft})</button>
-                    <button className={closetFilter === 'offers' ? 'primary' : 'ghost small'} type="button" onClick={() => setClosetFilter('offers')}>Offers ({closetBreakdown.offers})</button>
-                    <button className={closetFilter === 'traded' ? 'primary' : 'ghost small'} type="button" onClick={() => setClosetFilter('traded')}>Traded ({closetBreakdown.traded})</button>
-                  </div>
+              <p className="eyebrow closet-toolbar-heading">Portfolio</p>
+              <div className="closet-toolbar">
+                <div className="closet-status-filters" role="group" aria-label="Filter closet by status">
+                  {[
+                    ['all', 'All', myListings.length],
+                    ['active', 'Active', closetBreakdown.active],
+                    ['draft', 'Draft', closetBreakdown.draft],
+                    ['offers', 'Offers', closetBreakdown.offers],
+                    ['traded', 'Traded', closetBreakdown.traded],
+                  ].map(([value, label, count]) => (
+                    <button key={value} className="closet-filter-tab" type="button"
+                      aria-pressed={closetFilter === value} onClick={() => setClosetFilter(value)}>
+                      {label}<span className="closet-filter-count">{count}</span>
+                    </button>
+                  ))}
                 </div>
-                <div className="header-actions">
-                  <button className="primary" type="button" onClick={openCreateListingModal}>Create Listing</button>
+                <div className="closet-search-controls">
+                  <input id="closet-search" type="search" aria-label="Search my closet" maxLength={120} value={closetSearch}
+                    onChange={(event) => { setClosetSearch(event.target.value); setClosetSearchLoading(Boolean(event.target.value.trim())); setClosetSearchError('') }}
+                    placeholder="Search your closet…" />
+                  {closetSearch && <button className="ghost small" type="button" onClick={() => setClosetSearch('')}>Clear search</button>}
                 </div>
+                <button className="primary closet-create-button" type="button" onClick={openCreateListingModal}>Create Listing</button>
               </div>
-              {myListingsLoading ? (
+              {closetSearch.trim() && closetSearchError ? <p className="error-text" role="alert">{closetSearchError}</p> : (closetSearch.trim() ? closetSearchLoading : myListingsLoading) ? (
                 <div className="empty-state loading-state" role="status" aria-live="polite">
                   <span className="loading-dot" aria-hidden="true" />
-                  <h3>Loading your closet...</h3>
+                  <h3>{closetSearch.trim() ? 'Searching your closet...' : 'Loading your closet...'}</h3>
                   <p>We are getting your listings ready.</p>
                 </div>
               ) : filteredClosetListings.length === 0 ? (
-                <div className="empty-state"><h3>No listings yet</h3><p>Analyze an item and publish your first listing to start trading.</p><button className="primary" type="button" onClick={openCreateListingModal}>Create first listing</button></div>
+                closetSearch.trim() ? <div className="empty-state"><h3>No matching listings</h3><p>Try another title, brand, or category, or change the status filter.</p><button className="ghost" type="button" onClick={() => setClosetSearch('')}>Clear search</button></div> : <div className="empty-state"><h3>No listings yet</h3><p>Analyze an item and publish your first listing to start trading.</p><button className="primary" type="button" onClick={openCreateListingModal}>Create first listing</button></div>
               ) : (
                 <>
                   {analysisError && <p className="error-text">{analysisError}</p>}
@@ -8399,7 +8445,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                     const isPublished = String(item.status || '').toLowerCase() === 'active'
                     return <ListingCard key={item.id} item={item} own onEditDraft={openEditListingModal} onReviewListing={openReviewListing} onPublishListing={publishListingToMarketplace} onRemoveListing={removeListingFromCloset} onReportIssue={openListingSupport} onOpenDetails={isPublished ? openClosetListingMatches : null} matchCount={isPublished ? Number(item.matchCount || 0) : null} editorialStyle />
                   })}</div>
-                  {closetFilter === 'all' && myListingsHasMore ? (
+                  {!closetSearch.trim() && closetFilter === 'all' && myListingsHasMore ? (
                     <div ref={closetLoadMoreRef} className="load-more-row lazy-load-sentinel" role="status" aria-label="Loading more closet listings">
                       {myListingsPageLoading ? <><span className="loading-dot" aria-hidden="true" /><span>Loading listings...</span></> : null}
                     </div>
@@ -10300,6 +10346,15 @@ function ListingCard({ item, own = false, onEditDraft = null, onReviewListing = 
       </div>
       {cardDisabled && (
         <span className="listing-review-overlay" aria-hidden="true">Pending Review</span>
+      )}
+      {own && normalizedStatus === 'active' && item.generatedImages?.length > 0 && (
+        <details className="closet-ai-preview" onClick={(event) => event.stopPropagation()}>
+          <summary>View AI preview</summary>
+          {item.generatedImages.map((src) => <figure key={src}>
+            <img src={src} alt={`AI styling preview for ${item.title || 'your listing'}`} style={{ width: '100%', maxHeight: 360, objectFit: 'contain' }} />
+            <figcaption>{MANNEQUIN_DISCLAIMER}</figcaption>
+          </figure>)}
+        </details>
       )}
       {canReviewAndPublish && (
         <button

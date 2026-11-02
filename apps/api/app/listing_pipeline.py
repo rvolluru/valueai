@@ -176,7 +176,7 @@ def _run_component(component, snapshot, files, settings, valuation_service, gpt_
         enabled = (component == 'pricing' or
                    component == 'staging' and snapshot['inputs']['stage_images_after_analysis'] and settings.image_staging_enabled or
                    component == 'mannequin' and settings.mannequin_image_generation_enabled and settings.gemini_api_key
-                   and snapshot['inputs']['category'] in {'clothes', 'handbag'})
+                   and snapshot['inputs']['category'] in {'clothes', 'handbag', 'shoes'})
         if not enabled:
             db.set_pipeline_component(job_id, component, 'skipped', 0)
             return

@@ -89,6 +89,8 @@ def coverage_passes(review: dict) -> bool:
 
 
 def clothing_attempts(prompt: str, asset_kind: str) -> list[tuple[int, str, str]]:
+    if asset_kind == "mannequin_shoes":
+        return [(1, "shoe_legs", prompt)]
     attempts = [(1, "full", prompt)]
     if asset_kind == "mannequin_bottom":
         attempts.append((2, "full", "CORRECTIVE RETRY: the required supporting T-shirt was missing or unverified. "
@@ -193,6 +195,10 @@ async def plan_references(*, client, api_key, model, files: list[dict]) -> dict:
         "Do not infer fiber composition such as cotton or silk unless a legible composition label confirms it. "
         "Distinguish wearer-left/right from image-left/right; do not guess wearer orientation from flat-lay photos. "
         "For bags describe silhouette, straps, hardware, pockets, texture and pattern. "
+        "For shoes describe toe shape, upper silhouette, visible heel and sole profile, shaft height when "
+        "applicable, laces/straps/fastenings, material texture, logos and visible wear. A complete usable "
+        "front or three-quarter shoe view can be classified as front; outsole-only and label-only crops "
+        "are not front views. Do not require garment features or hidden shoe interiors. "
         "Set requires_human_review true for asymmetric construction, ambiguous orientation, obscured key details, "
         "or conflicting views. Set sufficient_evidence false ONLY when no complete usable front view exists or "
         "essential visible product shape/construction cannot be established (for example, the waistband or hem "
@@ -225,13 +231,24 @@ async def review_candidate(*, client, api_key, model, files: list[dict], plan: d
                       + ("This is a LOWER-BODY-ONLY fallback. Require no upper torso, chest, shoulders, arms or head, "
                          "and the complete listed bottom including waistband and hem. A top is NOT required on this "
                          "waist-down mannequin. For this mode, this rule overrides the full-body coverage rules below. "
-                         if display_mode == "lower_body" else "") +
+                         if display_mode == "lower_body" else
+                         "This is a SHOE-LEGS-ONLY preview. Require mannequin legs and feet only, no head, arms, "
+                         "chest or upper torso, and complete footwear including toes, heels and any boot shafts. "
+                         "Require appropriate plain neutral supporting clothing visible at the crop: athletic "
+                         "trousers for sneakers, tailored trousers for formal shoes/loafers, skirt or dress hem "
+                         "for dress heels/sandals, casual cropped trousers for flats/casual sandals, and tucked "
+                         "trousers or a hem above boots. Ambiguous styles may use neutral cropped trousers. "
+                         "Clothing must not obscure shoe construction. Bare matte mannequin legs are allowed; "
+                         "no supporting top is required. This mode overrides full-body clothing coverage rules. "
+                         if display_mode == "shoe_legs" else "") +
                       "Return JSON: verdict (passed/failed/uncertain), checks (one object for EVERY constraint, "
                       "with constraint_index, result matched/changed/uncertain, evidence), additional_changes "
                       "(array of other invented or altered product details). Fail altered neckline, added shoulder "
                       "coverage, mirrored asymmetry, changed collar, sleeves, closure path or endpoint, missing "
                       "hardware, seams, pockets, hem, pattern or silhouette. Mannequin pose and background may differ. "
                       "Do not excuse design changes as draping. If a feature cannot be verified, use uncertain. "
+                      "For footwear also check toe/heel shape, sole profile, straps, laces, hardware, logos, "
+                      "boot shafts and wear against source evidence; do not excuse invented or repaired details. "
                       "Also return clothing_coverage: {verdict: passed/failed/uncertain, evidence: visible explanation}. "
                       "Determine the actual product type from SOURCE photos, not text labels. For bottoms including shorts, "
                       "skirts and trousers, require an opaque supporting top covering chest, breasts and abdomen to waistband; "

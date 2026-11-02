@@ -28,6 +28,22 @@ def setup_pipeline(tmp_path):
     return settings, db, snapshot
 
 
+def test_shoe_mannequin_component_is_not_skipped(tmp_path, monkeypatch):
+    settings, db, snapshot = setup_pipeline(tmp_path)
+    snapshot['inputs']['category'] = 'shoes'
+    calls = []
+
+    async def generate(component_db, component_snapshot, files, component_settings):
+        calls.append(component_snapshot['inputs']['category'])
+
+    monkeypatch.setattr(pipeline, '_mannequin', generate)
+    pipeline._run_component('mannequin', snapshot, [], settings, None, None)
+    assert calls == ['shoes']
+    state = next(row for row in db.list_pipeline_components('job') if row['component'] == 'mannequin')
+    assert state['status'] == 'succeeded'
+    assert state['attempts'] == 1
+
+
 @pytest.mark.parametrize('order', list(itertools.permutations(['pricing', 'mannequin', 'staging'])))
 def test_result_merge_orders_preserve_other_components_and_user_edits(tmp_path, order):
     _, db, snapshot = setup_pipeline(tmp_path)

@@ -15,6 +15,49 @@ def plan():
             "requires_human_review": True}
 
 
+def test_shoe_generation_uses_leg_crop_and_shoe_review_mode(monkeypatch):
+    from app import main, mannequin_fidelity
+    from app.settings import Settings
+
+    async def inspect(**kwargs):
+        return {**plan(), "views": ["front"], "reference_indices": [0],
+                "product_type": "knee-high boots"}
+
+    async def generate(**kwargs):
+        assert kwargs['asset_kind'] == 'mannequin_shoes'
+        assert "complete shaft of tall boots" in kwargs['prompt']
+        assert "trousers tucked into boots" in kwargs['prompt']
+        assert mannequin_fidelity.clothing_attempts(kwargs['prompt'], kwargs['asset_kind']) == [
+            (1, 'shoe_legs', kwargs['prompt'])]
+        return {'review_decision': 'pending'}
+
+    monkeypatch.setattr(mannequin_fidelity, 'plan_references', inspect)
+    monkeypatch.setattr(main, '_generate_verified_mannequin_asset', generate)
+    result = asyncio.run(main._generate_mannequin_listing_asset(
+        files=[{'data': b'original'}], category='shoes', title='Boots', description='', item_id='shoe-test',
+        settings=Settings(gemini_api_key='test'), db=None, storage=None))
+    assert result == {'review_decision': 'pending'}
+
+
+def test_shoe_review_requires_legs_only_and_unobscured_footwear(monkeypatch):
+    from app import mannequin_fidelity
+
+    async def inspect(**kwargs):
+        prompt = kwargs['parts'][-1]['text']
+        assert 'SHOE-LEGS-ONLY' in prompt
+        assert 'no supporting top is required' in prompt
+        assert 'complete footwear including toes, heels and any boot shafts' in prompt
+        assert 'Clothing must not obscure shoe construction' in prompt
+        return {'clothing_coverage': {'verdict': 'failed', 'evidence': 'Upper torso visible'}}
+
+    monkeypatch.setattr(mannequin_fidelity, 'inspect_json', inspect)
+    result = asyncio.run(mannequin_fidelity.review_candidate(
+        client=None, api_key='test', model='test', files=[{'data': b'shoe'}],
+        plan={**plan(), 'reference_indices': [0]}, generated_raw=b'preview',
+        generated_content_type='image/png', display_mode='shoe_legs'))
+    assert not mannequin_fidelity.coverage_passes(result)
+
+
 def test_selects_front_over_mislabeled_label():
     assert validate_plan(plan(), 3)["reference_indices"] == [1, 2]
 

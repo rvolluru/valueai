@@ -10170,6 +10170,26 @@ def _mannequin_generation_prompt(*, category: str, title: str, description: str)
         "backdrop with soft lighting and sharp product focus. No human model, collage, text or added accessories. "
         "Generate one image only. "
     )
+    if normalized_category == "shoes":
+        return "mannequin_shoes", (
+            "Create a shoe styling preview of the exact footwear in the ORIGINAL source photos on matte white "
+            "retail mannequin legs and feet ONLY. No head, arms, chest or upper torso; never show a full body. "
+            "Frame from the lower thigh or knee to the floor, widening upward only as needed to show the complete "
+            "shaft of tall boots. Keep the entire shoes, toes, heels, soles and boot shafts inside the frame. "
+            "Use a natural standing three-quarter pose that shows the footwear clearly, without crossed legs. "
+            "Choose visually secondary, plain neutral supporting clothing based on the shoe type visible in the "
+            "photos: cropped athletic trousers for sneakers/trainers, tailored cropped trousers for loafers, "
+            "oxfords and formal shoes, a simple skirt or dress hem for pumps, heels and dress sandals, casual "
+            "cropped trousers for casual sandals/flats, and slim trousers tucked into boots or a short skirt hem "
+            "above tall boots. When style is ambiguous, use plain neutral cropped trousers. Show only the relevant "
+            "clothing hem and legs; no upper body is needed. Clothing must not hide the shoe uppers, straps, "
+            "buckles, heel shape or boot shafts. Bare matte mannequin legs are allowed. "
+            "Preserve source color, material texture, toe shape, heel height and shape, soles, stitching, logos, "
+            "laces, straps, fastenings, wear and image-left/right orientation. Do not redesign, mirror, repair or "
+            "invent hidden shoe details or a different matching shoe. Supporting clothing is styling, not the "
+            "listed product. Neutral off-white studio background, soft even lighting, sharp product focus. "
+            "No human model, collage, text or added accessories. Generate one image only."
+        )
     if is_bag:
         return "mannequin_handbag", (
             "Place this exact handbag on the mannequin using its existing straps or handles; do not invent a shoulder strap. "
