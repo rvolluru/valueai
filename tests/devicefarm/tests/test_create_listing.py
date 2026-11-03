@@ -70,6 +70,9 @@ def test_create_listing():
         buttons = driver.find_elements(AppiumBy.ANDROID_UIAUTOMATOR, 'new UiSelector().textMatches("(?i)Sign In")')
         assert buttons, 'Sign In button missing'
         buttons[-1].click()
+        WebDriverWait(driver, 90).until(lambda d: visible('Create') or visible('Verify Email'))
+        if visible('Verify Email'):
+            pytest.fail('Staging sign-in requires an emailed verification code; unattended test-account authentication must be configured', pytrace=False)
         text('Create', timeout=90).click()
         text('Add Photos')
 

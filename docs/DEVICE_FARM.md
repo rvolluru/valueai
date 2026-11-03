@@ -59,8 +59,12 @@ The mobile project has an execution role that can read only its dedicated stagin
 login secret. The owner must populate that secret using
 `python3 scripts/set_device_farm_password.py` from the terminal with the exported
 password. The secret was populated and three listing-test runs executed November 1;
-all failed at welcome/login navigation before listing creation. Remote host setup
-and credential retrieval worked. Listing creation remains unverified. Desktop test suites are
+all failed at welcome/login navigation before listing creation. A fourth run on
+November 2 (`0c35ed75-9125-4726-9600-63ed7c1be600`, Pixel 9 Pro XL) verified the
+accessibility-selector fix and submitted credentials, but Clerk required an emailed
+additional sign-in code. Remote host setup and credential retrieval worked.
+Unattended staging authentication is blocked by email verification; listing creation
+remains unverified. Desktop test suites are
 not configured yet.
 
 Mobile pay-as-you-go testing and remote access are currently $0.17 per device

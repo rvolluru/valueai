@@ -1,10 +1,14 @@
 # Android create-listing UI test
 
-Created November 1, 2026. Three remote executions on November 1 failed at the
-welcome/login navigation before listing creation. The remote host retrieved the
-secret and launched the app successfully. The latest run is
-`21231f23-502b-4a69-8342-5f3fb2805652` (FAILED). A local accessibility-button
-selector update after that run has not been uploaded or device-verified.
+Updated November 2, 2026 (run timestamp November 3 UTC). The latest remote run
+`0c35ed75-9125-4726-9600-63ed7c1be600` failed on a Google Pixel 9 Pro XL.
+The accessibility selector fix successfully opened login and credentials were
+submitted. Clerk then displayed “Enter the additional sign-in code Clerk sent to
+your email.” The test timed out before Create; no listing was created.
+The previous three runs failed at welcome/login navigation. Remote execution-role
+credential retrieval works. Unattended staging authentication is the current
+blocker. The local test now detects Verify Email and reports this requirement
+explicitly; that diagnostic change has not been uploaded or device-verified.
 No app behavior was changed. It targets the standard creation
 flow in the current mobile source; confirm the uploaded APK contains that version.
 
