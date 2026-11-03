@@ -10347,15 +10347,6 @@ function ListingCard({ item, own = false, onEditDraft = null, onReviewListing = 
       {cardDisabled && (
         <span className="listing-review-overlay" aria-hidden="true">Pending Review</span>
       )}
-      {own && normalizedStatus === 'active' && item.generatedImages?.length > 0 && (
-        <details className="closet-ai-preview" onClick={(event) => event.stopPropagation()}>
-          <summary>View AI preview</summary>
-          {item.generatedImages.map((src) => <figure key={src}>
-            <img src={src} alt={`AI styling preview for ${item.title || 'your listing'}`} style={{ width: '100%', maxHeight: 360, objectFit: 'contain' }} />
-            <figcaption>{MANNEQUIN_DISCLAIMER}</figcaption>
-          </figure>)}
-        </details>
-      )}
       {canReviewAndPublish && (
         <button
           className="listing-review-overlay listing-review-overlay-button"

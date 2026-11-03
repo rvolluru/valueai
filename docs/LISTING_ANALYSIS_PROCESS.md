@@ -183,10 +183,11 @@ previews are not regenerated automatically.
 mannequin eligibility check now includes shoes. The initial shoe prompt change
 did not update this check, so shoe jobs were marked skipped without generation.
 Existing skipped jobs are not automatically retried by this code change.
-**Owner-preview UI deployed November 2, 2026:** Active cards in the owner's
-web closet offer an expandable “View AI preview” section for available generated
-images. This lets the owner inspect a pending preview without adding it to the
-public gallery or changing its review decision.
+**Owner-preview UI removal implemented locally November 2, 2026; not deployed:**
+web closet cards no longer show the expandable “View AI preview” control. Generated
+assets and the existing listing-review flow are unchanged. Staging and production
+still have the control from the earlier November 2 release until this removal is
+deployed; removing it does not approve previews or add them to public galleries.
 **Review navigation correction deployed November 2, 2026:** web review
 lookup also checks closet search results and retains the clicked listing as a
 fallback. Listings found beyond the initial closet page can therefore open for
