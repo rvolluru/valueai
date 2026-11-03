@@ -175,6 +175,14 @@ or change analysis or pricing.
 Updated November 3, 2026. This document explains the functional process: inputs,
 model calls, decisions, outputs and user review—not a reliability assessment.
 
+**Shoe ankle-only previews implemented locally November 3, 2026; not deployed:**
+new shoe generation instructions use close-up matte white mannequin feet and ankles,
+cropped just above the ankles, without supporting clothing. Review rejects added
+trousers, skirts, dresses, socks, tights or hems. Boots allow only enough lower leg
+to retain the complete shaft and opening. Staging and production still use the
+previous lower-thigh/knee crop with shoe-type supporting clothing until deployment.
+Existing generated assets are not regenerated or approved by this code change.
+
 **Staging analysis-configuration parity verified November 3, 2026 (API 17 / worker 10):**
 staging now synchronizes an explicit behavioral analysis-settings allowlist from
 the currently deployed production API/worker configurations, beyond model names.
@@ -982,17 +990,17 @@ background, preserving visible product construction and appearance. Styling depe
 - **Tops/open jackets:** add appropriate supporting clothing/underlayers while preserving the listed item.
 - **Dresses/jumpsuits:** preserve intentional shoulders, cutouts, straps and exposed legs.
 - **Handbags:** use existing handles/straps on a simply dressed mannequin.
-- **Shoes:** generate `mannequin_shoes` on matte white
-  mannequin legs and feet only, generally cropped from lower thigh/knee to floor;
-  widen upward as needed to show tall boots completely. No full body or upper
-  torso. Use athletic cropped trousers for sneakers, tailored cropped trousers
-  for loafers/formal shoes, a skirt/dress hem for dress heels/sandals, casual
-  cropped trousers for flats/casual sandals, and tucked trousers or a hem above
-  boots. Ambiguous styles use neutral cropped trousers. Supporting clothing stays
-  secondary and must not cover the footwear; complete toes, heels and shafts stay
-  in frame. Preserve visible shoe construction, logos and wear without inventing
-  hidden details. A complete usable front or three-quarter shoe view qualifies
-  as front evidence; outsole-only and label-only crops do not.
+- **Shoes (local implementation; not yet deployed):** generate `mannequin_shoes`
+  on matte white mannequin feet and ankles only. Low-cut shoes use a close-up crop
+  just above the ankles, showing only a short ankle section. No knees, thighs,
+  torso or full body. Boots allow only enough lower leg to show the complete shaft
+  and a minimal section above its opening. Do not add supporting clothing, socks,
+  tights or hems. Keep complete toes, heels, soles, straps and shafts visible in a
+  natural standing three-quarter pose without crossed feet. Preserve visible shoe
+  construction, logos and wear without inventing hidden details. A complete usable
+  front or three-quarter shoe view qualifies as front evidence; outsole-only and
+  label-only crops do not. Deployed staging/production behavior remains the previous
+  lower-thigh/knee crop with category-appropriate clothing until this change ships.
 
 Supporting clothing is not part of the listed product.
 
@@ -1003,8 +1011,11 @@ Clothing coverage must explicitly pass. For bottoms, inadequate upper-body cover
 triggers stronger corrective instructions and, if needed, a **lower-body-only mannequin**.
 Shoes use the `shoe_legs` review mode with one generation attempt per generation
 invocation; the background component can retry a failed invocation once. Coverage review
-requires legs/feet-only framing, complete visible footwear and appropriate supporting
-clothing; bare matte mannequin legs are allowed and no top is required. Failed or
+requires feet-and-ankles-only framing for low-cut shoes and complete visible footwear;
+boots allow sufficient lower leg to retain full shafts. Supporting clothing is
+neither required nor permitted: added trousers, skirts, dresses, socks, tights or
+hems fail coverage. Bare matte white feet and ankles pass. These review changes
+are local only until deployment, matching the generation change above. Failed or
 uncertain coverage yields no saved preview. Shoe construction differences remain
 subject to the same owner review as other previews.
 

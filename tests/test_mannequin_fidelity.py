@@ -15,7 +15,7 @@ def plan():
             "requires_human_review": True}
 
 
-def test_shoe_generation_uses_leg_crop_and_shoe_review_mode(monkeypatch):
+def test_shoe_generation_uses_ankle_crop_without_clothing_and_preserves_boot_shafts(monkeypatch):
     from app import main, mannequin_fidelity
     from app.settings import Settings
 
@@ -26,7 +26,8 @@ def test_shoe_generation_uses_leg_crop_and_shoe_review_mode(monkeypatch):
     async def generate(**kwargs):
         assert kwargs['asset_kind'] == 'mannequin_shoes'
         assert "complete shaft of tall boots" in kwargs['prompt']
-        assert "trousers tucked into boots" in kwargs['prompt']
+        assert "Crop just above the ankles" in kwargs['prompt']
+        assert "Do not add supporting clothing" in kwargs['prompt']
         assert mannequin_fidelity.clothing_attempts(kwargs['prompt'], kwargs['asset_kind']) == [
             (1, 'shoe_legs', kwargs['prompt'])]
         return {'review_decision': 'pending'}
@@ -39,15 +40,16 @@ def test_shoe_generation_uses_leg_crop_and_shoe_review_mode(monkeypatch):
     assert result == {'review_decision': 'pending'}
 
 
-def test_shoe_review_requires_legs_only_and_unobscured_footwear(monkeypatch):
+def test_shoe_review_requires_ankle_crop_without_clothing_and_complete_footwear(monkeypatch):
     from app import mannequin_fidelity
 
     async def inspect(**kwargs):
         prompt = kwargs['parts'][-1]['text']
-        assert 'SHOE-LEGS-ONLY' in prompt
-        assert 'no supporting top is required' in prompt
+        assert 'SHOE-FEET-AND-ANKLES-ONLY' in prompt
+        assert 'No supporting clothing is required or permitted' in prompt
         assert 'complete footwear including toes, heels and any boot shafts' in prompt
-        assert 'Clothing must not obscure shoe construction' in prompt
+        assert 'do not crop ankle straps or boot tops' in prompt
+        assert 'Bare matte mannequin feet and ankles pass coverage' in prompt
         return {'clothing_coverage': {'verdict': 'failed', 'evidence': 'Upper torso visible'}}
 
     monkeypatch.setattr(mannequin_fidelity, 'inspect_json', inspect)
