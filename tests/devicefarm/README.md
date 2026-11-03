@@ -9,11 +9,17 @@ The previous three runs failed at welcome/login navigation. Remote execution-rol
 credential retrieval works. Unattended staging authentication is the current
 blocker. The local test now handles Verify Email with Clerk's reserved `424242` code
 only for `+clerk_test` addresses and an explicitly selected staging target. This
-change has not been uploaded or device-verified. Staging and production currently
+change was uploaded in run `573abd3b-bd6e-4757-ac1a-83c0e4b5c643`, which
+failed during authentication before photo selection or creation. Password-screen
+artifacts were suppressed. The Device Farm secret was verified to contain the test
+alias and a nonempty password without displaying either secret value. A Clerk
+dashboard search returned no matching test-alias user; account creation is the
+remaining prerequisite. Verification-code handling remains unverified on-device.
+Staging and production currently
 share a Clerk issuer, so keep the existing account unchanged and create a separate
 `leavethemessage+clerk_test@gmail.com` automation identity. Its creation and password
-entry are pending user completion in the Clerk dashboard; no authentication
-settings or stored credentials have been changed.
+entry are pending user completion in the Clerk dashboard. The dedicated Device
+Farm secret now uses the test alias; global authentication settings are unchanged.
 
 Once that identity exists, export its password in the terminal and run:
 

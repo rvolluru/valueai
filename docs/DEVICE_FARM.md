@@ -64,7 +64,10 @@ November 2 (`0c35ed75-9125-4726-9600-63ed7c1be600`, Pixel 9 Pro XL) verified the
 accessibility-selector fix and submitted credentials, but Clerk required an emailed
 additional sign-in code. Remote host setup and credential retrieval worked.
 Unattended staging authentication is blocked by email verification; listing creation
-remains unverified. Desktop test suites are
+remains unverified. A fifth run (`573abd3b-bd6e-4757-ac1a-83c0e4b5c643`)
+used the new test-alias credentials but failed during authentication. The Clerk
+dashboard showed no matching alias user; creation of that automation account is
+still pending. No listing was created. Desktop test suites are
 not configured yet.
 
 Mobile pay-as-you-go testing and remote access are currently $0.17 per device
