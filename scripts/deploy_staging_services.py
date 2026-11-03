@@ -1,4 +1,4 @@
-"""Roll out an already-built staging image; never targets production resources."""
+"""Roll out staging with production analysis behavior and isolated staging data."""
 import argparse
 import json
 import os
@@ -13,6 +13,71 @@ AI_SECRET_ARN = 'arn:aws:secretsmanager:us-east-1:537595754494:secret:valueai/pr
 MODEL_SETTINGS_KEYS = {'GPT_ITEM_PROFILE_MODEL', 'GPT_ITEM_PROFILE_GEMINI_MODEL',
                        'GPT_NEW_LISTING_PRICING_MODEL', 'GPT_PRICING_MODEL_ROUTING_ENABLED',
                        'GPT_ITEM_PROFILE_VERTEX_SEARCH_MODEL'}
+# Behavioral analysis settings only; infrastructure, credentials and data-source IDs stay isolated.
+ANALYSIS_SETTINGS_KEYS = {
+    'BRAND_ACCEPT_SCORE',
+    'BRAND_ACCEPT_SCORE_LOW',
+    'BRAND_DEBUG',
+    'BRAND_DETECTOR_WEIGHTS_PATH',
+    'BRAND_ENABLE_GPT_VISION',
+    'BRAND_ENABLE_LOGO_CLASSIFIER',
+    'BRAND_FORCE_LOGO_CLASSIFIER',
+    'BRAND_GAP_MIN',
+    'BRAND_GPT_VISION_MODEL',
+    'BRAND_GPT_VISION_TIMEOUT_S',
+    'BRAND_LOGO_CLASSIFIER_WEIGHTS_PATH',
+    'BRAND_LOGO_MODEL_TYPE',
+    'BRAND_LOGO_YOLO_CONFIDENCE',
+    'BRAND_LOGO_YOLO_WEIGHTS_PATH',
+    'CONDITION_CATEGORY_WEIGHTS_PATH',
+    'CONDITION_FORCE_CATEGORY_CLASSIFIER',
+    'CONDITION_FORCE_EFFICIENTNET',
+    'CONDITION_GRADE_WEIGHTS_PATH',
+    'CONDITION_REMBG_ENABLED',
+    'GPT_CONTROLLED_RESEARCH_ENABLED',
+    'GPT_CONTROLLED_RESEARCH_TTL_S',
+    'GPT_ITEM_PROFILE_ENABLED',
+    'GPT_ITEM_PROFILE_GEMINI_MODEL',
+    'GPT_ITEM_PROFILE_IMAGE_DETAIL',
+    'GPT_ITEM_PROFILE_MAX_IMAGES',
+    'GPT_ITEM_PROFILE_MODEL',
+    'GPT_ITEM_PROFILE_PROVIDER_ORDER',
+    'GPT_ITEM_PROFILE_REASONING_EFFORT',
+    'GPT_ITEM_PROFILE_TIMEOUT_S',
+    'GPT_ITEM_PROFILE_VERTEX_SEARCH_ENABLED',
+    'GPT_ITEM_PROFILE_VERTEX_SEARCH_LOCATION',
+    'GPT_ITEM_PROFILE_VERTEX_SEARCH_MAX_RESULTS',
+    'GPT_ITEM_PROFILE_VERTEX_SEARCH_MODEL',
+    'GPT_NEW_LISTING_PRICING_MODEL',
+    'GPT_PRICING_MODEL_ROUTING_ENABLED',
+    'IMAGE_STAGING_ENABLED',
+    'IMAGE_STAGING_GEMINI_ENABLED',
+    'IMAGE_STAGING_GEMINI_MODEL',
+    'IMAGE_STAGING_GEMINI_TIMEOUT_S',
+    'IMAGE_STAGING_IMAGEN_MODEL',
+    'IMAGE_STAGING_PHOTOROOM_ENABLED',
+    'IMAGE_STAGING_PHOTOROOM_FALLBACK_ENABLED',
+    'IMAGE_STAGING_VERTEXAI_ENABLED',
+    'LISTING_ANALYSIS_ATTEMPT_TIMEOUT_S',
+    'LISTING_MANNEQUIN_TIMEOUT_S',
+    'LISTING_STAGING_TIMEOUT_S',
+    'MANNEQUIN_IMAGE_GENERATION_ENABLED',
+    'MANNEQUIN_IMAGE_GENERATION_MODEL',
+    'MANNEQUIN_IMAGE_GENERATION_TIMEOUT_S',
+    'MAX_IMAGES_PER_REQUEST',
+    'PHOTOROOM_ACCOUNT_URL',
+    'PHOTOROOM_BACKGROUND_COLOR',
+    'PHOTOROOM_OUTPUT_FORMAT',
+    'PHOTOROOM_OUTPUT_SIZE',
+    'PHOTOROOM_SEGMENT_URL',
+    'PHOTOROOM_TIMEOUT_S',
+    'VALUATION_COMPS_ENABLED',
+    'VALUATION_CURRENCY',
+    'VALUATION_ENABLED',
+    'VALUATION_MAX_COMPS',
+    'VALUATION_MIN_COMPS',
+    'VALUATION_PROVIDERS',
+}
 AI_SECRET_KEYS = {'OPENAI_API_KEY', 'GEMINI_API_KEY', 'PHOTOROOM_API_KEY', 'FIRECRAWL_API_KEY'}
 ALLOWED = {'family', 'taskRoleArn', 'executionRoleArn', 'networkMode', 'containerDefinitions',
            'volumes', 'placementConstraints', 'requiresCompatibilities', 'cpu', 'memory',
@@ -33,7 +98,7 @@ def aws(*args, payload=None):
     return json.loads(result.stdout) if result.stdout.strip() else {}
 
 
-def prepare(definition, image, production_models=None):
+def prepare(definition, image, production_analysis=None):
     if not definition['family'].startswith('valueai-staging-'):
         raise RuntimeError('Not a staging task family')
     result = {key: value for key, value in definition.items() if key in ALLOWED}
@@ -54,11 +119,11 @@ def prepare(definition, image, production_models=None):
                 raise RuntimeError('Only approved shared AI-provider secret references are allowed in staging')
             if name in env:
                 raise RuntimeError('AI key cannot be both an environment value and a secret reference')
-        if production_models is not None:
-            if not set(production_models) <= MODEL_SETTINGS_KEYS:
-                raise RuntimeError('Unapproved production model settings')
-            env = {key: value for key, value in env.items() if key not in MODEL_SETTINGS_KEYS}
-            env.update(production_models)
+        if production_analysis is not None:
+            if not set(production_analysis) <= ANALYSIS_SETTINGS_KEYS:
+                raise RuntimeError('Unapproved production analysis settings')
+            env = {key: value for key, value in env.items() if key not in ANALYSIS_SETTINGS_KEYS}
+            env.update(production_analysis)
         env.update(LISTING_AGENT_ENABLED='true', ASSISTANT_CONVERSATIONS_ENABLED='true',
                    DAILY_MATCH_FEED_ENABLED='true', DAILY_MATCH_FEED_UTC_HOUR='14',
                    SES_REGION='us-east-1', SES_FROM_EMAIL='notifications@jouft.com',
@@ -86,8 +151,8 @@ def main():
                                     production['taskDefinition'])['taskDefinition']
         production_env = {entry['name']: entry['value']
                           for entry in production_definition['containerDefinitions'][0].get('environment', [])}
-        models = {key: value for key, value in production_env.items() if key in MODEL_SETTINGS_KEYS}
-        candidates[service] = prepare(definition, args.image, models)
+        analysis_settings = {key: value for key, value in production_env.items() if key in ANALYSIS_SETTINGS_KEYS}
+        candidates[service] = prepare(definition, args.image, analysis_settings)
     subprocess.run([sys.executable, os.path.join(os.path.dirname(__file__), 'run_ecs_migrations.py'),
         '--cluster', CLUSTER, '--service', SERVICES[0], '--image', args.image], check=True)
     changed = []

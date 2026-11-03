@@ -40,8 +40,8 @@ gpt_item_profile_model                      = "gpt-5"
 gpt_pricing_model_routing_enabled           = true
 gpt_new_listing_pricing_model               = "gpt-6.1-sol"
 gpt_item_profile_gemini_model               = "gemini-3.8-flash"
-gpt_item_profile_timeout_s                  = 120
-listing_analysis_attempt_timeout_s          = 180
+gpt_item_profile_timeout_s                  = 240
+listing_analysis_attempt_timeout_s          = 300
 gpt_item_profile_max_images                 = 6
 gpt_item_profile_image_detail               = "auto"
 gpt_item_profile_reasoning_effort           = "low"
@@ -71,3 +71,21 @@ create_ecr_repository                       = true
 existing_ecr_repository_url                 = "537595754494.dkr.ecr.us-east-1.amazonaws.com/valueai-staging-api"
 create_cloudwatch_log_group                 = true
 existing_cloudwatch_log_group_name          = "/ecs/valueai-mvp"
+
+valuation_max_comps = 25
+
+valuation_currency = "USD"
+
+image_staging_photoroom_enabled = true
+
+photoroom_background_color = "#FFFFFF"
+
+valuation_enabled = true
+
+valuation_min_comps = 3
+
+brand_enable_gpt_vision = true
+
+photoroom_output_size = "full"
+
+photoroom_output_format = "jpg"

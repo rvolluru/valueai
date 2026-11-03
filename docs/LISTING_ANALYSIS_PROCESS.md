@@ -175,6 +175,23 @@ or change analysis or pricing.
 Updated November 3, 2026. This document explains the functional process: inputs,
 model calls, decisions, outputs and user review—not a reliability assessment.
 
+**Staging analysis-configuration parity verified November 3, 2026 (API 17 / worker 10):**
+staging now synchronizes an explicit behavioral analysis-settings allowlist from
+the currently deployed production API/worker configurations, beyond model names.
+This sets the profile timeout to 240 seconds, overall attempt timeout to 300 seconds,
+profile photo limit to six, and provider order to `hybrid,gemini,openai`; pricing,
+research, brand/condition, mannequin and image-staging settings also follow the
+production overrides. This replaces staging's older 25-second timeout, two-photo
+limit and `gemini,openai` provider order. Stale overrides absent from production
+are removed to use application defaults. Credentials, database, storage, queue,
+billing settings and Vertex project/datastore IDs remain outside this behavior
+sync. Current shared provider secret references and images are preserved. Future
+staging releases use the same allowlist; this does not automatically reprocess saved listings or
+change existing model-cohort assignments. Effective-setting checks inside ECS,
+full allowlist parity, both completed rollouts at desired task counts and public
+health passed. Production task definitions were unchanged. The
+packaged guide in existing images is unchanged.
+
 **Staging model parity verified November 3, 2026 (API 16 / worker 9):** the
 staging API/worker model environment settings now match their currently deployed
 production counterparts: identification and mannequin planning/review use

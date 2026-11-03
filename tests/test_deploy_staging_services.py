@@ -73,10 +73,32 @@ def test_production_model_settings_replace_stale_values_without_other_changes():
     result = module.prepare(original, 'new', models)
     env = {e['name']: e['value'] for e in result['containerDefinitions'][0]['environment']}
     assert {k: v for k, v in env.items() if k in module.MODEL_SETTINGS_KEYS} == models
-    assert env['GPT_ITEM_PROFILE_TIMEOUT_S'] == '25'
+    assert 'GPT_ITEM_PROFILE_TIMEOUT_S' not in env
     assert original['containerDefinitions'][0]['image'] == 'old'
 
 
 def test_model_sync_cannot_copy_production_credentials():
     with pytest.raises(RuntimeError):
         module.prepare(definition(), 'new', {'DATABASE_URL': 'production-database'})
+
+
+def test_analysis_parity_includes_limits_and_preserves_staging_data():
+    original = definition(GPT_ITEM_PROFILE_TIMEOUT_S='25', GPT_ITEM_PROFILE_MAX_IMAGES='2',
+                          STRIPE_SECRET_KEY='sk_test_fixture')
+    settings = {'GPT_ITEM_PROFILE_TIMEOUT_S': '240', 'GPT_ITEM_PROFILE_MAX_IMAGES': '6',
+                'GPT_ITEM_PROFILE_PROVIDER_ORDER': 'hybrid,gemini,openai',
+                'LISTING_ANALYSIS_ATTEMPT_TIMEOUT_S': '300',
+                'IMAGE_STAGING_PHOTOROOM_ENABLED': 'true'}
+    candidate = module.prepare(original, 'new', settings)
+    env = {e['name']:e['value'] for e in candidate['containerDefinitions'][0]['environment']}
+    assert {k:v for k,v in env.items() if k in module.ANALYSIS_SETTINGS_KEYS} == settings
+    assert env['STRIPE_SECRET_KEY'] == 'sk_test_fixture'
+    assert env['DATABASE_URL'].startswith('postgresql://user:pass@valueai-staging-postgres.')
+
+
+@pytest.mark.parametrize('key', ['OPENAI_API_KEY', 'S3_BUCKET', 'SQS_ANALYSIS_QUEUE_URL',
+                               'GPT_ITEM_PROFILE_VERTEX_SEARCH_PROJECT_ID',
+                               'GPT_ITEM_PROFILE_VERTEX_SEARCH_DATASTORE'])
+def test_analysis_sync_does_not_copy_credentials_or_production_data_sources(key):
+    with pytest.raises(RuntimeError):
+        module.prepare(definition(), 'new', {key:'production-value'})
