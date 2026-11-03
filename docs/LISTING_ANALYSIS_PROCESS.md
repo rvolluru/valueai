@@ -175,14 +175,19 @@ or change analysis or pricing.
 Updated November 3, 2026. This document explains the functional process: inputs,
 model calls, decisions, outputs and user review—not a reliability assessment.
 
-**Shoe close-up previews implemented locally November 3, 2026; not deployed:**
+**Shoe close-up previews deployed and verified November 3, 2026 — release `371c508`:**
+staging API 18 / worker 11 and production API 189 / worker 59 completed rollout,
+health and authentication checks. All 196 relevant backend tests passed. The
+release changes application images while preserving every existing environment
+value and secret reference, including staging/production analysis parity and shared
+AI-provider keys. The standalone guide is republished with this verified status.
+
 new shoe generation instructions use close-up matte white mannequin feet and ankles,
 camera-cropped at the ankles or lower calves, without supporting clothing. Both legs extend
 beyond the top image border; visible cut ends, end caps, hollow openings and
 detached ankle stumps are rejected. Review also rejects added
 trousers, skirts, dresses, socks, tights or hems. Boots allow only enough lower leg
-to retain the complete shaft and opening. Staging and production still use the
-previous lower-thigh/knee crop with shoe-type supporting clothing until deployment.
+to retain the complete shaft and opening.
 Existing generated assets are not automatically regenerated or approved by this code change.
 
 **Staging analysis-configuration parity verified November 3, 2026 (API 17 / worker 10):**
@@ -200,7 +205,8 @@ staging releases use the same allowlist; this does not automatically reprocess s
 change existing model-cohort assignments. Effective-setting checks inside ECS,
 full allowlist parity, both completed rollouts at desired task counts and public
 health passed. Production task definitions were unchanged. The
-packaged guide in existing images is unchanged.
+configuration-only rollout did not rebuild the packaged guide; the reader edition
+is updated with release `371c508`.
 
 **Staging model parity verified November 3, 2026 (API 16 / worker 9):** the
 staging API/worker model environment settings now match their currently deployed
@@ -212,7 +218,8 @@ routing policy. A real Gemini request succeeded from the candidate staging task.
 Both service rollouts completed at desired task counts and public health passed;
 images, timeouts, credential references and data configuration were preserved. The updated release helper reads these five
 model settings from production on later staging deployments. No production service
-was updated. The guide packaged in the existing images is unchanged.
+was updated. That configuration-only rollout did not rebuild the guide; the
+reader edition is updated with release `371c508`.
 
 **Staging credential configuration verified November 3, 2026 (API revision 15, worker revision 8):**
 the staging API and analysis worker now reference the same Secrets Manager JSON
@@ -226,8 +233,8 @@ completed at their desired task counts, and public health passed. Production tas
 definitions were unchanged. Credentials load on
 task startup, so rotations require new tasks. Existing saved analyses are not
 reprocessed automatically, and manual pricing/publication rules are unchanged.
-This is a configuration-only rollout; the guide packaged in the running images
-has not been rebuilt from this updated document.
+That configuration-only rollout did not rebuild the guide; the reader edition is
+updated with release `371c508`.
 
 **Deployed November 2, 2026 to staging and production (release `f973c82`):** shoe mannequin previews
 now use legs-and-feet-only framing and shoe-type-appropriate supporting clothing.
@@ -248,11 +255,10 @@ does not automatically approve future generated images. The proposed separate
 Edit Listing preview section was removed locally before deployment; approved
 assets use the existing photo gallery instead.
 
-**Owner-preview UI removal implemented locally November 2, 2026; not deployed:**
+**Owner-preview UI removal deployed to staging and production November 3, 2026:**
 web closet cards no longer show the expandable “View AI preview” control. Generated
-assets and the existing listing-review flow are unchanged. Staging and production
-still have the control from the earlier November 2 release until this removal is
-deployed; removing it does not approve previews or add them to public galleries.
+assets and the existing listing-review flow are unchanged. Removing this control
+does not approve previews or add them to public galleries.
 **Review navigation correction deployed November 2, 2026:** web review
 lookup also checks closet search results and retains the clicked listing as a
 fallback. Listings found beyond the initial closet page can therefore open for
@@ -992,7 +998,7 @@ background, preserving visible product construction and appearance. Styling depe
 - **Tops/open jackets:** add appropriate supporting clothing/underlayers while preserving the listed item.
 - **Dresses/jumpsuits:** preserve intentional shoulders, cutouts, straps and exposed legs.
 - **Handbags:** use existing handles/straps on a simply dressed mannequin.
-- **Shoes (local implementation; not yet deployed):** generate `mannequin_shoes`
+- **Shoes (deployed November 3, 2026):** generate `mannequin_shoes`
   on matte white mannequin feet and ankles with a short section of lower leg.
   Low-cut shoes use a close-up crop
   at the ankles or lower calves, showing only enough lower leg for both mannequin
@@ -1005,8 +1011,7 @@ background, preserving visible product construction and appearance. Styling depe
   natural standing three-quarter pose without crossed feet. Preserve visible shoe
   construction, logos and wear without inventing hidden details. A complete usable
   front or three-quarter shoe view qualifies as front evidence; outsole-only and
-  label-only crops do not. Deployed staging/production behavior remains the previous
-  lower-thigh/knee crop with category-appropriate clothing until this change ships.
+  label-only crops do not.
 
 Supporting clothing is not part of the listed product.
 
@@ -1024,8 +1029,7 @@ through the top image border. An ankle or lower-calf camera crop is allowed;
 visible cut surfaces, end caps, hollow openings or
 detached stump-like ends fail coverage. Supporting clothing is
 neither required nor permitted: added trousers, skirts, dresses, socks, tights or
-hems fail coverage. Bare matte white feet and ankles pass. These review changes
-are local only until deployment, matching the generation change above. Failed or
+hems fail coverage. Bare matte white feet and ankles pass. Failed or
 uncertain coverage yields no saved preview. Shoe construction differences remain
 subject to the same owner review as other previews.
 

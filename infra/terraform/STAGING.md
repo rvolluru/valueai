@@ -2,6 +2,15 @@
 
 ## Application rollouts (existing stack)
 
+Verified November 3, 2026: source release `371c508` deploys shoe close-up framing
+and the closet preview-control removal to staging (API 18 / worker 11) and production
+(API 189 / worker 59). Migrations, completed rollouts, public health and sign-in
+requirements passed. The image-only deployment preserved all live environment
+values and secret references. Staging retains six-photo support, 240/300-second
+timeouts, hybrid provider order and the shared AI-provider secret references.
+The verified reader guide is published separately as an API image documentation
+layer; worker code and runtime configuration remain the same.
+
 Verified October 25, 2026: source `ec13811`, image `staging-ec13811`, API task
 revision 10 and worker revision 3. Migrations, service stability, public health,
 unauthenticated rejection and authenticated assistant reads passed. Production
