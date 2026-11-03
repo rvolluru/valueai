@@ -8282,6 +8282,19 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                     </div>
                   </form>
 
+                    {modalEditingListing?.generatedImages?.length > 0 && (
+                      <section className="mannequin-review" aria-label="AI mannequin previews">
+                        <h3>AI mannequin preview</h3>
+                        <p className="mannequin-disclaimer">{MANNEQUIN_DISCLAIMER}</p>
+                        <p>Saving listing details does not approve an unpublished preview or add it to your public photos.</p>
+                        {modalEditingListing.generatedImages.map((src) => (
+                          <button className="listing-image-zoom-trigger" type="button" key={src} aria-label="Enlarge AI mannequin preview" onClick={() => openZoomedListingImage({ src, images: modalEditingListing.generatedImages, disclosureListing: modalEditingListing, alt: 'AI-generated mannequin preview' })}>
+                            <img src={src} alt="AI-generated mannequin preview" style={{ maxWidth: '100%', maxHeight: 360, objectFit: 'contain' }} />
+                          </button>
+                        ))}
+                      </section>
+                    )}
+
                     {modalEditingListing?.analysis && (
                       <section className="listing-edit-analysis">
                       <article className="result-card feature">

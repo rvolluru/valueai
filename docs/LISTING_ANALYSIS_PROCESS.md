@@ -183,6 +183,15 @@ previews are not regenerated automatically.
 mannequin eligibility check now includes shoes. The initial shoe prompt change
 did not update this check, so shoe jobs were marked skipped without generation.
 Existing skipped jobs are not automatically retried by this code change.
+**Edit Listing preview visibility implemented locally November 2, 2026; not deployed:**
+Edit Listing displays non-excluded generated mannequin assets in a separate,
+zoomable preview section, including pending previews on active listings. Previously
+these were visible in listing review but absent from the edit photo gallery because
+pending active previews are intentionally filtered from public photos. The preview
+section does not change the editable photo list, hero selection, save payload,
+analysis evidence, or publication approval. Staging and production retain the prior
+edit-screen behavior until deployment.
+
 **Owner-preview UI removal implemented locally November 2, 2026; not deployed:**
 web closet cards no longer show the expandable “View AI preview” control. Generated
 assets and the existing listing-review flow are unchanged. Staging and production
