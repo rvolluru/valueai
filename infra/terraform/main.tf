@@ -5,6 +5,8 @@ data "aws_availability_zones" "available" {
 data "aws_caller_identity" "current" {}
 
 locals {
+  ai_provider_secret_keys   = ["OPENAI_API_KEY", "GEMINI_API_KEY", "PHOTOROOM_API_KEY", "FIRECRAWL_API_KEY"]
+  execution_secret_arns     = distinct(compact([var.runtime_secret_arn, var.ai_provider_secret_arn]))
   azs                       = slice(data.aws_availability_zones.available.names, 0, 2)
   cloudwatch_log_group_name = var.create_cloudwatch_log_group ? aws_cloudwatch_log_group.api[0].name : var.existing_cloudwatch_log_group_name
   ecr_repository_url        = var.create_ecr_repository ? aws_ecr_repository.api[0].repository_url : var.existing_ecr_repository_url
@@ -288,7 +290,7 @@ resource "aws_iam_role_policy" "ecs_task_analysis_queue" {
 }
 
 resource "aws_iam_role_policy" "ecs_execution_runtime_secret" {
-  count = var.runtime_secret_arn == "" ? 0 : 1
+  count = length(local.execution_secret_arns) == 0 ? 0 : 1
   name  = "${var.project_name}-runtime-secret"
   role  = aws_iam_role.ecs_task_execution.id
   policy = jsonencode({
@@ -296,7 +298,7 @@ resource "aws_iam_role_policy" "ecs_execution_runtime_secret" {
     Statement = [{
       Effect   = "Allow"
       Action   = ["secretsmanager:GetSecretValue"]
-      Resource = var.runtime_secret_arn
+      Resource = local.execution_secret_arns
     }]
   })
 }
@@ -491,23 +493,23 @@ resource "aws_ecs_task_definition" "api" {
         { name = "BRAND_ACCEPT_SCORE", value = tostring(var.brand_accept_score) },
         { name = "BRAND_ACCEPT_SCORE_LOW", value = tostring(var.brand_accept_score_low) },
         { name = "BRAND_GAP_MIN", value = tostring(var.brand_gap_min) }
-      ], var.runtime_secret_arn == "" ? [
-        { name = "API_KEY", value = var.api_key },
-        { name = "DATABASE_URL", value = "postgresql://${var.db_username}:${var.db_password}@${aws_db_instance.postgres.address}:5432/${var.db_name}" },
-        { name = "OPENAI_API_KEY", value = var.openai_api_key },
-        { name = "GEMINI_API_KEY", value = var.gemini_api_key },
-        { name = "PHOTOROOM_API_KEY", value = var.photoroom_api_key },
-        { name = "PLAIN_API_KEY", value = var.plain_api_key },
-        { name = "PLAIN_WEBHOOK_SECRET", value = var.plain_webhook_secret },
-        { name = "STRIPE_SECRET_KEY", value = var.stripe_secret_key },
-        { name = "STRIPE_WEBHOOK_SECRET", value = var.stripe_webhook_secret },
-        { name = "EXPO_PUSH_HEALTH_TOKEN", value = var.expo_push_health_token },
-        { name = "GOOGLE_PLACES_API_KEY", value = var.google_places_api_key },
-        { name = "SHIPPO_API_KEY", value = var.shippo_api_key },
-        { name = "GPT_ITEM_PROFILE_VERTEX_SEARCH_ACCESS_TOKEN", value = var.gpt_item_profile_vertex_search_access_token },
-        { name = "FIRECRAWL_API_KEY", value = var.firecrawl_api_key }
-      ] : [])
-      secrets = var.runtime_secret_arn == "" ? [] : [
+        ], var.runtime_secret_arn == "" ? [for entry in [
+          { name = "API_KEY", value = var.api_key },
+          { name = "DATABASE_URL", value = "postgresql://${var.db_username}:${var.db_password}@${aws_db_instance.postgres.address}:5432/${var.db_name}" },
+          { name = "OPENAI_API_KEY", value = var.openai_api_key },
+          { name = "GEMINI_API_KEY", value = var.gemini_api_key },
+          { name = "PHOTOROOM_API_KEY", value = var.photoroom_api_key },
+          { name = "PLAIN_API_KEY", value = var.plain_api_key },
+          { name = "PLAIN_WEBHOOK_SECRET", value = var.plain_webhook_secret },
+          { name = "STRIPE_SECRET_KEY", value = var.stripe_secret_key },
+          { name = "STRIPE_WEBHOOK_SECRET", value = var.stripe_webhook_secret },
+          { name = "EXPO_PUSH_HEALTH_TOKEN", value = var.expo_push_health_token },
+          { name = "GOOGLE_PLACES_API_KEY", value = var.google_places_api_key },
+          { name = "SHIPPO_API_KEY", value = var.shippo_api_key },
+          { name = "GPT_ITEM_PROFILE_VERTEX_SEARCH_ACCESS_TOKEN", value = var.gpt_item_profile_vertex_search_access_token },
+          { name = "FIRECRAWL_API_KEY", value = var.firecrawl_api_key }
+      ] : entry if var.ai_provider_secret_arn == "" || !contains(local.ai_provider_secret_keys, entry.name)] : [])
+      secrets = concat(var.runtime_secret_arn == "" ? [] : [
         for name in [
           "API_KEY",
           "DATABASE_URL",
@@ -523,8 +525,10 @@ resource "aws_ecs_task_definition" "api" {
           "SHIPPO_API_KEY",
           "GPT_ITEM_PROFILE_VERTEX_SEARCH_ACCESS_TOKEN",
           "FIRECRAWL_API_KEY"
-        ] : { name = name, valueFrom = "${var.runtime_secret_arn}:${name}::" }
-      ]
+        ] : { name = name, valueFrom = "${var.runtime_secret_arn}:${name}::" } if var.ai_provider_secret_arn == "" || !contains(local.ai_provider_secret_keys, name)
+        ], var.ai_provider_secret_arn == "" ? [] : [
+        for name in local.ai_provider_secret_keys : { name = name, valueFrom = "${var.ai_provider_secret_arn}:${name}::" }
+      ])
       logConfiguration = {
         logDriver = "awslogs"
         options = {
@@ -538,11 +542,11 @@ resource "aws_ecs_task_definition" "api" {
 }
 
 resource "aws_ecs_service" "api" {
-  name            = "${var.project_name}-api"
-  cluster         = aws_ecs_cluster.this.id
-  task_definition = aws_ecs_task_definition.api.arn
-  desired_count   = var.ecs_api_desired_count
-  launch_type     = "FARGATE"
+  name                              = "${var.project_name}-api"
+  cluster                           = aws_ecs_cluster.this.id
+  task_definition                   = aws_ecs_task_definition.api.arn
+  desired_count                     = var.ecs_api_desired_count
+  launch_type                       = "FARGATE"
   health_check_grace_period_seconds = 180
 
   deployment_circuit_breaker {

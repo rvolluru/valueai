@@ -32,3 +32,33 @@ def test_staging_deploy_preserves_original_and_enables_guarded_features():
 def test_staging_deploy_rejects_production_resources_and_live_billing(values):
     with pytest.raises(RuntimeError):
         module.prepare(definition(**values), 'new')
+
+
+def test_shared_ai_secrets_are_preserved_without_copying_runtime_secrets():
+    original = definition()
+    original['containerDefinitions'][0]['secrets'] = [
+        dict(name=name, valueFrom=f'{module.AI_SECRET_ARN}:{name}::')
+        for name in sorted(module.AI_SECRET_KEYS)
+    ]
+    candidate = module.prepare(original, 'new')
+    assert candidate['containerDefinitions'][0]['secrets'] == original['containerDefinitions'][0]['secrets']
+
+
+@pytest.mark.parametrize('name,reference', [
+    ('DATABASE_URL', f'{module.AI_SECRET_ARN}:DATABASE_URL::'),
+    ('STRIPE_SECRET_KEY', f'{module.AI_SECRET_ARN}:STRIPE_SECRET_KEY::'),
+    ('OPENAI_API_KEY', 'arn:aws:secretsmanager:us-east-1:537595754494:secret:other:OPENAI_API_KEY::'),
+])
+def test_rejects_unapproved_secret_references(name, reference):
+    original = definition()
+    original['containerDefinitions'][0]['secrets'] = [dict(name=name, valueFrom=reference)]
+    with pytest.raises(RuntimeError):
+        module.prepare(original, 'new')
+
+
+def test_rejects_duplicate_plaintext_and_secret_ai_key():
+    original = definition(OPENAI_API_KEY='fixture-only')
+    original['containerDefinitions'][0]['secrets'] = [
+        dict(name='OPENAI_API_KEY', valueFrom=f'{module.AI_SECRET_ARN}:OPENAI_API_KEY::')]
+    with pytest.raises(RuntimeError):
+        module.prepare(original, 'new')

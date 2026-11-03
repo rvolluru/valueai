@@ -172,8 +172,23 @@ provide Yes/No buttons for the current pending action. Yes follows the existing
 signed confirmation path; No cancels it. This does not bypass publication checks
 or change analysis or pricing.
 
-Updated November 2, 2026. This document explains the functional process: inputs,
+Updated November 3, 2026. This document explains the functional process: inputs,
 model calls, decisions, outputs and user review—not a reliability assessment.
+
+**Staging credential configuration verified November 3, 2026 (API revision 15, worker revision 8):**
+the staging API and analysis worker now reference the same Secrets Manager JSON
+fields as production for OpenAI, Gemini, Firecrawl and Photoroom. Inline values for
+those four provider keys are removed; staging database, storage, queue, billing
+credentials, feature flags and application images are preserved. The staging task
+execution role can retrieve the shared secret. This corrects a stale staging
+OpenAI key that returned `credit_balance_exhausted`; a real OpenAI response request
+from a staging ECS task succeeded with the new injected key. Both service rollouts
+completed at their desired task counts, and public health passed. Production task
+definitions were unchanged. Credentials load on
+task startup, so rotations require new tasks. Existing saved analyses are not
+reprocessed automatically, and manual pricing/publication rules are unchanged.
+This is a configuration-only rollout; the guide packaged in the running images
+has not been rebuilt from this updated document.
 
 **Deployed November 2, 2026 to staging and production (release `f973c82`):** shoe mannequin previews
 now use legs-and-feet-only framing and shoe-type-appropriate supporting clothing.

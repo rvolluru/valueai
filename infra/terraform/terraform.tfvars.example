@@ -71,3 +71,6 @@ ses_identity            = "jouft.com"
 notification_from_email = "notifications@jouft.com"
 public_app_url         = "https://jouft.com"
 public_api_url         = "https://api.jouft.com"
+
+# Optional shared AI-provider JSON secret; leaves database and payment keys separate.
+ai_provider_secret_arn = ""

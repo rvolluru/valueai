@@ -9,6 +9,8 @@ from urllib.parse import urlparse
 
 CLUSTER = 'valueai-staging-cluster'
 SERVICES = ('valueai-staging-api', 'valueai-staging-analysis-worker')
+AI_SECRET_ARN = 'arn:aws:secretsmanager:us-east-1:537595754494:secret:valueai/prod/runtime-KrphYs'
+AI_SECRET_KEYS = {'OPENAI_API_KEY', 'GEMINI_API_KEY', 'PHOTOROOM_API_KEY', 'FIRECRAWL_API_KEY'}
 ALLOWED = {'family', 'taskRoleArn', 'executionRoleArn', 'networkMode', 'containerDefinitions',
            'volumes', 'placementConstraints', 'requiresCompatibilities', 'cpu', 'memory',
            'pidMode', 'ipcMode', 'proxyConfiguration', 'inferenceAccelerators',
@@ -43,8 +45,12 @@ def prepare(definition, image):
         if any(str(env.get(key, '')).startswith(('sk_live_', 'pk_live_', 'shippo_live_'))
                for key in ('STRIPE_SECRET_KEY', 'STRIPE_PUBLISHABLE_KEY', 'SHIPPO_API_KEY')):
             raise RuntimeError('Live payment/shipping credentials are not allowed in staging')
-        if container.get('secrets'):
-            raise RuntimeError('Review secret references for isolation before deployment')
+        for entry in container.get('secrets', []):
+            name = entry['name']
+            if name not in AI_SECRET_KEYS or entry['valueFrom'] != f'{AI_SECRET_ARN}:{name}::':
+                raise RuntimeError('Only approved shared AI-provider secret references are allowed in staging')
+            if name in env:
+                raise RuntimeError('AI key cannot be both an environment value and a secret reference')
         env.update(LISTING_AGENT_ENABLED='true', ASSISTANT_CONVERSATIONS_ENABLED='true',
                    DAILY_MATCH_FEED_ENABLED='true', DAILY_MATCH_FEED_UTC_HOUR='14',
                    SES_REGION='us-east-1', SES_FROM_EMAIL='notifications@jouft.com',

@@ -201,6 +201,12 @@ variable "runtime_secret_arn" {
   description = "Secrets Manager JSON secret containing production runtime credentials."
 }
 
+variable "ai_provider_secret_arn" {
+  type        = string
+  default     = ""
+  description = "Optional shared JSON secret for AI provider keys only; does not replace environment-specific runtime credentials."
+}
+
 variable "openai_api_key" {
   type      = string
   default   = ""

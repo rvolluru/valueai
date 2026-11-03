@@ -30,6 +30,7 @@ analysis_worker_max_count                   = 1
 analysis_worker_queue_depth_target          = 1
 analysis_worker_oldest_age_target_s         = 120
 runtime_secret_arn                          = ""
+ai_provider_secret_arn                      = "arn:aws:secretsmanager:us-east-1:537595754494:secret:valueai/prod/runtime-KrphYs"
 brand_accept_score                          = 78
 brand_accept_score_low                      = 70
 brand_gap_min                               = 8
