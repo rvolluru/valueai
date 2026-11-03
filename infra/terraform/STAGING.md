@@ -10,7 +10,7 @@ was unchanged. No listings, analyses or trade requests were created by verificat
 Use `scripts/deploy_staging_services.py` for an already-built, versioned ARM64
 image in the `valueai-staging-api` ECR repository. It validates staging database,
 bucket and queue references, rejects live billing/shipping credentials and
-unapproved secret references, runs migrations first, updates the staging API and
+unapproved secret references, reads production’s current model settings, runs migrations first, updates the staging API and
 worker, waits for stability and checks health/authentication. Rollout/smoke failure
 restores the prior service task definitions. Migrations themselves are not reversed.
 
@@ -19,9 +19,25 @@ AWS_PROFILE=rajesh_volluru AWS_DEFAULT_REGION=us-east-1 python3 scripts/deploy_s
   --image 537595754494.dkr.ecr.us-east-1.amazonaws.com/valueai-staging-api:VERSIONED_TAG
 ```
 
-No production service or Terraform state is targeted by that script. Do not copy
+Production service task definitions are read only to copy model settings; the script
+does not update production services or Terraform state. Do not copy
 production users or payment credentials into staging. The staging web/API origin
 is `https://staging.jouft.com`; `staging-api.jouft.com` is not configured.
+
+## Model configuration parity
+
+The staging release helper copies these environment settings from the matching
+currently deployed production API/worker task definition: `GPT_ITEM_PROFILE_MODEL`,
+`GPT_ITEM_PROFILE_GEMINI_MODEL`, `GPT_NEW_LISTING_PRICING_MODEL`,
+`GPT_PRICING_MODEL_ROUTING_ENABLED`, and `GPT_ITEM_PROFILE_VERTEX_SEARCH_MODEL`.
+It does not copy other production environment values. The staging Terraform var
+file records the same current values: Gemini `gemini-3.8-flash`, base OpenAI
+`gpt-5`, new-listing pricing `gpt-6.1-sol`, routing enabled, and empty Vertex model
+override. Existing model assignments follow the normal cohort policy.
+
+Verified November 3: configuration-only rollout API 16 / worker 9 completed at
+desired task counts. A real Gemini request and public health passed. Application images, shared secret references,
+timeouts and staging data configuration were preserved.
 
 ## Shared AI-provider credentials
 

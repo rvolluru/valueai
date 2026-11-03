@@ -62,3 +62,21 @@ def test_rejects_duplicate_plaintext_and_secret_ai_key():
         dict(name='OPENAI_API_KEY', valueFrom=f'{module.AI_SECRET_ARN}:OPENAI_API_KEY::')]
     with pytest.raises(RuntimeError):
         module.prepare(original, 'new')
+
+
+def test_production_model_settings_replace_stale_values_without_other_changes():
+    original = definition(GPT_ITEM_PROFILE_GEMINI_MODEL='old', GPT_ITEM_PROFILE_MODEL='stale',
+                          GPT_ITEM_PROFILE_TIMEOUT_S='25')
+    models = {'GPT_ITEM_PROFILE_GEMINI_MODEL': 'gemini-3.8-flash',
+              'GPT_NEW_LISTING_PRICING_MODEL': 'gpt-6.1-sol',
+              'GPT_PRICING_MODEL_ROUTING_ENABLED': 'true'}
+    result = module.prepare(original, 'new', models)
+    env = {e['name']: e['value'] for e in result['containerDefinitions'][0]['environment']}
+    assert {k: v for k, v in env.items() if k in module.MODEL_SETTINGS_KEYS} == models
+    assert env['GPT_ITEM_PROFILE_TIMEOUT_S'] == '25'
+    assert original['containerDefinitions'][0]['image'] == 'old'
+
+
+def test_model_sync_cannot_copy_production_credentials():
+    with pytest.raises(RuntimeError):
+        module.prepare(definition(), 'new', {'DATABASE_URL': 'production-database'})

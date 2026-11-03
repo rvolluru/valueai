@@ -175,6 +175,18 @@ or change analysis or pricing.
 Updated November 3, 2026. This document explains the functional process: inputs,
 model calls, decisions, outputs and user review—not a reliability assessment.
 
+**Staging model parity verified November 3, 2026 (API 16 / worker 9):** the
+staging API/worker model environment settings now match their currently deployed
+production counterparts: identification and mannequin planning/review use
+`gemini-3.8-flash`, base OpenAI remains `gpt-5`, new-listing pricing model is
+`gpt-6.1-sol`, pricing model routing is enabled, and the Vertex model override is
+empty. Existing pricing model cohort assignments are preserved by the existing
+routing policy. A real Gemini request succeeded from the candidate staging task.
+Both service rollouts completed at desired task counts and public health passed;
+images, timeouts, credential references and data configuration were preserved. The updated release helper reads these five
+model settings from production on later staging deployments. No production service
+was updated. The guide packaged in the existing images is unchanged.
+
 **Staging credential configuration verified November 3, 2026 (API revision 15, worker revision 8):**
 the staging API and analysis worker now reference the same Secrets Manager JSON
 fields as production for OpenAI, Gemini, Firecrawl and Photoroom. Inline values for

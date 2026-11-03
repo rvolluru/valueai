@@ -10,6 +10,9 @@ from urllib.parse import urlparse
 CLUSTER = 'valueai-staging-cluster'
 SERVICES = ('valueai-staging-api', 'valueai-staging-analysis-worker')
 AI_SECRET_ARN = 'arn:aws:secretsmanager:us-east-1:537595754494:secret:valueai/prod/runtime-KrphYs'
+MODEL_SETTINGS_KEYS = {'GPT_ITEM_PROFILE_MODEL', 'GPT_ITEM_PROFILE_GEMINI_MODEL',
+                       'GPT_NEW_LISTING_PRICING_MODEL', 'GPT_PRICING_MODEL_ROUTING_ENABLED',
+                       'GPT_ITEM_PROFILE_VERTEX_SEARCH_MODEL'}
 AI_SECRET_KEYS = {'OPENAI_API_KEY', 'GEMINI_API_KEY', 'PHOTOROOM_API_KEY', 'FIRECRAWL_API_KEY'}
 ALLOWED = {'family', 'taskRoleArn', 'executionRoleArn', 'networkMode', 'containerDefinitions',
            'volumes', 'placementConstraints', 'requiresCompatibilities', 'cpu', 'memory',
@@ -30,7 +33,7 @@ def aws(*args, payload=None):
     return json.loads(result.stdout) if result.stdout.strip() else {}
 
 
-def prepare(definition, image):
+def prepare(definition, image, production_models=None):
     if not definition['family'].startswith('valueai-staging-'):
         raise RuntimeError('Not a staging task family')
     result = {key: value for key, value in definition.items() if key in ALLOWED}
@@ -51,6 +54,11 @@ def prepare(definition, image):
                 raise RuntimeError('Only approved shared AI-provider secret references are allowed in staging')
             if name in env:
                 raise RuntimeError('AI key cannot be both an environment value and a secret reference')
+        if production_models is not None:
+            if not set(production_models) <= MODEL_SETTINGS_KEYS:
+                raise RuntimeError('Unapproved production model settings')
+            env = {key: value for key, value in env.items() if key not in MODEL_SETTINGS_KEYS}
+            env.update(production_models)
         env.update(LISTING_AGENT_ENABLED='true', ASSISTANT_CONVERSATIONS_ENABLED='true',
                    DAILY_MATCH_FEED_ENABLED='true', DAILY_MATCH_FEED_UTC_HOUR='14',
                    SES_REGION='us-east-1', SES_FROM_EMAIL='notifications@jouft.com',
@@ -71,7 +79,15 @@ def main():
         details = aws('describe-services', '--cluster', CLUSTER, '--services', service)['services'][0]
         previous[service] = details['taskDefinition']
         definition = aws('describe-task-definition', '--task-definition', details['taskDefinition'])['taskDefinition']
-        candidates[service] = prepare(definition, args.image)
+        production_service = service.replace('valueai-staging-', 'valueai-mvp-', 1)
+        production = aws('describe-services', '--cluster', 'valueai-mvp-cluster',
+                         '--services', production_service)['services'][0]
+        production_definition = aws('describe-task-definition', '--task-definition',
+                                    production['taskDefinition'])['taskDefinition']
+        production_env = {entry['name']: entry['value']
+                          for entry in production_definition['containerDefinitions'][0].get('environment', [])}
+        models = {key: value for key, value in production_env.items() if key in MODEL_SETTINGS_KEYS}
+        candidates[service] = prepare(definition, args.image, models)
     subprocess.run([sys.executable, os.path.join(os.path.dirname(__file__), 'run_ecs_migrations.py'),
         '--cluster', CLUSTER, '--service', SERVICES[0], '--image', args.image], check=True)
     changed = []
