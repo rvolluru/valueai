@@ -28,6 +28,7 @@ def test_shoe_generation_uses_ankle_crop_without_clothing_and_preserves_boot_sha
         assert "complete shaft of tall boots" in kwargs['prompt']
         assert "Crop just above the ankles" in kwargs['prompt']
         assert "Do not add supporting clothing" in kwargs['prompt']
+        assert "flat cut 2–3 cm above the ankle bones" in kwargs['prompt']
         assert mannequin_fidelity.clothing_attempts(kwargs['prompt'], kwargs['asset_kind']) == [
             (1, 'shoe_legs', kwargs['prompt'])]
         return {'review_decision': 'pending'}

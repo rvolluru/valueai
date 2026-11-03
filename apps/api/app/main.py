@@ -10174,7 +10174,10 @@ def _mannequin_generation_prompt(*, category: str, title: str, description: str)
         return "mannequin_shoes", (
             "Create a shoe styling preview of the exact footwear in the ORIGINAL source photos on matte white "
             "retail mannequin feet and ankles ONLY. Crop just above the ankles with only a short ankle section "
-            "visible above low-cut shoes, like a close-up footwear product photograph. No knees, thighs, head, "
+            "visible above low-cut shoes, like a close-up footwear product photograph. For low-cut shoes, use short foot display "
+            "forms ending in a flat cut 2–3 cm above the ankle bones, not mannequin shins or calf-length legs. "
+            "For low-cut shoes, place this flat ankle cutoff fully inside the image with background above it. "
+            "No knees, thighs, head, "
             "arms, chest or torso; never show a full body. For boots, widen upward only as needed to show the "
             "complete shaft of tall boots and a minimal section of mannequin above the opening. "
             "Keep the entire shoes, toes, heels, soles, straps and boot shafts inside the frame. "

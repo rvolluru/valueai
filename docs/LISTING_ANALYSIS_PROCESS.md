@@ -992,7 +992,9 @@ background, preserving visible product construction and appearance. Styling depe
 - **Handbags:** use existing handles/straps on a simply dressed mannequin.
 - **Shoes (local implementation; not yet deployed):** generate `mannequin_shoes`
   on matte white mannequin feet and ankles only. Low-cut shoes use a close-up crop
-  just above the ankles, showing only a short ankle section. No knees, thighs,
+  just above the ankles, showing short foot-display forms with a flat cutoff 2–3 cm
+  above the ankle bones; the cutoff stays inside the frame with background above
+  it. Do not show shins or calf-length legs for low-cut shoes. No knees, thighs,
   torso or full body. Boots allow only enough lower leg to show the complete shaft
   and a minimal section above its opening. Do not add supporting clothing, socks,
   tights or hems. Keep complete toes, heels, soles, straps and shafts visible in a
