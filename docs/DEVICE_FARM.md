@@ -57,18 +57,21 @@ and Edge on Windows. An Android [create-listing Appium test](../tests/devicefarm
 has been uploaded with fixture photos and a custom Appium test-host specification.
 The mobile project has an execution role that can read only its dedicated staging
 login secret. The owner must populate that secret using
-`python3 scripts/set_device_farm_password.py` from the terminal with the exported
-password. The secret was populated and three listing-test runs executed November 1;
-all failed at welcome/login navigation before listing creation. A fourth run on
-November 2 (`0c35ed75-9125-4726-9600-63ed7c1be600`, Pixel 9 Pro XL) verified the
-accessibility-selector fix and submitted credentials, but Clerk required an emailed
-additional sign-in code. Remote host setup and credential retrieval worked.
-Unattended staging authentication is blocked by email verification; listing creation
-remains unverified. A fifth run (`573abd3b-bd6e-4757-ac1a-83c0e4b5c643`)
-used the new test-alias credentials but failed during authentication. The Clerk
-dashboard showed no matching alias user; creation of that automation account is
-still pending. No listing was created. Desktop test suites are
-not configured yet.
+`python3 scripts/set_device_farm_password.py --email leavethemessage+clerk_test@gmail.com` from the terminal with the exported
+password. The secret and separate Clerk test identity are configured. The staging-only test
+profile uses synthetic onboarding data and the free plan, without a payment method.
+Global authentication settings and the original user account are unchanged.
+
+**Verified November 2, 2026 (November 3 UTC):** Android run
+`c0782ebf-d80b-42e3-b199-0b61487eab8f` PASSED: sign-in, three fixture-photo
+selection, required photo coverage, Clothes / Like New / S entry, saved listing,
+and an increased listing-card count in My Closet. The dedicated
+`jouft-create-listing-android15` pool selects the tested Google Pixel 9 Pro XL /
+Android 15 configuration. Other Android pickers remain unverified; a different
+device previously opened an empty Documents picker. The general Android pool is
+unchanged. Test listings remain in the dedicated staging closet for inspection.
+The test does not publish or assert full background analysis completion. Desktop
+test suites are not configured yet.
 
 Mobile pay-as-you-go testing and remote access are currently $0.17 per device
 minute after any remaining one-time trial allowance. No remaining free allowance

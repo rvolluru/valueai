@@ -12,6 +12,7 @@ from appium import webdriver
 from appium.options.android import UiAutomator2Options
 from appium.webdriver.common.appiumby import AppiumBy
 from selenium.webdriver.support.ui import WebDriverWait
+from selenium.common.exceptions import StaleElementReferenceException
 
 
 def test_create_listing():
@@ -36,33 +37,59 @@ def test_create_listing():
     artifacts = Path(os.environ.get('DEVICEFARM_LOG_DIR', 'output/devicefarm'))
     artifacts.mkdir(parents=True, exist_ok=True)
 
+    def matching_elements(label):
+        elements = []
+        for value in dict.fromkeys([label, label.upper()]):
+            elements.extend(driver.find_elements(AppiumBy.ACCESSIBILITY_ID, value))
+            elements.extend(driver.find_elements(AppiumBy.ANDROID_UIAUTOMATOR,
+                'new UiSelector().text(' + json.dumps(value) + ')'))
+        visible_elements = [e for e in elements if e.is_displayed() and e.is_enabled()]
+        # A heading and action can share a label (for example Create Listing).
+        # Prefer the actual accessible button over its non-clickable heading.
+        return sorted(visible_elements, key=lambda e: e.get_attribute('clickable') != 'true')
+
+    def matches(label):
+        try:
+            return matching_elements(label)
+        except StaleElementReferenceException:
+            # React Native can replace a node between lookup and inspection.
+            return []
+
+    def closet_cards():
+        return driver.find_elements(AppiumBy.XPATH,
+            '//*[starts-with(@content-desc,"View details for ")]')
+
     def text(label, timeout=30, scroll=False):
-        selector = 'new UiSelector().textMatches(' + json.dumps('(?i)' + re.escape(label)) + ')'
-        if scroll:
-            selector = 'new UiScrollable(new UiSelector().scrollable(true)).scrollIntoView(' + selector + ')'
-        return WebDriverWait(driver, timeout).until(
-            lambda d: next((e for e in (d.find_elements(AppiumBy.ACCESSIBILITY_ID, label.upper())
-                            + d.find_elements(AppiumBy.ACCESSIBILITY_ID, label)
-                            + d.find_elements(AppiumBy.ANDROID_UIAUTOMATOR, selector))
-                            if e.is_displayed() and e.is_enabled()), False))
+        def find(d):
+            found = matches(label)
+            if found:
+                return found[0]
+            if scroll:
+                # Python re.escape escapes spaces; use a Java-compatible regex
+                # without those escapes for Android's UiScrollable expression.
+                pattern = '(?i)' + re.escape(label).replace(r'\ ', ' ')
+                selector = 'new UiScrollable(new UiSelector().scrollable(true)).scrollIntoView(new UiSelector().textMatches(' + json.dumps(pattern) + '))'
+                found = d.find_elements(AppiumBy.ANDROID_UIAUTOMATOR, selector)
+                return next((e for e in found if e.is_displayed() and e.is_enabled()), False)
+            return False
+        return WebDriverWait(driver, timeout).until(find)
 
     def visible(label):
-        return any(e.is_displayed() for e in (
-            driver.find_elements(AppiumBy.ACCESSIBILITY_ID, label.upper())
-            + driver.find_elements(AppiumBy.ANDROID_UIAUTOMATOR,
-                'new UiSelector().textMatches(' + json.dumps('(?i)' + re.escape(label)) + ')')))
+        return bool(matches(label))
 
+    stage = 'opening login'
     try:
         driver.activate_app(package)
         WebDriverWait(driver, 60).until(lambda d: visible('Log In') or d.find_elements(
             AppiumBy.CLASS_NAME, 'android.widget.EditText'))
         if visible('Log In'):
             text('Log In').click()
-        # A new Device Farm device starts signed out. MFA/verification challenges
-        # intentionally fail instead of bypassing authentication.
+        # A new Device Farm device starts signed out. Only the reserved Clerk
+        # test-address verification flow below supports unattended verification.
         fields = WebDriverWait(driver, 60).until(
             lambda d: d.find_elements(AppiumBy.CLASS_NAME, 'android.widget.EditText') or False)
         assert len(fields) >= 2, 'Expected the email/password sign-in screen'
+        stage = 'submitting credentials'
         fields[0].send_keys(email)
         fields[1].send_keys(password)
         if driver.is_keyboard_shown():
@@ -72,6 +99,7 @@ def test_create_listing():
         buttons[-1].click()
         WebDriverWait(driver, 90).until(lambda d: visible('Create') or visible('Verify Email'))
         if visible('Verify Email'):
+            stage = 'verifying test email'
             # Clerk reserves this fixed OTP for test-mode email aliases only.
             # Never use it against a real email address or a production target.
             assert '+clerk_test@' in email.lower(), 'Email verification requires a Clerk test-mode alias'
@@ -82,11 +110,19 @@ def test_create_listing():
             if driver.is_keyboard_shown():
                 driver.hide_keyboard()
             text('Verify Email').click()
+        stage = 'reading existing closet'
+        text('Closet', timeout=90).click()
+        text('My Closet')
+        WebDriverWait(driver, 30).until(lambda d: not d.find_elements(
+            AppiumBy.CLASS_NAME, 'android.widget.ProgressBar'))
+        existing_card_count = len(closet_cards())
+        stage = 'opening create listing'
         text('Create', timeout=90).click()
         text('Add Photos')
 
         # Seed only these fixture images into the Android gallery. Use a clean
         # managed device: the picker selection below assumes no other photos.
+        stage = 'seeding fixture photos'
         for index, photo in enumerate(photos):
             target = f'/sdcard/Pictures/jouft-e2e-{index}.jpg'
             driver.push_file(target, base64.b64encode(photo.read_bytes()).decode())
@@ -96,6 +132,7 @@ def test_create_listing():
             subprocess.run(command + ['shell', 'am', 'broadcast', '-a',
                            'android.intent.action.MEDIA_SCANNER_SCAN_FILE', '-d', 'file://' + target],
                            check=True, capture_output=True)
+        stage = 'selecting gallery photos'
         text('Choose Photos', scroll=True).click()
         text('Photo library').click()
         thumbnails = WebDriverWait(driver, 30).until(lambda d: d.find_elements(
@@ -107,22 +144,27 @@ def test_create_listing():
         WebDriverWait(driver, 15).until(lambda d: next((e for e in d.find_elements(
             AppiumBy.ANDROID_UIAUTOMATOR, 'new UiSelector().textMatches("(?i)Add( \\(.*\\))?")')
             if e.is_displayed()), False)).click()
+        stage = 'checking photo coverage'
         text('Required photo coverage is complete.', timeout=180, scroll=True)
         text('Continue').click()
+        stage = 'entering item basics'
         text('Item Basics')
         text(os.environ.get('JOUFT_TEST_CATEGORY', 'Clothes'), scroll=True).click()
         text('Like New', scroll=True).click()
         text(os.environ.get('JOUFT_TEST_SIZE', 'M'), scroll=True).click()
+        stage = 'saving listing'
         text('Create Listing').click()
-        text('Listing created. AI analysis is running in the background.', timeout=180)
-        text('My Closet')
+        # The success notice is transient and can disappear during a re-render.
+        # Assert the persistent destination and an additional saved listing card.
+        text('My Closet', timeout=180)
+        WebDriverWait(driver, 30).until(lambda d: len(closet_cards()) > existing_card_count)
         driver.save_screenshot(str(artifacts / 'create-listing-success.png'))
-    except Exception:
+    except Exception as exc:
         # Never record the authentication screen/password in failure artifacts.
         if driver.find_elements(AppiumBy.XPATH, '//*[@password="true"]'):
-            pytest.fail('Authentication did not complete; sensitive screen capture suppressed', pytrace=False)
+            pytest.fail(f'Test stopped while {stage}; sensitive screen capture suppressed ({type(exc).__name__})', pytrace=False)
         driver.save_screenshot(str(artifacts / 'create-listing-failure.png'))
         (artifacts / 'create-listing-failure.xml').write_text(driver.page_source)
-        raise
+        pytest.fail(f'Test stopped while {stage} ({type(exc).__name__}); see failure artifacts', pytrace=False)
     finally:
         driver.quit()
