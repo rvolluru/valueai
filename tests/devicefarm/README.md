@@ -7,8 +7,24 @@ submitted. Clerk then displayed “Enter the additional sign-in code Clerk sent 
 your email.” The test timed out before Create; no listing was created.
 The previous three runs failed at welcome/login navigation. Remote execution-role
 credential retrieval works. Unattended staging authentication is the current
-blocker. The local test now detects Verify Email and reports this requirement
-explicitly; that diagnostic change has not been uploaded or device-verified.
+blocker. The local test now handles Verify Email with Clerk's reserved `424242` code
+only for `+clerk_test` addresses and an explicitly selected staging target. This
+change has not been uploaded or device-verified. Staging and production currently
+share a Clerk issuer, so keep the existing account unchanged and create a separate
+`leavethemessage+clerk_test@gmail.com` automation identity. Its creation and password
+entry are pending user completion in the Clerk dashboard; no authentication
+settings or stored credentials have been changed.
+
+Once that identity exists, export its password in the terminal and run:
+
+```bash
+python3 scripts/set_device_farm_password.py --email leavethemessage+clerk_test@gmail.com
+```
+
+This replaces only the dedicated Device Farm secret's email/password. The account
+will still need any normal staging onboarding and listing entitlement. Do not use
+the fixed test code on the original account or enable test mode in a live Clerk
+instance. See [Clerk test emails](https://clerk.com/docs/guides/development/testing/test-emails-and-phones).
 No app behavior was changed. It targets the standard creation
 flow in the current mobile source; confirm the uploaded APK contains that version.
 

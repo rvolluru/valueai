@@ -72,7 +72,16 @@ def test_create_listing():
         buttons[-1].click()
         WebDriverWait(driver, 90).until(lambda d: visible('Create') or visible('Verify Email'))
         if visible('Verify Email'):
-            pytest.fail('Staging sign-in requires an emailed verification code; unattended test-account authentication must be configured', pytrace=False)
+            # Clerk reserves this fixed OTP for test-mode email aliases only.
+            # Never use it against a real email address or a production target.
+            assert '+clerk_test@' in email.lower(), 'Email verification requires a Clerk test-mode alias'
+            code_fields = [e for e in driver.find_elements(AppiumBy.CLASS_NAME, 'android.widget.EditText')
+                           if e.is_enabled() and e.is_displayed()]
+            assert len(code_fields) == 1, 'Expected one verification-code input'
+            code_fields[0].send_keys('424242')
+            if driver.is_keyboard_shown():
+                driver.hide_keyboard()
+            text('Verify Email').click()
         text('Create', timeout=90).click()
         text('Add Photos')
 
