@@ -26,9 +26,11 @@ def test_shoe_generation_uses_ankle_crop_without_clothing_and_preserves_boot_sha
     async def generate(**kwargs):
         assert kwargs['asset_kind'] == 'mannequin_shoes'
         assert "complete shaft of tall boots" in kwargs['prompt']
-        assert "Crop just above the ankles" in kwargs['prompt']
+        assert "Frame at the ankles or" in kwargs['prompt']
         assert "Do not add supporting clothing" in kwargs['prompt']
-        assert "flat cut 2–3 cm above the ankle bones" in kwargs['prompt']
+        assert "both legs must intersect and exit the top" in kwargs['prompt']
+        assert "Hide their upper ends outside the camera frame" in kwargs['prompt']
+        assert "flat cut 2–3 cm" not in kwargs['prompt']
         assert mannequin_fidelity.clothing_attempts(kwargs['prompt'], kwargs['asset_kind']) == [
             (1, 'shoe_legs', kwargs['prompt'])]
         return {'review_decision': 'pending'}
@@ -46,12 +48,15 @@ def test_shoe_review_requires_ankle_crop_without_clothing_and_complete_footwear(
 
     async def inspect(**kwargs):
         prompt = kwargs['parts'][-1]['text']
-        assert 'SHOE-FEET-AND-ANKLES-ONLY' in prompt
+        assert 'SHOE-CLOSE-UP' in prompt
+        assert 'An ankle or lower-calf camera crop is allowed' in prompt
         assert 'No supporting clothing is required or permitted' in prompt
         assert 'complete footwear including toes, heels and any boot shafts' in prompt
         assert 'do not crop ankle straps or boot tops' in prompt
         assert 'Bare matte mannequin feet and ankles pass coverage' in prompt
-        return {'clothing_coverage': {'verdict': 'failed', 'evidence': 'Upper torso visible'}}
+        assert 'Both mannequin legs must continue naturally beyond the top image border' in prompt
+        assert 'Fail visible' in prompt and 'end caps' in prompt
+        return {'clothing_coverage': {'verdict': 'failed', 'evidence': 'Visible flat ankle end caps'}}
 
     monkeypatch.setattr(mannequin_fidelity, 'inspect_json', inspect)
     result = asyncio.run(mannequin_fidelity.review_candidate(

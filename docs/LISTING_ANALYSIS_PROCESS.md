@@ -175,13 +175,15 @@ or change analysis or pricing.
 Updated November 3, 2026. This document explains the functional process: inputs,
 model calls, decisions, outputs and user review—not a reliability assessment.
 
-**Shoe ankle-only previews implemented locally November 3, 2026; not deployed:**
+**Shoe close-up previews implemented locally November 3, 2026; not deployed:**
 new shoe generation instructions use close-up matte white mannequin feet and ankles,
-cropped just above the ankles, without supporting clothing. Review rejects added
+camera-cropped at the ankles or lower calves, without supporting clothing. Both legs extend
+beyond the top image border; visible cut ends, end caps, hollow openings and
+detached ankle stumps are rejected. Review also rejects added
 trousers, skirts, dresses, socks, tights or hems. Boots allow only enough lower leg
 to retain the complete shaft and opening. Staging and production still use the
 previous lower-thigh/knee crop with shoe-type supporting clothing until deployment.
-Existing generated assets are not regenerated or approved by this code change.
+Existing generated assets are not automatically regenerated or approved by this code change.
 
 **Staging analysis-configuration parity verified November 3, 2026 (API 17 / worker 10):**
 staging now synchronizes an explicit behavioral analysis-settings allowlist from
@@ -991,10 +993,12 @@ background, preserving visible product construction and appearance. Styling depe
 - **Dresses/jumpsuits:** preserve intentional shoulders, cutouts, straps and exposed legs.
 - **Handbags:** use existing handles/straps on a simply dressed mannequin.
 - **Shoes (local implementation; not yet deployed):** generate `mannequin_shoes`
-  on matte white mannequin feet and ankles only. Low-cut shoes use a close-up crop
-  just above the ankles, showing short foot-display forms with a flat cutoff 2–3 cm
-  above the ankle bones; the cutoff stays inside the frame with background above
-  it. Do not show shins or calf-length legs for low-cut shoes. No knees, thighs,
+  on matte white mannequin feet and ankles with a short section of lower leg.
+  Low-cut shoes use a close-up crop
+  at the ankles or lower calves, showing only enough lower leg for both mannequin
+  legs to continue naturally through the top image border. Upper ends stay outside the camera frame; never generate
+  visible cut surfaces, end caps, hollow openings or detached ankle stumps. Keep
+  the shoe-focused close-up without knees, thighs,
   torso or full body. Boots allow only enough lower leg to show the complete shaft
   and a minimal section above its opening. Do not add supporting clothing, socks,
   tights or hems. Keep complete toes, heels, soles, straps and shafts visible in a
@@ -1013,8 +1017,12 @@ Clothing coverage must explicitly pass. For bottoms, inadequate upper-body cover
 triggers stronger corrective instructions and, if needed, a **lower-body-only mannequin**.
 Shoes use the `shoe_legs` review mode with one generation attempt per generation
 invocation; the background component can retry a failed invocation once. Coverage review
-requires feet-and-ankles-only framing for low-cut shoes and complete visible footwear;
-boots allow sufficient lower leg to retain full shafts. Supporting clothing is
+requires footwear close-up framing with short lower-leg sections continuing out
+of the image for low-cut shoes, and complete visible footwear;
+boots allow sufficient lower leg to retain full shafts. Both legs must continue
+through the top image border. An ankle or lower-calf camera crop is allowed;
+visible cut surfaces, end caps, hollow openings or
+detached stump-like ends fail coverage. Supporting clothing is
 neither required nor permitted: added trousers, skirts, dresses, socks, tights or
 hems fail coverage. Bare matte white feet and ankles pass. These review changes
 are local only until deployment, matching the generation change above. Failed or

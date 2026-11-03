@@ -998,7 +998,7 @@ def test_mannequin_generation_prompt_is_limited_to_handbags_and_dresses() -> Non
     assert legacy_bag[0] == "mannequin_handbag"
     shoes = _mannequin_generation_prompt(category="shoes", title="Leather pumps", description="Black")
     assert shoes[0] == "mannequin_shoes"
-    assert "feet and ankles ONLY" in shoes[1]
+    assert "feet and ankles in a close-up" in shoes[1]
     assert "Do not add supporting clothing" in shoes[1]
 
 
