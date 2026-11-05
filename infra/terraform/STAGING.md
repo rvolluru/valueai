@@ -2,6 +2,14 @@
 
 ## Application rollouts (existing stack)
 
+Verified November 5, 2026: website release `0043177` makes mannequin previews the
+primary closet-card image, with original-photo fallback. Staging API revision 20
+and production API revision 191 completed rollout; live bundle hashes, health
+and unauthenticated assistant rejection passed. Web assets and the bundled guide
+were layered onto each existing API image, preserving backend code, analysis
+workers, all runtime settings and secret references. Native mobile builds were
+not requested or deployed.
+
 Verified November 3, 2026: source release `371c508` deploys shoe close-up framing
 and the closet preview-control removal to staging (API 18 / worker 11) and production
 (API 189 / worker 59). Migrations, completed rollouts, public health and sign-in

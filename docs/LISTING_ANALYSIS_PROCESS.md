@@ -1074,8 +1074,15 @@ research while preserving eligible identity. When controlled research is enabled
 pricing refresh instead revalues eligible saved evidence; only expiry or changed
 photo/identity/policy inputs starts new research.
 
-**Implemented locally November 5, 2026; not deployed:** Web and mobile My Closet
-listing cards prefer the available AI mannequin preview as their primary image,
+**Website deployed and verified November 5, 2026 — release `0043177`:**
+Staging API revision 20 and production API revision 191 completed rollout. Live
+JavaScript bundle hashes, public health and unauthenticated assistant rejection
+passed. Only web assets and the bundled guide were layered onto the existing API
+images; backend code, analysis workers, runtime settings and secret references
+were preserved. The native mobile implementation remains local to the source
+release and requires new app builds; no native builds were requested or deployed.
+
+Web My Closet listing cards (and native mobile cards once rebuilt) prefer the available AI mannequin preview as their primary image,
 including previews awaiting the owner’s publication choice. Excluded previews are
 not selected. Cards fall back to the original photo when no preview is available
 or the preview fails to load. This presentation does not change saved gallery
