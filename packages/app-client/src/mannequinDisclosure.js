@@ -21,3 +21,18 @@ export function hasMannequinPreview(listing) {
   return Boolean(listing?.generatedImages?.length || listing?.analysis?.generated_assets?.some(asset => asset?.synthetic && asset.review_decision !== 'exclude')
     || (listing?.listed_images || listing?.listedImages || []).some(image => image?.role_hint === 'ai_mannequin' || image?.synthetic));
 }
+
+// Closet presentation only: leave persisted/public gallery ordering untouched.
+export function closetCardImages(listing, originals = []) {
+  const assets = listing?.analysis?.generated_assets || [];
+  const excluded = new Set(assets.filter(asset => asset?.review_decision === 'exclude')
+    .map(asset => imageKey(asset.image_url)));
+  const candidates = [
+    ...originals,
+    ...(listing?.listedImages || listing?.listed_images || []).map(entry => entry?.d_img || entry?.p_img),
+    ...(listing?.generatedImages || []).map(entry => typeof entry === 'string' ? entry : entry?.image_url),
+    ...assets.map(asset => asset?.image_url),
+  ].filter(src => typeof src === 'string' && src.trim() && !excluded.has(imageKey(src)));
+  const mannequin = candidates.find(src => isMannequinImage(listing, src));
+  return [...new Set([mannequin, ...originals].filter(Boolean))];
+}

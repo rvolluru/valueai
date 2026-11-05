@@ -172,7 +172,7 @@ provide Yes/No buttons for the current pending action. Yes follows the existing
 signed confirmation path; No cancels it. This does not bypass publication checks
 or change analysis or pricing.
 
-Updated November 3, 2026. This document explains the functional process: inputs,
+Updated November 5, 2026. This document explains the functional process: inputs,
 model calls, decisions, outputs and user review—not a reliability assessment.
 
 **Shoe close-up previews deployed and verified November 3, 2026 — release `371c508`:**
@@ -1073,6 +1073,13 @@ Changed photos are new evidence. By default, explicit pricing refresh requests f
 research while preserving eligible identity. When controlled research is enabled,
 pricing refresh instead revalues eligible saved evidence; only expiry or changed
 photo/identity/policy inputs starts new research.
+
+**Implemented locally November 5, 2026; not deployed:** Web and mobile My Closet
+listing cards prefer the available AI mannequin preview as their primary image,
+including previews awaiting the owner’s publication choice. Excluded previews are
+not selected. Cards fall back to the original photo when no preview is available
+or the preview fails to load. This presentation does not change saved gallery
+order or the publication include/exclude requirement.
 
 ## 14. Publish to Marketplace
 

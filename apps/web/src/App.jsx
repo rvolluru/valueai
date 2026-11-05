@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
-import { MANNEQUIN_DISCLAIMER, isMannequinImage } from '../../../packages/app-client/src/mannequinDisclosure'
+import { MANNEQUIN_DISCLAIMER, isMannequinImage, closetCardImages } from '../../../packages/app-client/src/mannequinDisclosure'
 import {
   useAuth,
   useClerk,
@@ -10019,9 +10019,10 @@ function ListingImage({ src, alt, onFailed }) {
 }
 
 function ListingCard({ item, own = false, onEditDraft = null, onReviewListing = null, onPublishListing = null, onRemoveListing = null, onReportIssue = null, marketplaceCompact = false, onOpenTrade = null, myTradeCandidates = [], onOpenMatches = null, matchPreviewImages = [], matchPreviewListings = [], onMatchPreviewSelect = null, matchCount = null, editorialStyle = false, onOpenDetails = null, isOwnListing = false, liked = false, onToggleLike = null }) {
-  const rawGallery = Array.isArray(item.images) && item.images.length > 0
+  const originalGallery = Array.isArray(item.images) && item.images.length > 0
     ? item.images
     : [item.image].filter(Boolean)
+  const rawGallery = own ? closetCardImages(item, originalGallery) : originalGallery
   const [failedImageSrcs, setFailedImageSrcs] = useState(() => new Set())
   useEffect(() => {
     setFailedImageSrcs(new Set())

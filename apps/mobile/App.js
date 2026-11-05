@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { shareSocialListing, socialWebUrl } from './src/lib/socialSharing.mjs';
-import { MANNEQUIN_DISCLAIMER, isMannequinImage } from '../../packages/app-client/src/mannequinDisclosure';
+import { MANNEQUIN_DISCLAIMER, isMannequinImage, closetCardImages } from '../../packages/app-client/src/mannequinDisclosure';
 import {
   ActivityIndicator,
   BackHandler,
@@ -914,14 +914,15 @@ function ListingCard({
   closet = false,
   matchCount = null,
 }) {
-  const rawImageUrl = item?.image || item?.images?.[0];
+  const originalImageUrl = item?.image || item?.images?.[0];
+  const rawImageUrl = closet ? closetCardImages(item, [originalImageUrl])[0] : originalImageUrl;
   const moreButtonRef = useRef(null);
   const pendingMenuDelete = useRef(false);
   const [moreMenuAnchor, setMoreMenuAnchor] = useState(null);
   const { width: menuScreenWidth, height: menuScreenHeight } = useWindowDimensions();
   useEffect(() => { setMoreMenuAnchor(null); }, [menuScreenWidth, menuScreenHeight, item?.listing_id]);
   const [imageFailed, setImageFailed] = useState(false);
-  const imageUrl = imageFailed ? null : normalizeImageUrl(rawImageUrl, apiBaseUrl);
+  const imageUrl = normalizeImageUrl(imageFailed ? (closet && rawImageUrl !== originalImageUrl ? originalImageUrl : null) : rawImageUrl, apiBaseUrl);
   useEffect(() => {
     setImageFailed(false);
   }, [rawImageUrl, apiBaseUrl]);
