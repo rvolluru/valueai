@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { shareSocialListing, socialWebUrl } from './src/lib/socialSharing.mjs';
-import { MANNEQUIN_DISCLAIMER, isMannequinImage, closetCardImages } from '../../packages/app-client/src/mannequinDisclosure';
+import { MANNEQUIN_DISCLAIMER, isMannequinImage, closetCardImages, marketplaceCardImages } from '../../packages/app-client/src/mannequinDisclosure';
 import {
   ActivityIndicator,
   BackHandler,
@@ -915,14 +915,15 @@ function ListingCard({
   matchCount = null,
 }) {
   const originalImageUrl = item?.image || item?.images?.[0];
-  const rawImageUrl = closet ? closetCardImages(item, [originalImageUrl])[0] : originalImageUrl;
+  const cardImages = closet ? closetCardImages(item, [originalImageUrl]) : marketplaceCardImages(item, item?.images?.length ? item.images : [originalImageUrl]);
+  const rawImageUrl = cardImages[0];
   const moreButtonRef = useRef(null);
   const pendingMenuDelete = useRef(false);
   const [moreMenuAnchor, setMoreMenuAnchor] = useState(null);
   const { width: menuScreenWidth, height: menuScreenHeight } = useWindowDimensions();
   useEffect(() => { setMoreMenuAnchor(null); }, [menuScreenWidth, menuScreenHeight, item?.listing_id]);
   const [imageFailed, setImageFailed] = useState(false);
-  const imageUrl = normalizeImageUrl(imageFailed ? (closet && rawImageUrl !== originalImageUrl ? originalImageUrl : null) : rawImageUrl, apiBaseUrl);
+  const imageUrl = normalizeImageUrl(imageFailed ? cardImages[1] : rawImageUrl, apiBaseUrl);
   useEffect(() => {
     setImageFailed(false);
   }, [rawImageUrl, apiBaseUrl]);
@@ -1298,11 +1299,9 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
   const [wizardStep, setWizardStep] = useState(1);
   const [editingListingId, setEditingListingId] = useState('');
   const [editingListing, setEditingListing] = useState(null);
-  const [selectedHeroImageIndex, setSelectedHeroImageIndex] = useState(0);
   const photoPickerBusyRef = useRef(false);
   const [, requestListingCameraPermission] = useCameraPermissions();
   const [listingCameraOpen, setListingCameraOpen] = useState(false);
-  const [selectedEditHeroImageIndex, setSelectedEditHeroImageIndex] = useState(null);
   const [profileSection, setProfileSection] = useState('account');
   const [images, setImages] = useState([]);
   const [editImageUrls, setEditImageUrls] = useState([]);
@@ -1599,17 +1598,6 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
       setLoading(false);
     }
   }
-  useEffect(() => {
-    const count = editImageUrls.length + images.length;
-    if (editingListingId) {
-      setSelectedEditHeroImageIndex((idx) => {
-        if (idx === null) return null;
-        return count > 0 ? Math.max(0, Math.min(idx, count - 1)) : null;
-      });
-    } else {
-      setSelectedHeroImageIndex((idx) => (count > 0 ? Math.max(0, Math.min(idx, count - 1)) : 0));
-    }
-  }, [editingListingId, editImageUrls.length, images.length]);
 
   const selectedOffer = useMemo(
     () => incomingOffers.find((offer) => offer?.offer_id === selectedOfferId) || null,
@@ -3724,7 +3712,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
       setAnalysisResult(null);
       setWizardStep((step) => Math.min(step, 2));
     } else if (!images.length) {
-      setSelectedHeroImageIndex(0);
+
     }
     setError('');
   }
@@ -3758,8 +3746,8 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     setWizardStep(1);
     setEditingListingId('');
     setEditingListing(null);
-    setSelectedHeroImageIndex(0);
-    setSelectedEditHeroImageIndex(null);
+
+
     setImages([]);
     setEditImageUrls([]);
     setCategory('');
@@ -3784,28 +3772,17 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     setListingAssistantError('');
   }
 
-  function moveArrayItemToFront(list, index) {
-    const items = Array.isArray(list) ? list.filter(Boolean) : [];
-    if (items.length < 2) return items;
-    const safeIndex = Math.max(0, Math.min(index, items.length - 1));
-    if (safeIndex === 0) return items;
-    const next = [...items];
-    const [selected] = next.splice(safeIndex, 1);
-    return [selected, ...next];
-  }
 
   function orderedCreateImagesForSave() {
-    return moveArrayItemToFront(images.slice(0, 6), selectedHeroImageIndex);
+    return images.slice(0, 6);
   }
 
   function orderedEditExistingImagesForSave() {
-    if (selectedEditHeroImageIndex === null || selectedEditHeroImageIndex >= editImageUrls.length) return persistableImageUrls(editImageUrls);
-    return persistableImageUrls(moveArrayItemToFront(editImageUrls, selectedEditHeroImageIndex));
+    return persistableImageUrls(editImageUrls);
   }
 
   function orderedEditPendingImagesForSave() {
-    if (selectedEditHeroImageIndex === null || selectedEditHeroImageIndex < editImageUrls.length) return images;
-    return moveArrayItemToFront(images, selectedEditHeroImageIndex - editImageUrls.length);
+    return images;
   }
 
   function cancelEditListing() {
@@ -3817,25 +3794,11 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
 
   function removeEditImageAt(index) {
     setEditImageUrls((prev) => prev.filter((_, entryIndex) => entryIndex !== index));
-    setSelectedEditHeroImageIndex((idx) => {
-      if (idx === null) return null;
-      if (idx === index) return null;
-      return Math.max(0, idx - (idx > index ? 1 : 0));
-    });
+
   }
 
   function removePendingImageAt(index) {
     setImages((prev) => prev.filter((_, entryIndex) => entryIndex !== index));
-    if (editingListingId) {
-      setSelectedEditHeroImageIndex((idx) => {
-        const absoluteIndex = editImageUrls.length + index;
-        if (idx === null) return null;
-        if (idx === absoluteIndex) return null;
-        return Math.max(0, idx - (idx > absoluteIndex ? 1 : 0));
-      });
-    } else {
-      setSelectedHeroImageIndex((idx) => Math.max(0, idx - (idx >= index ? 1 : 0)));
-    }
     setAnalysisResult(null);
     if (editingListingId) setWizardStep((step) => Math.min(step, 2));
   }
@@ -3846,7 +3809,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     const existingImageUrls = listingGallery(item, apiBaseUrl).slice(0, 6);
     setEditingListingId(listingId);
     setEditingListing(item);
-    setSelectedEditHeroImageIndex(null);
+
     setImages([]);
     setEditImageUrls(existingImageUrls);
     setCategory(item?.category || '');
@@ -4146,7 +4109,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
           apiClient,
           images: imagesForAnalysis,
           auth,
-          roleAssignments: isEditing ? [] : moveArrayItemToFront(createImageRoleCheck?.images || [], selectedHeroImageIndex),
+          roleAssignments: isEditing ? [] : (createImageRoleCheck?.images || []),
         })
         : null;
       const uploadedImageUrls = persistableImageUrls(uploadedImageUrlsFromPayload(uploaded));
@@ -4162,9 +4125,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
       const imageUrls = isEditing
         ? [...existingImages, ...uploadedImageUrls].slice(0, 6)
         : uploadedImageUrls;
-      const orderedImageUrls = isEditing && selectedEditHeroImageIndex !== null && selectedEditHeroImageIndex >= editImageUrls.length && uploadedImageUrls.length > 0
-        ? [uploadedImageUrls[0], ...existingImages, ...uploadedImageUrls.slice(1)].slice(0, 6)
-        : imageUrls;
+      const orderedImageUrls = imageUrls;
       if (imageUrls.length < 1) {
         throw new Error(isEditing ? 'Keep existing images or upload new photos before saving.' : 'Upload 1 to 6 images before creating the listing.');
       }
@@ -4719,26 +4680,18 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                 <Text style={styles.label}>Listing Images ({editImageUrls.length + images.length}/6)</Text>
                 <View style={styles.editImageGrid}>
                   {editImageUrls.map((imageUrl, index) => (
-                    <View key={`${imageUrl}-${index}`} style={[styles.editImageTile, selectedEditHeroImageIndex === index && styles.editImageTileHero]}>
+                    <View key={`${imageUrl}-${index}`} style={styles.editImageTile}>
                       <Image source={{ uri: imageUrl }} style={styles.editImageThumb} resizeMode="cover" />
                       {isMannequinImage(editingListing, imageUrl) && <Text style={styles.helperText}>{MANNEQUIN_DISCLAIMER}</Text>}
-                      {selectedEditHeroImageIndex === index ? <Text style={styles.editImageHeroBadge}>Hero</Text> : null}
-                      <TouchableOpacity style={styles.editImageHeroButton} onPress={() => setSelectedEditHeroImageIndex(index)}>
-                        <Text style={styles.editImageHeroButtonText}>{selectedEditHeroImageIndex === index ? 'Hero Image' : 'Set Hero'}</Text>
-                      </TouchableOpacity>
                       <TouchableOpacity style={styles.editImageRemove} onPress={() => removeEditImageAt(index)}>
                         <Text style={styles.editImageRemoveText}>Remove</Text>
                       </TouchableOpacity>
                     </View>
                   ))}
                   {images.map((asset, index) => (
-                    <View key={`${asset?.uri || 'pending'}-${index}`} style={[styles.editImageTile, selectedEditHeroImageIndex === editImageUrls.length + index && styles.editImageTileHero]}>
+                    <View key={`${asset?.uri || 'pending'}-${index}`} style={styles.editImageTile}>
                       <Image source={{ uri: asset.uri }} style={styles.editImageThumb} resizeMode="cover" />
                       <Text style={styles.editImageBadge}>New</Text>
-                      {selectedEditHeroImageIndex === editImageUrls.length + index ? <Text style={styles.editImageHeroBadge}>Hero</Text> : null}
-                      <TouchableOpacity style={styles.editImageHeroButton} onPress={() => setSelectedEditHeroImageIndex(editImageUrls.length + index)}>
-                        <Text style={styles.editImageHeroButtonText}>{selectedEditHeroImageIndex === editImageUrls.length + index ? 'Hero Image' : 'Set Hero'}</Text>
-                      </TouchableOpacity>
                       <TouchableOpacity style={styles.editImageRemove} onPress={() => removePendingImageAt(index)}>
                         <Text style={styles.editImageRemoveText}>Remove</Text>
                       </TouchableOpacity>
@@ -4807,7 +4760,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                   {images.length > 0 ? (
                     <View style={styles.createImageGrid}>
                       {images.map((asset, index) => (
-                        <View key={`${asset?.uri || 'pending'}-${index}`} style={[styles.createImageTile, selectedHeroImageIndex === index && styles.editImageTileHero]}>
+                        <View key={`${asset?.uri || 'pending'}-${index}`} style={styles.createImageTile}>
                           <Image source={{ uri: asset.uri }} style={styles.createImageThumb} resizeMode="cover" />
                           <Text style={styles.createImageNumber}>{index + 1}</Text>
                           {createImageRoleCheck?.images?.[index]?.role ? (
@@ -4815,12 +4768,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                               {[createImageRoleCheck.images[index].role, ...(createImageRoleCheck.images[index].additional_roles || [])].map((role) => IMAGE_ROLE_LABELS[role] || 'Other view').join(' + ')}
                             </Text>
                           ) : null}
-                          {selectedHeroImageIndex === index ? <Text style={styles.editImageHeroBadge}>Hero</Text> : null}
                           <View style={styles.createImageActions}>
-                            <TouchableOpacity style={styles.createImageAction} onPress={() => setSelectedHeroImageIndex(index)}>
-                              <Ionicons name={selectedHeroImageIndex === index ? 'star' : 'star-outline'} size={17} color={theme.brand} />
-                              <Text style={styles.createImageActionText}>{selectedHeroImageIndex === index ? 'Hero' : 'Make Hero'}</Text>
-                            </TouchableOpacity>
                             <TouchableOpacity style={styles.createImageRemoveButton} onPress={() => removePendingImageAt(index)} accessibilityLabel={`Remove photo ${index + 1}`}>
                               <Ionicons name="trash-outline" size={18} color="#b42318" />
                             </TouchableOpacity>

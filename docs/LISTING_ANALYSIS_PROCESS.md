@@ -485,8 +485,14 @@ variants are not substituted for originals when identifying or valuing the produ
 ## 4. Upload photos and check coverage
 
 The user captures photos in the mobile app or selects/uploads existing images.
-The application stores originals and permits a hero-image selection. The hero is a
-presentation choice, not an instruction to analyze only that image.
+The application stores originals. **Implemented locally November 5, 2026; not
+deployed:** manual Set Hero/Make Hero controls and the associated photo
+reordering are removed from web and mobile create/edit screens. Closet cards
+prefer available mannequin previews; marketplace cards prefer included previews
+already in the public gallery. Originals retain their order and provide the
+fallback when no eligible mannequin image is available. Publication still
+requires the include/exclude decision for new previews. Primary-image display
+does not change which original photos are used as analysis evidence.
 
 Gemini receives the supplied images and returns:
 
@@ -988,6 +994,15 @@ Insufficient essential visible evidence means no preview is produced from that p
 
 ### Generate the image
 
+**Implemented locally November 5, 2026; not deployed:** Generation requests a
+3:4 portrait image and explicitly requires the mannequin to stand upright, even
+when source photos are sideways. The visual review returns an orientation verdict
+and evidence. Saving requires both verified clothing coverage and a passed
+orientation review with nonempty evidence. Sideways, upside-down, strongly tilted,
+missing or uncertain orientation reviews reject the candidate. Existing category
+attempts/fallbacks remain in effect; exhausted attempts produce no preview.
+Existing saved images are not automatically rotated or regenerated.
+
 All original references inform planning and later inspection. **Only the best verified
 front original is sent to image synthesis** in the current strategy.
 
@@ -1087,6 +1102,12 @@ including previews awaiting the owner’s publication choice. Excluded previews 
 not selected. Cards fall back to the original photo when no preview is available
 or the preview fails to load. This presentation does not change saved gallery
 order or the publication include/exclude requirement.
+
+**Implemented November 5, 2026; marketplace update not yet deployed:** Web and
+native mobile marketplace cards prefer the mannequin preview already in the
+public gallery. Pending and excluded assets are not promoted or displayed by
+this selection. Original gallery photos remain the fallback; saved gallery order
+is unchanged. Native mobile changes require new app builds.
 
 ## 14. Publish to Marketplace
 

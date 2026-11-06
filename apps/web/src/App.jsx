@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
-import { MANNEQUIN_DISCLAIMER, isMannequinImage, closetCardImages } from '../../../packages/app-client/src/mannequinDisclosure'
+import { MANNEQUIN_DISCLAIMER, isMannequinImage, closetCardImages, marketplaceCardImages } from '../../../packages/app-client/src/mannequinDisclosure'
 import {
   useAuth,
   useClerk,
@@ -1813,14 +1813,6 @@ const PRIVACY_POLICY_SECTIONS = [
 
 const CONTACT_DETAILS = [
   {
-    title: 'Company Address',
-    body: [
-      '120 Vantis Dr. Suite 300',
-      'Aliso Viejo, CA 92656',
-      'US',
-    ],
-  },
-  {
     title: 'Contact Email',
     contact: 'admin@jouft.com',
   },
@@ -1830,9 +1822,6 @@ const CONTACT_DETAILS = [
     phoneHref: 'tel:+19493544133',
   },
 ]
-const CONTACT_MAP_QUERY = '120 Vantis Dr Suite 300, Aliso Viejo, CA 92656, US'
-const CONTACT_MAP_EMBED_URL = `https://maps.google.com/maps?q=${encodeURIComponent(CONTACT_MAP_QUERY)}&output=embed`
-const CONTACT_DIRECTIONS_URL = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(CONTACT_MAP_QUERY)}`
 
 function PrivacyPolicyPage() {
   return (
@@ -2634,17 +2623,15 @@ function AuthShell({ children, actions = null }) {
           <div className="auth-hero-copy">
             <p className="auth-kicker">TRADE. ELEVATE. BELONG.</p>
             <h1 className="auth-hero-title">
-              <span>The Fashion Trading Platform</span>
-              <span>for Collectors</span>
+              <span>The Art of Trading</span>
             </h1>
             <p className="lede">
-              Trade authentic, pre-loved and new fashion with our curated community. No listing fees. No marketplace clutter. Just the right match.
+              Trade authentic, new and like-new fashion with our curated community. No listing fees. No marketplace clutter. Just the right match.
             </p>
             <div className="auth-hero-actions">
               <button className="primary" type="button">Request Access</button>
               <a className="ghost arrow" href="#how-it-works">How It Works</a>
             </div>
-            <p className="auth-social-proof">Join 2,800+ members shaping the future of fashion.</p>
           </div>
           <div className="auth-hero-image-wall">
             <div className="auth-hero-main-image">
@@ -2654,7 +2641,6 @@ function AuthShell({ children, actions = null }) {
               <p className="auth-members-kicker">CURATED COMMUNITY</p>
               <h3>Members Only</h3>
               <p>Exclusivity. Trust. Quality.</p>
-              <span>+2.8K</span>
             </div>
           </div>
         </div>
@@ -2735,17 +2721,6 @@ function AuthShell({ children, actions = null }) {
                   {section.phone ? <a href={section.phoneHref}>{section.phone}</a> : null}
                 </div>
               ))}
-              <a className="contact-directions-link" href={CONTACT_DIRECTIONS_URL} target="_blank" rel="noreferrer">
-                Get Directions
-              </a>
-            </div>
-            <div className="contact-map-frame auth-contact-map">
-              <iframe
-                title="JOUFT office map"
-                src={CONTACT_MAP_EMBED_URL}
-                loading="lazy"
-                referrerPolicy="no-referrer-when-downgrade"
-              />
             </div>
           </div>
         </section>
@@ -2950,7 +2925,6 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   const [closetMarketplaceMatches, setClosetMarketplaceMatches] = useState([])
   const [closetMarketplaceMatchesLoading, setClosetMarketplaceMatchesLoading] = useState(false)
   const [selectedMarketImageIndex, setSelectedMarketImageIndex] = useState(0)
-  const [selectedCreateImageIndex, setSelectedCreateImageIndex] = useState(0)
   const [createImageSlots, setCreateImageSlots] = useState(() => Array(6).fill(null))
   const [createSlotPreviewUrls, setCreateSlotPreviewUrls] = useState(() => Array(6).fill(null))
   const [createImageRoleCheck, setCreateImageRoleCheck] = useState(null)
@@ -2963,7 +2937,6 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   const [createImageRoleRetry, setCreateImageRoleRetry] = useState(0)
   const [selectedEditImageIndex, setSelectedEditImageIndex] = useState(0)
   const [selectedReviewImageIndex, setSelectedReviewImageIndex] = useState(0)
-  const [selectedEditHeroImageIndex, setSelectedEditHeroImageIndex] = useState(null)
   const [tradeOfferCandidates, setTradeOfferCandidates] = useState([])
   const [tradeOfferListingIds, setTradeOfferListingIds] = useState([])
   const [tradeOfferError, setTradeOfferError] = useState('')
@@ -3169,7 +3142,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
       setModalEditingListing(null)
       setImages([])
       setEditPreviewUrls([])
-      setSelectedEditHeroImageIndex(null)
+
       setAnalysisError('')
     }
     setReviewListingId(nextTab === 'review_listing' ? listingIdFromLocation() : null)
@@ -4805,22 +4778,9 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     ? [...editPreviewUrls, ...previewUrls].slice(0, 6)
     : previewUrls.slice(0, 6)
 
-  function moveArrayItemToFront(list, index) {
-    const items = Array.isArray(list) ? list.filter(Boolean) : []
-    if (items.length < 2) return items
-    const safeIndex = Math.max(0, Math.min(index, items.length - 1))
-    if (safeIndex === 0) return items
-    const next = [...items]
-    const [selected] = next.splice(safeIndex, 1)
-    return [selected, ...next]
-  }
 
   function orderedCreateImagesForSave() {
-    const slots = createImageSlots.slice(0, 6)
-    const safeIndex = Math.max(0, Math.min(selectedCreateImageIndex, slots.length - 1))
-    const selected = slots[safeIndex]
-    const rest = slots.filter((file, idx) => file && idx !== safeIndex)
-    return selected ? [selected, ...rest] : rest
+    return createImageSlots.filter(Boolean).slice(0, 6)
   }
 
   function handleCreatePhotoFiles(fileList) {
@@ -4830,22 +4790,18 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
       const existing = (Array.isArray(prev) ? prev : []).filter(Boolean)
       return [...existing, ...selected].slice(0, 6)
     })
-    setSelectedCreateImageIndex((current) => Math.max(0, current))
+
     setEditPreviewUrls([])
     setReceiptPromptPending(false)
     setReceiptPromptDismissed(false)
   }
 
   function orderedEditExistingImageUrlsForSave() {
-    const existingCount = editPreviewUrls.length
-    if (selectedEditHeroImageIndex === null || selectedEditHeroImageIndex >= existingCount) return persistableImageUrls(editPreviewUrls)
-    return persistableImageUrls(moveArrayItemToFront(editPreviewUrls, selectedEditHeroImageIndex))
+    return persistableImageUrls(editPreviewUrls)
   }
 
   function orderedEditNewImagesForSave() {
-    const existingCount = editPreviewUrls.length
-    if (selectedEditHeroImageIndex === null || selectedEditHeroImageIndex < existingCount) return images
-    return moveArrayItemToFront(images, selectedEditHeroImageIndex - existingCount)
+    return images
   }
 
   useEffect(() => {
@@ -4854,19 +4810,9 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
       if (modalPreviewUrls.length <= 0) return 0
       return Math.max(0, Math.min(idx, modalPreviewUrls.length - 1))
     })
-    setSelectedEditHeroImageIndex((idx) => {
-      if (idx === null) return null
-      if (modalPreviewUrls.length <= 0) return null
-      return Math.max(0, Math.min(idx, modalPreviewUrls.length - 1))
-    })
+
   }, [listingModalMode, modalPreviewUrls.length])
 
-  useEffect(() => {
-    setSelectedCreateImageIndex((idx) => {
-      if (previewUrls.length <= 0) return 0
-      return Math.max(0, Math.min(idx, previewUrls.length - 1))
-    })
-  }, [previewUrls.length])
 
   function originalListingImageUrls(listing) {
     return persistableImageUrls(Array.isArray(listing?.images) && listing.images.length > 0
@@ -4922,21 +4868,11 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   }
 
   function mergedEditImageUrlsForSave(existingImageUrls, uploadedImageUrls) {
-    const existing = persistableImageUrls(existingImageUrls)
-    const uploaded = persistableImageUrls(uploadedImageUrls)
-    if (selectedEditHeroImageIndex !== null && selectedEditHeroImageIndex >= editPreviewUrls.length && uploaded.length > 0) {
-      return persistableImageUrls([uploaded[0], ...existing, ...uploaded.slice(1)]).slice(0, 6)
-    }
-    return persistableImageUrls([...existing, ...uploaded]).slice(0, 6)
+    return persistableImageUrls([...existingImageUrls, ...uploadedImageUrls]).slice(0, 6)
   }
 
   async function analysisFilesForEdit(existingImageUrls, newImages = images) {
     const keptFiles = await Promise.all(existingImageUrls.map((url, index) => listingImageUrlToFile(url, index)))
-    if (selectedEditHeroImageIndex !== null && selectedEditHeroImageIndex >= editPreviewUrls.length && newImages.length > 0) {
-      const safeNewIndex = Math.max(0, Math.min(selectedEditHeroImageIndex - editPreviewUrls.length, newImages.length - 1))
-      const remainingNewImages = newImages.filter((_, idx) => idx !== safeNewIndex)
-      return [newImages[safeNewIndex], ...keptFiles, ...remainingNewImages].slice(0, 6)
-    }
     return [...keptFiles, ...newImages].slice(0, 6)
   }
 
@@ -6062,9 +5998,9 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     setCreateSlotPreviewUrls(Array(6).fill(null))
     setEditPreviewUrls([])
     setEditImageCount(0)
-    setSelectedCreateImageIndex(0)
+
     setSelectedEditImageIndex(0)
-    setSelectedEditHeroImageIndex(null)
+
     setAnalysisResult(null)
     setEditingListingId(null)
     setReceiptPromptPending(false)
@@ -6373,7 +6309,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
         apiKey: clerkEnabled ? '' : apiKey.trim(),
         bearerToken,
         images: imagesForAnalysis,
-        roleAssignments: moveArrayItemToFront(createImageRoleCheck?.images || [], selectedCreateImageIndex),
+        roleAssignments: createImageRoleCheck?.images || [],
       })
       const uploadedImageUrls = persistableImageUrls((uploaded?.uploaded_images || []).map((entry) => entry?.image_url))
       if (uploadedImageUrls.length < 1) {
@@ -6714,7 +6650,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     setEditImageCount(existingImages.length)
     setEditPreviewUrls(existingImages)
     setSelectedEditImageIndex(0)
-    setSelectedEditHeroImageIndex(null)
+
     setReceiptPromptPending(false)
     setReceiptPromptDismissed(false)
     setAnalysisError('')
@@ -6760,11 +6696,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
       setImages((prev) => prev.filter((_, idx) => idx !== newImageIndex))
     }
     setSelectedEditImageIndex((idx) => Math.max(0, idx - (idx >= imageIndex ? 1 : 0)))
-    setSelectedEditHeroImageIndex((idx) => {
-      if (idx === null) return null
-      if (idx === imageIndex) return null
-      return Math.max(0, idx - (idx > imageIndex ? 1 : 0))
-    })
+
   }
 
   return (
@@ -8102,20 +8034,9 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                             />
                             <span className="listing-image-zoom-label">Magnify</span>
                             </button>
-                            {selectedEditHeroImageIndex === Math.min(selectedEditImageIndex, modalPreviewUrls.length - 1) && (
-                              <span className="listing-hero-badge listing-edit-hero-badge">Hero</span>
-                            )}
                             {Math.min(selectedEditImageIndex, modalPreviewUrls.length - 1) >= editPreviewUrls.length && (
                               <span className="listing-modal-new-badge listing-edit-main-badge">New</span>
                             )}
-                            <button
-                              className="listing-modal-set-hero listing-edit-main-set-hero"
-                              type="button"
-                              onClick={() => setSelectedEditHeroImageIndex(Math.min(selectedEditImageIndex, modalPreviewUrls.length - 1))}
-                              disabled={selectedEditHeroImageIndex === Math.min(selectedEditImageIndex, modalPreviewUrls.length - 1)}
-                            >
-                              {selectedEditHeroImageIndex === Math.min(selectedEditImageIndex, modalPreviewUrls.length - 1) ? 'Hero Image' : 'Set Hero'}
-                            </button>
                             <button
                               className="listing-modal-remove-image listing-edit-main-remove"
                               type="button"
@@ -8143,7 +8064,6 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                             aria-label={`Show image ${idx + 1}`}
                           >
                             <img src={url} alt="" />
-                            {idx === selectedEditHeroImageIndex && <span className="listing-edit-thumb-badge hero">Hero</span>}
                             {idx >= editPreviewUrls.length && <span className="listing-edit-thumb-badge new">New</span>}
                           </button>
                         ))}
@@ -9617,19 +9537,15 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                 {createSlotPreviewUrls.filter(Boolean).map((url, idx) => {
                   const assignment = createImageRoleCheck?.images?.[idx]
                   return (
-                    <div key={`${url}-${idx}`} className={`listing-modal-thumb ${idx === selectedCreateImageIndex ? 'is-hero' : ''}`}>
+                    <div key={`${url}-${idx}`} className="listing-modal-thumb">
                       <img src={url} alt={`Upload ${idx + 1}`} />
-                      {idx === selectedCreateImageIndex && <span className="listing-hero-badge">Hero</span>}
                       {assignment?.role && <span className="listing-image-role-badge">{IMAGE_ROLE_LABELS[assignment.role] || 'Other view'}</span>}
-                      <button className="listing-modal-set-hero" type="button" onClick={() => setSelectedCreateImageIndex(idx)}>
-                        Set Hero
-                      </button>
                       <button
                         className="listing-modal-remove-photo"
                         type="button"
                         onClick={() => {
                           setCreateImageSlots((prev) => prev.filter(Boolean).filter((_, imageIdx) => imageIdx !== idx))
-                          setSelectedCreateImageIndex((current) => Math.max(0, current > idx ? current - 1 : current === idx ? 0 : current))
+
                         }}
                       >
                         Remove
@@ -10022,7 +9938,7 @@ function ListingCard({ item, own = false, onEditDraft = null, onReviewListing = 
   const originalGallery = Array.isArray(item.images) && item.images.length > 0
     ? item.images
     : [item.image].filter(Boolean)
-  const rawGallery = own ? closetCardImages(item, originalGallery) : originalGallery
+  const rawGallery = own ? closetCardImages(item, originalGallery) : marketplaceCardImages(item, originalGallery)
   const [failedImageSrcs, setFailedImageSrcs] = useState(() => new Set())
   useEffect(() => {
     setFailedImageSrcs(new Set())

@@ -36,3 +36,13 @@ export function closetCardImages(listing, originals = []) {
   const mannequin = candidates.find(src => isMannequinImage(listing, src));
   return [...new Set([mannequin, ...originals].filter(Boolean))];
 }
+
+// Marketplace cards only promote previews already present in the public gallery.
+export function marketplaceCardImages(listing, gallery = []) {
+  const hidden = new Set((listing?.analysis?.generated_assets || [])
+    .filter(asset => ['exclude', 'pending'].includes(asset?.review_decision))
+    .map(asset => imageKey(asset.image_url)));
+  const visible = gallery.filter(src => typeof src === 'string' && src.trim() && !hidden.has(imageKey(src)));
+  const mannequin = visible.find(src => isMannequinImage(listing, src));
+  return [...new Set([mannequin, ...visible].filter(Boolean))];
+}

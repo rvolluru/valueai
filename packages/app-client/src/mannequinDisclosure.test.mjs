@@ -27,3 +27,15 @@ test('closet cards prefer mannequin previews and retain original fallback', asyn
   assert.deepEqual(closetCardImages({ analysis: { generated_assets: [listing.analysis.generated_assets[2]] } }, originals), originals);
   assert.deepEqual(closetCardImages({ listedImages: [{ d_img: '/v1/images/marked', role_hint: 'ai_mannequin' }] }, originals), ['/v1/images/marked', ...originals]);
 });
+
+
+test('marketplace cards promote only public mannequin photos and hide undecided previews', async () => {
+  const { marketplaceCardImages } = await import('./mannequinDisclosure.js');
+  const original = '/v1/images/original';
+  const ai = '/v1/images/ai';
+  const included = { analysis: { generated_assets: [{ synthetic: true, kind: 'mannequin', image_url: ai, review_decision: 'include' }] } };
+  assert.deepEqual(marketplaceCardImages(included, [original, ai]), [ai, original]);
+  assert.deepEqual(marketplaceCardImages(included, [original]), [original]);
+  assert.deepEqual(marketplaceCardImages(listing, [original, ai, '/v1/images/excluded']), [original]);
+  assert.deepEqual(marketplaceCardImages({}, [original]), [original]);
+});

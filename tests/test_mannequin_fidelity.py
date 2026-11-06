@@ -242,7 +242,7 @@ def test_pipeline_generates_from_front_only_but_keeps_all_originals_for_review(m
     assert result["review_decision"] == "pending"
 
 
-@pytest.mark.parametrize("outcome", ["changed", "uncertain", "unavailable", "underdressed", "bottom_fallback"])
+@pytest.mark.parametrize("outcome", ["changed", "uncertain", "unavailable", "underdressed", "bottom_fallback", "sideways", "orientation_missing"])
 def test_flagged_candidate_is_saved_only_as_pending_owner_preview(monkeypatch, outcome):
     from app import main, mannequin_fidelity
     from app.settings import Settings
@@ -268,7 +268,7 @@ def test_flagged_candidate_is_saved_only_as_pending_owner_preview(monkeypatch, o
 
     class Storage:
         def save_upload(self, **kwargs):
-            assert outcome not in {"unavailable", "underdressed"}, "Unsafe preview must not be persisted"
+            assert outcome not in {"unavailable", "underdressed", "sideways", "orientation_missing"}, "Unsafe preview must not be persisted"
             return "test-preview.png"
 
         def save_debug_artifact(self, **kwargs):
@@ -284,6 +284,9 @@ def test_flagged_candidate_is_saved_only_as_pending_owner_preview(monkeypatch, o
         if outcome == "unavailable":
             raise TimeoutError("Diagnostic review timed out")
         result = review()
+        if outcome != "orientation_missing":
+            result["orientation"] = {"verdict": "failed" if outcome == "sideways" else "passed",
+                                     "evidence": "Neck points left" if outcome == "sideways" else "Mannequin is upright"}
         rejected = outcome == "underdressed" or (outcome == "bottom_fallback" and kwargs["display_mode"] != "lower_body")
         result["clothing_coverage"] = {"verdict": "failed" if rejected else "passed",
                                        "evidence": "Visible clothing coverage inspected"}
@@ -297,7 +300,7 @@ def test_flagged_candidate_is_saved_only_as_pending_owner_preview(monkeypatch, o
         endpoint="https://example.test", asset_kind="mannequin_bottom" if outcome == "bottom_fallback" else "mannequin_dress", category="clothes", item_id="test",
         settings=Settings(gemini_api_key="test"), db=Database(), storage=Storage(),
     ))
-    if outcome in {"unavailable", "underdressed"}:
+    if outcome in {"unavailable", "underdressed", "sideways", "orientation_missing"}:
         assert result is None
         return
     assert result["review_decision"] == "pending"
@@ -360,3 +363,29 @@ def test_bottom_attempts_prioritize_a_top_then_fall_back_to_lower_body():
     assert "no upper torso" in attempts[2][2]
     assert "entire waistband" in attempts[2][2]
     assert len(clothing_attempts("dress", "mannequin_dress")) == 1
+
+
+@pytest.mark.parametrize("orientation,expected", [
+    (None, False), ({"verdict": "failed", "evidence": "Neck points left"}, False),
+    ({"verdict": "uncertain", "evidence": "Cannot determine"}, False),
+    ({"verdict": "passed", "evidence": ""}, False),
+    ({"verdict": "passed", "evidence": "Neck above hem"}, True),
+])
+def test_orientation_requires_positive_visual_evidence(orientation, expected):
+    from app.mannequin_fidelity import orientation_passes
+    assert orientation_passes({"orientation": orientation}) is expected
+
+
+def test_generation_requests_portrait_and_upright_subject():
+    from app.mannequin_fidelity import generate_candidate
+    class Response:
+        def raise_for_status(self): pass
+        def json(self): return {"candidates": []}
+    class Client:
+        async def post(self, url, **kwargs):
+            payload = kwargs["json"]
+            assert payload["generationConfig"]["imageConfig"]["aspectRatio"] == "3:4"
+            prompt = payload["contents"][0]["parts"][-1]["text"]
+            assert "Never rotate the mannequin 90 or 180 degrees" in prompt
+            return Response()
+    assert asyncio.run(generate_candidate(client=Client(), api_key="test", model="test", files=[], prompt="Product")) is None

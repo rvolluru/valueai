@@ -163,7 +163,7 @@ test('matched-item trade requests show both items and require a separate send co
     assert.match(source, /Track it in/);
   }
 });
-test('photo role labels take their own row instead of covering Set Hero', () => {
+test('photo role labels take their own row', () => {
   const badge = css.match(/\.listing-image-role-badge\s*\{([^}]+)\}/)[1];
   assert.match(badge, /position: static/);
   assert.match(badge, /display: block/);
