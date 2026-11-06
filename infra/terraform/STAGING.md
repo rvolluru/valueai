@@ -2,6 +2,14 @@
 
 ## Application rollouts (existing stack)
 
+Verified November 5, 2026: packaging correction `2b1d87c-runtimefix` completed on
+staging API 22 / worker 13 and production API 193 / worker 61. Installed-module
+imports verify the upright-generation and orientation-review code used by workers.
+Health, sign-in and live asset checks passed; runtime settings and secret references
+were preserved. Image overlays must update both `/app/apps/api/app` and the installed
+`app` package in site-packages, since the normal worker command imports the latter.
+Full Dockerfile builds install the package from the current source automatically.
+
 Verified November 5, 2026: release `2b1d87c` deployed to staging API 21 / worker 12
 and production API 192 / worker 60. Both environments completed rollout at desired
 task counts and passed public health, sign-in enforcement and exact served

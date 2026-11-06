@@ -175,6 +175,14 @@ or change analysis or pricing.
 Updated November 5, 2026. This document explains the functional process: inputs,
 model calls, decisions, outputs and user review—not a reliability assessment.
 
+**Runtime packaging verified November 5, 2026 — `2b1d87c-runtimefix`:** Staging
+API 22 / worker 13 and production API 193 / worker 61 completed rollout and passed
+health, sign-in and served asset checks. The API source directory and installed
+Python package both contain the current upright-generation and orientation-review
+implementation. Installed-module imports were verified, covering normal analysis
+workers as well as API execution. Runtime environment values and secret references
+remain unchanged.
+
 **Deployed and verified November 5, 2026 — release `2b1d87c`:** Staging API 21 /
 worker 12 and production API 192 / worker 60 completed rollout at their desired
 task counts. Public health, sign-in enforcement and exact live JavaScript/CSS
