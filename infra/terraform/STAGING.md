@@ -2,6 +2,15 @@
 
 ## Application rollouts (existing stack)
 
+Verified November 5, 2026: release `2b1d87c` deployed to staging API 21 / worker 12
+and production API 192 / worker 60. Both environments completed rollout at desired
+task counts and passed public health, sign-in enforcement and exact served
+JavaScript/CSS hash verification. Images update the homepage, mannequin-first
+marketplace cards, removal of manual hero controls and upright preview generation
+with an explicit orientation review gate. All container runtime settings and
+secret references were preserved; no infrastructure or schema changes were made.
+Native mobile source changes remain undistributed; no mobile builds were requested.
+
 Verified November 5, 2026: website release `0043177` makes mannequin previews the
 primary closet-card image, with original-photo fallback. Staging API revision 20
 and production API revision 191 completed rollout; live bundle hashes, health
