@@ -172,7 +172,7 @@ provide Yes/No buttons for the current pending action. Yes follows the existing
 signed confirmation path; No cancels it. This does not bypass publication checks
 or change analysis or pricing.
 
-Updated November 5, 2026. This document explains the functional process: inputs,
+Updated November 7, 2026. This document explains the functional process: inputs,
 model calls, decisions, outputs and user review—not a reliability assessment.
 
 **Runtime packaging verified November 5, 2026 — `2b1d87c-runtimefix`:** Staging
@@ -1130,6 +1130,18 @@ this selection. Original gallery photos remain the fallback; saved gallery order
 is unchanged. Native mobile changes require new app builds.
 
 ## 14. Publish to Marketplace
+
+**November 7, 2026 — implemented locally, not deployed or device-verified:**
+The standard native Closet → Listing Details review screen now offers explicit
+**Publish with mannequin image** and **Publish without mannequin image** actions
+when saved analysis contains synthetic generated assets, including previously
+excluded assets. These submit `mannequin_choice=include` or `exclude` together
+with the Active update; without synthetic assets it retains plain Publish.
+Buttons are disabled while publication is in progress. The backend remains
+responsible for persisting the owner decision, filtering the public gallery and
+enforcing pending pricing review. This closes the missing-control implementation
+gap tracked as QA defect DF-001; closure requires a new staging APK/device retest.
+No production rollout or change to generation/inspection policy is claimed.
 
 The owner chooses whether to publish. Pending manual pricing review must first be
 resolved. If generated mannequin assets exist without an owner decision, the owner

@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { shareSocialListing, socialWebUrl } from './src/lib/socialSharing.mjs';
-import { MANNEQUIN_DISCLAIMER, isMannequinImage, closetCardImages, marketplaceCardImages } from '../../packages/app-client/src/mannequinDisclosure';
+import { MANNEQUIN_DISCLAIMER, isMannequinImage, closetCardImages, marketplaceCardImages, hasSyntheticReviewAssets } from '../../packages/app-client/src/mannequinDisclosure';
 import {
   ActivityIndicator,
   BackHandler,
@@ -4003,7 +4003,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     };
   }
 
-  async function publishListingToMarketplace(item) {
+  async function publishListingToMarketplace(item, mannequinChoice = null) {
     const listingId = listingIdOf(item);
     if (!listingId) return;
     const missingMessage = missingPublishFieldsMessage(item);
@@ -4028,6 +4028,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
         {
           ...item,
           status: 'Active',
+          mannequin_choice: mannequinChoice,
           tags: [condition, brand, 'trade'].filter(Boolean),
         },
         await authContext(),
@@ -4189,6 +4190,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     const selectedListingLiked = likedListingIds.includes(String(selectedListing?.listing_id || selectedListing?.id || ''));
     const selectedListingAnalysisFailed = String(selectedListing?.status || '').toLowerCase() === 'analysisfailed';
     const selectedListingStatus = String(selectedListing?.status || '').trim().toLowerCase();
+    const hasReviewImages = hasSyntheticReviewAssets(selectedListing);
     const canReviewClosetListing = selectedListingSource === 'closet' && !['active', 'analyzing', 'analysisfailed'].includes(selectedListingStatus);
     if (selectedListingSource === 'closet' && selectedListingStatus === 'active') {
       const closetMatches = closetMarketplaceMatches;
@@ -4278,10 +4280,22 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
               </TouchableOpacity>
               <TouchableOpacity
                 style={styles.primaryBtnCompact}
-                onPress={() => publishListingToMarketplace(selectedListing)}
+                disabled={loading}
+                accessibilityRole="button"
+                accessibilityLabel={hasReviewImages ? 'Publish with mannequin image' : 'Publish'}
+                onPress={() => publishListingToMarketplace(selectedListing, hasReviewImages ? 'include' : null)}
               >
-                <Text style={styles.primaryBtnText}>Publish</Text>
+                <Text style={styles.primaryBtnText}>{hasReviewImages ? 'Publish with mannequin image' : 'Publish'}</Text>
               </TouchableOpacity>
+              {hasReviewImages ? <TouchableOpacity
+                style={styles.secondaryBtnCompact}
+                disabled={loading}
+                accessibilityRole="button"
+                accessibilityLabel="Publish without mannequin image"
+                onPress={() => publishListingToMarketplace(selectedListing, 'exclude')}
+              >
+                <Text style={styles.secondaryBtnText}>Publish without mannequin image</Text>
+              </TouchableOpacity> : null}
             </View>
           ) : null}
           {(selectedListingSource === 'closet' || isOwnListing) ? (

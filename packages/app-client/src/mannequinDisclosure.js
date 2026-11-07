@@ -46,3 +46,8 @@ export function marketplaceCardImages(listing, gallery = []) {
   const mannequin = visible.find(src => isMannequinImage(listing, src));
   return [...new Set([mannequin, ...visible].filter(Boolean))];
 }
+
+// Match the API publication guard, including previews excluded on an earlier edit.
+export function hasSyntheticReviewAssets(listing) {
+  return Boolean(listing?.analysis?.generated_assets?.some(asset => asset?.synthetic));
+}

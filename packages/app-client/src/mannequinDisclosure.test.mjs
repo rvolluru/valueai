@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { isMannequinImage } from './mannequinDisclosure.js';
+import { isMannequinImage, hasSyntheticReviewAssets } from './mannequinDisclosure.js';
 
 const listing = { analysis: { generated_assets: [
   { synthetic: true, kind: 'mannequin_bottom', image_url: '/v1/images/ai', review_decision: 'pending' },
@@ -38,4 +38,15 @@ test('marketplace cards promote only public mannequin photos and hide undecided 
   assert.deepEqual(marketplaceCardImages(included, [original]), [original]);
   assert.deepEqual(marketplaceCardImages(listing, [original, ai, '/v1/images/excluded']), [original]);
   assert.deepEqual(marketplaceCardImages({}, [original]), [original]);
+});
+
+test('publication offers a decision for pending, included and excluded synthetic assets', () => {
+  for (const decision of ['pending', 'include', 'exclude', undefined]) {
+    assert.equal(hasSyntheticReviewAssets({ analysis: { generated_assets: [
+      { synthetic: true, review_decision: decision },
+    ] } }), true);
+  }
+  assert.equal(hasSyntheticReviewAssets({ analysis: { generated_assets: [null, { synthetic: false }] } }), false);
+  assert.equal(hasSyntheticReviewAssets({}), false);
+  assert.equal(hasSyntheticReviewAssets(null), false);
 });
