@@ -1,0 +1,77 @@
+name: Device Farm defect
+description: Report and triage an application, automation, device or configuration failure.
+title: "[Device Farm] "
+body:
+  - type: dropdown
+    id: classification
+    attributes:
+      label: Classification
+      options:
+        - Unclassified
+        - Application
+        - Automation
+        - Device/service
+        - Test data/configuration
+    validations:
+      required: true
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      options:
+        - Untriaged
+        - Critical
+        - High
+        - Medium
+        - Low
+    validations:
+      required: true
+  - type: input
+    id: ownership
+    attributes:
+      label: Owner and repair priority
+      description: Use Unassigned / Untriaged if not yet agreed. Priority is separate from severity.
+    validations:
+      required: true
+  - type: textarea
+    id: execution
+    attributes:
+      label: Execution identity
+      description: Environment, exact build/commit, device/OS, UTC time, case/scenario, run URL/ARN and entity IDs. No credentials.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction, expected and actual behavior
+      description: Preconditions, steps, exact error, frequency, impact and verified workaround.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence and triage
+      description: Redacted screenshot/video/log/JUnit links, confirmed observations versus suspected cause, comparison devices and mutation outcome before retry.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria and regression scope
+      description: Define original workflow, affected branches and persisted-state checks needed for closure.
+    validations:
+      required: true
+  - type: textarea
+    id: resolution
+    attributes:
+      label: Fix and retest record
+      description: Update with fix commit, candidate artifact, retest run/device/results/evidence, disposition and deployment status. Leave pending until performed.
+  - type: checkboxes
+    id: handling
+    attributes:
+      label: Reporting checks
+      options:
+        - label: I checked for duplicates and preserved the original failed result.
+          required: true
+        - label: Evidence excludes credentials, signed URLs, tokens and unnecessary customer data.
+          required: true

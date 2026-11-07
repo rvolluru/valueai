@@ -27,9 +27,16 @@ def main():
         'JOUFT_TEST_PHOTOS': str(Path('fixtures').resolve()),
         'APPIUM_SERVER_URL': 'http://127.0.0.1:4723/wd/hub',
     })
+    scenario = environment.get('JOUFT_TEST_SCENARIO', 'create')
+    tests = {'create': 'tests/test_create_listing.py',
+             'review_publish': 'tests/test_review_publish.py',
+             'review_publish_existing': 'tests/test_review_publish_existing.py'}
+    if scenario not in tests:
+        print('Unknown Device Farm test scenario')
+        return 2
     # Tracebacks can contain WebDriver request payloads, including send_keys.
     return subprocess.run([
-        sys.executable, '-m', 'pytest', 'tests/', '-v', '--tb=no',
+        sys.executable, '-m', 'pytest', tests[scenario], '-v', '--tb=no',
         '--junitxml', str(Path(os.environ['DEVICEFARM_LOG_DIR']) / 'junitreport.xml'),
     ], env=environment).returncode
 

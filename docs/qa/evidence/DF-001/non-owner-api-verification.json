@@ -1,0 +1,14 @@
+{
+  "listing_id": "db3ede13-0844-42bb-a559-b041eccb53f6",
+  "status": "Active",
+  "decisions": [
+    "include",
+    "include"
+  ],
+  "non_owner_api_view": true,
+  "included_image_ids_visible": [
+    "a76f411b-c284-48a9-a17a-3d1e9349d440",
+    "771f5864-0676-4f79-8d14-8fa38fbc429d"
+  ],
+  "second_account_ui_checked": false
+}

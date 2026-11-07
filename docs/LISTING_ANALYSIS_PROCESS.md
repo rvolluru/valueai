@@ -1131,7 +1131,7 @@ is unchanged. Native mobile changes require new app builds.
 
 ## 14. Publish to Marketplace
 
-**November 7, 2026 — implemented locally, not deployed or device-verified:**
+**November 7, 2026 — staging Android APK build 4 device-verified; not production deployed:**
 The standard native Closet → Listing Details review screen now offers explicit
 **Publish with mannequin image** and **Publish without mannequin image** actions
 when saved analysis contains synthetic generated assets, including previously
@@ -1140,7 +1140,10 @@ with the Active update; without synthetic assets it retains plain Publish.
 Buttons are disabled while publication is in progress. The backend remains
 responsible for persisting the owner decision, filtering the public gallery and
 enforcing pending pricing review. This closes the missing-control implementation
-gap tracked as QA defect DF-001; closure requires a new staging APK/device retest.
+gap tracked as QA defect DF-001. Include and exclude publication passed on Pixel
+9 Pro XL / Android 15 in runs `d90e45d7-5ee0-4c97-90cc-dcbf37015c46`
+and `2e44da67-5358-4c7e-8bcd-5ae3d0b2b828` using candidate commit `c69446f`.
+Cross-account UI gallery acceptance remains pending before defect closure.
 No production rollout or change to generation/inspection policy is claimed.
 
 The owner chooses whether to publish. Pending manual pricing review must first be

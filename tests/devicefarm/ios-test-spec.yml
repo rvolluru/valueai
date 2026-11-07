@@ -1,0 +1,34 @@
+version: 0.1
+ios_test_host: macos_sequoia
+phases:
+  install:
+    commands:
+      - devicefarm-cli use node 22
+      - devicefarm-cli use appium 3
+      - devicefarm-cli use python 3.11
+      - cd "$DEVICEFARM_TEST_PACKAGE_PATH"
+      - python -m pip install -r requirements.txt
+  pre_test:
+    commands:
+      - |-
+        DRIVER_MAJOR=$(appium driver list --installed --json | jq -r '.xcuitest.version' | cut -d . -f 1)
+        WDA_VAR="DEVICEFARM_APPIUM_WDA_DERIVED_DATA_PATH_V${DRIVER_MAJOR}"
+        export DEVICEFARM_APPIUM_WDA_DERIVED_DATA_PATH=$(printenv "$WDA_VAR")
+        test -n "$DEVICEFARM_APPIUM_WDA_DERIVED_DATA_PATH"
+        appium --base-path=/wd/hub --log-level warn --log-no-colors \
+          > "$DEVICEFARM_LOG_DIR/appium.log" 2>&1 &
+      - |-
+        for attempt in $(seq 1 60); do
+          if curl --silent --fail http://127.0.0.1:4723/wd/hub/status > /dev/null; then break; fi
+          sleep 1
+        done
+        curl --silent --fail http://127.0.0.1:4723/wd/hub/status > /dev/null
+  test:
+    commands:
+      - cd "$DEVICEFARM_TEST_PACKAGE_PATH"
+      - JOUFT_TEST_PLATFORM=iOS python run_remote.py
+  post_test:
+    commands:
+      - rm -f "$DEVICEFARM_LOG_DIR/appium.log"
+artifacts:
+  - $DEVICEFARM_LOG_DIR
