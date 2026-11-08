@@ -130,3 +130,18 @@ and no Appium device sessions. AWS validated the smoke ZIP and custom spec;
 local metadata: `output/android-suite-smoke/metadata.json`. Upload validation
 covers format only; no new broad Device Farm run has been scheduled.
 The second staging account and actual sandbox configuration remain unconfirmed.
+
+## Staging provider check — November 7, 2026
+
+A runtime settings check on `valueai-staging-api:22` found Stripe secret and
+publishable keys and the Shippo API token **missing**, not test-mode credentials.
+No explicit transaction key injection was present in that task definition.
+Flat-rate quote configuration does not establish sandbox label/payment support.
+See [DF-003](../../docs/qa/bugs/DF-003_STAGING_TRANSACTION_CONFIGURATION.md) and its
+sanitized evidence. Transaction workflows remain Blocked; do not set
+`JOUFT_TEST_SANDBOX_CONFIRMED=1` until actual test-mode configuration is verified.
+
+The user selected `rajesh_mid@yahoo.co.in` for account B. Credentials have not been
+provisioned by this check. Keep the password in a separate Secrets Manager secret;
+if this real email needs verification, fixed Clerk test OTP automation does not
+apply. Cross-account tests remain prerequisite-dependent.

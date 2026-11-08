@@ -11,4 +11,6 @@ Device Farm guide and need separate triage if they recur.
 
 | DF-002 | [Android post-publication refresh](bugs/DF-002_ANDROID_POST_PUBLISH_REFRESH.md) | Automation | Medium | P1 | Closed | Codex | Staging build 4: both publication retests pass |
 
+| DF-003 | [Staging transaction providers missing](bugs/DF-003_STAGING_TRANSACTION_CONFIGURATION.md) | Test data/configuration | High | P1 | Blocked | Unassigned | Runtime credentials missing; sandbox not established |
+
 Follow [the workflow](DEVICE_FARM_DEFECT_WORKFLOW.md) when adding or changing a report.

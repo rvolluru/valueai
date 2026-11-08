@@ -1,0 +1,14 @@
+{
+  "task_definition": "arn:aws:ecs:us-east-1:537595754494:task-definition/valueai-staging-api:22",
+  "sources": {
+    "STRIPE_SECRET_KEY": "not explicitly injected by task definition",
+    "STRIPE_PUBLISHABLE_KEY": "not explicitly injected by task definition",
+    "STRIPE_WEBHOOK_SECRET": "not explicitly injected by task definition",
+    "SHIPPO_API_KEY": "not explicitly injected by task definition"
+  },
+  "app_env": "staging",
+  "stripe_secret_mode": "missing",
+  "stripe_publishable_mode": "missing",
+  "shippo_mode": "missing",
+  "shippo_flat_rate_enabled": true
+}
