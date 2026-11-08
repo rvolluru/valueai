@@ -1,6 +1,6 @@
 # Mobile DF-001 production release
 
-Updated November 8, 2026. Status: **Android build in progress; store submission/signing blocked; not deployed**.
+Updated November 8, 2026. Status: **Android build in progress; Google Play credential and Apple agreement blockers; not deployed**.
 
 ## Scope and source
 
@@ -70,8 +70,25 @@ the current production auth instance, not an auth migration.
 
 - Android: production AAB build `30d90157-9486-48c1-af93-8480173347b5`, version code 8, in progress at this update.
 - Android submission preflight: Google Play service-account credentials are not configured in EAS. No store submission was queued. Secret name/region or EAS credential setup requested from owner.
-- iOS: production config passes; signing for `com.jouft.app` is not provisioned. Saved Apple login was accepted but requires owner two-factor verification. Interactive build setup is waiting; no iOS cloud build ID exists yet.
+- iOS: Apple login and two-factor verification succeeded. JOUFT LLC provider was selected. Registering/signing `com.jouft.app` returned Apple 403: updated Program License Agreement must be accepted by Account Holder Mona Shalchi. No iOS cloud build ID exists yet. Owner action requested; no agreement was accepted on anyone’s behalf.
 
 The original key-only blocker above is resolved; remaining signing/store blockers
 must not be described as successful deployment. Build completion and public store
 availability will be recorded only after verified results.
+
+## Credential-source verification details
+
+AWS secret access is working in account `537595754494`. Secrets Manager inventory
+in enabled regions found the production runtime secret in us-east-1 and dedicated
+Device Farm login secret in us-west-2. No Google Play service-account JSON field
+or separate secret was found. EAS explicitly reported “Google Service Account Keys
+cannot be set up in --non-interactive mode.” Parameter Store metadata checks in
+us-east-1/us-east-2/us-west-1/us-west-2 found no matching Play/mobile credential
+parameters. This is a missing identified publishing credential, not an inability
+to read the available AWS runtime keys. No private credential values are logged.
+
+Apple’s exact blocker: “Unable to process request - PLA Update available - You
+currently don't have access to this membership resource. To resolve this issue,
+your team's Account Holder, Mona Shalchi, must agree to the latest Program License
+Agreement.” Resume after the Account Holder completes this at
+https://developer.apple.com/account/ .
