@@ -1,6 +1,6 @@
 # Mobile DF-001 production release
 
-Updated November 8, 2026. Status: **Android build in progress; Google Play credential and Apple agreement blockers; not deployed**.
+Updated November 8, 2026. Status: **Android production AAB built and checked; Google Play credential and Apple agreement blockers prevent publication**.
 
 ## Scope and source
 
@@ -19,7 +19,7 @@ Pixel 9 Pro XL / Android 15, include and exclude publication passed:
 Cross-account UI gallery acceptance remains pending in DF-001. iOS device
 verification of this fix has not been performed.
 
-## Build attempt and blocker
+## Initial build attempt and blocker (resolved)
 
 Both Android and iOS production EAS commands stopped during Expo configuration,
 before compilation or a cloud build ID was created. EAS project
@@ -30,8 +30,9 @@ The existing production configuration guard in
 The production AWS runtime secret did not contain a Clerk publishable key.
 No secret values were displayed or copied into this document.
 
-Required next input: configure the correct public production Clerk key in the EAS
-production environment. Do not use a Clerk secret key or the staging/test key.
+The initial next input was production Clerk configuration. That blocker was
+resolved below by preserving the existing deployed issuer with explicit pinning.
+No Clerk secret key was bundled, and no implicit staging-key fallback was introduced.
 The app targets `https://api.jouft.com` with identity `com.jouft.app`.
 
 ## Remaining release steps
@@ -68,7 +69,7 @@ the current production auth instance, not an auth migration.
 
 ## Current build and store prerequisites
 
-- Android: production AAB build `30d90157-9486-48c1-af93-8480173347b5`, version code 8, in progress at this update.
+- Android: production AAB build `30d90157-9486-48c1-af93-8480173347b5`, version 1.0.0, version code 8, FINISHED November 8, 2026. Production profile, store distribution, source `97d383a`.
 - Android submission preflight: Google Play service-account credentials are not configured in EAS. No store submission was queued. Secret name/region or EAS credential setup requested from owner.
 - iOS: Apple login and two-factor verification succeeded. JOUFT LLC provider was selected. Registering/signing `com.jouft.app` returned Apple 403: updated Program License Agreement must be accepted by Account Holder Mona Shalchi. No iOS cloud build ID exists yet. Owner action requested; no agreement was accepted on anyone’s behalf.
 
@@ -92,3 +93,20 @@ currently don't have access to this membership resource. To resolve this issue,
 your team's Account Holder, Mona Shalchi, must agree to the latest Program License
 Agreement.” Resume after the Account Holder completes this at
 https://developer.apple.com/account/ .
+
+## Android artifact verification
+
+- [Production AAB download](https://expo.dev/artifacts/eas/hWBktIgI0gJdr4f1JqKC9yjG3pu50d9Ium4zvma6AAA.aab)
+- Local artifact: `output/jouft-production-1.0.0-8.aab`.
+- SHA-256: `b6c1011cf87c22a107d91500a9ee40c4c529b4b1906020231f6270e461e04d9a`.
+- ZIP integrity passed. The base manifest contains the production package marker
+  `com.jouft.app` and does not contain `com.jouft.app.dev`.
+- EAS metadata confirms production/store distribution, version 1.0.0/code 8,
+  source commit `97d383a41297d60ceb0839a7eab727c087756c95`.
+- The artifact has not been submitted to Google Play; no public rollout is claimed.
+
+Historical production builds did not supply the missing new-bundle Apple signing
+or Play publishing credential. The remaining actions are the Account Holder’s
+Apple agreement acceptance and configuration/location of Google Play’s service
+account key. Existing production web/API services and unrelated worktree edits
+remain unchanged.
