@@ -162,3 +162,15 @@ This is internal beta distribution, not a public App Store release or App Review
 submission. No application-data mutation, server redeployment or unrelated Entrupy
 changes were included. Cross-account UI QA acceptance remains separately tracked
 in DF-001; successful TestFlight delivery is not that functional retest.
+
+
+## Existing iOS testing app update — November 8, 2026
+
+At the user's request, the same isolated mobile fix is being delivered to the existing `com.jouft.app.dev` app (App Store Connect `6791465341`). This build retains the production backend and production EAS authentication configuration; it does not change AWS secrets or staging settings. The archive excludes unrelated Entrupy work.
+
+- Source release branch commit: `2ea17eb`.
+- App version/build: `1.0.0 (66)`; display name: Jouft Testing.
+- EAS build: `a13b2e2e-132f-49dd-99a5-5cd53e508ad8`.
+- EAS submission: `0b16c187-2f90-4e03-a9d0-5a5ecc63938d`, targeting the existing testing app.
+- Status: build queued/in progress; submission scheduled and awaiting build. TestFlight availability has not yet been verified.
+- The identity override is confined to the isolated release checkout; the main production profile remains `com.jouft.app`.
