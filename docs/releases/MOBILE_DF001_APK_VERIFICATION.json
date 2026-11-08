@@ -1,0 +1,11 @@
+{
+  "build_id": "66e72ca6-f03f-4c02-a0e2-4adcf8d78f7a",
+  "status": "FINISHED",
+  "url": "https://expo.dev/artifacts/eas/d-AFYR6-Lh7mMldkNW-3rHZ5pNVBP6wqmGS-W-JolwY.apk",
+  "package_badging": "package: name='com.jouft.app' versionCode='9' versionName='1.0.0' platformBuildVersionName='16' platformBuildVersionCode='36' compileSdkVersion='36' compileSdkVersionCodename='16'",
+  "sha256": "48b20306b21e9e7fba451ca326adc9f551d6ea8a3408684680ff3eae774e8f72",
+  "archive_integrity": "passed",
+  "play_submission": false,
+  "embedded_api_origin": "https://api.jouft.com",
+  "embedded_environment": "production"
+}

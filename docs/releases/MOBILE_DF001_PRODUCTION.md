@@ -1,6 +1,6 @@
 # Mobile DF-001 production release
 
-Updated November 8, 2026. Status: **Android APK build 9 in progress for Expo download; no Google Play submission planned. iOS awaits Apple agreement acceptance.**
+Updated November 8, 2026. Status: **Production Android APK build 9 available through Expo; no Google Play submission. iOS awaits Apple agreement acceptance.**
 
 ## Scope and source
 
@@ -121,4 +121,19 @@ identity/API/authentication and keystore are retained; no auto-submit command is
 
 APK build: `66e72ca6-f03f-4c02-a0e2-4adcf8d78f7a`, version 1.0.0/code 9,
 source `ef57f90` on the isolated release branch. Main configuration commit:
-`bbd4d12`. Final download and package verification will be recorded after completion.
+`bbd4d12`. Build completed and package verification passed, as recorded below.
+
+## Production APK available — November 8, 2026
+
+[Download Android production APK — version 1.0.0, build 9](https://expo.dev/artifacts/eas/d-AFYR6-Lh7mMldkNW-3rHZ5pNVBP6wqmGS-W-JolwY.apk).
+
+Build `66e72ca6-f03f-4c02-a0e2-4adcf8d78f7a` completed successfully.
+Downloaded ZIP integrity passed; Android aapt2 confirms `com.jouft.app`, version
+1.0.0/code 9. SHA-256:
+`48b20306b21e9e7fba451ca326adc9f551d6ea8a3408684680ff3eae774e8f72`.
+[Machine-readable verification](MOBILE_DF001_APK_VERIFICATION.json).
+Local APK: `output/jouft-production-1.0.0-9.apk`.
+
+This is a standalone production APK distributed through Expo for installation.
+No Google Play submission occurred. Existing installations require installation
+of the new APK; no OTA update or automatic store rollout is claimed.
