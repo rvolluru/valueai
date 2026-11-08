@@ -1010,6 +1010,8 @@ Clean up only your recorded disposable listings/proposals and test subscriptions
 
 ## 7. Behavior references
 
+- [Android automation coverage](ANDROID_AUTOMATION_COVERAGE.md): device-suite mapping, prerequisite blocks and remaining manual checks.
+
 - [Listing analysis process](../LISTING_ANALYSIS_PROCESS.md): authoritative analysis, image generation and publication behavior; check deployment-status notes.
 - [Daily match feed](../DAILY_MATCH_FEED.md): baseline, first-observed match windows, opt-out and delivery rules. Current preference control is web Profile → General; native mobile control is not implemented in that change.
 - [Device Farm test guide](../../tests/devicefarm/README.md): automated harness and known device limitations; automated status is independent of manual results.

@@ -1,0 +1,13 @@
+{
+  "environment": "staging",
+  "verified_build": "Set exact staging APK build ID before a run",
+  "reviewed_by": null,
+  "closet_listing": null,
+  "marketplace_listing": null,
+  "review_listing": null,
+  "pricing_review_listing": null,
+  "private_listing": null,
+  "published_include": null,
+  "published_exclude": null,
+  "workflows": {}
+}

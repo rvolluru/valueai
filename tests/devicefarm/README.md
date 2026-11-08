@@ -361,3 +361,14 @@ apply to the old APK, not this fixed build. The original failure is preserved.
 A separate harness refresh defect DF-002 was fixed and verified by these runs.
 See [DF-001 retest record](../../docs/qa/bugs/DF-001_RETEST.md) for fixture resets,
 API verification and remaining cross-account UI acceptance. No production rollout.
+
+## Broad Android regression suite — November 7, 2026
+
+See [Android suite setup](ANDROID_SUITE.md) for the smoke/regression/workflow/full
+scenarios, fixture schemas, staging/sandbox restrictions and packaging helper.
+[Coverage matrix](../../docs/qa/ANDROID_AUTOMATION_COVERAGE.md) accounts for all
+manual cases, including partial coverage and remaining manual/implementation gaps.
+The 31 new native checks and 21 configurable workflow slots collect locally;
+**new broad cases have not yet been verified on physical devices**. Missing
+fixtures/recipes are Blocked and make broad scenarios incomplete (nonzero exit).
+No claim of full app correctness follows from package validation or collection.
