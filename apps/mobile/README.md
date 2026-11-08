@@ -118,7 +118,7 @@ npm run eas:build:android:production
 
 Development iOS builds target the simulator; development Android includes the dev
 client. Staging iOS uses TestFlight; staging Android is an installable APK.
-Production Android produces a store AAB. No OTA updates are configured.
+Production Android produces an installable APK for Expo download (updated November 8, 2026). No Google Play submission or OTA update is automatic.
 
 The existing App Store Connect record `6791465341` is staging/testing ONLY.
 Production submissions target the owner-supplied record `6826942359`, configured

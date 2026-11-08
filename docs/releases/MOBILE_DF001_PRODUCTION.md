@@ -1,6 +1,6 @@
 # Mobile DF-001 production release
 
-Updated November 8, 2026. Status: **Android production AAB built and checked; Google Play credential and Apple agreement blockers prevent publication**.
+Updated November 8, 2026. Status: **Android APK build 9 in progress for Expo download; no Google Play submission planned. iOS awaits Apple agreement acceptance.**
 
 ## Scope and source
 
@@ -110,3 +110,15 @@ or Play publishing credential. The remaining actions are the Account Holder’s
 Apple agreement acceptance and configuration/location of Google Play’s service
 account key. Existing production web/API services and unrelated worktree edits
 remain unchanged.
+
+## Android delivery scope changed — November 8, 2026
+
+The owner explicitly requested Expo distribution and a downloadable production
+APK, with **no Google Play submission**. The Play-credential discussion above is
+historical; that credential is no longer a dependency for Android delivery.
+`production.android.buildType=apk` is configured in EAS. Existing production
+identity/API/authentication and keystore are retained; no auto-submit command is used.
+
+APK build: `66e72ca6-f03f-4c02-a0e2-4adcf8d78f7a`, version 1.0.0/code 9,
+source `ef57f90` on the isolated release branch. Main configuration commit:
+`bbd4d12`. Final download and package verification will be recorded after completion.
