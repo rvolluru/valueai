@@ -1,6 +1,6 @@
 # Mobile DF-001 production release
 
-Updated November 8, 2026. Status: **Blocked before build; not deployed**.
+Updated November 8, 2026. Status: **Android build in progress; store submission/signing blocked; not deployed**.
 
 ## Scope and source
 
@@ -8,8 +8,9 @@ User requested production deployment of the standard native mannequin
 include/exclude publication fix. Implementation commit: `c69446f`.
 Isolated release checkout: `e755b8b` (same mobile implementation plus QA records).
 Uncommitted Entrupy work in the primary workspace is excluded and preserved.
-No backend, AWS credential/model configuration, staging environment or production
-store listing was changed by this release attempt.
+No backend deployment, existing AI/payment credential rotation, staging configuration or production
+store listing change was made. Three additive production mobile-auth settings were
+stored in the AWS runtime secret and synced to EAS, as described below.
 
 Staging validation: Android build 4 (`777562a3-e97d-4c64-a784-612d6179eafe`),
 Pixel 9 Pro XL / Android 15, include and exclude publication passed:
@@ -42,3 +43,35 @@ The app targets `https://api.jouft.com` with identity `com.jouft.app`.
 5. Record actual upload/review/release outcomes separately. Upload does not mean public availability; there is no OTA channel configured in this source.
 
 This report is a local release record, not a claim of store submission or deployment.
+
+## Configuration investigation and recovery
+
+The initial EAS production environment was empty. The production AWS runtime
+secret contained payment/AI keys but no Clerk key; enabled-region inventory found
+no separate Clerk secret in this AWS account. Existing production frontend and
+API both use `https://firm-mink-35.clerk.accounts.dev`. Historical iOS production
+build `d9c98018-8feb-4dd8-b12d-61bd30b39566` predates the newer variants guard and
+used bundle `com.jouft.app.dev`; it did not establish signing for `com.jouft.app`.
+
+To preserve deployed authentication, the exact production frontend publishable
+key was verified against the backend issuer and stored as
+`JOUFT_PRODUCTION_CLERK_PUBLISHABLE_KEY` in `valueai/prod/runtime`, alongside
+`JOUFT_PRODUCTION_CLERK_ALLOW_TEST_INSTANCE=true` and the pinned
+`JOUFT_PRODUCTION_CLERK_ISSUER`. All pre-existing secret fields were verified
+unchanged. These three fields were synced from AWS to EAS production using
+sensitive visibility. No key values are included here.
+
+Compatibility commit `97d383a` on `release/mobile-df001-production` (equivalent
+main commit `22a4e07`) requires explicit opt-in and exact issuer matching; default
+production still requires a live Clerk key. Four guard tests passed. This preserves
+the current production auth instance, not an auth migration.
+
+## Current build and store prerequisites
+
+- Android: production AAB build `30d90157-9486-48c1-af93-8480173347b5`, version code 8, in progress at this update.
+- Android submission preflight: Google Play service-account credentials are not configured in EAS. No store submission was queued. Secret name/region or EAS credential setup requested from owner.
+- iOS: production config passes; signing for `com.jouft.app` is not provisioned. Saved Apple login was accepted but requires owner two-factor verification. Interactive build setup is waiting; no iOS cloud build ID exists yet.
+
+The original key-only blocker above is resolved; remaining signing/store blockers
+must not be described as successful deployment. Build completion and public store
+availability will be recorded only after verified results.
