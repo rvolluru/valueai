@@ -133,3 +133,23 @@ Existing App Store compliance findings still apply; this separation does not fix
 account deletion, Apple login, subscription billing or moderation.
 
 Expo reference: https://docs.expo.dev/build-reference/variants/
+
+### Production authentication compatibility — November 8, 2026
+
+The deployed production frontend/API currently use the existing Clerk instance
+`https://firm-mink-35.clerk.accounts.dev`. The newer release guard initially
+blocked those existing credentials because it required a live-mode prefix.
+Production mobile compatibility now requires all three explicit AWS settings:
+`JOUFT_PRODUCTION_CLERK_PUBLISHABLE_KEY`,
+`JOUFT_PRODUCTION_CLERK_ALLOW_TEST_INSTANCE=true` and
+`JOUFT_PRODUCTION_CLERK_ISSUER` matching that key's instance exactly. No implicit
+fallback to staging credentials is allowed; without compatibility opt-in,
+production retains the live-key requirement. This preserves deployed auth; it
+does not migrate users or Clerk instances.
+
+`valueai/prod/runtime` in us-east-1 is the source for these public build settings.
+EAS production is a build-time mirror, not a runtime AWS secret lookup. Before a
+production build, synchronize with `python3 scripts/sync_mobile_production_env.py`
+from repository root (use `--dry-run` to validate without writes). Secret API keys
+are not copied to the app. See `docs/releases/MOBILE_DF001_PRODUCTION.md` for
+current build/signing/submission status; configuration success is not deployment.
