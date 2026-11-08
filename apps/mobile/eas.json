@@ -20,6 +20,7 @@
       "environment": "production",
       "distribution": "store",
       "autoIncrement": true,
+      "android": { "buildType": "apk" },
       "env": { "APP_ENV": "production", "EXPO_NO_DOTENV": "1", "EXPO_PUBLIC_LISTING_AGENT_ENABLED": "true", "EXPO_PUBLIC_ASSISTANT_CONVERSATIONS_ENABLED": "true" }
     }
   },
