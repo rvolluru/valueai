@@ -1,6 +1,6 @@
 # Mobile DF-001 production release
 
-Updated November 8, 2026. Status: **Production Android APK build 9 available through Expo; no Google Play submission. iOS awaits Apple agreement acceptance.**
+Updated November 8, 2026. Status: **Android production APK build 9 available through Expo; iOS 1.0.0 (4) available in internal TestFlight. No Google Play submission or public App Store rollout.**
 
 ## Scope and source
 
@@ -35,7 +35,7 @@ resolved below by preserving the existing deployed issuer with explicit pinning.
 No Clerk secret key was bundled, and no implicit staging-key fallback was introduced.
 The app targets `https://api.jouft.com` with identity `com.jouft.app`.
 
-## Remaining release steps
+## Initial planned release steps (historical; outcomes below)
 
 1. Resolve required production publishable configuration and verify production authentication compatibility.
 2. Build Android production AAB and iOS production IPA from the isolated committed source.
@@ -137,3 +137,28 @@ Local APK: `output/jouft-production-1.0.0-9.apk`.
 This is a standalone production APK distributed through Expo for installation.
 No Google Play submission occurred. Existing installations require installation
 of the new APK; no OTA update or automatic store rollout is claimed.
+
+## iOS TestFlight release completed — November 8, 2026
+
+The owner confirmed agreement acceptance. Apple login restored successfully;
+`com.jouft.app` registered, the existing JOUFT distribution certificate and push
+key were reused, and production provisioning profile `WA4HA85WCU` was created.
+The earlier Apple 403 blocker is resolved.
+
+- Production EAS build: `f0962cf8-e0dc-46c5-af5d-598a2f27cc5b`, FINISHED.
+- Version/build: **1.0.0 (4)**, bundle **com.jouft.app**.
+- Source: `ef57f90965a4ce86ae4f89f670737e7a2e809938` on the isolated release branch.
+- Production App Store Connect app: `6826942359`; staging/testing record was not used.
+- EAS submission: `7560abf1-4a47-48b3-95fa-426e1013a14f`, FINISHED with no reported error.
+- Apple build: `37b5a773-27c6-4554-a277-2b3b33406b0a`; internal state verified **IN_BETA_TESTING**.
+- Internal group: **Jouft Internal**, with automatic access to all builds.
+- Tester verified in the group: **leavethemessage@gmail.com**. No other users were added.
+- IPA Info.plist independently verified bundle ID and version/build; SHA-256:
+  `56fe5fb94eb863368cdf4682642e44d8b551aa0e81d7a2511526e2376bbba7c3`.
+
+[Verified TestFlight release metadata](MOBILE_DF001_IOS_VERIFICATION.json).
+Open TestFlight with the tester account and install JOUFT 1.0.0 (4).
+This is internal beta distribution, not a public App Store release or App Review
+submission. No application-data mutation, server redeployment or unrelated Entrupy
+changes were included. Cross-account UI QA acceptance remains separately tracked
+in DF-001; successful TestFlight delivery is not that functional retest.

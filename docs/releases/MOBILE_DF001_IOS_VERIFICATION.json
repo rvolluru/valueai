@@ -1,0 +1,15 @@
+{
+  "build_id": "f0962cf8-e0dc-46c5-af5d-598a2f27cc5b",
+  "bundle_id": "com.jouft.app",
+  "version": "1.0.0",
+  "build_number": "4",
+  "sha256": "56fe5fb94eb863368cdf4682642e44d8b551aa0e81d7a2511526e2376bbba7c3",
+  "submission_id": "7560abf1-4a47-48b3-95fa-426e1013a14f",
+  "production_asc_app_id": "6826942359",
+  "apple_build_id": "37b5a773-27c6-4554-a277-2b3b33406b0a",
+  "internal_build_state": "IN_BETA_TESTING",
+  "internal_group": "Jouft Internal",
+  "tester": "leavethemessage@gmail.com",
+  "submission_status": "FINISHED",
+  "public_app_store_release": false
+}
