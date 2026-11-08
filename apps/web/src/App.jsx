@@ -2617,7 +2617,10 @@ function AuthShell({ children, actions = null }) {
           <div className="auth-brandmark" aria-label="Jouft brand">
             <div className="brand-logo-lockup">
               <span className="brand-logo-caption">TRADE · ELEVATE · BELONG.</span>
-              <img className="auth-brand-logo" src={jouftLogo} alt="JOUFT" />
+              <span className="auth-brand-wordmark">
+                <img className="auth-brand-logo" src={jouftLogo} alt="JOUFT" />
+                <sup className="auth-brand-trademark" aria-label="trademark">™</sup>
+              </span>
             </div>
           </div>
           <div className="auth-marquee" aria-label="Site sections">
@@ -2749,7 +2752,7 @@ function AuthShell({ children, actions = null }) {
           </div>
         </section>
         <footer className="auth-site-footer">
-          <strong>JOUFT</strong>
+          <strong>JOUFT<sup className="auth-footer-trademark" aria-label="trademark">™</sup></strong>
           <div className="auth-footer-links">
             <span>ABOUT</span><a href="#contact">CONTACT US</a><span>FAQ</span><a href="/terms">TERMS</a><a href="/privacy">PRIVACY</a>
           </div>
@@ -6743,7 +6746,10 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
             <div className="app-brandmark" aria-label="Jouft brand">
               <div className="brand-logo-lockup">
                 <span className="brand-logo-caption">TRADE · ELEVATE · BELONG.</span>
-                <img className="app-brand-logo" src={jouftLogo} alt="JOUFT" />
+                <span className="auth-brand-wordmark">
+                  <img className="app-brand-logo" src={jouftLogo} alt="JOUFT" />
+                  <sup className="auth-brand-trademark" aria-label="trademark">™</sup>
+                </span>
               </div>
             </div>
             <div className="app-brand-links" aria-label="Primary app sections">
