@@ -1,6 +1,7 @@
 # Jouft listing analysis: complete process
 
-Archive visibility update — November 9, 2026 (implemented; not yet deployed):
+Archive visibility update — November 9, 2026 (deployed and verified in production,
+release `6bdacb6`, workflow `42705131275`):
 `GET /v1/listings?mine=true` excludes `Archived` listings before search pagination
 and `has_more` calculation. This hides archived records from My Closet on web
 and mobile. Marketplace results continue to include only active listings. Internal
