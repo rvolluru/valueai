@@ -1,6 +1,9 @@
 # Web profile and homepage updates
 
-November 9, 2026. Implemented and tested; production deployment pending.
+November 9, 2026. Deployed and verified in production: release `3a1d49c`,
+GitHub Actions workflow `42718631994` succeeded. Live frontend asset checks,
+production-image age validation checks (without account-data writes), and
+`/v1/health` passed.
 
 - Reuse the homepage footer throughout the web app after a minimum viewport height.
 - Link the entire signed-in logo to My Closet without link decoration.
