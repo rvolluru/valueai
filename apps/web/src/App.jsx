@@ -1812,14 +1812,6 @@ const PRIVACY_POLICY_SECTIONS = [
 
 const CONTACT_DETAILS = [
   {
-    title: 'Company Address',
-    body: [
-      '120 Vantis Dr. Suite 300',
-      'Aliso Viejo, CA 92656',
-      'US',
-    ],
-  },
-  {
     title: 'Contact Email',
     contact: 'admin@jouft.com',
   },
@@ -1829,9 +1821,6 @@ const CONTACT_DETAILS = [
     phoneHref: 'tel:+19493544133',
   },
 ]
-const CONTACT_MAP_QUERY = '120 Vantis Dr Suite 300, Aliso Viejo, CA 92656, US'
-const CONTACT_MAP_EMBED_URL = `https://maps.google.com/maps?q=${encodeURIComponent(CONTACT_MAP_QUERY)}&output=embed`
-const CONTACT_DIRECTIONS_URL = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(CONTACT_MAP_QUERY)}`
 
 function PrivacyPolicyPage() {
   return (
@@ -2636,17 +2625,15 @@ function AuthShell({ children, actions = null }) {
           <div className="auth-hero-copy">
             <p className="auth-kicker">TRADE. ELEVATE. BELONG.</p>
             <h1 className="auth-hero-title">
-              <span>The Fashion Trading Platform</span>
-              <span>for Collectors</span>
+              <span>The Art of Trading</span>
             </h1>
             <p className="lede">
-              Trade authentic, pre-loved and new fashion with our curated community. No listing fees. No marketplace clutter. Just the right match.
+              Trade authentic, new and like-new fashion with our curated community. No listing fees. No marketplace clutter. Just the right match.
             </p>
             <div className="auth-hero-actions">
               <button className="primary" type="button">Request Access</button>
               <a className="ghost arrow" href="#how-it-works">How It Works</a>
             </div>
-            <p className="auth-social-proof">Join 2,800+ members shaping the future of fashion.</p>
           </div>
           <div className="auth-hero-image-wall">
             <div className="auth-hero-main-image">
@@ -2656,7 +2643,6 @@ function AuthShell({ children, actions = null }) {
               <p className="auth-members-kicker">CURATED COMMUNITY</p>
               <h3>Members Only</h3>
               <p>Exclusivity. Trust. Quality.</p>
-              <span>+2.8K</span>
             </div>
           </div>
         </div>
@@ -2737,17 +2723,6 @@ function AuthShell({ children, actions = null }) {
                   {section.phone ? <a href={section.phoneHref}>{section.phone}</a> : null}
                 </div>
               ))}
-              <a className="contact-directions-link" href={CONTACT_DIRECTIONS_URL} target="_blank" rel="noreferrer">
-                Get Directions
-              </a>
-            </div>
-            <div className="contact-map-frame auth-contact-map">
-              <iframe
-                title="JOUFT office map"
-                src={CONTACT_MAP_EMBED_URL}
-                loading="lazy"
-                referrerPolicy="no-referrer-when-downgrade"
-              />
             </div>
           </div>
         </section>
