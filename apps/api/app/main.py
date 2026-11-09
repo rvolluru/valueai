@@ -5799,7 +5799,7 @@ def list_recent_listings(
     except Exception as exc:
         log_json("stale_analyzing_cleanup_error", error=str(exc))
     records = (
-        db.list_owner_listings(principal.subject, limit=safe_limit + 1, offset=safe_offset, search=q)
+        db.list_owner_listings(principal.subject, limit=safe_limit + 1, offset=safe_offset, search=q, include_archived=False)
         if mine
         else db.list_recent_listings(limit=safe_limit + 1, offset=safe_offset, include_analysis=False, include_media=True, active_only=True, search=q)
     )

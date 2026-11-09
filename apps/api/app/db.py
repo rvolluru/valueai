@@ -2850,7 +2850,8 @@ class Database:
                 item["analysis"] = {"generated_assets": assets} if assets else None
         return items
 
-    def list_owner_listings(self, owner_subject: str, limit: int = 50, offset: int = 0, search: str = "") -> list[dict]:
+    def list_owner_listings(self, owner_subject: str, limit: int = 50, offset: int = 0, search: str = "", include_archived: bool = True) -> list[dict]:
+        archive_clause = "" if include_archived else " AND LOWER(status) != 'archived'"
         search_clause = ""
         params = [owner_subject]
         if search.strip():
@@ -2860,7 +2861,7 @@ class Database:
         query = (
             f"SELECT listing_id, owner_subject, owner_name, title, mode, category, brand, condition, "
             f"size, estimated_value, city, image, images_json, description, wants, tags_json, source_item_id, analysis_json, status, created_at, COALESCE(updated_at, created_at) AS updated_at "
-            f"FROM listings WHERE owner_subject = {self.param}{search_clause} ORDER BY created_at DESC LIMIT {self.param} OFFSET {self.param}"
+            f"FROM listings WHERE owner_subject = {self.param}{archive_clause}{search_clause} ORDER BY created_at DESC LIMIT {self.param} OFFSET {self.param}"
         )
         rows = self.fetchall(query, tuple(params))
         return [self._listing_row_to_dict(row) for row in rows]
