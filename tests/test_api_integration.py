@@ -2490,6 +2490,7 @@ def test_publish_listing_transition_queues_published_email(monkeypatch) -> None:
             "first_name": "Rajesh",
             "last_name": "Volluru",
             "email": "rajesh@example.com",
+            "birthday": "1990-01-01",
         },
         headers={"x-api-key": "test-key"},
     )

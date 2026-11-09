@@ -512,6 +512,23 @@ h1, h2, h3, h4 {
   font-family: var(--font-auth-sans);
   font-weight: 400;
 }
+.application-layout {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+.application-content {
+  flex: 1 0 auto;
+  min-width: 0;
+}
+.application-layout > .auth-site-footer {
+  flex-shrink: 0;
+  width: calc(100% - 24px);
+  max-width: 1396px;
+  align-self: center;
+  margin-bottom: 12px;
+}
 .auth-site-footer {
   margin-top: 24px;
   display: grid;
@@ -2070,6 +2087,19 @@ textarea:focus-visible,
   display: inline-flex;
   align-items: center;
   gap: 0;
+  color: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
+.app-brandmark:hover,
+.app-brandmark:focus,
+.app-brandmark:active,
+.app-brandmark:visited {
+  color: inherit;
+  text-decoration: none;
+}
+.app-brandmark .brand-logo-lockup {
+  pointer-events: none;
 }
 .app-brand-logo {
   display: block;
@@ -5520,3 +5550,37 @@ textarea:focus-visible,
   .assistant-threads nav { display: flex; overflow-x: auto; margin-top: .4rem; }
   .assistant-threads nav button { max-width: 200px; flex-shrink: 0; }
 }
+.profile-setup-address-wide { grid-column: 1 / -1; }
+.profile-setup-guidance {
+  padding: 16px 20px;
+  margin-bottom: 20px;
+  border-left: 4px solid #53191f;
+  background: #f5efea;
+  color: #35262a;
+  line-height: 1.5;
+}
+.profile-setup-guidance p { margin: 6px 0 0; color: inherit; }
+
+.profile-setup-error {
+  margin-top: 16px;
+  padding: 16px 20px;
+  border: 1px solid #b42318;
+  border-left: 5px solid #b42318;
+  background: #fff1f0;
+  color: #8a1c13;
+  font-size: 1rem;
+  line-height: 1.5;
+}
+.profile-setup-error strong { font-weight: 700; }
+.profile-setup-error p { margin: 4px 0 0; color: inherit; }
+.profile-setup-error:focus { outline: 2px solid #b42318; outline-offset: 3px; }
+.profile-setup-field-group input[aria-invalid="true"] {
+  border: 2px solid #b42318;
+  background: #fff7f6;
+}
+
+.birthday-field { margin: 0; padding: 0; border: 0; min-width: 0; }
+.birthday-field legend { padding: 0; margin-bottom: 8px; color: var(--muted); }
+.birthday-selects { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr) minmax(0, 1.2fr); gap: 8px; }
+.birthday-selects select { width: 100%; min-width: 0; }
+.profile-setup-field-group select[aria-invalid="true"] { border: 2px solid #b42318; background: #fff7f6; }

@@ -1,3 +1,4 @@
+import { JOUFT_GOAL_OPTIONS, normalizeProfileGoals, needsGoalSelection } from './lib/profileGoals'
 import { Fragment, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import { MANNEQUIN_DISCLAIMER, isMannequinImage } from '../../../packages/app-client/src/mannequinDisclosure'
 import {
@@ -855,16 +856,6 @@ const STYLE_DESCRIPTOR_OPTIONS = [
   { value: 'Trendy', className: 'trendy', description: 'Current silhouettes, bold accents, high rotation' },
   { value: 'Unique', className: 'unique', description: 'Statement finds, unexpected texture, rare details' },
 ]
-const JOUFT_GOAL_OPTIONS = [
-  'Refresh My Closet',
-  'Trade Unworn Pieces',
-  'Discover Rare Finds',
-  'Access Luxury Fashion',
-  'Build My Collection',
-  'Sustainable Fashion',
-  'Connect With Fashion Enthusiasts',
-  'Trade Instead of Sell',
-]
 const PROFILE_SETUP_TOTAL_STEPS = 5
 const SUBSCRIPTION_PLANS = [
   { id: 'free', name: 'Free Tier', monthlyPrice: 0, listingsPerMonth: 3, description: '3 listings per month' },
@@ -931,6 +922,50 @@ function resolveSignupFullName(session, profileData) {
   return typeof session?.name === 'string' ? session.name.trim() : ''
 }
 
+function BirthdaySelect({ value, onChange, invalid }) {
+  const [year = '', month = '', day = ''] = (value || '').split('-')
+  const currentYear = new Date().getUTCFullYear()
+  const years = Array.from({ length: 103 }, (_, index) => String(currentYear - 18 - index))
+  if (year && !years.includes(year)) years.unshift(year)
+  const days = new Date(Date.UTC(Number(year) || 2000, Number(month) || 1, 0)).getUTCDate()
+  function update(part, next) {
+    const parts = { year, month, day, [part]: next }
+    const maxDay = new Date(Date.UTC(Number(parts.year) || 2000, Number(parts.month) || 1, 0)).getUTCDate()
+    if (Number(parts.day) > maxDay) parts.day = ''
+    onChange(`${parts.year}-${parts.month}-${parts.day}`)
+  }
+  return (
+    <fieldset className="birthday-field">
+      <legend>Birthday</legend>
+      <div className="birthday-selects">
+        <select aria-label="Birth month" aria-describedby="profile-birthday-age-note" aria-invalid={invalid} value={month} onChange={(event) => update('month', event.target.value)} required>
+          <option value="">Month</option>
+          {Array.from({ length: 12 }, (_, index) => <option key={index} value={String(index + 1).padStart(2, '0')}>{new Date(2000, index, 1).toLocaleString('en-US', { month: 'long' })}</option>)}
+        </select>
+        <select aria-label="Birth day" aria-describedby="profile-birthday-age-note" aria-invalid={invalid} value={day} onChange={(event) => update('day', event.target.value)} required>
+          <option value="">Day</option>
+          {Array.from({ length: days }, (_, index) => <option key={index} value={String(index + 1).padStart(2, '0')}>{index + 1}</option>)}
+        </select>
+        <select aria-label="Birth year" aria-describedby="profile-birthday-age-note" aria-invalid={invalid} value={year} onChange={(event) => update('year', event.target.value)} required>
+          <option value="">Year</option>
+          {years.map((item) => <option key={item} value={item}>{item}</option>)}
+        </select>
+      </div>
+      <p id="profile-birthday-age-note" className="tiny-note">You must be at least 18 years old to use Jouft.</p>
+    </fieldset>
+  )
+}
+
+function isAdultBirthday(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value || '')) return false
+  const born = new Date(`${value}T00:00:00Z`)
+  if (!Number.isFinite(born.getTime()) || born.toISOString().slice(0, 10) !== value) return false
+  const today = new Date()
+  const age = today.getUTCFullYear() - born.getUTCFullYear()
+    - (today.toISOString().slice(5, 10) < value.slice(5, 10) ? 1 : 0)
+  return age >= 18
+}
+
 function isProfileSetupRequired(profile) {
   const firstName = String(profile?.first_name || profile?.firstName || '').trim()
   const lastName = String(profile?.last_name || profile?.lastName || '').trim()
@@ -943,11 +978,11 @@ function isProfileSetupRequired(profile) {
     || normalizeMultiSizeValue(profile?.bottoms_size).length > 0
     || normalizeMultiSizeValue(profile?.shoes_size).length > 0
   const hasStyle = Array.isArray(profile?.style_descriptors) && profile.style_descriptors.length > 0
-  const hasGoal = Array.isArray(profile?.jouft_goals) && profile.jouft_goals.length > 0
+  const hasGoal = !needsGoalSelection(profile?.jouft_goals)
   const plan = normalizeSubscriptionPlanId(profile?.subscription_plan)
   const status = String(profile?.subscription_status || '').trim().toLowerCase()
   const hasSubscription = plan === 'free' || ['active', 'trialing'].includes(status)
-  return !firstName || !lastName || !email || !gender || !birthday || addresses.length === 0 || !hasSizes || !hasStyle || !hasGoal || !hasSubscription
+  return !firstName || !lastName || !email || !gender || !isAdultBirthday(birthday) || addresses.length === 0 || !hasSizes || !hasStyle || !hasGoal || !hasSubscription
 }
 
 function brandSizeChartUrl(brand, category) {
@@ -1551,7 +1586,28 @@ async function fetchShippingLabelDocumentRemote({ apiBaseUrl, apiKey, bearerToke
   return client.get(`/v1/shipments/${shipmentId}/label`, authContext(bearerToken))
 }
 
+function SiteFooter() {
+  return (
+    <footer className="auth-site-footer">
+      <strong>JOUFT<sup className="auth-footer-trademark" aria-label="trademark">™</sup></strong>
+      <nav className="auth-footer-links" aria-label="Footer">
+        <span>ABOUT</span><a href="/#contact">CONTACT US</a><span>FAQ</span><a href="/terms">TERMS</a><a href="/privacy">PRIVACY</a>
+      </nav>
+      <small>© {new Date().getFullYear()} JOUFT. ALL RIGHTS RESERVED.</small>
+    </footer>
+  )
+}
+
 export default function App() {
+  return (
+    <div className="application-layout">
+      <div className="application-content"><AppContent /></div>
+      <SiteFooter />
+    </div>
+  )
+}
+
+function AppContent() {
   if (typeof window !== 'undefined' && ['/docs/home', '/docs/system-architecture', '/docs/listing-analysis'].includes(window.location.pathname)) {
     return CLERK_ENABLED ? <AnalysisGuidePage apiBaseUrl={API_DEFAULT} document={window.location.pathname.split('/').pop()} /> : <p>Sign-in is required to access this guide.</p>
   }
@@ -2699,7 +2755,7 @@ function AuthShell({ children, actions = null }) {
               <div className="hero-card-content"><span>01</span><h3>Share Your Items</h3><p>Add pieces from your closet. We evaluate them for you.</p></div>
             </div>
             <div className="hero-card">
-              <div className="hero-card-content"><span>02</span><h3>Get Matched</h3><p>Our algorithm finds the best matches based on style and value.</p></div>
+              <div className="hero-card-content"><span>02</span><h3>Unlock Your Custom Marketplace</h3><p>Our algorithm finds the best matches based on style and value.</p></div>
             </div>
             <div className="hero-card">
               <div className="hero-card-content"><span>03</span><h3>Trade Securely</h3><p>Approve the trade and we handle authentication and shipping.</p></div>
@@ -2726,13 +2782,7 @@ function AuthShell({ children, actions = null }) {
             </div>
           </div>
         </section>
-        <footer className="auth-site-footer">
-          <strong>JOUFT<sup className="auth-footer-trademark" aria-label="trademark">™</sup></strong>
-          <div className="auth-footer-links">
-            <span>ABOUT</span><a href="#contact">CONTACT US</a><span>FAQ</span><a href="/terms">TERMS</a><a href="/privacy">PRIVACY</a>
-          </div>
-          <small>© 2026 JOUFT. ALL RIGHTS RESERVED.</small>
-        </footer>
+
       </section>
       {children}
     </div>
@@ -2886,6 +2936,12 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   const [addressSuggestions, setAddressSuggestions] = useState([])
   const [addressAutocompleteActive, setAddressAutocompleteActive] = useState(false)
   const [profileSaveMsg, setProfileSaveMsg] = useState('')
+  const profileSetupAlertRef = useRef(null)
+  useEffect(() => {
+    if (activeTab !== 'profile_setup' || !profileSaveMsg) return
+    profileSetupAlertRef.current?.focus({ preventScroll: true })
+    profileSetupAlertRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+  }, [activeTab, profileSaveMsg])
   const [securityCurrentPassword, setSecurityCurrentPassword] = useState('')
   const [securityNewPassword, setSecurityNewPassword] = useState('')
   const [securityConfirmPassword, setSecurityConfirmPassword] = useState('')
@@ -3015,6 +3071,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   const seenServerNotificationIdsRef = useRef(new Set())
   const profileQuizHydrationStartedRef = useRef('')
   const lastLoadedProfileQuizRef = useRef(null)
+  const profileQuizLoadPromiseRef = useRef(null)
   const profileSetupDirtyRef = useRef(false)
   const activeTabRef = useRef(activeTab)
   const notificationStorageKey = useMemo(() => {
@@ -3449,6 +3506,17 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   }, [apiBaseUrl, apiKey, clerkEnabled, getBearerToken])
 
   async function loadProfileQuizIntoState({ force = false } = {}) {
+    if (!force && profileQuizLoadPromiseRef.current) return profileQuizLoadPromiseRef.current
+    const pending = fetchProfileQuizIntoState({ force })
+    profileQuizLoadPromiseRef.current = pending
+    try {
+      return await pending
+    } finally {
+      if (profileQuizLoadPromiseRef.current === pending) profileQuizLoadPromiseRef.current = null
+    }
+  }
+
+  async function fetchProfileQuizIntoState({ force = false } = {}) {
     const hydrationKey = String(session?.id || session?.email || 'anonymous')
     if (!force && profileQuizHydrationStartedRef.current === hydrationKey) {
       return lastLoadedProfileQuizRef.current
@@ -3471,7 +3539,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
         last_name: data?.last_name || profileData?.lastName || '',
         email: data?.email || profileData?.email || session?.email || '',
         shipping_email: data?.shipping_email || profileData?.email || session?.email || '',
-        shipping_phone: data?.shipping_phone || profileData?.phone || '',
+        shipping_phone: data?.shipping_phone || '',
         gender: data?.gender || '',
         birthday: data?.birthday || '',
         tops_size: normalizeMultiSizeValue(data?.tops_size),
@@ -3480,7 +3548,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
         shoes_size: normalizeMultiSizeValue(data?.shoes_size),
         category_preferences: Array.isArray(data?.category_preferences) ? data.category_preferences : [],
         style_descriptors: Array.isArray(data?.style_descriptors) ? data.style_descriptors : [],
-        jouft_goals: Array.isArray(data?.jouft_goals) ? data.jouft_goals : [],
+        jouft_goals: normalizeProfileGoals(data?.jouft_goals),
         shipping_full_name: primaryShippingAddress.full_name || '',
         shipping_address_line1: primaryShippingAddress.address_line1 || '',
         shipping_address_line2: primaryShippingAddress.address_line2 || '',
@@ -3550,6 +3618,9 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
           }
           if (shouldOpenSetup && !profileSetupAutoOpenedRef.current) {
             profileSetupAutoOpenedRef.current = true
+            if (needsGoalSelection(data.jouft_goals) && !isProfileSetupRequired({ ...data, jouft_goals: [JOUFT_GOAL_OPTIONS[0]] })) {
+              setProfileSetupStep(4)
+            }
             navigateToTab('profile_setup')
           }
         }
@@ -3743,6 +3814,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
       if (!payload.last_name) return 'Last name is required.'
       if (!payload.email) return 'Email address is required.'
       if (!payload.birthday) return 'Birthday is required.'
+      if (!isAdultBirthday(payload.birthday)) return 'You must be at least 18 years old to use Jouft.'
       if (!payload.gender) return 'Gender is required.'
       if (!isCompleteShippingAddress(primaryAddress)) return 'Complete shipping address is required.'
     }
@@ -4011,7 +4083,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   function toggleProfileArrayField(field, value, max = null) {
     profileSetupDirtyRef.current = true
     setProfileQuiz((prev) => {
-      const current = Array.isArray(prev[field]) ? prev[field] : []
+      const current = field === 'jouft_goals' ? normalizeProfileGoals(prev[field]) : (Array.isArray(prev[field]) ? prev[field] : [])
       const selected = current.includes(value)
       const next = selected
         ? current.filter((x) => x !== value)
@@ -4037,7 +4109,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
       shoes_size: serializeMultiSizeValue(profileQuiz.shoes_size),
       category_preferences: Array.isArray(profileQuiz.category_preferences) ? profileQuiz.category_preferences : [],
       style_descriptors: Array.isArray(profileQuiz.style_descriptors) ? profileQuiz.style_descriptors : [],
-      jouft_goals: Array.isArray(profileQuiz.jouft_goals) ? profileQuiz.jouft_goals : [],
+      jouft_goals: normalizeProfileGoals(profileQuiz.jouft_goals),
       subscription_plan: selectedSubscriptionPlanId,
       subscription_billing_cycle: selectedBillingCycle,
       shipping_addresses: normalizedAddresses.map((address, idx) => ({
@@ -4073,7 +4145,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
       last_name: saved?.last_name || profileData?.lastName || '',
       email: saved?.email || profileData?.email || session?.email || '',
       shipping_email: saved?.shipping_email || profileData?.email || session?.email || '',
-      shipping_phone: saved?.shipping_phone || profileData?.phone || '',
+      shipping_phone: saved?.shipping_phone || '',
       gender: saved?.gender || '',
       birthday: saved?.birthday || '',
       tops_size: normalizeMultiSizeValue(saved?.tops_size),
@@ -4082,7 +4154,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
       shoes_size: normalizeMultiSizeValue(saved?.shoes_size),
       category_preferences: Array.isArray(saved?.category_preferences) ? saved.category_preferences : [],
       style_descriptors: Array.isArray(saved?.style_descriptors) ? saved.style_descriptors : [],
-      jouft_goals: Array.isArray(saved?.jouft_goals) ? saved.jouft_goals : [],
+      jouft_goals: normalizeProfileGoals(saved?.jouft_goals),
       shipping_full_name: savedShippingAddresses[0]?.full_name || '',
       shipping_address_line1: savedShippingAddresses[0]?.address_line1 || '',
       shipping_address_line2: savedShippingAddresses[0]?.address_line2 || '',
@@ -4103,6 +4175,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   }
 
   async function saveProfileQuiz() {
+    if (!isAdultBirthday(profileQuiz.birthday)) throw new Error('You must be at least 18 years old to use Jouft.')
     const bearerToken = clerkEnabled && getBearerToken ? await getBearerToken() : null
     const saved = await saveProfileQuizRemote({
       apiBaseUrl,
@@ -4961,6 +5034,12 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     const expectsReceipt = expectedNorm === 'yes' || expectedNorm === 'mixed' || askedByBackend
     return expectsReceipt && receiptPresent !== 'yes'
   }
+
+  const hasThreeActiveListings = myListings.filter((item) => String(item.status || '').toLowerCase() === 'active').length >= 3
+  useEffect(() => {
+    if (activeTab !== 'market' || hasThreeActiveListings || myListingsLoading || myListingsPageLoading || !myListingsHasMore) return
+    void loadMoreMyListings()
+  }, [activeTab, hasThreeActiveListings, myListingsLoading, myListingsPageLoading, myListingsHasMore, loadMoreMyListings])
 
   const allListings = marketListings.length > 0 ? marketListings : [...myListings, ...seedListings]
   const deferredMarketSearch = useDeferredValue(marketSearch)
@@ -6718,7 +6797,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
       <div className="topbar">
         <div className="topbar-copy">
           <div className="app-brand-row">
-            <div className="app-brandmark" aria-label="Jouft brand">
+            <a className="app-brandmark" href={tabHref('portfolio')} onClick={(event) => navigateTabLink(event, 'portfolio', navigateToTab)} aria-label="Jouft — My Closet">
               <div className="brand-logo-lockup">
                 <span className="brand-logo-caption">TRADE · ELEVATE · BELONG.</span>
                 <span className="auth-brand-wordmark">
@@ -6726,7 +6805,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                   <sup className="auth-brand-trademark" aria-label="trademark">™</sup>
                 </span>
               </div>
-            </div>
+            </a>
             <div className="app-brand-links" aria-label="Primary app sections">
               <a href={tabHref('market')} onClick={(event) => navigateTabLink(event, 'market', navigateToTab)} className={activeTab === 'market' ? 'app-brand-link active' : 'app-brand-link'}>Marketplace</a>
               <a href={tabHref('portfolio')} onClick={(event) => navigateTabLink(event, 'portfolio', navigateToTab)} className={activeTab === 'portfolio' ? 'app-brand-link active' : 'app-brand-link'}>My Closet</a>
@@ -6981,17 +7060,14 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                         required
                       />
                     </label>
-                    <label>
-                      <span>Birthday</span>
-                      <input
-                        type="date"
-                        value={profileQuiz.birthday || ''}
-                        onChange={(e) => {
-                          profileSetupDirtyRef.current = true
-                          setProfileQuiz((p) => ({ ...p, birthday: e.target.value }))
-                        }}
-                      />
-                    </label>
+                    <BirthdaySelect
+                      value={profileQuiz.birthday || ''}
+                      invalid={Boolean(profileSaveMsg && !isAdultBirthday(profileQuiz.birthday))}
+                      onChange={(birthday) => {
+                        profileSetupDirtyRef.current = true
+                        setProfileQuiz((p) => ({ ...p, birthday }))
+                      }}
+                    />
                     <label>
                       <span>Gender</span>
                       <select
@@ -7021,15 +7097,15 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                 <div className="profile-setup-field-group">
                   <p className="eyebrow">Shipping Address</p>
                   <div className="field-grid two">
-                    <label>
+                    <label className="profile-setup-address-wide">
                       <span>Shipping Full Name</span>
                       <input value={primaryProfileAddress.full_name || ''} onChange={(e) => updatePrimaryShippingAddress({ full_name: e.target.value })} />
                     </label>
-                    <label>
+                    <label className="profile-setup-address-wide">
                       <span>Address Line 1</span>
                       <input value={primaryProfileAddress.address_line1 || ''} onChange={(e) => updatePrimaryShippingAddress({ address_line1: e.target.value })} />
                     </label>
-                    <label>
+                    <label className="profile-setup-address-wide">
                       <span>Address Line 2 (Optional)</span>
                       <input value={primaryProfileAddress.address_line2 || ''} onChange={(e) => updatePrimaryShippingAddress({ address_line2: e.target.value })} />
                     </label>
@@ -7056,6 +7132,10 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
 
             {profileSetupStep === 2 && (
               <div className="profile-setup-body">
+                <div className="profile-setup-guidance">
+                  <strong>Discover more in your Marketplace</strong>
+                  <p>Select all sizes you comfortably wear and multiple categories you enjoy. Sizing varies by brand and fit—broader preferences can help you discover more items.</p>
+                </div>
                 <div className="profile-setup-size-grid">
                   <div>
                     <span className="tiny-note">Tops Size</span>
@@ -7110,7 +7190,6 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
 
             {profileSetupStep === 3 && (
               <div className="profile-setup-body">
-                <p className="tiny-note">Choose up to 3.</p>
                 <div className="profile-style-card-grid">
                   {STYLE_DESCRIPTOR_OPTIONS.map((style) => {
                     const selected = profileQuiz.style_descriptors.includes(style.value)
@@ -7133,7 +7212,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
 
             {profileSetupStep === 4 && (
               <div className="profile-setup-body">
-                <p className="tiny-note">Choose up to 2.</p>
+                <p className="tiny-note">Choose one or two reasons from the updated options below.</p>
                 <div className="profile-goal-grid">
                   {JOUFT_GOAL_OPTIONS.map((goal) => {
                     const selected = profileQuiz.jouft_goals.includes(goal)
@@ -7329,7 +7408,12 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                 )}
               </div>
             </div>
-            {profileSaveMsg && <span className="tiny-note">{profileSaveMsg}</span>}
+            {profileSaveMsg && (
+              <div className="profile-setup-error" role="alert" tabIndex={-1} ref={profileSetupAlertRef}>
+                <strong>Please check your details</strong>
+                <p>{profileSaveMsg}</p>
+              </div>
+            )}
           </section>
         </main>
       )}
@@ -7438,6 +7522,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                   {profileSection === 'style' && (
                     <div style={{ marginTop: 4 }}>
                       <p className="eyebrow" style={{ marginBottom: 8 }}>Style Preferences</p>
+                      <p className="tiny-note">Select all sizes you comfortably wear. Sizing varies by brand and fit, so choosing multiple sizes can help you discover more Marketplace items.</p>
                       <div className="field-grid">
                         <label>
                           <span>Gender</span>
@@ -8819,8 +8904,17 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                     ) : (
                       <>
                         <h3>No matched marketplace listings yet</h3>
-                        <p>Create or publish a closet listing to see marketplace items that match your closet.</p>
-                        <button className="primary" type="button" onClick={openCreateListingFromCloset}>Create Listing</button>
+                        {hasThreeActiveListings && !marketSearch.trim() ? (
+                          <>
+                            <p>Expand your style preferences to see more items in your Marketplace.</p>
+                            <button className="primary" type="button" onClick={() => { setProfileSection('style'); navigateToTab('profile') }}>Update Style Preferences</button>
+                          </>
+                        ) : (
+                          <>
+                            <p>Create or publish a closet listing to see marketplace items that match your closet.</p>
+                            <button className="primary" type="button" onClick={openCreateListingFromCloset}>Create Listing</button>
+                          </>
+                        )}
                       </>
                     )}
                   </div>
