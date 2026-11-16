@@ -11,7 +11,7 @@ import hashlib
 import hmac
 import time
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from html import escape as html_escape
 from io import BytesIO
 from pathlib import Path
@@ -120,6 +120,8 @@ from .trade_match_agent import build_trade_match_suggestions
 
 app = FastAPI(title="ValueAI Fashion Analyzer", version="0.1.0")
 app.include_router(listing_agent_router)
+# Entrupy integration is paused. Keep its router unregistered even if a
+# runtime environment still has ENTRUPY_ENABLED=true. Source is retained in entrupy.py.
 from .assistant_conversation_routes import router as assistant_conversation_router
 app.include_router(assistant_conversation_router)
 from .match_feed import router as match_feed_router
@@ -2916,6 +2918,18 @@ def put_profile_quiz(
     db: Database = Depends(get_db),
 ):
     existing = db.get_user_profile_quiz(principal.subject) or {}
+    birthday = payload.birthday if "birthday" in payload.model_fields_set else existing.get("birthday")
+    if not birthday:
+        raise HTTPException(status_code=400, detail="Birthday is required. You must be at least 18 years old to use Jouft.")
+    if birthday:
+        try:
+            born = date.fromisoformat(birthday)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Enter a valid birthday.")
+        today = datetime.now(timezone.utc).date()
+        age = today.year - born.year - ((today.month, today.day) < (born.month, born.day))
+        if age < 18:
+            raise HTTPException(status_code=400, detail="You must be at least 18 years old to use Jouft.")
     first_name = str(payload.first_name or "").strip()
     last_name = str(payload.last_name or "").strip()
     email = str(payload.email or "").strip().lower()
@@ -2961,7 +2975,7 @@ def put_profile_quiz(
         last_name=last_name,
         email=email,
         gender=payload.gender,
-        birthday=payload.birthday,
+        birthday=birthday,
         tops_size=payload.tops_size,
         dresses_size=payload.dresses_size,
         bottoms_size=payload.bottoms_size,
@@ -3008,7 +3022,7 @@ def put_profile_quiz(
             (payload.shipping_email or existing.get("shipping_email") or "").strip() or None
         ),
         shipping_phone=(
-            (payload.shipping_phone or existing.get("shipping_phone") or "").strip() or None
+            ((payload.shipping_phone if "shipping_phone" in payload.model_fields_set else existing.get("shipping_phone")) or "").strip() or None
         ),
         shipping_addresses=shipping_addresses_payload,
         subscription_plan=payload.subscription_plan,
@@ -5801,7 +5815,7 @@ def list_recent_listings(
     except Exception as exc:
         log_json("stale_analyzing_cleanup_error", error=str(exc))
     records = (
-        db.list_owner_listings(principal.subject, limit=safe_limit + 1, offset=safe_offset, search=q)
+        db.list_owner_listings(principal.subject, limit=safe_limit + 1, offset=safe_offset, search=q, include_archived=False)
         if mine
         else db.list_recent_listings(limit=safe_limit + 1, offset=safe_offset, include_analysis=False, include_media=True, active_only=True, search=q)
     )

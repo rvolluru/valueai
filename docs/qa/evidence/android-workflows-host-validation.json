@@ -1,0 +1,27 @@
+{
+  "checked_date": "2026-11-09",
+  "scope": "Host-side validation; no Device Farm device execution",
+  "host_tests": {
+    "command": "python -m pytest tests/test_devicefarm_suite_config.py -q",
+    "passed": 34
+  },
+  "collection": {
+    "regression_cases": 31,
+    "concrete_workflow_cases": 21,
+    "total": 52
+  },
+  "missing_fixture_gate": {
+    "Pass": 0,
+    "Fail": 0,
+    "Blocked": 21,
+    "Not Run": 0,
+    "exit_code": 2,
+    "qa_case_ids_recorded": true
+  },
+  "device_run_verified": false,
+  "sandbox_providers_verified": false,
+  "notes": [
+    "Fixtures now supply data rather than executable recipes.",
+    "Hardware acceptance still requires configured accounts, observer authentication, fixtures and verified sandbox providers."
+  ]
+}

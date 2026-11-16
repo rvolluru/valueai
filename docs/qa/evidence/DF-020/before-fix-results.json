@@ -1,0 +1,82 @@
+{
+  "counts": {
+    "Pass": 2,
+    "Fail": 3,
+    "Blocked": 0,
+    "Not Run": 0
+  },
+  "cases": [
+    {
+      "case": "tests/test_android_regression.py::test_search_known_title[marketplace]",
+      "phase": "call",
+      "status": "Pass",
+      "duration_seconds": 12.91
+    },
+    {
+      "case": "tests/test_android_regression.py::test_marketplace_detail_gallery",
+      "phase": "call",
+      "status": "Fail",
+      "duration_seconds": 11.72,
+      "error_type": "AssertionError",
+      "failure_sites": [
+        {
+          "file": "test_android_regression.py",
+          "function": "test_marketplace_detail_gallery",
+          "line": 83
+        },
+        {
+          "file": "android_ui.py",
+          "function": "open_listing",
+          "line": 191
+        }
+      ]
+    },
+    {
+      "case": "tests/test_android_regression.py::test_second_account_private_isolation",
+      "phase": "call",
+      "status": "Pass",
+      "duration_seconds": 70.98
+    },
+    {
+      "case": "tests/test_android_regression.py::test_second_account_published_gallery[include]",
+      "phase": "call",
+      "status": "Fail",
+      "duration_seconds": 44.92,
+      "error_type": "AssertionError",
+      "failure_sites": [
+        {
+          "file": "test_android_regression.py",
+          "function": "test_second_account_published_gallery",
+          "line": 199
+        },
+        {
+          "file": "android_ui.py",
+          "function": "open_listing",
+          "line": 191
+        }
+      ]
+    },
+    {
+      "case": "tests/test_android_regression.py::test_second_account_published_gallery[exclude]",
+      "phase": "call",
+      "status": "Fail",
+      "duration_seconds": 48.61,
+      "error_type": "AssertionError",
+      "failure_sites": [
+        {
+          "file": "test_android_regression.py",
+          "function": "test_second_account_published_gallery",
+          "line": 199
+        },
+        {
+          "file": "android_ui.py",
+          "function": "open_listing",
+          "line": 191
+        }
+      ]
+    }
+  ],
+  "device": "47081FDAS00792",
+  "build": "777562a3-e97d-4c64-a784-612d6179eafe",
+  "collection_only": false
+}

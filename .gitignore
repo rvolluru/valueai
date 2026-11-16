@@ -25,3 +25,8 @@ infra/terraform/terraform.tfstate
 infra/terraform/terraform.tfstate.backup
 infra/terraform/terraform.tfvars
 /tmp/model-evaluations/
+
+# Local QA recordings, credentials and scratch artifacts are not release sources.
+/output/
+/tmp/
+/artifacts/

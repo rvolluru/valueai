@@ -1,0 +1,31 @@
+{
+  "counts": {
+    "Pass": 3,
+    "Fail": 0,
+    "Blocked": 0,
+    "Not Run": 0
+  },
+  "cases": [
+    {
+      "case": "tests/test_android_regression.py::test_marketplace_detail_gallery",
+      "phase": "call",
+      "status": "Pass",
+      "duration_seconds": 19.04
+    },
+    {
+      "case": "tests/test_android_regression.py::test_second_account_published_gallery[include]",
+      "phase": "call",
+      "status": "Pass",
+      "duration_seconds": 68.96
+    },
+    {
+      "case": "tests/test_android_regression.py::test_second_account_published_gallery[exclude]",
+      "phase": "call",
+      "status": "Pass",
+      "duration_seconds": 59.52
+    }
+  ],
+  "device": "47011FDAS008NV",
+  "build": "777562a3-e97d-4c64-a784-612d6179eafe",
+  "collection_only": false
+}

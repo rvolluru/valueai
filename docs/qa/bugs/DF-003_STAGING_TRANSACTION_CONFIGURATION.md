@@ -44,3 +44,12 @@ Related suite prerequisite: second account `rajesh_mid@yahoo.co.in` selected by 
 its password must be supplied through Secrets Manager. Real-email verification, if
 requested by Clerk, needs a supported flow; the reserved test OTP is not valid for
 this address. No password or account security settings were changed.
+
+
+November 9 recheck: the running staging API remains revision 22 with Stripe secret,
+publishable key and Shippo token missing. Local test-mode provider credentials
+were found and authenticated successfully (Stripe balance `livemode=false`, Shippo
+HTTP 200 with a test-prefixed token), but they have not been injected into staging.
+No live or production credentials were substituted. Dedicated account B credentials
+and observer authentication are separate missing test prerequisites. This report
+remains Blocked; local provider-key validity does not mean staging is configured.

@@ -1,6 +1,6 @@
 # Android Device Farm suite
 
-Prepared November 7, 2026. This suite extends the existing create/analyze/mannequin
+Updated November 9, 2026. This suite extends the existing create/analyze/mannequin
 and publish tests. **New broad cases are implemented but not yet device-verified.**
 Collection/ZIP validation is not evidence that the app passes. The already passing
 DF-001 publication runs remain documented separately.
@@ -11,15 +11,15 @@ DF-001 publication runs remain documented separately.
 | --- | --- | --- |
 | `android_smoke` | Navigation, empty search recovery, profile sections, activity screen, session restore, sign-out, empty creation, assistant open/close, inbox filters, invalid login | Dedicated staging login; latest staging APK; no fixture mutations beyond invalid login attempt |
 | `android_regression` | All 31 native UI checks, including known-title/brand/category search, review/edit navigation, gallery, pricing block and second-account checks | Reviewed manifest with seeded listings; second account for isolation/gallery |
-| `android_workflows` | 21 registered workflow slots executed through reviewed UI recipes | Per-workflow steps, assertions and cleanup; sandbox verification for transactions |
+| `android_workflows` | 21 implemented native business workflows | Reviewed fixture data, observer sessions, disposable accounts and sandbox verification |
 | `android_full` | Both groups plus fresh create → analysis → mannequin → decision → publish | All above plus 1–6 complete JPG views of one clothing item |
 
-The workflow slots are **not completed business-flow implementations until reviewed
-recipes are supplied and device-verified**. Missing recipes report Blocked. Camera,
-network changes, OS permissions, payment-provider sheets and mailbox verification
-may need new driver actions or manual execution; unsupported actions fail validation.
-No billing, shipping, external social posting or bulk email actions are scheduled
-by default. Tests do not establish model-image visual fidelity without human review.
+All 21 formerly recipe-driven slots now have concrete test implementations,
+including persistence assertions and restoration/retained-fixture rules. See
+[workflow cases and setup](ANDROID_WORKFLOWS.md). They are **not yet verified on
+Device Farm**. Missing prerequisites report Blocked; collection does not mean pass.
+Financial cases require actual provider test-mode verification. Human visual,
+accessibility, real email-delivery and social-sharing checks remain separate.
 
 ## Coverage and ownership
 
@@ -49,36 +49,24 @@ entries use these schemas (supply actual unique titles owned by controlled users
 Titles must be unique across visible search pages; run one device per dedicated
 account at a time. Use distinct drafts for mutation scenarios where possible.
 Record fixture IDs and preserve state before retries. A is the existing Secrets
-Manager login. If supplied, `JOUFT_TEST_SECOND_SECRET` names a separate Oregon secret
-containing B's `email` and `password`; the execution role needs narrowly scoped
+Manager login. Broad Android runs now default account B to
+`jouft/devicefarm/staging-login-b`; `JOUFT_TEST_SECOND_SECRET` can override that secret
+containing B's `email` and `password`. `JOUFT_TEST_SECOND_SECRET_REGION` defaults
+to `us-east-1` (set `us-west-2` for an existing Oregon secret); the execution role needs narrowly scoped
 GetSecretValue access to that secret. Do not reuse A as B or put either password in
-a manifest/ZIP. Secrets/IAM for B have not been provisioned by this suite change.
-Missing second credentials are Blocked. Verify B can see seeded public matches;
+a manifest/ZIP. Account B and its exact-secret IAM read permission were provisioned November 9,
+2026. See the [setup/verification record](../../docs/qa/DEVICE_FARM_ACCOUNT_B_SETUP_2026-11-09.md).
+Missing second credentials are not a passing cross-account check. Verify B can see seeded public matches;
 matching preferences and size rules still apply.
 
-Recipe example (navigation-only illustration; replace with actual reviewed
-business steps, final persistence assertions and restoration before enabling a slot):
-
-```json
-{
-  "reviewed_by": "Reviewer name",
-  "fixture_ids": ["Controlled staging entity ID"],
-  "steps": [{"action": "tab", "label": "Profile", "expect": "SETTINGS"}],
-  "verify": [{"action": "wait", "label": "SETTINGS"}],
-  "cleanup": [{"action": "tab", "label": "Closet", "expect": "My Closet"}]
-}
-```
-
-Put recipes under `workflows.<registered_name>`. Actions: tab, tap (optional
-scroll), input (accessible field label and value or environment-variable name),
-wait, absent, search, open_listing, back, relaunch, sign_out, and switch_account
-(with account A or B). Recipe strings are not a
-substitute for a proper OS/provider driver; those need extension
-before corresponding end-to-end claims. Financial recipes additionally need
-`sandbox_environment=staging-test-mode`, `sandbox_verified_by`, and host variable
-`JOUFT_TEST_SANDBOX_CONFIRMED=1`. The reviewer must verify actual provider test mode;
-a flag alone does not detect billing configuration. Never place a real card in recipes.
-Recipe cleanup runs after authentication even on failure; make it safe and specific.
+Workflow fixtures now contain data, not action recipes. The example manifest
+contains all 21 case schemas. Populate the selected cases and use the exact APK
+SHA-256, staging origin and build ID. The tests reject an embedded production
+configuration even if its package is `com.jouft.app.dev`. Configure renewable
+observer sessions or short-lived observer JWTs as described in
+[ANDROID_WORKFLOWS.md](ANDROID_WORKFLOWS.md). Credentials stay in host memory and
+must never appear in the manifest/ZIP. All 21 business actions are implemented;
+external account/provider setup is still required for a complete hardware run.
 
 ## Package and upload
 
@@ -129,7 +117,7 @@ packaging tests passed. A missing-recipe run produced 21 Blocked results, exit 2
 and no Appium device sessions. AWS validated the smoke ZIP and custom spec;
 local metadata: `output/android-suite-smoke/metadata.json`. Upload validation
 covers format only; no new broad Device Farm run has been scheduled.
-The second staging account and actual sandbox configuration remain unconfirmed.
+The second staging account and actual sandbox configuration were unconfirmed at that check.
 
 ## Staging provider check — November 7, 2026
 
@@ -145,3 +133,29 @@ The user selected `rajesh_mid@yahoo.co.in` for account B. Credentials have not b
 provisioned by this check. Keep the password in a separate Secrets Manager secret;
 if this real email needs verification, fixed Clerk test OTP automation does not
 apply. Cross-account tests remain prerequisite-dependent.
+
+
+## Workflow implementation validation — November 9, 2026
+
+All 21 recipes were replaced with concrete cases. Host checks cover APK backend
+pinning, account/token guards, sandbox refusal, packaging, radio/permission
+restoration, cleanup failure handling, native payment refusal on a live key,
+and an independent-session stale trade race. See the workflow guide for current
+execution prerequisites. No new hardware run or broad acceptance pass is claimed.
+
+
+## First broad device execution — November 9, 2026
+
+The full 53-case run is now being executed on the pinned Pixel 9 Pro XL. See the
+[current execution report](../../docs/qa/ANDROID_DEVICE_FARM_RUN_2026-11-09.md)
+for the original setup failure, fixes, retest and unresolved prerequisites. The
+report supersedes earlier "not yet scheduled" status statements; implementation
+and host-check records remain historical evidence, not hardware pass claims.
+
+For automated email verification, provision B as a distinct staging Clerk test
+identity, for example `rajesh_mid+clerk_test@yahoo.co.in`. With Clerk Test mode
+enabled, the existing helper uses `424242` without an inbox bridge. The untagged
+`rajesh_mid@yahoo.co.in` remains a different identity and cannot use that fixed
+code. Pin fixture ownership to the test identity; do not rename existing users
+or enable Test mode on the production instance. Device Farm runs in Oregon but
+can read an authorized Secrets Manager secret in another region.

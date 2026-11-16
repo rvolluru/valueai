@@ -1,0 +1,43 @@
+{
+  "counts": {
+    "Pass": 0,
+    "Fail": 1,
+    "Blocked": 0,
+    "Not Run": 0
+  },
+  "cases": [
+    {
+      "case": "tests/test_android_workflows.py::test_controlled_workflow[registration]",
+      "phase": "call",
+      "status": "Fail",
+      "duration_seconds": 22.47,
+      "qa_case_id": "QA-008",
+      "error_type": "NoSuchElementException",
+      "failure_sites": [
+        {
+          "file": "test_android_workflows.py",
+          "function": "test_controlled_workflow",
+          "line": 726
+        },
+        {
+          "file": "test_android_workflows.py",
+          "function": "registration",
+          "line": 169
+        },
+        {
+          "file": "android_workflow_support.py",
+          "function": "input",
+          "line": 228
+        },
+        {
+          "file": "android_workflow_support.py",
+          "function": "field",
+          "line": 220
+        }
+      ]
+    }
+  ],
+  "device": "47021FDAS0022F",
+  "build": "777562a3-e97d-4c64-a784-612d6179eafe",
+  "collection_only": false
+}

@@ -1,0 +1,472 @@
+{
+  "counts": {
+    "Pass": 21,
+    "Fail": 9,
+    "Blocked": 23,
+    "Not Run": 0
+  },
+  "cases": [
+    {
+      "case": "tests/test_android_regression.py::test_navigation[Market-Marketplace]",
+      "phase": "call",
+      "status": "Pass",
+      "duration_seconds": 1.81
+    },
+    {
+      "case": "tests/test_android_regression.py::test_navigation[Closet-My Closet]",
+      "phase": "call",
+      "status": "Pass",
+      "duration_seconds": 2.23
+    },
+    {
+      "case": "tests/test_android_regression.py::test_navigation[Inbox-Trade Inbox]",
+      "phase": "call",
+      "status": "Pass",
+      "duration_seconds": 1.7
+    },
+    {
+      "case": "tests/test_android_regression.py::test_navigation[Profile-SETTINGS]",
+      "phase": "call",
+      "status": "Pass",
+      "duration_seconds": 2.78
+    },
+    {
+      "case": "tests/test_android_regression.py::test_empty_search_and_recovery[closet]",
+      "phase": "call",
+      "status": "Pass",
+      "duration_seconds": 6.44
+    },
+    {
+      "case": "tests/test_android_regression.py::test_empty_search_and_recovery[marketplace]",
+      "phase": "call",
+      "status": "Pass",
+      "duration_seconds": 7.1
+    },
+    {
+      "case": "tests/test_android_regression.py::test_search_known_title[closet]",
+      "phase": "call",
+      "status": "Pass",
+      "duration_seconds": 4.2
+    },
+    {
+      "case": "tests/test_android_regression.py::test_search_known_title[marketplace]",
+      "phase": "call",
+      "status": "Blocked",
+      "duration_seconds": 0.0,
+      "reason": "missing Android fixture marketplace_listing"
+    },
+    {
+      "case": "tests/test_android_regression.py::test_closet_search_metadata[brand]",
+      "phase": "call",
+      "status": "Pass",
+      "duration_seconds": 4.37
+    },
+    {
+      "case": "tests/test_android_regression.py::test_closet_search_metadata[category]",
+      "phase": "call",
+      "status": "Pass",
+      "duration_seconds": 3.6
+    },
+    {
+      "case": "tests/test_android_regression.py::test_search_review_navigation",
+      "phase": "call",
+      "status": "Pass",
+      "duration_seconds": 15.71
+    },
+    {
+      "case": "tests/test_android_regression.py::test_marketplace_detail_gallery",
+      "phase": "call",
+      "status": "Blocked",
+      "duration_seconds": 0.0,
+      "reason": "missing Android fixture marketplace_listing"
+    },
+    {
+      "case": "tests/test_android_regression.py::test_profile_sections[Account-First Name]",
+      "phase": "call",
+      "status": "Pass",
+      "duration_seconds": 3.86
+    },
+    {
+      "case": "tests/test_android_regression.py::test_profile_sections[Security-Verified Sign-in Email]",
+      "phase": "call",
+      "status": "Pass",
+      "duration_seconds": 6.74
+    },
+    {
+      "case": "tests/test_android_regression.py::test_profile_sections[Style-Style Preferences]",
+      "phase": "call",
+      "status": "Pass",
+      "duration_seconds": 7.49
+    },
+    {
+      "case": "tests/test_android_regression.py::test_profile_sections[Shipping-Shipping Addresses]",
+      "phase": "call",
+      "status": "Pass",
+      "duration_seconds": 5.08
+    },
+    {
+      "case": "tests/test_android_regression.py::test_profile_sections[Subscription-Payment Methods]",
+      "phase": "call",
+      "status": "Pass",
+      "duration_seconds": 7.36
+    },
+    {
+      "case": "tests/test_android_regression.py::test_notification_history",
+      "phase": "call",
+      "status": "Fail",
+      "duration_seconds": 32.28,
+      "error_type": "TimeoutException",
+      "failure_sites": [
+        {
+          "file": "test_android_regression.py",
+          "function": "test_notification_history",
+          "line": 105
+        },
+        {
+          "file": "android_ui.py",
+          "function": "tap",
+          "line": 83
+        }
+      ]
+    },
+    {
+      "case": "tests/test_android_regression.py::test_resume_session",
+      "phase": "call",
+      "status": "Pass",
+      "duration_seconds": 5.18
+    },
+    {
+      "case": "tests/test_android_regression.py::test_signout",
+      "phase": "call",
+      "status": "Pass",
+      "duration_seconds": 9.88
+    },
+    {
+      "case": "tests/test_android_regression.py::test_create_without_photos",
+      "phase": "call",
+      "status": "Fail",
+      "duration_seconds": 3.4,
+      "error_type": "InvalidSelectorException",
+      "failure_sites": [
+        {
+          "file": "test_android_regression.py",
+          "function": "test_create_without_photos",
+          "line": 126
+        }
+      ]
+    },
+    {
+      "case": "tests/test_android_regression.py::test_assistant_open_close",
+      "phase": "call",
+      "status": "Pass",
+      "duration_seconds": 6.95
+    },
+    {
+      "case": "tests/test_android_regression.py::test_pricing_review_blocks_publication",
+      "phase": "call",
+      "status": "Fail",
+      "duration_seconds": 37.5,
+      "error_type": "TimeoutException",
+      "failure_sites": [
+        {
+          "file": "test_android_regression.py",
+          "function": "test_pricing_review_blocks_publication",
+          "line": 149
+        }
+      ]
+    },
+    {
+      "case": "tests/test_android_regression.py::test_second_account_private_isolation",
+      "phase": "call",
+      "status": "Blocked",
+      "duration_seconds": 0.0,
+      "reason": "second dedicated staging account secret not configured"
+    },
+    {
+      "case": "tests/test_android_regression.py::test_second_account_published_gallery[include]",
+      "phase": "call",
+      "status": "Blocked",
+      "duration_seconds": 0.0,
+      "reason": "second dedicated staging account secret not configured"
+    },
+    {
+      "case": "tests/test_android_regression.py::test_second_account_published_gallery[exclude]",
+      "phase": "call",
+      "status": "Blocked",
+      "duration_seconds": 0.0,
+      "reason": "missing Android fixture published_exclude"
+    },
+    {
+      "case": "tests/test_android_regression.py::test_trade_inbox_filters[Active]",
+      "phase": "call",
+      "status": "Pass",
+      "duration_seconds": 3.38
+    },
+    {
+      "case": "tests/test_android_regression.py::test_trade_inbox_filters[Closed]",
+      "phase": "call",
+      "status": "Pass",
+      "duration_seconds": 3.23
+    },
+    {
+      "case": "tests/test_android_regression.py::test_invalid_signin",
+      "phase": "call",
+      "status": "Fail",
+      "duration_seconds": 9.17,
+      "error_type": "AssertionError",
+      "failure_sites": [
+        {
+          "file": "test_android_regression.py",
+          "function": "test_invalid_signin",
+          "line": 199
+        }
+      ]
+    },
+    {
+      "case": "tests/test_android_regression.py::test_required_signin_fields[]",
+      "phase": "call",
+      "status": "Fail",
+      "duration_seconds": 9.71,
+      "error_type": "AssertionError",
+      "failure_sites": [
+        {
+          "file": "test_android_regression.py",
+          "function": "test_required_signin_fields",
+          "line": 214
+        }
+      ]
+    },
+    {
+      "case": "tests/test_android_regression.py::test_required_signin_fields[not-an-email]",
+      "phase": "call",
+      "status": "Pass",
+      "duration_seconds": 15.34
+    },
+    {
+      "case": "tests/test_android_workflows.py::test_controlled_workflow[registration]",
+      "phase": "call",
+      "status": "Fail",
+      "duration_seconds": 0.0,
+      "qa_case_id": "QA-008",
+      "error_type": "KeyError",
+      "failure_sites": [
+        {
+          "file": "test_android_workflows.py",
+          "function": "test_controlled_workflow",
+          "line": 671
+        },
+        {
+          "file": "test_android_workflows.py",
+          "function": "prerequisites",
+          "line": 72
+        }
+      ]
+    },
+    {
+      "case": "tests/test_android_workflows.py::test_controlled_workflow[password_recovery]",
+      "phase": "call",
+      "status": "Fail",
+      "duration_seconds": 0.0,
+      "qa_case_id": "QA-005",
+      "error_type": "KeyError",
+      "failure_sites": [
+        {
+          "file": "test_android_workflows.py",
+          "function": "test_controlled_workflow",
+          "line": 671
+        },
+        {
+          "file": "test_android_workflows.py",
+          "function": "prerequisites",
+          "line": 72
+        }
+      ]
+    },
+    {
+      "case": "tests/test_android_workflows.py::test_controlled_workflow[profile_save_restore]",
+      "phase": "call",
+      "status": "Blocked",
+      "duration_seconds": 0.0,
+      "qa_case_id": "QA-050",
+      "reason": "staging account A observer token is required"
+    },
+    {
+      "case": "tests/test_android_workflows.py::test_controlled_workflow[style_matching]",
+      "phase": "call",
+      "status": "Blocked",
+      "duration_seconds": 0.0,
+      "qa_case_id": "QA-040",
+      "reason": "missing workflow fixture field source_title"
+    },
+    {
+      "case": "tests/test_android_workflows.py::test_controlled_workflow[edit_save_restore]",
+      "phase": "call",
+      "status": "Blocked",
+      "duration_seconds": 0.0,
+      "qa_case_id": "QA-036",
+      "reason": "staging account A observer token is required"
+    },
+    {
+      "case": "tests/test_android_workflows.py::test_controlled_workflow[delete_disposable]",
+      "phase": "call",
+      "status": "Blocked",
+      "duration_seconds": 0.0,
+      "qa_case_id": "QA-038",
+      "reason": "missing workflow fixture field title"
+    },
+    {
+      "case": "tests/test_android_workflows.py::test_controlled_workflow[like_restore]",
+      "phase": "call",
+      "status": "Blocked",
+      "duration_seconds": 0.0,
+      "qa_case_id": "QA-041",
+      "reason": "missing workflow fixture field title"
+    },
+    {
+      "case": "tests/test_android_workflows.py::test_controlled_workflow[trade_send]",
+      "phase": "call",
+      "status": "Blocked",
+      "duration_seconds": 0.0,
+      "qa_case_id": "QA-042",
+      "reason": "missing workflow fixture field target_title"
+    },
+    {
+      "case": "tests/test_android_workflows.py::test_controlled_workflow[trade_decline]",
+      "phase": "call",
+      "status": "Blocked",
+      "duration_seconds": 0.0,
+      "qa_case_id": "QA-043",
+      "reason": "missing workflow fixture field offer_id"
+    },
+    {
+      "case": "tests/test_android_workflows.py::test_controlled_workflow[trade_accept]",
+      "phase": "call",
+      "status": "Blocked",
+      "duration_seconds": 0.0,
+      "qa_case_id": "QA-044",
+      "reason": "missing workflow fixture field offer_id"
+    },
+    {
+      "case": "tests/test_android_workflows.py::test_controlled_workflow[trade_stale_action]",
+      "phase": "call",
+      "status": "Blocked",
+      "duration_seconds": 0.0,
+      "qa_case_id": "QA-045",
+      "reason": "missing workflow fixture field offer_id"
+    },
+    {
+      "case": "tests/test_android_workflows.py::test_controlled_workflow[shipping_address_save_restore]",
+      "phase": "call",
+      "status": "Blocked",
+      "duration_seconds": 0.0,
+      "qa_case_id": "QA-046",
+      "reason": "staging account A observer token is required"
+    },
+    {
+      "case": "tests/test_android_workflows.py::test_controlled_workflow[shipping_quote_label]",
+      "phase": "call",
+      "status": "Blocked",
+      "duration_seconds": 0.0,
+      "qa_case_id": "QA-047",
+      "reason": "missing workflow fixture field offer_id"
+    },
+    {
+      "case": "tests/test_android_workflows.py::test_controlled_workflow[payment_add_default_remove]",
+      "phase": "call",
+      "status": "Blocked",
+      "duration_seconds": 0.0,
+      "qa_case_id": "QA-048",
+      "reason": "staging account A observer token is required"
+    },
+    {
+      "case": "tests/test_android_workflows.py::test_controlled_workflow[subscription_change_cancel]",
+      "phase": "call",
+      "status": "Blocked",
+      "duration_seconds": 0.0,
+      "qa_case_id": "QA-049",
+      "reason": "staging account A observer token is required"
+    },
+    {
+      "case": "tests/test_android_workflows.py::test_controlled_workflow[push_delivery]",
+      "phase": "call",
+      "status": "Blocked",
+      "duration_seconds": 0.0,
+      "qa_case_id": "QA-053",
+      "reason": "missing workflow fixture field listing_id"
+    },
+    {
+      "case": "tests/test_android_workflows.py::test_controlled_workflow[photo_permission_recovery]",
+      "phase": "call",
+      "status": "Blocked",
+      "duration_seconds": 34.38,
+      "qa_case_id": "QA-017",
+      "reason": "permission is not requested/supported by this APK: android.permission.READ_MEDIA_IMAGES"
+    },
+    {
+      "case": "tests/test_android_workflows.py::test_controlled_workflow[camera_capture]",
+      "phase": "call",
+      "status": "Fail",
+      "duration_seconds": 68.32,
+      "qa_case_id": "QA-016",
+      "error_type": "TimeoutException",
+      "failure_sites": [
+        {
+          "file": "test_android_workflows.py",
+          "function": "test_controlled_workflow",
+          "line": 697
+        },
+        {
+          "file": "test_android_workflows.py",
+          "function": "camera_capture",
+          "line": 520
+        },
+        {
+          "file": "android_ui.py",
+          "function": "wait",
+          "line": 75
+        }
+      ]
+    },
+    {
+      "case": "tests/test_android_workflows.py::test_controlled_workflow[offline_recovery]",
+      "phase": "call",
+      "status": "Blocked",
+      "duration_seconds": 0.0,
+      "qa_case_id": "QA-059",
+      "reason": "staging account A observer token is required"
+    },
+    {
+      "case": "tests/test_android_workflows.py::test_controlled_workflow[background_analysis]",
+      "phase": "call",
+      "status": "Blocked",
+      "duration_seconds": 0.0,
+      "qa_case_id": "QA-060",
+      "reason": "staging account A observer token is required"
+    },
+    {
+      "case": "tests/test_android_workflows.py::test_controlled_workflow[assistant_listing]",
+      "phase": "call",
+      "status": "Blocked",
+      "duration_seconds": 0.0,
+      "qa_case_id": "QA-058",
+      "reason": "missing workflow fixture field answer_fragment"
+    },
+    {
+      "case": "tests/test_review_publish.py::test_review_and_publish",
+      "phase": "call",
+      "status": "Fail",
+      "duration_seconds": 93.33,
+      "error_type": "Failed",
+      "failure_sites": [
+        {
+          "file": "test_create_listing.py",
+          "function": "run_listing_flow",
+          "line": 591
+        }
+      ]
+    }
+  ],
+  "device": "47261FDAS00AR2",
+  "build": "777562a3-e97d-4c64-a784-612d6179eafe",
+  "collection_only": false
+}

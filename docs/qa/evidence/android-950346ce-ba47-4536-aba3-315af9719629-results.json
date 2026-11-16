@@ -1,0 +1,19 @@
+{
+  "counts": {
+    "Pass": 1,
+    "Fail": 0,
+    "Blocked": 0,
+    "Not Run": 0
+  },
+  "cases": [
+    {
+      "case": "tests/test_review_publish.py::test_review_and_publish",
+      "phase": "call",
+      "status": "Pass",
+      "duration_seconds": 194.75
+    }
+  ],
+  "device": "47291FDAS006Y8",
+  "build": "777562a3-e97d-4c64-a784-612d6179eafe",
+  "collection_only": false
+}

@@ -44,3 +44,8 @@ apps/mobile/ios/
 apps/mobile/android/
 artifacts/
 tmp/
+
+# Local QA recordings, credentials and scratch artifacts are not release sources.
+/output/
+/tmp/
+/artifacts/

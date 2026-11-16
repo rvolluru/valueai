@@ -54,6 +54,8 @@ export function createMobileApiClient({ apiBaseUrl }) {
   const conversationPost = (path, payload, auth) => requestJson({ apiBaseUrl, path, method: 'POST', auth,
     headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
   return {
+    authorizeEntrupy: (id, request, auth = {}) => conversationPost(`/v1/listings/${encodeURIComponent(id)}/authentication/authorize`, { sdk_authorization_request: request }, auth),
+    getEntrupyAuthentication: (id, auth = {}) => requestJson({ apiBaseUrl, path: `/v1/listings/${encodeURIComponent(id)}/authentication`, auth }),
     getListingAgentSession: (id, auth = {}) => requestJson({ apiBaseUrl, path: `/v1/listing-agent/sessions/${encodeURIComponent(id)}`, auth }),
     getActiveListingAgentSession: (auth = {}) => requestJson({ apiBaseUrl, path: '/v1/listing-agent/sessions/active', auth }),
     startListingAgentSession: (payload, auth = {}) => conversationPost('/v1/listing-agent/sessions', payload, auth),

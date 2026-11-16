@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createRequire } from 'node:module';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
@@ -60,8 +62,22 @@ test('cloud releases regenerate native identities and ignore local dotenv settin
 });
 
 test('production submission refuses to reuse or infer the testing App Store record', () => {
-  const script = new URL('../../scripts/submit-production.cjs', import.meta.url);
-  const result = spawnSync(process.execPath, [script.pathname, 'ios'], { encoding: 'utf8' });
-  assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /NEW ascAppId/);
+  // Exercise invalid configurations in isolation. Never invoke EAS with the
+  // repository's valid production target from a unit test.
+  const directory = mkdtempSync(join(tmpdir(), 'jouft-submit-guard-'));
+  try {
+    mkdirSync(join(directory, 'scripts'));
+    const script = join(directory, 'scripts', 'submit-production.cjs');
+    writeFileSync(script, readFileSync(new URL('../../scripts/submit-production.cjs', import.meta.url)));
+    for (const ascAppId of ['', eas.submit.staging.ios.ascAppId]) {
+      const config = structuredClone(eas);
+      config.submit.production.ios.ascAppId = ascAppId;
+      writeFileSync(join(directory, 'eas.json'), JSON.stringify(config));
+      const result = spawnSync(process.execPath, [script, 'ios'], { encoding: 'utf8' });
+      assert.notEqual(result.status, 0);
+      assert.match(result.stderr, /NEW ascAppId/);
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });

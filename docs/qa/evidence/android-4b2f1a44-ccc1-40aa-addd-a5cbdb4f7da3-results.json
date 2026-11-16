@@ -1,0 +1,183 @@
+{
+  "counts": {
+    "Pass": 3,
+    "Fail": 6,
+    "Blocked": 2,
+    "Not Run": 0
+  },
+  "cases": [
+    {
+      "case": "tests/test_android_regression.py::test_notification_history",
+      "phase": "call",
+      "status": "Fail",
+      "duration_seconds": 17.73,
+      "error_type": "AssertionError",
+      "failure_sites": [
+        {
+          "file": "test_android_regression.py",
+          "function": "test_notification_history",
+          "line": 105
+        },
+        {
+          "file": "android_ui.py",
+          "function": "tab",
+          "line": 108
+        }
+      ]
+    },
+    {
+      "case": "tests/test_android_regression.py::test_create_without_photos",
+      "phase": "call",
+      "status": "Pass",
+      "duration_seconds": 4.72
+    },
+    {
+      "case": "tests/test_android_regression.py::test_pricing_review_blocks_publication",
+      "phase": "call",
+      "status": "Pass",
+      "duration_seconds": 37.13
+    },
+    {
+      "case": "tests/test_android_regression.py::test_invalid_signin",
+      "phase": "call",
+      "status": "Fail",
+      "duration_seconds": 16.71,
+      "error_type": "AssertionError",
+      "failure_sites": [
+        {
+          "file": "test_android_regression.py",
+          "function": "test_invalid_signin",
+          "line": 209
+        },
+        {
+          "file": "android_ui.py",
+          "function": "logout",
+          "line": 147
+        },
+        {
+          "file": "android_ui.py",
+          "function": "tab",
+          "line": 108
+        }
+      ]
+    },
+    {
+      "case": "tests/test_android_regression.py::test_required_signin_fields[]",
+      "phase": "call",
+      "status": "Fail",
+      "duration_seconds": 17.64,
+      "error_type": "AssertionError",
+      "failure_sites": [
+        {
+          "file": "test_android_regression.py",
+          "function": "test_required_signin_fields",
+          "line": 224
+        },
+        {
+          "file": "android_ui.py",
+          "function": "logout",
+          "line": 147
+        },
+        {
+          "file": "android_ui.py",
+          "function": "tab",
+          "line": 108
+        }
+      ]
+    },
+    {
+      "case": "tests/test_android_regression.py::test_required_signin_fields[not-an-email]",
+      "phase": "call",
+      "status": "Fail",
+      "duration_seconds": 15.92,
+      "error_type": "AssertionError",
+      "failure_sites": [
+        {
+          "file": "test_android_regression.py",
+          "function": "test_required_signin_fields",
+          "line": 224
+        },
+        {
+          "file": "android_ui.py",
+          "function": "logout",
+          "line": 147
+        },
+        {
+          "file": "android_ui.py",
+          "function": "tab",
+          "line": 108
+        }
+      ]
+    },
+    {
+      "case": "tests/test_android_workflows.py::test_controlled_workflow[registration]",
+      "phase": "call",
+      "status": "Blocked",
+      "duration_seconds": 0.0,
+      "qa_case_id": "QA-008",
+      "reason": "missing workflow environment reference email_env"
+    },
+    {
+      "case": "tests/test_android_workflows.py::test_controlled_workflow[password_recovery]",
+      "phase": "call",
+      "status": "Blocked",
+      "duration_seconds": 0.0,
+      "qa_case_id": "QA-005",
+      "reason": "missing workflow environment reference email_env"
+    },
+    {
+      "case": "tests/test_android_workflows.py::test_controlled_workflow[photo_permission_recovery]",
+      "phase": "call",
+      "status": "Fail",
+      "duration_seconds": 60.28,
+      "qa_case_id": "QA-017",
+      "error_type": "AssertionError",
+      "failure_sites": [
+        {
+          "file": "test_android_workflows.py",
+          "function": "test_controlled_workflow",
+          "line": 715
+        },
+        {
+          "file": "test_android_workflows.py",
+          "function": "photo_permission_recovery",
+          "line": 544
+        },
+        {
+          "file": "test_android_workflows.py",
+          "function": "select_photos",
+          "line": 575
+        },
+        {
+          "file": "android_ui.py",
+          "function": "tab",
+          "line": 108
+        }
+      ]
+    },
+    {
+      "case": "tests/test_android_workflows.py::test_controlled_workflow[camera_capture]",
+      "phase": "call",
+      "status": "Pass",
+      "duration_seconds": 64.04,
+      "qa_case_id": "QA-016"
+    },
+    {
+      "case": "tests/test_review_publish.py::test_review_and_publish",
+      "phase": "call",
+      "status": "Fail",
+      "duration_seconds": 87.83,
+      "error_type": "Failed",
+      "failure_sites": [
+        {
+          "file": "test_create_listing.py",
+          "function": "run_listing_flow",
+          "line": 602
+        }
+      ]
+    }
+  ],
+  "device": "47221FDAS0014A",
+  "build": "777562a3-e97d-4c64-a784-612d6179eafe",
+  "collection_only": false
+}

@@ -1,0 +1,58 @@
+{
+  "email": "rajesh_mid+clerk_test@yahoo.co.in",
+  "secret_region": "us-east-1",
+  "device_model": "Google Pixel 9 Pro XL",
+  "os": "Android 15",
+  "build": "777562a3-e97d-4c64-a784-612d6179eafe",
+  "latest_counts": {
+    "Pass": 5,
+    "Fail": 0,
+    "Blocked": 0,
+    "Not Run": 0
+  },
+  "host_checks_passed": 59,
+  "aggregation": "Latest per-case outcomes across the original five-case run and focused three-case retest; not one clean five-case execution.",
+  "cases": [
+    {
+      "case": "tests/test_android_regression.py::test_search_known_title[marketplace]",
+      "phase": "call",
+      "status": "Pass",
+      "duration_seconds": 12.91,
+      "run_id": "b8242749-e6c6-443d-8eb6-4cd998bc9ae0"
+    },
+    {
+      "case": "tests/test_android_regression.py::test_marketplace_detail_gallery",
+      "phase": "call",
+      "status": "Pass",
+      "duration_seconds": 19.04,
+      "run_id": "44210bd2-be1b-4889-8af8-0b298794d6b9"
+    },
+    {
+      "case": "tests/test_android_regression.py::test_second_account_private_isolation",
+      "phase": "call",
+      "status": "Pass",
+      "duration_seconds": 70.98,
+      "run_id": "b8242749-e6c6-443d-8eb6-4cd998bc9ae0"
+    },
+    {
+      "case": "tests/test_android_regression.py::test_second_account_published_gallery[include]",
+      "phase": "call",
+      "status": "Pass",
+      "duration_seconds": 68.96,
+      "run_id": "44210bd2-be1b-4889-8af8-0b298794d6b9"
+    },
+    {
+      "case": "tests/test_android_regression.py::test_second_account_published_gallery[exclude]",
+      "phase": "call",
+      "status": "Pass",
+      "duration_seconds": 59.52,
+      "run_id": "44210bd2-be1b-4889-8af8-0b298794d6b9"
+    }
+  ],
+  "test_archive_sha256": {
+    "cross-account-package": "11616e66fe63d8874576a904517067fbac331b2ac2c21de746ce03e1083dd4ea",
+    "cross-account-package-r2": "e15dc6c51a94db7cd97764e2d4fe18f8bf56bc5eae9f4d992acf3057f56be403"
+  },
+  "final_run_status": "COMPLETED",
+  "final_run_result": "PASSED"
+}

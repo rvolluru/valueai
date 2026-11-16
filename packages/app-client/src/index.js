@@ -379,6 +379,8 @@ export function createApiClient(options) {
     readAssistantConversation: (id, payload, auth = {}) => post(`/v1/assistant-conversations/${encodeURIComponent(id)}/turns`, payload, auth),
     getActiveListingAssistantConversation: (auth = {}) => get("/v1/listing-assistant/conversations/active", auth),
     updateListingAssistantConversation: (conversationId, payload, auth = {}) => patch(`/v1/listing-assistant/conversations/${encodeURIComponent(conversationId)}`, payload, auth),
+    authorizeEntrupy: (listingId, sdkRequest, auth = {}) => post(`/v1/listings/${encodeURIComponent(listingId)}/authentication/authorize`, { sdk_authorization_request: sdkRequest }, auth),
+    getEntrupyAuthentication: (listingId, auth = {}) => get(`/v1/listings/${encodeURIComponent(listingId)}/authentication`, auth),
     listListings: (params = {}, auth = {}) => {
       const query = new URLSearchParams();
       Object.entries(params).forEach(([k, v]) => {

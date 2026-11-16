@@ -1,0 +1,113 @@
+{
+  "counts": {
+    "Pass": 7,
+    "Fail": 3,
+    "Blocked": 0,
+    "Not Run": 0
+  },
+  "cases": [
+    {
+      "case": "tests/test_android_regression.py::test_navigation[Market-Marketplace]",
+      "phase": "call",
+      "status": "Pass",
+      "duration_seconds": 5.89
+    },
+    {
+      "case": "tests/test_android_regression.py::test_navigation[Closet-My Closet]",
+      "phase": "call",
+      "status": "Pass",
+      "duration_seconds": 2.01
+    },
+    {
+      "case": "tests/test_android_regression.py::test_navigation[Inbox-Trade Inbox]",
+      "phase": "call",
+      "status": "Pass",
+      "duration_seconds": 4.88
+    },
+    {
+      "case": "tests/test_android_regression.py::test_navigation[Profile-SETTINGS]",
+      "phase": "call",
+      "status": "Pass",
+      "duration_seconds": 2.94
+    },
+    {
+      "case": "tests/test_android_regression.py::test_notification_history",
+      "phase": "call",
+      "status": "Pass",
+      "duration_seconds": 5.97
+    },
+    {
+      "case": "tests/test_android_regression.py::test_invalid_signin",
+      "phase": "call",
+      "status": "Pass",
+      "duration_seconds": 19.08
+    },
+    {
+      "case": "tests/test_android_regression.py::test_required_signin_fields[]",
+      "phase": "call",
+      "status": "Fail",
+      "duration_seconds": 51.7,
+      "error_type": "TimeoutException",
+      "failure_sites": [
+        {
+          "file": "test_android_regression.py",
+          "function": "test_required_signin_fields",
+          "line": 234
+        }
+      ]
+    },
+    {
+      "case": "tests/test_android_regression.py::test_required_signin_fields[not-an-email]",
+      "phase": "call",
+      "status": "Pass",
+      "duration_seconds": 22.19
+    },
+    {
+      "case": "tests/test_android_workflows.py::test_controlled_workflow[photo_permission_recovery]",
+      "phase": "call",
+      "status": "Fail",
+      "duration_seconds": 63.0,
+      "qa_case_id": "QA-017",
+      "error_type": "AssertionError",
+      "failure_sites": [
+        {
+          "file": "test_android_workflows.py",
+          "function": "test_controlled_workflow",
+          "line": 716
+        },
+        {
+          "file": "test_android_workflows.py",
+          "function": "photo_permission_recovery",
+          "line": 545
+        },
+        {
+          "file": "test_android_workflows.py",
+          "function": "select_photos",
+          "line": 576
+        },
+        {
+          "file": "android_ui.py",
+          "function": "tab",
+          "line": 112
+        }
+      ]
+    },
+    {
+      "case": "tests/test_review_publish.py::test_review_and_publish",
+      "phase": "call",
+      "status": "Fail",
+      "duration_seconds": 190.71,
+      "error_type": "Failed",
+      "failure_sites": [
+        {
+          "file": "test_create_listing.py",
+          "function": "run_listing_flow",
+          "line": 602
+        }
+      ]
+    }
+  ],
+  "device": "45241FDAS000T9",
+  "build": "777562a3-e97d-4c64-a784-612d6179eafe",
+  "collection_only": false
+}

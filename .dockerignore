@@ -25,3 +25,8 @@ docs/*
 !docs/listing-analysis-guide.html
 !docs/index.html
 !docs/system-architecture-guide.html
+
+# Local QA recordings, credentials and scratch artifacts are not release sources.
+/output/
+/tmp/
+/artifacts/

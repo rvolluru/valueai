@@ -47,5 +47,13 @@
   "devDependencies": {
     "@expo/metro-config": "~54.0.16",
     "babel-preset-expo": "~54.0.10"
+  },
+  "expo": {
+    "autolinking": {
+      "nativeModulesDir": "./modules",
+      "exclude": [
+        "jouft-entrupy"
+      ]
+    }
   }
 }

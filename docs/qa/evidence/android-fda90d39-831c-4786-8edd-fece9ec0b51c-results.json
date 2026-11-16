@@ -1,0 +1,46 @@
+{
+  "counts": {
+    "Pass": 3,
+    "Fail": 1,
+    "Blocked": 0,
+    "Not Run": 0
+  },
+  "cases": [
+    {
+      "case": "tests/test_android_regression.py::test_required_signin_fields[]",
+      "phase": "call",
+      "status": "Pass",
+      "duration_seconds": 13.95
+    },
+    {
+      "case": "tests/test_android_regression.py::test_required_signin_fields[not-an-email]",
+      "phase": "call",
+      "status": "Pass",
+      "duration_seconds": 14.14
+    },
+    {
+      "case": "tests/test_android_workflows.py::test_controlled_workflow[photo_permission_recovery]",
+      "phase": "call",
+      "status": "Pass",
+      "duration_seconds": 56.03,
+      "qa_case_id": "QA-017"
+    },
+    {
+      "case": "tests/test_review_publish.py::test_review_and_publish",
+      "phase": "call",
+      "status": "Fail",
+      "duration_seconds": 986.61,
+      "error_type": "Failed",
+      "failure_sites": [
+        {
+          "file": "test_create_listing.py",
+          "function": "run_listing_flow",
+          "line": 608
+        }
+      ]
+    }
+  ],
+  "device": "45241FDAS001NY",
+  "build": "777562a3-e97d-4c64-a784-612d6179eafe",
+  "collection_only": false
+}

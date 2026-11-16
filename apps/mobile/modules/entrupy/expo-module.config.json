@@ -1,0 +1,19 @@
+{
+  "platforms": [
+    "apple",
+    "android"
+  ],
+  "apple": {
+    "modules": [
+      "JouftEntrupyModule"
+    ],
+    "appDelegateSubscribers": [
+      "EntrupyAppDelegateSubscriber"
+    ]
+  },
+  "android": {
+    "modules": [
+      "com.jouft.entrupy.JouftEntrupyModule"
+    ]
+  }
+}

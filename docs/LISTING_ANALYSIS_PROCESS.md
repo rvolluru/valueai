@@ -1,5 +1,53 @@
 # Jouft listing analysis: complete process
 
+Archive visibility update — November 9, 2026 (deployed and verified in production,
+release `6bdacb6`, workflow `42705131275`):
+`GET /v1/listings?mine=true` excludes `Archived` listings before search pagination
+and `has_more` calculation. This hides archived records from My Closet on web
+and mobile. Marketplace results continue to include only active listings. Internal
+owner lookups retain archived records for trade history and ownership checks;
+archiving does not delete photos, analysis evidence, or existing trade records.
+
+Entrupy integration paused — November 15, 2026 (local change; not deployed):
+seller authentication controls and the SDK sign-out hook are disconnected. The
+Entrupy API router is unregistered even if runtime credentials or the enable flag
+are present. Native autolinking excludes `jouft-entrupy`; Entrupy-specific iOS
+permission and build settings are removed. The source is retained but the flow
+below is dormant and unavailable in this source configuration. No deployed service
+or distributed mobile build was changed. Listing analysis, pricing, mannequin
+review, and publication rules are unchanged.
+
+Retained Entrupy candidate — November 8, 2026 (disabled locally; never deployed):
+The dormant implementation offers seller native capture and a manual result check.
+The API requires Clerk authentication and listing ownership, signs the SDK request
+using a server-only partner token, and assigns `{namespace}:{listing_id}` as
+`customer_item_id`. The SDK collects and uploads its own evidence directly to
+Entrupy; Jouft's listing photo selection, identification and pricing pipeline do
+not submit their photos to the authentication API. Each capture authorizes anew.
+The iOS/Android bridge sources require native vendor builds and real-device QA;
+they have not been compiled or verified with partner credentials.
+
+Result checks query Entrupy v2 by that identifier and validate the returned item
+correlation. Only a final `authentic` result without flags or retakes exposes an
+HTTPS Entrupy certificate link. Provider errors do not imply authenticity. Results
+are not stored in analysis JSON, reused by analysis, or displayed as buyer badges.
+Entrupy does not currently gate publishing, alter prices, or trigger automatic
+polling/webhooks. Listing edits do not invalidate vendor records; this integration
+must not be used to establish a public authenticity guarantee without that policy.
+See [Entrupy setup and release checks](ENTRUPY_INTEGRATION.md).
+
+```mermaid
+flowchart LR
+    A[Dormant candidate: seller closet listing] --> B[Owner-authorized API signs SDK request]
+    B --> C[Native Entrupy capture and upload]
+    C --> D[Entrupy processing]
+    A --> E[Seller checks result]
+    E --> F[API lookup by namespaced listing ID]
+    D --> F
+    F --> G[Validate item correlation and final result]
+    G --> H[Seller result and eligible certificate link]
+```
+
 Production verified October 27, 2026 — release `c927955`, workflow `40625671003`:
 database migrations, API revision 182/worker revision 52 stability and workflow
 smoke checks passed. Public API health returned 200. Both deployed task definitions

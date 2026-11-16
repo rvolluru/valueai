@@ -1,0 +1,30 @@
+{
+  "email": "rajesh_mid+clerk_test@yahoo.co.in",
+  "subject": "user_3Lt5h7cMj2kZpzMdmu6Isp5Fik5",
+  "profile_complete": true,
+  "synthetic_shipping_only": true,
+  "plan": "free",
+  "original_a_listings_unchanged": true,
+  "original_real_b_account_unchanged": true,
+  "marketplace_listing": {
+    "listing_id": "c554bc98-d0eb-40e4-be5d-36c3e44694ff",
+    "title": "QA Account B Matching Shorts 20261109",
+    "image_count": 3,
+    "minimum_images": 3
+  },
+  "private_listing": {
+    "listing_id": "a65529dd-c3d0-4341-bf5a-32ed4d4458fe",
+    "title": "QA Private Shorts 20261109",
+    "image_count": 3
+  },
+  "published_include": {
+    "listing_id": "db3ede13-0844-42bb-a559-b041eccb53f6",
+    "title": "Free People Eyelet Scalloped Shorts",
+    "image_count": 5
+  },
+  "published_exclude": {
+    "listing_id": "40df4237-e1ba-4942-96da-1bfc37111838",
+    "title": "QA Excluded Preview Shorts 20261109",
+    "image_count": 3
+  }
+}

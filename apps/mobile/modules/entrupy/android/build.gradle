@@ -1,0 +1,18 @@
+apply plugin: 'com.android.library'
+apply plugin: 'expo-module-gradle-plugin'
+group = 'com.jouft.entrupy'
+version = '0.1.0'
+android {
+  namespace 'com.jouft.entrupy'
+  defaultConfig { minSdkVersion 24 }
+}
+repositories {
+  maven {
+    url 'https://maven.pkg.github.com/entrupy/entrupy-sdk-android'
+    credentials {
+      username = findProperty('gpr.user') ?: System.getenv('GITHUB_USER') ?: ''
+      password = findProperty('gpr.token') ?: System.getenv('GITHUB_TOKEN') ?: ''
+    }
+  }
+}
+dependencies { implementation 'com.entrupy:sdk:2.5.0' }

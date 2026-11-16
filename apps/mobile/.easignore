@@ -28,3 +28,5 @@ android/
 .env*
 artifacts/
 tmp/
+
+/output/

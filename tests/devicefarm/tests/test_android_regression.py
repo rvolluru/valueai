@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 from android_ui import AndroidUI
+from appium.webdriver.common.appiumby import AppiumBy
 
 
 @pytest.fixture
@@ -80,7 +81,7 @@ def test_search_review_navigation(ui, fixtures):
 def test_marketplace_detail_gallery(ui, fixtures):
     item = require(fixtures, 'marketplace_listing')
     ui.open_listing('marketplace', item['title'])
-    ui.tap('Gallery', scroll=True)
+    ui.show_gallery()
     assert not ui.has('Image unavailable')
     if item.get('minimum_images', 1) > 1:
         ui.tap('Next photo')
@@ -123,7 +124,7 @@ def test_create_without_photos(ui):
     ui.tab('Create', 'Add Photos')
     assert ui.has('0/6')
     # Disabled Continue must not advance to Item Basics.
-    buttons = ui.driver.find_elements('android uiautomator', 'new UiSelector().textMatches("(?i)Continue")')
+    buttons = ui.driver.find_elements(AppiumBy.ANDROID_UIAUTOMATOR, 'new UiSelector().textMatches("(?i)Continue")')
     assert buttons
     if buttons[-1].is_enabled():
         buttons[-1].click()
@@ -138,6 +139,12 @@ def test_assistant_open_close(ui):
     ui.wait('Open Jouft assistant')
 
 
+def has_manual_pricing_notice(values):
+    # The native preflight and API boundary use different, both valid messages.
+    return any('manual pricing review' in value.lower() or
+               'manual review before publishing' in value.lower() for value in values)
+
+
 def test_pricing_review_blocks_publication(ui, fixtures):
     item = require(fixtures, 'pricing_review_listing')
     ui.open_listing('closet', item['title'])
@@ -146,9 +153,14 @@ def test_pricing_review_blocks_publication(ui, fixtures):
     ui.tap(label)
     # Must remain in review with an explicit pricing-related error, not a successful notice.
     from selenium.webdriver.support.ui import WebDriverWait
-    WebDriverWait(ui.driver, 30).until(lambda _: any(
-        'manual pricing review' in value.lower() for value in ui.values()))
+    WebDriverWait(ui.driver, 30).until(lambda _: has_manual_pricing_notice(ui.values()))
     assert not ui.has('Listing published to Marketplace.')
+    ui.tap('Back'); ui.wait('My Closet'); ui.tap('Refresh')
+    ui.search('closet', item['title']); ui.wait('View details for ' + item['title'], 60)
+    ui.wait('Review and publish listing')
+    ui.open_listing('closet', item['title'])
+    assert has_manual_pricing_notice(ui.values())
+    assert ui.has('Publish') or ui.has('Publish without mannequin image')
 
 
 def test_second_account_private_isolation(ui, fixtures):
@@ -160,8 +172,20 @@ def test_second_account_private_isolation(ui, fixtures):
     # Establish that fixture exists for A before testing that B cannot see it.
     ui.search('closet', private['title']); ui.wait('View details for ' + private['title'], 60)
     ui.logout(); ui.login(email, password)
+    ui.tab('Profile', 'SETTINGS'); ui.tap('Security', scroll=True)
+    ui.wait(email); ui.wait('VERIFIED')
+    # The security panel contains blank password-change fields. Never capture
+    # it if any such field has a value, even in a dedicated QA account.
+    sensitive = ui.driver.find_elements(AppiumBy.XPATH, '//*[@password="true"]')
+    if sensitive and all(not field.get_attribute('text') for field in sensitive):
+        folder = Path(os.environ.get('DEVICEFARM_LOG_DIR', 'output/devicefarm'))
+        folder.mkdir(parents=True, exist_ok=True)
+        ui.driver.save_screenshot(str(folder / 'second-account-verified-identity.png'))
     ui.search('closet', private['title'])
     ui.wait('No matching closet listings. Try another title, brand, or category.', 60)
+    ui.search('marketplace', private['title'])
+    ui.wait('No matching search results', 60)
+    assert not ui.card_titles()
 
 
 @pytest.mark.parametrize('decision', ['include', 'exclude'])
@@ -173,7 +197,7 @@ def test_second_account_published_gallery(ui, fixtures, decision):
         pytest.skip('Blocked: second dedicated staging account secret not configured')
     ui.logout(); ui.login(email, password)
     ui.open_listing('marketplace', item['title'])
-    ui.tap('Gallery', scroll=True)
+    ui.show_gallery()
     seen = False
     for _ in range(item.get('image_count', 1)):
         assert not ui.has('Image unavailable')
@@ -195,7 +219,7 @@ def test_trade_inbox_filters(ui, filter_label):
 
 def test_invalid_signin(ui):
     ui.logout(); ui.tap('Log In')
-    fields = ui.driver.find_elements('class name', 'android.widget.EditText')
+    fields = ui.wait_editable_fields()
     assert len(fields) >= 2
     fields[0].send_keys('jouft-invalid-' + str(time.time_ns()) + '@example.invalid')
     fields[1].send_keys('Invalid-Test-Password-123')
@@ -210,7 +234,7 @@ def test_invalid_signin(ui):
 @pytest.mark.parametrize('identifier', ['', 'not-an-email'])
 def test_required_signin_fields(ui, identifier):
     ui.logout(); ui.tap('Log In')
-    fields = ui.driver.find_elements('class name', 'android.widget.EditText')
+    fields = ui.wait_editable_fields()
     assert len(fields) >= 2
     fields[0].clear(); fields[1].clear()
     if identifier:
@@ -221,5 +245,5 @@ def test_required_signin_fields(ui, identifier):
     from selenium.webdriver.support.ui import WebDriverWait
     WebDriverWait(ui.driver, 30).until(lambda _: any(
         word in value.lower() for value in ui.values() - before
-        for word in ['required', 'missing', 'invalid', 'valid email', 'identifier', 'provide', 'not found', "couldn't find"]))
+        for word in ['required', 'missing', 'invalid', 'valid email', 'identifier', 'provide', 'not found', "couldn't find", 'you have to use email address']))
     assert not ui.has('My Closet')

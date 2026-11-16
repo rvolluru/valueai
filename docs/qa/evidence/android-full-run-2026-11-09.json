@@ -1,0 +1,496 @@
+{
+  "date": "2026-11-09",
+  "status": "Completed with outstanding defects and blocked prerequisites",
+  "scenario": "android_full",
+  "selected_cases": 53,
+  "device": "Google Pixel 9 Pro XL",
+  "os": "Android 15",
+  "eas_build_id": "777562a3-e97d-4c64-a784-612d6179eafe",
+  "app_version": "0.1.0 (4)",
+  "app_source_commit": "c69446ffe8c2acf733ceca9db6cbb0dc2730aa4c",
+  "baseline_run_id": "6aefd70d-2a5c-4fe7-a82d-ae7fc21ad8d2",
+  "runs": [
+    {
+      "name": "Full suite",
+      "run_id": "20592dbb-482d-4570-953e-157b90ec3eb5",
+      "counts": {
+        "Pass": 21,
+        "Fail": 9,
+        "Blocked": 23,
+        "Not Run": 0
+      },
+      "archive_sha256": "8249449ebf91ad577804046a211cb965872eca38c73d8e64874d856181e8fb36"
+    },
+    {
+      "name": "Focused retest 1",
+      "run_id": "4b2f1a44-ccc1-40aa-addd-a5cbdb4f7da3",
+      "counts": {
+        "Pass": 3,
+        "Fail": 6,
+        "Blocked": 2,
+        "Not Run": 0
+      },
+      "archive_sha256": "bd99e222c464de3790d660777a6ef47434a8d7be3088b4d1c338b1a9f8f02f07"
+    },
+    {
+      "name": "Focused retest 2",
+      "run_id": "6e980389-92c4-412d-be20-738b773a352e",
+      "counts": {
+        "Pass": 7,
+        "Fail": 3,
+        "Blocked": 0,
+        "Not Run": 0
+      },
+      "archive_sha256": "793bcc62f481019e596e34f9abc884a41fe3082fdd00bae827cb8e3d0292bec9"
+    },
+    {
+      "name": "Focused retest 3",
+      "run_id": "fda90d39-831c-4786-8edd-fece9ec0b51c",
+      "counts": {
+        "Pass": 3,
+        "Fail": 1,
+        "Blocked": 0,
+        "Not Run": 0
+      },
+      "archive_sha256": "2804831e8eac9ed044a1f2766b1f103339a5cc93e9d3548e6453d72d2c7863f0"
+    },
+    {
+      "name": "Fresh-flow retest",
+      "run_id": "950346ce-ba47-4536-aba3-315af9719629",
+      "counts": {
+        "Pass": 1,
+        "Fail": 0,
+        "Blocked": 0,
+        "Not Run": 0
+      },
+      "archive_sha256": "1c7c4f7248ddb74effbd4cde5966ab407d274743657392804f84cee63c14058f"
+    }
+  ],
+  "latest_result_per_case_counts": {
+    "Pass": 29,
+    "Fail": 0,
+    "Blocked": 24,
+    "Not Run": 0
+  },
+  "host_checks_passed": 52,
+  "complete_application_pass": false,
+  "aggregation_note": "Latest result for each case on the same APK and device model/OS; this is not a single full-suite clean run. Original outcomes are preserved.",
+  "cases": [
+    {
+      "case": "tests/test_android_regression.py::test_navigation[Market-Marketplace]",
+      "phase": "call",
+      "status": "Pass",
+      "duration_seconds": 5.89,
+      "run_id": "6e980389-92c4-412d-be20-738b773a352e"
+    },
+    {
+      "case": "tests/test_android_regression.py::test_navigation[Closet-My Closet]",
+      "phase": "call",
+      "status": "Pass",
+      "duration_seconds": 2.01,
+      "run_id": "6e980389-92c4-412d-be20-738b773a352e"
+    },
+    {
+      "case": "tests/test_android_regression.py::test_navigation[Inbox-Trade Inbox]",
+      "phase": "call",
+      "status": "Pass",
+      "duration_seconds": 4.88,
+      "run_id": "6e980389-92c4-412d-be20-738b773a352e"
+    },
+    {
+      "case": "tests/test_android_regression.py::test_navigation[Profile-SETTINGS]",
+      "phase": "call",
+      "status": "Pass",
+      "duration_seconds": 2.94,
+      "run_id": "6e980389-92c4-412d-be20-738b773a352e"
+    },
+    {
+      "case": "tests/test_android_regression.py::test_empty_search_and_recovery[closet]",
+      "phase": "call",
+      "status": "Pass",
+      "duration_seconds": 6.44,
+      "run_id": "20592dbb-482d-4570-953e-157b90ec3eb5"
+    },
+    {
+      "case": "tests/test_android_regression.py::test_empty_search_and_recovery[marketplace]",
+      "phase": "call",
+      "status": "Pass",
+      "duration_seconds": 7.1,
+      "run_id": "20592dbb-482d-4570-953e-157b90ec3eb5"
+    },
+    {
+      "case": "tests/test_android_regression.py::test_search_known_title[closet]",
+      "phase": "call",
+      "status": "Pass",
+      "duration_seconds": 4.2,
+      "run_id": "20592dbb-482d-4570-953e-157b90ec3eb5"
+    },
+    {
+      "case": "tests/test_android_regression.py::test_search_known_title[marketplace]",
+      "phase": "call",
+      "status": "Blocked",
+      "duration_seconds": 0.0,
+      "reason": "missing Android fixture marketplace_listing",
+      "run_id": "20592dbb-482d-4570-953e-157b90ec3eb5"
+    },
+    {
+      "case": "tests/test_android_regression.py::test_closet_search_metadata[brand]",
+      "phase": "call",
+      "status": "Pass",
+      "duration_seconds": 4.37,
+      "run_id": "20592dbb-482d-4570-953e-157b90ec3eb5"
+    },
+    {
+      "case": "tests/test_android_regression.py::test_closet_search_metadata[category]",
+      "phase": "call",
+      "status": "Pass",
+      "duration_seconds": 3.6,
+      "run_id": "20592dbb-482d-4570-953e-157b90ec3eb5"
+    },
+    {
+      "case": "tests/test_android_regression.py::test_search_review_navigation",
+      "phase": "call",
+      "status": "Pass",
+      "duration_seconds": 15.71,
+      "run_id": "20592dbb-482d-4570-953e-157b90ec3eb5"
+    },
+    {
+      "case": "tests/test_android_regression.py::test_marketplace_detail_gallery",
+      "phase": "call",
+      "status": "Blocked",
+      "duration_seconds": 0.0,
+      "reason": "missing Android fixture marketplace_listing",
+      "run_id": "20592dbb-482d-4570-953e-157b90ec3eb5"
+    },
+    {
+      "case": "tests/test_android_regression.py::test_profile_sections[Account-First Name]",
+      "phase": "call",
+      "status": "Pass",
+      "duration_seconds": 3.86,
+      "run_id": "20592dbb-482d-4570-953e-157b90ec3eb5"
+    },
+    {
+      "case": "tests/test_android_regression.py::test_profile_sections[Security-Verified Sign-in Email]",
+      "phase": "call",
+      "status": "Pass",
+      "duration_seconds": 6.74,
+      "run_id": "20592dbb-482d-4570-953e-157b90ec3eb5"
+    },
+    {
+      "case": "tests/test_android_regression.py::test_profile_sections[Style-Style Preferences]",
+      "phase": "call",
+      "status": "Pass",
+      "duration_seconds": 7.49,
+      "run_id": "20592dbb-482d-4570-953e-157b90ec3eb5"
+    },
+    {
+      "case": "tests/test_android_regression.py::test_profile_sections[Shipping-Shipping Addresses]",
+      "phase": "call",
+      "status": "Pass",
+      "duration_seconds": 5.08,
+      "run_id": "20592dbb-482d-4570-953e-157b90ec3eb5"
+    },
+    {
+      "case": "tests/test_android_regression.py::test_profile_sections[Subscription-Payment Methods]",
+      "phase": "call",
+      "status": "Pass",
+      "duration_seconds": 7.36,
+      "run_id": "20592dbb-482d-4570-953e-157b90ec3eb5"
+    },
+    {
+      "case": "tests/test_android_regression.py::test_notification_history",
+      "phase": "call",
+      "status": "Pass",
+      "duration_seconds": 5.97,
+      "run_id": "6e980389-92c4-412d-be20-738b773a352e"
+    },
+    {
+      "case": "tests/test_android_regression.py::test_resume_session",
+      "phase": "call",
+      "status": "Pass",
+      "duration_seconds": 5.18,
+      "run_id": "20592dbb-482d-4570-953e-157b90ec3eb5"
+    },
+    {
+      "case": "tests/test_android_regression.py::test_signout",
+      "phase": "call",
+      "status": "Pass",
+      "duration_seconds": 9.88,
+      "run_id": "20592dbb-482d-4570-953e-157b90ec3eb5"
+    },
+    {
+      "case": "tests/test_android_regression.py::test_create_without_photos",
+      "phase": "call",
+      "status": "Pass",
+      "duration_seconds": 4.72,
+      "run_id": "4b2f1a44-ccc1-40aa-addd-a5cbdb4f7da3"
+    },
+    {
+      "case": "tests/test_android_regression.py::test_assistant_open_close",
+      "phase": "call",
+      "status": "Pass",
+      "duration_seconds": 6.95,
+      "run_id": "20592dbb-482d-4570-953e-157b90ec3eb5"
+    },
+    {
+      "case": "tests/test_android_regression.py::test_pricing_review_blocks_publication",
+      "phase": "call",
+      "status": "Pass",
+      "duration_seconds": 37.13,
+      "run_id": "4b2f1a44-ccc1-40aa-addd-a5cbdb4f7da3"
+    },
+    {
+      "case": "tests/test_android_regression.py::test_second_account_private_isolation",
+      "phase": "call",
+      "status": "Blocked",
+      "duration_seconds": 0.0,
+      "reason": "second dedicated staging account secret not configured",
+      "run_id": "20592dbb-482d-4570-953e-157b90ec3eb5"
+    },
+    {
+      "case": "tests/test_android_regression.py::test_second_account_published_gallery[include]",
+      "phase": "call",
+      "status": "Blocked",
+      "duration_seconds": 0.0,
+      "reason": "second dedicated staging account secret not configured",
+      "run_id": "20592dbb-482d-4570-953e-157b90ec3eb5"
+    },
+    {
+      "case": "tests/test_android_regression.py::test_second_account_published_gallery[exclude]",
+      "phase": "call",
+      "status": "Blocked",
+      "duration_seconds": 0.0,
+      "reason": "missing Android fixture published_exclude",
+      "run_id": "20592dbb-482d-4570-953e-157b90ec3eb5"
+    },
+    {
+      "case": "tests/test_android_regression.py::test_trade_inbox_filters[Active]",
+      "phase": "call",
+      "status": "Pass",
+      "duration_seconds": 3.38,
+      "run_id": "20592dbb-482d-4570-953e-157b90ec3eb5"
+    },
+    {
+      "case": "tests/test_android_regression.py::test_trade_inbox_filters[Closed]",
+      "phase": "call",
+      "status": "Pass",
+      "duration_seconds": 3.23,
+      "run_id": "20592dbb-482d-4570-953e-157b90ec3eb5"
+    },
+    {
+      "case": "tests/test_android_regression.py::test_invalid_signin",
+      "phase": "call",
+      "status": "Pass",
+      "duration_seconds": 19.08,
+      "run_id": "6e980389-92c4-412d-be20-738b773a352e"
+    },
+    {
+      "case": "tests/test_android_regression.py::test_required_signin_fields[]",
+      "phase": "call",
+      "status": "Pass",
+      "duration_seconds": 13.95,
+      "run_id": "fda90d39-831c-4786-8edd-fece9ec0b51c"
+    },
+    {
+      "case": "tests/test_android_regression.py::test_required_signin_fields[not-an-email]",
+      "phase": "call",
+      "status": "Pass",
+      "duration_seconds": 14.14,
+      "run_id": "fda90d39-831c-4786-8edd-fece9ec0b51c"
+    },
+    {
+      "case": "tests/test_android_workflows.py::test_controlled_workflow[registration]",
+      "phase": "call",
+      "status": "Blocked",
+      "duration_seconds": 0.0,
+      "qa_case_id": "QA-008",
+      "reason": "missing workflow environment reference email_env",
+      "run_id": "4b2f1a44-ccc1-40aa-addd-a5cbdb4f7da3"
+    },
+    {
+      "case": "tests/test_android_workflows.py::test_controlled_workflow[password_recovery]",
+      "phase": "call",
+      "status": "Blocked",
+      "duration_seconds": 0.0,
+      "qa_case_id": "QA-005",
+      "reason": "missing workflow environment reference email_env",
+      "run_id": "4b2f1a44-ccc1-40aa-addd-a5cbdb4f7da3"
+    },
+    {
+      "case": "tests/test_android_workflows.py::test_controlled_workflow[profile_save_restore]",
+      "phase": "call",
+      "status": "Blocked",
+      "duration_seconds": 0.0,
+      "qa_case_id": "QA-050",
+      "reason": "staging account A observer token is required",
+      "run_id": "20592dbb-482d-4570-953e-157b90ec3eb5"
+    },
+    {
+      "case": "tests/test_android_workflows.py::test_controlled_workflow[style_matching]",
+      "phase": "call",
+      "status": "Blocked",
+      "duration_seconds": 0.0,
+      "qa_case_id": "QA-040",
+      "reason": "missing workflow fixture field source_title",
+      "run_id": "20592dbb-482d-4570-953e-157b90ec3eb5"
+    },
+    {
+      "case": "tests/test_android_workflows.py::test_controlled_workflow[edit_save_restore]",
+      "phase": "call",
+      "status": "Blocked",
+      "duration_seconds": 0.0,
+      "qa_case_id": "QA-036",
+      "reason": "staging account A observer token is required",
+      "run_id": "20592dbb-482d-4570-953e-157b90ec3eb5"
+    },
+    {
+      "case": "tests/test_android_workflows.py::test_controlled_workflow[delete_disposable]",
+      "phase": "call",
+      "status": "Blocked",
+      "duration_seconds": 0.0,
+      "qa_case_id": "QA-038",
+      "reason": "missing workflow fixture field title",
+      "run_id": "20592dbb-482d-4570-953e-157b90ec3eb5"
+    },
+    {
+      "case": "tests/test_android_workflows.py::test_controlled_workflow[like_restore]",
+      "phase": "call",
+      "status": "Blocked",
+      "duration_seconds": 0.0,
+      "qa_case_id": "QA-041",
+      "reason": "missing workflow fixture field title",
+      "run_id": "20592dbb-482d-4570-953e-157b90ec3eb5"
+    },
+    {
+      "case": "tests/test_android_workflows.py::test_controlled_workflow[trade_send]",
+      "phase": "call",
+      "status": "Blocked",
+      "duration_seconds": 0.0,
+      "qa_case_id": "QA-042",
+      "reason": "missing workflow fixture field target_title",
+      "run_id": "20592dbb-482d-4570-953e-157b90ec3eb5"
+    },
+    {
+      "case": "tests/test_android_workflows.py::test_controlled_workflow[trade_decline]",
+      "phase": "call",
+      "status": "Blocked",
+      "duration_seconds": 0.0,
+      "qa_case_id": "QA-043",
+      "reason": "missing workflow fixture field offer_id",
+      "run_id": "20592dbb-482d-4570-953e-157b90ec3eb5"
+    },
+    {
+      "case": "tests/test_android_workflows.py::test_controlled_workflow[trade_accept]",
+      "phase": "call",
+      "status": "Blocked",
+      "duration_seconds": 0.0,
+      "qa_case_id": "QA-044",
+      "reason": "missing workflow fixture field offer_id",
+      "run_id": "20592dbb-482d-4570-953e-157b90ec3eb5"
+    },
+    {
+      "case": "tests/test_android_workflows.py::test_controlled_workflow[trade_stale_action]",
+      "phase": "call",
+      "status": "Blocked",
+      "duration_seconds": 0.0,
+      "qa_case_id": "QA-045",
+      "reason": "missing workflow fixture field offer_id",
+      "run_id": "20592dbb-482d-4570-953e-157b90ec3eb5"
+    },
+    {
+      "case": "tests/test_android_workflows.py::test_controlled_workflow[shipping_address_save_restore]",
+      "phase": "call",
+      "status": "Blocked",
+      "duration_seconds": 0.0,
+      "qa_case_id": "QA-046",
+      "reason": "staging account A observer token is required",
+      "run_id": "20592dbb-482d-4570-953e-157b90ec3eb5"
+    },
+    {
+      "case": "tests/test_android_workflows.py::test_controlled_workflow[shipping_quote_label]",
+      "phase": "call",
+      "status": "Blocked",
+      "duration_seconds": 0.0,
+      "qa_case_id": "QA-047",
+      "reason": "missing workflow fixture field offer_id",
+      "run_id": "20592dbb-482d-4570-953e-157b90ec3eb5"
+    },
+    {
+      "case": "tests/test_android_workflows.py::test_controlled_workflow[payment_add_default_remove]",
+      "phase": "call",
+      "status": "Blocked",
+      "duration_seconds": 0.0,
+      "qa_case_id": "QA-048",
+      "reason": "staging account A observer token is required",
+      "run_id": "20592dbb-482d-4570-953e-157b90ec3eb5"
+    },
+    {
+      "case": "tests/test_android_workflows.py::test_controlled_workflow[subscription_change_cancel]",
+      "phase": "call",
+      "status": "Blocked",
+      "duration_seconds": 0.0,
+      "qa_case_id": "QA-049",
+      "reason": "staging account A observer token is required",
+      "run_id": "20592dbb-482d-4570-953e-157b90ec3eb5"
+    },
+    {
+      "case": "tests/test_android_workflows.py::test_controlled_workflow[push_delivery]",
+      "phase": "call",
+      "status": "Blocked",
+      "duration_seconds": 0.0,
+      "qa_case_id": "QA-053",
+      "reason": "missing workflow fixture field listing_id",
+      "run_id": "20592dbb-482d-4570-953e-157b90ec3eb5"
+    },
+    {
+      "case": "tests/test_android_workflows.py::test_controlled_workflow[photo_permission_recovery]",
+      "phase": "call",
+      "status": "Pass",
+      "duration_seconds": 56.03,
+      "qa_case_id": "QA-017",
+      "run_id": "fda90d39-831c-4786-8edd-fece9ec0b51c"
+    },
+    {
+      "case": "tests/test_android_workflows.py::test_controlled_workflow[camera_capture]",
+      "phase": "call",
+      "status": "Pass",
+      "duration_seconds": 64.04,
+      "qa_case_id": "QA-016",
+      "run_id": "4b2f1a44-ccc1-40aa-addd-a5cbdb4f7da3"
+    },
+    {
+      "case": "tests/test_android_workflows.py::test_controlled_workflow[offline_recovery]",
+      "phase": "call",
+      "status": "Blocked",
+      "duration_seconds": 0.0,
+      "qa_case_id": "QA-059",
+      "reason": "staging account A observer token is required",
+      "run_id": "20592dbb-482d-4570-953e-157b90ec3eb5"
+    },
+    {
+      "case": "tests/test_android_workflows.py::test_controlled_workflow[background_analysis]",
+      "phase": "call",
+      "status": "Blocked",
+      "duration_seconds": 0.0,
+      "qa_case_id": "QA-060",
+      "reason": "staging account A observer token is required",
+      "run_id": "20592dbb-482d-4570-953e-157b90ec3eb5"
+    },
+    {
+      "case": "tests/test_android_workflows.py::test_controlled_workflow[assistant_listing]",
+      "phase": "call",
+      "status": "Blocked",
+      "duration_seconds": 0.0,
+      "qa_case_id": "QA-058",
+      "reason": "missing workflow fixture field answer_fragment",
+      "run_id": "20592dbb-482d-4570-953e-157b90ec3eb5"
+    },
+    {
+      "case": "tests/test_review_publish.py::test_review_and_publish",
+      "phase": "call",
+      "status": "Pass",
+      "duration_seconds": 194.75,
+      "run_id": "950346ce-ba47-4536-aba3-315af9719629"
+    }
+  ]
+}

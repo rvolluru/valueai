@@ -44,6 +44,11 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+    entrupy_enabled: bool = False
+    entrupy_api_token: str | None = None
+    entrupy_item_namespace: str = "jouft-local"
+    entrupy_timeout_s: float = Field(default=20, gt=0, le=60)
+
     app_env: str = "local"
     aws_region: str = "us-east-1"
     api_key: str = "local-dev-key"

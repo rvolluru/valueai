@@ -6482,11 +6482,6 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
           </View>
         </View>
       </Modal>
-      {activeTab !== 'create' && <TouchableOpacity style={styles.appAssistantLauncher} onPress={() => setAppAssistantOpen(true)} accessibilityRole="button" accessibilityLabel="Open Jouft assistant">
-        <View style={styles.appAssistantLogoJ} pointerEvents="none" accessible={false}>
-          <Image source={JOUFT_LOGO_IMAGE} style={styles.appAssistantLogoImage} resizeMode="stretch" accessible={false} />
-        </View>
-      </TouchableOpacity>}
       <Modal visible={appAssistantOpen} animationType="slide" onRequestClose={() => setAppAssistantOpen(false)}>
         <SafeAreaProvider>
         <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={0}>
@@ -6595,6 +6590,14 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
           </View>}
         </SafeAreaView></SafeAreaProvider>
       </Modal>
+      {/* Keep the launcher in the footer's coordinate space. The safe-area
+          padding and navigation height are then handled by normal layout. */}
+      <View>
+      {activeTab !== 'create' && <View pointerEvents="box-none" style={styles.appAssistantLauncherRow}><TouchableOpacity style={styles.appAssistantLauncher} onPress={() => setAppAssistantOpen(true)} accessibilityRole="button" accessibilityLabel="Open Jouft assistant">
+        <View style={styles.appAssistantLogoJ} pointerEvents="none" accessible={false}>
+          <Image source={JOUFT_LOGO_IMAGE} style={styles.appAssistantLogoImage} resizeMode="stretch" accessible={false} />
+        </View>
+      </TouchableOpacity></View>}
       {!tradeComposerTarget && !selectedOffer && activeTab !== 'create' ? (
         <View style={styles.tabContainer}>
           {TABS.map((tab) => (
@@ -6602,6 +6605,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
           ))}
         </View>
       ) : null}
+      </View>
     </SafeAreaView>
   );
 }
@@ -9835,10 +9839,11 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   emptyText: { color: '#7a7167', textAlign: 'center', paddingVertical: 10 },
+  appAssistantLauncherRow: { height: 62 },
   appAssistantLauncher: {
     position: 'absolute',
     right: 18,
-    bottom: 84,
+    bottom: 12,
     zIndex: 40,
     width: 50,
     height: 50,

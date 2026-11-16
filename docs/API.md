@@ -225,3 +225,19 @@ Deployed to staging and production November 2, 2026.
   also supports one-click email-client POSTs.
 
 See [daily match feed behavior and rollout](DAILY_MATCH_FEED.md).
+
+## Entrupy item authentication (paused locally, not deployed)
+
+As of November 15, 2026, this router is unregistered; these endpoints are unavailable
+in the current source configuration even if `ENTRUPY_ENABLED=true`. The contracts
+below describe retained dormant code. No deployed API was changed.
+
+Clerk bearer token and listing ownership required:
+
+- `POST /v1/listings/{listing_id}/authentication/authorize` accepts
+  `sdk_authorization_request`; returns `signed_authorization_request` and
+  server-derived capture `metadata`.
+- `GET /v1/listings/{listing_id}/authentication` returns the live Entrupy result,
+  final/authenticated booleans, retake state and eligible certificate URL.
+
+No listing writes or publication changes. See [setup and contracts](ENTRUPY_INTEGRATION.md).

@@ -1,0 +1,15 @@
+{
+  "run_id": "20592dbb-482d-4570-953e-157b90ec3eb5",
+  "case": "tests/test_android_regression.py::test_pricing_review_blocks_publication",
+  "phase": "call",
+  "status": "Fail",
+  "duration_seconds": 37.5,
+  "error_type": "TimeoutException",
+  "failure_sites": [
+    {
+      "file": "test_android_regression.py",
+      "function": "test_pricing_review_blocks_publication",
+      "line": 149
+    }
+  ]
+}

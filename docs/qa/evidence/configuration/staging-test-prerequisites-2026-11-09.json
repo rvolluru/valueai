@@ -1,0 +1,17 @@
+{
+  "app_env": "staging",
+  "stripe_secret_mode": "missing",
+  "stripe_publishable_mode": "missing",
+  "shippo_mode": "missing",
+  "clerk_observer_configured": false,
+  "listing_agent": true,
+  "assistant_conversations": true,
+  "second_account_profile_present": true,
+  "checked_date": "2026-11-09",
+  "task_definition": "valueai-staging-api:22",
+  "primary_listing_count": 2,
+  "eligible_marketplace_fixture_count": 0,
+  "second_account_login_secret_configured": false,
+  "local_test_credentials_validated": true,
+  "staging_credentials_changed": false
+}

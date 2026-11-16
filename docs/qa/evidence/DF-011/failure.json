@@ -1,0 +1,26 @@
+{
+  "run_id": "20592dbb-482d-4570-953e-157b90ec3eb5",
+  "case": "tests/test_android_workflows.py::test_controlled_workflow[camera_capture]",
+  "phase": "call",
+  "status": "Fail",
+  "duration_seconds": 68.32,
+  "qa_case_id": "QA-016",
+  "error_type": "TimeoutException",
+  "failure_sites": [
+    {
+      "file": "test_android_workflows.py",
+      "function": "test_controlled_workflow",
+      "line": 697
+    },
+    {
+      "file": "test_android_workflows.py",
+      "function": "camera_capture",
+      "line": 520
+    },
+    {
+      "file": "android_ui.py",
+      "function": "wait",
+      "line": 75
+    }
+  ]
+}

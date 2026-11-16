@@ -5,6 +5,7 @@ import json
 import os
 import re
 import time
+import traceback
 import xml.etree.ElementTree as ET
 from pathlib import Path
 import subprocess
@@ -15,10 +16,17 @@ from appium.options.android import UiAutomator2Options
 from appium.options.ios import XCUITestOptions
 from appium.webdriver.common.appiumby import AppiumBy
 from selenium.webdriver.support.ui import WebDriverWait
+from android_ui import android_photo_thumbnails
 from selenium.common.exceptions import StaleElementReferenceException, WebDriverException
 
 
-def run_listing_flow(*, publish=False, existing=False):
+def new_listing_card_visible(before, after):
+    # RN prunes off-screen accessibility nodes: inserting a new first card need
+    # not increase the number of visible cards. An unchanged window is not proof.
+    return bool(after) and (len(after) > len(before) or not before or after[0] != before[0])
+
+
+def run_listing_flow(*, publish=False, existing=False, after_save=None):
     # Require explicit staging confirmation: this test creates a real saved listing.
     assert os.environ.get('JOUFT_TEST_TARGET') == 'staging', 'Set JOUFT_TEST_TARGET=staging'
     email = os.environ['JOUFT_TEST_EMAIL']
@@ -127,7 +135,7 @@ def run_listing_flow(*, publish=False, existing=False):
                     coords = [int(value) for value in re.findall(r'\d+', nodes[-1].attrib['bounds'])]
                     driver.execute_script('mobile: clickGesture', {
                         'x': (coords[0] + coords[2]) // 2,
-                        'y': (coords[1] + coords[3]) // 2,
+                        'y': coords[3] - max(1, (coords[3] - coords[1]) // 5),
                     })
                     for _ in range(5):
                         if visible(destination):
@@ -226,6 +234,12 @@ def run_listing_flow(*, publish=False, existing=False):
 
     def find_mannequin():
         text('Gallery', timeout=10, scroll=True)
+        # scrollIntoView only reveals the Gallery heading. The image and AI
+        # disclosure underneath can still be clipped below the viewport.
+        if not ios:
+            size = driver.get_window_size()
+            driver.swipe(size['width']//2, int(size['height']*.75),
+                         size['width']//2, int(size['height']*.38), 500)
         # At most six originals plus a generated preview. Inspect every page;
         # an extra image alone is not evidence of mannequin generation.
         for _ in range(8):
@@ -384,7 +398,7 @@ def run_listing_flow(*, publish=False, existing=False):
             text('Gallery', timeout=15, scroll=True)
             assert 'Image unavailable' not in screen_texts(), 'Listing gallery failed to load'
             # Reopen to bring review actions back into view after gallery inspection.
-            text('Back', timeout=15).click()
+            text('Back', timeout=15, scroll=not ios).click()
             text('My Closet', timeout=30)
             select_target().click()
             text('Listing Details', timeout=30)
@@ -403,7 +417,8 @@ def run_listing_flow(*, publish=False, existing=False):
                 'persisted_active_view': True,
             }, indent=2))
             return
-        existing_card_count = len(closet_cards())
+        card_label_attribute = 'name' if ios else 'content-desc'
+        existing_card_labels = [c.get_attribute(card_label_attribute) for c in closet_cards()]
         stage = 'opening create listing'
         navigate_tab('Create', 'Add Photos', timeout=90)
 
@@ -482,8 +497,7 @@ def run_listing_flow(*, publish=False, existing=False):
             stage = 'selecting gallery photos'
             text('Choose Photos', scroll=True).click()
             text('Photo library').click()
-            thumbnails = WebDriverWait(driver, 30).until(lambda d: d.find_elements(
-                AppiumBy.XPATH, '//*[contains(@resource-id,"icon_thumbnail")]') or False)
+            thumbnails = WebDriverWait(driver, 30).until(lambda d: android_photo_thumbnails(d) or False)
             assert len(thumbnails) == len(photos), 'Gallery must contain only the supplied fixture views'
             for thumbnail in thumbnails:
                 thumbnail.click()
@@ -502,22 +516,29 @@ def run_listing_flow(*, publish=False, existing=False):
         stage = 'saving listing'
         text('Create Listing').click()
         # The success notice is transient and can disappear during a re-render.
-        # Assert the persistent destination and an additional saved listing card.
+        # Assert the destination and a newly inserted first card even when the
+        # accessibility viewport contains the same number of cards.
         text('My Closet', timeout=180)
-        WebDriverWait(driver, 30).until(lambda d: len(closet_cards()) > existing_card_count)
+        WebDriverWait(driver, 60).until(lambda d: new_listing_card_visible(existing_card_labels,
+            [c.get_attribute(card_label_attribute) for c in closet_cards()]))
         driver.save_screenshot(str(artifacts / 'create-listing-success.png'))
+        if after_save is not None:
+            after_save(driver)
         stage = 'waiting for analysis and mannequin generation'
         timeout = int(os.environ.get('JOUFT_TEST_ANALYSIS_TIMEOUT', '900'))
         assert 60 <= timeout <= 1800, 'Analysis timeout must be between 60 and 1800 seconds'
         deadline = time.monotonic() + timeout
         last_summary = {}
+        generated_preview_waits = 0
         while time.monotonic() < deadline:
             # This dedicated account must have only one creating test at a time.
             # The API orders My Closet newest first, so reopen the newly saved
             # first card each poll rather than retaining a stale detail snapshot.
             cards = WebDriverWait(driver, 30).until(lambda d: closet_cards() or False)
             if not cards[0].is_enabled():
-                # Analyzing closet cards intentionally disable navigation.
+                # The row can remain an old snapshot after the creation timers
+                # expire; refresh while polling the server-backed closet.
+                text('Refresh', timeout=15).click()
                 time.sleep(10)
                 continue
             label = cards[0].get_attribute('name' if ios else 'content-desc') or ''
@@ -534,6 +555,8 @@ def run_listing_flow(*, publish=False, existing=False):
             assert not any('analysis failed' in value.lower() or
                            'unable to complete' in value.lower() for value in values), 'Listing analysis failed'
             if all(last_summary.values()):
+                generated_preview_ready = (visible('Publish with mannequin image')
+                                           and visible('Publish without mannequin image'))
                 driver.save_screenshot(str(artifacts / 'listing-analysis-success.png'))
                 if find_mannequin():
                     driver.save_screenshot(str(artifacts / 'listing-mannequin-success.png'))
@@ -545,7 +568,7 @@ def run_listing_flow(*, publish=False, existing=False):
                         # Return to the closet and exercise its actual review CTA,
                         # rather than publishing directly from an already open detail.
                         stage = 'opening Review and Publish'
-                        text('Back', timeout=15).click()
+                        text('Back', timeout=15, scroll=not ios).click()
                         text('My Closet', timeout=30)
                         text('Review and publish listing', timeout=30).click()
                         text('Listing Details', timeout=30)
@@ -569,18 +592,31 @@ def run_listing_flow(*, publish=False, existing=False):
                             'persisted_active_view': True, 'listing_title': title,
                         }, indent=2))
                     break
-            text('Back', timeout=15).click()
+                if generated_preview_ready:
+                    generated_preview_waits += 1
+                    if generated_preview_waits >= 3:
+                        (artifacts / 'listing-analysis-checks.json').write_text(json.dumps({
+                            **last_summary, 'mannequin_review_controls_ready': True,
+                            'mannequin_visible': False, 'ready_preview_polls': generated_preview_waits,
+                        }, indent=2))
+                        raise AssertionError('Generated preview is ready for review but its gallery disclosure was not found')
+            text('Back', timeout=15, scroll=not ios).click()
             text('My Closet', timeout=30)
-            # Closet polling refreshes background component results. Navigating
-            # away and back also refreshes after the core job has completed.
-            navigate_tab('Create', 'Add Photos')
-            navigate_tab('Closet', 'My Closet')
+            # Refresh the existing closet snapshot. Create is a modal without
+            # footer tabs, so opening it merely to refresh traps navigation.
+            text('Refresh', timeout=30).click()
             time.sleep(10)
         else:
             (artifacts / 'listing-analysis-checks.json').write_text(json.dumps(last_summary, indent=2))
             raise AssertionError('Analysis and visible mannequin preview did not complete before timeout')
 
     except Exception as exc:
+        (artifacts / 'listing-flow-failure.json').write_text(json.dumps({
+            'stage': stage, 'error_type': type(exc).__name__,
+            'sites': [{'file': Path(e.filename).name, 'function': e.name, 'line': e.lineno}
+                      for e in traceback.extract_tb(exc.__traceback__)
+                      if Path(e.filename).name in {'test_create_listing.py', 'android_ui.py'}],
+        }, indent=2))
         # Never record the authentication screen/password in failure artifacts.
         if driver.find_elements(AppiumBy.XPATH, '//*[@type="XCUIElementTypeSecureTextField"]' if ios else '//*[@password="true"]'):
             pytest.fail(f'Test stopped while {stage}; sensitive screen capture suppressed ({type(exc).__name__})', pytrace=False)

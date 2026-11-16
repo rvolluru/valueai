@@ -1,6 +1,6 @@
 {
   "environment": "staging",
-  "verified_build": "Set exact staging APK build ID before a run",
+  "verified_build": null,
   "reviewed_by": null,
   "closet_listing": null,
   "marketplace_listing": null,
@@ -9,5 +9,150 @@
   "private_listing": null,
   "published_include": null,
   "published_exclude": null,
-  "workflows": {}
+  "workflows": {
+    "registration": {
+      "email_env": "JOUFT_TEST_REGISTRATION_EMAIL",
+      "password_env": "JOUFT_TEST_REGISTRATION_PASSWORD",
+      "invite_policy": "open",
+      "disposable": true
+    },
+    "password_recovery": {
+      "email_env": "JOUFT_TEST_RECOVERY_EMAIL",
+      "password_env": "JOUFT_TEST_RECOVERY_PASSWORD",
+      "new_password_env": "JOUFT_TEST_RECOVERY_NEW_PASSWORD",
+      "disposable": true
+    },
+    "profile_save_restore": {
+      "first_name": "QA Workflow",
+      "style_option": "Classic",
+      "disposable": true
+    },
+    "style_matching": {
+      "source_title": null,
+      "eligible_title": null,
+      "ineligible_title": null,
+      "size_option": "US 8",
+      "size_field": "shoes_size",
+      "size_field_label": "Shoes Size",
+      "disposable": true
+    },
+    "edit_save_restore": {
+      "title": null,
+      "new_title": null,
+      "description": "Disposable QA persistence check",
+      "condition": "Like New",
+      "size": "M",
+      "disposable": true
+    },
+    "delete_disposable": {
+      "title": null,
+      "listing_id": null,
+      "sentinel_title": null,
+      "disposable": true
+    },
+    "like_restore": {
+      "title": null,
+      "disposable": true
+    },
+    "trade_send": {
+      "target_title": null,
+      "exchange_title": null,
+      "disposable": true
+    },
+    "trade_decline": {
+      "offer_id": null,
+      "target_title": null,
+      "disposable": true
+    },
+    "trade_accept": {
+      "offer_id": null,
+      "target_title": null,
+      "exchange_title": null,
+      "address_label": null,
+      "amount_label": null,
+      "disposable": true
+    },
+    "trade_stale_action": {
+      "offer_id": null,
+      "target_title": null,
+      "disposable": true
+    },
+    "shipping_address_save_restore": {
+      "address": {
+        "Label": "QA disposable address",
+        "Full Name": "QA Recipient",
+        "Address Line 1": "450 Serra Mall",
+        "City": "Stanford",
+        "State": "CA",
+        "Postal Code": "94305",
+        "Country": "US"
+      },
+      "disposable": true
+    },
+    "shipping_quote_label": {
+      "offer_id": null,
+      "target_title": null,
+      "quote_amount": null,
+      "currency": "USD",
+      "label_host": null,
+      "disposable": true
+    },
+    "payment_add_default_remove": {
+      "billing_name": "QA Sandbox",
+      "postal_code": "94305",
+      "disposable": true
+    },
+    "subscription_change_cancel": {
+      "plan_label": "$15 Plan",
+      "plan_key": "starter_15",
+      "amount_label": "$15 / month",
+      "disposable": true
+    },
+    "push_delivery": {
+      "listing_id": null,
+      "title": null,
+      "disposable": true
+    },
+    "photo_permission_recovery": {
+      "permission": "android.permission.READ_MEDIA_IMAGES",
+      "disposable": true
+    },
+    "camera_capture": {
+      "disposable": true
+    },
+    "offline_recovery": {
+      "title": null,
+      "disposable": true
+    },
+    "background_analysis": {
+      "disposable": true
+    },
+    "assistant_listing": {
+      "question": "How do I create a listing?",
+      "answer_fragment": null,
+      "listing_prompt": "Help me create a private listing",
+      "listing_response_fragment": null,
+      "facts": "Clothes, size M, Like new. Use the item shown in these photos.",
+      "disposable": true
+    }
+  },
+  "apk_sha256": null,
+  "api_origin": "https://staging.jouft.com",
+  "exclusive_accounts": true,
+  "accounts": {
+    "A": {
+      "subject": null
+    },
+    "B": {
+      "subject": null
+    }
+  },
+  "sandbox": {
+    "verified_by": null,
+    "verified_build": null,
+    "stripe_mode": null,
+    "shippo_mode": null
+  },
+  "config_sha256": null,
+  "js_bundle_sha256": null
 }
