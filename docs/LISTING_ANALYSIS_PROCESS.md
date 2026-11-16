@@ -8,13 +8,26 @@ and mobile. Marketplace results continue to include only active listings. Intern
 owner lookups retain archived records for trade history and ownership checks;
 archiving does not delete photos, analysis evidence, or existing trade records.
 
-Entrupy integration paused — November 15, 2026 (local change; not deployed):
+Production service release — November 15, 2026 (deployed and verified):
+release `55ced44`, [workflow `43805821295`](https://github.com/rvolluru/valueai/actions/runs/43805821295)
+succeeded. API revision 198 and analysis-worker revision 66 reached steady state;
+public health and final model/assistant smoke checks passed. Existing runtime
+settings and credential references were preserved. Entrupy remains disabled in
+this release; listing analysis and mannequin rules are unchanged. Android build 10
+and iOS build 68 contain the same disabled integration. Android is available by
+APK; iOS build 68 is verified VALID and IN_BETA_TESTING for internal TestFlight.
+The deployed image embeds the pre-verification guide; this status update and reader
+edition are recorded after verification for the next image.
+See [release verification](releases/PRODUCTION_2026-11-15.md).
+
+Entrupy integration paused — November 15, 2026 (production services deployed;
+Android APK available; iOS build 68 verified in internal TestFlight):
 seller authentication controls and the SDK sign-out hook are disconnected. The
 Entrupy API router is unregistered even if runtime credentials or the enable flag
 are present. Native autolinking excludes `jouft-entrupy`; Entrupy-specific iOS
 permission and build settings are removed. The source is retained but the flow
-below is dormant and unavailable in this source configuration. No deployed service
-or distributed mobile build was changed. Listing analysis, pricing, mannequin
+below is dormant and unavailable in this release. Production services and new mobile
+artifacts contain this configuration; already installed apps require an update. Listing analysis, pricing, mannequin
 review, and publication rules are unchanged.
 
 Retained Entrupy candidate — November 8, 2026 (disabled locally; never deployed):
@@ -220,7 +233,7 @@ provide Yes/No buttons for the current pending action. Yes follows the existing
 signed confirmation path; No cancels it. This does not bypass publication checks
 or change analysis or pricing.
 
-Updated November 7, 2026. This document explains the functional process: inputs,
+Updated November 15, 2026. This document explains the functional process: inputs,
 model calls, decisions, outputs and user review—not a reliability assessment.
 
 **Runtime packaging verified November 5, 2026 — `2b1d87c-runtimefix`:** Staging

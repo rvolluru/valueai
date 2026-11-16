@@ -226,11 +226,12 @@ Deployed to staging and production November 2, 2026.
 
 See [daily match feed behavior and rollout](DAILY_MATCH_FEED.md).
 
-## Entrupy item authentication (paused locally, not deployed)
+## Entrupy item authentication (disabled)
 
 As of November 15, 2026, this router is unregistered; these endpoints are unavailable
 in the current source configuration even if `ENTRUPY_ENABLED=true`. The contracts
-below describe retained dormant code. No deployed API was changed.
+below describe retained dormant code. Production release `55ced44` was deployed and verified on November 15, 2026;
+Entrupy routes remain absent from its live schema.
 
 Clerk bearer token and listing ownership required:
 

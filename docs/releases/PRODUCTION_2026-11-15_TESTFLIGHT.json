@@ -1,0 +1,16 @@
+{
+  "asc_app_id": "6791465341",
+  "requested_build": "68",
+  "builds": [
+    {
+      "id": "61fe776e-e212-420b-91df-d0b8b2aa15ea",
+      "version": "68",
+      "processing_state": "VALID",
+      "expired": false,
+      "internal_state": "IN_BETA_TESTING",
+      "external_state": "READY_FOR_BETA_SUBMISSION"
+    }
+  ],
+  "eas_submission_id": "e3897938-8031-4ee6-af83-fed82070bf94",
+  "eas_submission_status": "FINISHED"
+}

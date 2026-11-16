@@ -1,0 +1,15 @@
+{
+  "build_id": "acd85a35-f54c-4b7f-8da5-1b4e2351e49b",
+  "bundle_id": "com.jouft.app.dev",
+  "version": "1.0.0",
+  "build_number": "68",
+  "source_commit": "c4a57060f6e93a0136a7d72e302a2877a89748ee",
+  "sha256": "9a95b98c2dfd2d31fcddc5e2e6915deee6c37c4eee268b310f9f21e5b2f22dea",
+  "zip_integrity": "passed",
+  "api_base_url": "https://api.jouft.com",
+  "app_environment": "production",
+  "clerk_key_matches_production_aws": true,
+  "entrupy_seller_ui_absent": true,
+  "aps_environment": "production",
+  "profile_uuid": "b7d0d577-dfed-4f54-9048-cfb623d3d4d3"
+}

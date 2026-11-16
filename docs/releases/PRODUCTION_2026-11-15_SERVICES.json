@@ -1,0 +1,39 @@
+{
+  "source_commit": "55ced443ea9c990e12f33a4e2c135cf8b27e5f50",
+  "workflow_run": 43805821295,
+  "workflow_conclusion": "success",
+  "services": {
+    "valueai-mvp-api": {
+      "task_definition": "valueai-mvp-api:198",
+      "running_count": 2,
+      "desired_count": 2,
+      "rollout_states": [
+        "COMPLETED"
+      ],
+      "containers": [
+        {
+          "container": "api",
+          "image": "537595754494.dkr.ecr.us-east-1.amazonaws.com/valueai-mvp-api:prod-148-55ced443ea9c990e12f33a4e2c135cf8b27e5f50",
+          "environment_unchanged": true,
+          "secret_references_unchanged": true
+        }
+      ]
+    },
+    "valueai-mvp-analysis-worker": {
+      "task_definition": "valueai-mvp-analysis-worker:66",
+      "running_count": 2,
+      "desired_count": 2,
+      "rollout_states": [
+        "COMPLETED"
+      ],
+      "containers": [
+        {
+          "container": "analysis-worker",
+          "image": "537595754494.dkr.ecr.us-east-1.amazonaws.com/valueai-mvp-api:prod-148-55ced443ea9c990e12f33a4e2c135cf8b27e5f50",
+          "environment_unchanged": true,
+          "secret_references_unchanged": true
+        }
+      ]
+    }
+  }
+}

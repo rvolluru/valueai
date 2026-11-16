@@ -1,12 +1,14 @@
 # Entrupy integration
 
-Updated November 15, 2026. **Integration paused locally; not deployed.**
+Updated November 15, 2026. **Integration paused; production service deployment verified.**
 The seller controls and SDK sign-out hook have been disconnected, the API router
 is not registered (regardless of `ENTRUPY_ENABLED`), and Expo autolinking excludes
 `jouft-entrupy` on both platforms. Entrupy-specific iOS permission and native build
 settings have also been removed. No provider requests or SDK capture can be started
-through the application in this source configuration. Existing distributed builds
-and deployed services have not been changed.
+through the application in this source configuration. Production web/API and worker deployment `55ced44` was verified in workflow
+`43805821295`. New Android APK build 10 and iOS build 68 exclude the integration;
+iOS build 68 is verified available in internal TestFlight. Existing installed
+apps require an update. See [release verification](releases/PRODUCTION_2026-11-15.md).
 
 Source is retained for future work. The sections below describe the dormant
 candidate, not currently available features. Re-enabling requires restoring the

@@ -1,0 +1,21 @@
+{
+  "build_id": "69ce0f32-dc54-4664-88bc-10bff359c034",
+  "package": "com.jouft.app",
+  "version": "1.0.0",
+  "version_code": "10",
+  "source_commit": "55ced443ea9c990e12f33a4e2c135cf8b27e5f50",
+  "apk_url": "https://expo.dev/artifacts/eas/XxYILE9p8IO3VGSvwDobuUmleqpJHWJnk0QHGkqSrg8.apk",
+  "sha256": "b7dc773217ecdcd4d962ce6061e74427c0fef6075733f59970454417049d2553",
+  "zip_integrity": "passed",
+  "signature_verification": "passed",
+  "existing_signing_certificate_matches": true,
+  "certificate_sha256": "1c502054a1bad46096ea51847e2d2f5f3789c9f1b1bbb95faa9d033f2945bb24",
+  "entrupy_seller_ui_absent": true,
+  "embedded_config": {
+    "api_base_url": "https://api.jouft.com",
+    "app_environment": "production",
+    "app_variant": "production",
+    "clerk_key_present": true
+  },
+  "clerk_key_matches_production_aws": true
+}
