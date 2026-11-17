@@ -1,0 +1,8 @@
+{
+  "platform": "ios",
+  "zip_integrity": "passed",
+  "sha256": "fae5b04ed5bf1f868186b1cc87f7b65c1dbf3d8999d861688f1bcf48f75fe6bf",
+  "bundle_identifier": "com.jouft.app.dev",
+  "version": "1.0.0",
+  "build": "69"
+}

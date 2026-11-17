@@ -1,6 +1,6 @@
 # Jouft listing analysis: complete process
 
-Front-view mannequin alignment — November 17, 2026 (implemented locally, not deployed):
+Front-view mannequin alignment — November 17, 2026 (deployed and verified in production, release `55e275f`, workflow `44138546290`):
 generation explicitly requires the recognized front photo’s viewing direction and
 front details, without mirroring. Candidate review now separately checks
 `front_alignment` with visible evidence. Failed, uncertain, missing or unavailable
@@ -10,7 +10,7 @@ match the recognized front/front three-quarter view rather than show only heels.
 Fidelity metadata version is 4. Existing production images are not regenerated
 or replaced by this change.
 
-Listing issue controls — November 17, 2026 (implemented locally, not deployed):
+Listing issue controls — November 17, 2026 (web deployed in release `55e275f`; native build delivery recorded separately):
 web listing menus and native listing detail/match screens temporarily hide the
 Report Issue action. Existing reporting endpoints and stored reports remain
 unchanged. Help directs listing problems to support email with the listing ID or
@@ -758,9 +758,9 @@ applicable brand can generate warnings or an authenticity-receipt photo request.
 
 ## 8. Research and estimate value with OpenAI
 
-### Cettire source expansion (implemented locally; not deployed — November 17, 2026)
+### Cettire source expansion (deployed in production release `55e275f` — November 17, 2026)
 
-The pending source policy `approved-pricing-sources-v2` adds `cettire.com`, including
+The deployed source policy `approved-pricing-sources-v2` adds `cettire.com`, including
 `www` and other subdomains, to the approved comparable-search filter and server-side
 evidence validation. The seven resale sites below remain approved. Cettire is an
 additional multi-brand retail source, not an official brand site: only displayed
@@ -784,9 +784,8 @@ sites, plus a ninth request when an official brand is registered). Its `resale`
 source role means eligibility for the resale-valuation evidence pool; Cettire rows
 also carry their actual `source_market=retail` classification and the new-item
 asking-price checks. Research snapshot keys include the new source-policy version.
-The legacy Firecrawl agent classifies Cettire as a new/retail market. These changes
-are local source changes, not verified production behavior; the deployed policy
-is described below.
+The legacy Firecrawl agent classifies Cettire as a new/retail market. These changes were deployed in release `55e275f`; the source rules below describe
+the baseline resale allowlist, extended by this retail-only source.
 
 ### Approved sources (deployed and enforced in production)
 

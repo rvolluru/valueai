@@ -1,0 +1,31 @@
+{
+  "release": "55e275f74d6568a71640ca057378e30d46e6190b",
+  "workflow": "https://github.com/rvolluru/valueai/actions/runs/44138546290",
+  "services": [
+    {
+      "service": "valueai-mvp-api",
+      "task_definition": "valueai-mvp-api:199",
+      "running": 2,
+      "desired": 2,
+      "rollout_state": "COMPLETED",
+      "environment_and_secret_references_unchanged": true,
+      "images": [
+        "537595754494.dkr.ecr.us-east-1.amazonaws.com/valueai-mvp-api:prod-149-55e275f74d6568a71640ca057378e30d46e6190b"
+      ]
+    },
+    {
+      "service": "valueai-mvp-analysis-worker",
+      "task_definition": "valueai-mvp-analysis-worker:67",
+      "running": 2,
+      "desired": 2,
+      "rollout_state": "COMPLETED",
+      "environment_and_secret_references_unchanged": true,
+      "images": [
+        "537595754494.dkr.ecr.us-east-1.amazonaws.com/valueai-mvp-api:prod-149-55e275f74d6568a71640ca057378e30d46e6190b"
+      ]
+    }
+  ],
+  "health": {
+    "status": "ok"
+  }
+}
