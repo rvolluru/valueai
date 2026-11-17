@@ -16,7 +16,8 @@
     "eas:build:android:production": "node scripts/eas-release.cjs build android production",
     "eas:submit:ios:staging": "node scripts/eas-release.cjs submit ios staging",
     "eas:submit:ios": "node scripts/eas-release.cjs submit ios production",
-    "eas:submit:android": "node scripts/eas-release.cjs submit android production"
+    "eas:submit:android": "node scripts/eas-release.cjs submit android production",
+    "eas:build:ios:simulator": "node scripts/eas-release.cjs build ios production-simulator"
   },
   "dependencies": {
     "@clerk/clerk-expo": "^2.19.31",

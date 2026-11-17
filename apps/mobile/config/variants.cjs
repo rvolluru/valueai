@@ -3,7 +3,9 @@ const PRODUCTION_API = 'https://api.jouft.com';
 function buildVariant(config, env = process.env) {
   const profile = env.APP_ENV || 'development';
   if (!['development', 'staging', 'production'].includes(profile)) throw Error('Unknown APP_ENV');
-  if (env.EAS_BUILD_PROFILE && env.EAS_BUILD_PROFILE !== profile) throw Error('Build profile and APP_ENV must match');
+  const productionSimulator = env.EAS_BUILD_PROFILE === 'production-simulator' && profile === 'production'
+    && (!env.EAS_BUILD_PLATFORM || env.EAS_BUILD_PLATFORM === 'ios');
+  if (env.EAS_BUILD_PROFILE && env.EAS_BUILD_PROFILE !== profile && !productionSimulator) throw Error('Build profile and APP_ENV must match');
   const production = profile === 'production';
   const api = profile === 'development' ? env.EXPO_PUBLIC_API_BASE_URL || 'http://127.0.0.1:8000'
     : production ? PRODUCTION_API : env.JOUFT_STAGING_API_URL;

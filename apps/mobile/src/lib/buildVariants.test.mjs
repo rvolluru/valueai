@@ -12,8 +12,8 @@ const eas = require('../../eas.json');
 const staging = { APP_ENV: 'staging', JOUFT_STAGING_API_URL: 'https://staging.example.test', JOUFT_STAGING_CLERK_PUBLISHABLE_KEY: 'pk_test_example' };
 const production = { APP_ENV: 'production', JOUFT_PRODUCTION_CLERK_PUBLISHABLE_KEY: 'pk_live_example' };
 
-test('three profiles map to exactly two separate native identities and schemes', () => {
-  assert.deepEqual(Object.keys(eas.build), ['development', 'staging', 'production']);
+test('build profiles map to exactly two separate native identities and schemes', () => {
+  assert.deepEqual(Object.keys(eas.build), ['development', 'staging', 'production', 'production-simulator']);
   for (const env of [{ APP_ENV: 'development' }, staging, production]) {
     const config = buildVariant(base, env);
     const live = env.APP_ENV === 'production';
@@ -79,5 +79,27 @@ test('production submission refuses to reuse or infer the testing App Store reco
     }
   } finally {
     rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('production simulator is standalone and preserves production API/auth guards', () => {
+  const simulator = eas.build['production-simulator'];
+  assert.equal(simulator.extends, 'production');
+  assert.equal(simulator.environment, 'production');
+  assert.equal(simulator.developmentClient, false);
+  assert.equal(simulator.autoIncrement, false);
+  assert.equal(simulator.ios.simulator, true);
+  assert.equal(simulator.ios.buildConfiguration, 'Release');
+  const env = { ...production, EAS_BUILD_PROFILE: 'production-simulator', EAS_BUILD_PLATFORM: 'ios' };
+  const config = buildVariant(base, env);
+  assert.equal(config.ios.bundleIdentifier, 'com.jouft.app');
+  assert.equal(config.extra.apiBaseUrl, 'https://api.jouft.com');
+  assert.equal(config.extra.clerkPublishableKey, production.JOUFT_PRODUCTION_CLERK_PUBLISHABLE_KEY);
+  assert.throws(() => buildVariant(base, { ...env, APP_ENV: 'staging' }), /must match/);
+  assert.throws(() => buildVariant(base, { ...env, EAS_BUILD_PLATFORM: 'android' }), /must match/);
+  for (const [action, platform] of [['submit', 'ios'], ['build', 'android']]) {
+    const result = spawnSync(process.execPath, [new URL('../../scripts/eas-release.cjs', import.meta.url).pathname, action, platform, 'production-simulator'], { encoding: 'utf8' });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /only supports iOS builds/);
   }
 });
