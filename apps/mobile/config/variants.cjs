@@ -38,9 +38,9 @@ function buildVariant(config, env = process.env) {
     }
     if (env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY && env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY !== key) throw Error('Conflicting Clerk configuration');
   }
-  const identifier = production ? 'com.jouft.app' : 'com.jouft.app.dev';
+  const identifier = 'com.jouft.app.dev'; // Preserve the existing TestFlight application identity.
   return {
-    ...config, name: production ? 'JOUFT' : 'Jouft Testing', version: production ? '1.0.0' : '0.1.0', scheme: identifier,
+    ...config, name: 'Jouft Testing', version: production ? '1.0.0' : '0.1.0', scheme: identifier,
     ios: { ...config.ios, bundleIdentifier: identifier }, android: { ...config.android, package: identifier },
     plugins: [...(config.plugins || []), ['expo-dev-client', { addGeneratedScheme: profile === 'development' }]],
     extra: { ...config.extra, appEnvironment: profile, appVariant: production ? 'production' : 'testing',
