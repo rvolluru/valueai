@@ -1,0 +1,27 @@
+{
+  "build_id": "5f92430a-a951-4a41-a40c-fa674934b779",
+  "source_commit": "907e8271d09ef41d74b45385efea7aca2ce34d72",
+  "is_simulator": true,
+  "bundle_id": "com.jouft.app",
+  "version": "1.0.0",
+  "build_number": "1",
+  "minimum_ios": "15.1",
+  "architectures": [
+    "x86_64",
+    "arm64"
+  ],
+  "archive_url": "https://expo.dev/artifacts/eas/9XskqMmEYU7wbcgwxcujMOtXhkqu4HxXeqfDqLX9kh0.tar.gz",
+  "archive_sha256": "3d4f1fb73e7e7713480c117e6484367b5c1a4db37996a789bb7f9786496c73ef",
+  "api_base_url": "https://api.jouft.com",
+  "app_environment": "production",
+  "clerk_key_matches_production_aws": true,
+  "javascript_bundled": true,
+  "entrupy_seller_ui_absent": true,
+  "simulator_install": "passed",
+  "simulator_launch": "home_screen_rendered",
+  "test_device": "iPhone 17 Pro",
+  "test_runtime": "26.3.1",
+  "standalone_launch_verified": true,
+  "host_tests_passed": 43,
+  "scope": "Install and signed-out landing-screen smoke check only; no authenticated workflow or production data mutations."
+}
