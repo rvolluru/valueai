@@ -3,7 +3,7 @@ import re
 import unicodedata
 from urllib.parse import urlsplit
 
-SOURCE_POLICY_VERSION = "approved-pricing-sources-v1"
+SOURCE_POLICY_VERSION = "approved-pricing-sources-v2"
 RESALE_DOMAINS = (
     "therealreal.com", "poshmark.com", "poshmark.ca",
     "vestiairecollective.com", "rebag.com", "depop.com",
@@ -12,6 +12,19 @@ RESALE_DOMAINS = (
     "ebay.com", "ebay.co.uk", "ebay.ca", "ebay.com.au", "ebay.de",
     "ebay.fr", "ebay.it", "ebay.es",
 )
+
+
+# Retailers can supply new-item asking comparables, never invented used/sold
+# prices or official-brand MSRP. Keep their market role explicit.
+RETAIL_COMPARABLE_DOMAINS = ("cettire.com",)
+COMPARABLE_DOMAINS = (*RESALE_DOMAINS, *RETAIL_COMPARABLE_DOMAINS)
+
+
+def retail_comparable_rejection(row):
+    if url_in_domains(row.get("url"), RETAIL_COMPARABLE_DOMAINS):
+        if row.get("price_type") != "asking" or row.get("condition") not in {"New", "NewWithTags"}:
+            return "retail_listing_requires_new_asking_price"
+    return None
 
 
 def brand_key(value):
@@ -43,7 +56,7 @@ def official_domains(identity):
 
 
 def allowed_domains(identity):
-    return [*RESALE_DOMAINS, *official_domains(identity)]
+    return [*COMPARABLE_DOMAINS, *official_domains(identity)]
 
 
 def url_in_domains(url, domains):
@@ -63,6 +76,10 @@ def source_prompt(identity):
     return (
         "MANDATORY SOURCE RESTRICTIONS (override all other source suggestions): "
         "Resale evidence must come ONLY from these approved domains: " + ", ".join(RESALE_DOMAINS) + ". "
+        "Approved multi-brand retail listing domains: " + ", ".join(RETAIL_COMPARABLE_DOMAINS) + ". "
+        "Cettire may supply displayed regular new-item asking comparables only: price_type asking, "
+        "condition New (NewWithTags only with explicit evidence). Never label retail listings used or sold; "
+        "explain condition differences when estimating a used item. These prices are not official-brand MSRP. "
         "Official brand domains for this image-analysis identity: " + (", ".join(official) or "none registered") + ". "
         "Use official brand sites only for product identity, specifications and original full retail price, "
         "never as resale anchors. Do not guess official sites or use other brands' sites. "

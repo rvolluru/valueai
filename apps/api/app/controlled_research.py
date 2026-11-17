@@ -14,10 +14,14 @@ from datetime import datetime, timezone
 
 from .db import Database, utc_now_iso
 from .pricing_evidence import PRODUCT_FAMILIES, retrieved_urls, search_titles, source_identity_support, tokens, url_key
-from .pricing_sources import RESALE_DOMAINS, SOURCE_POLICY_VERSION, brand_key, official_domains, url_in_domains
+from .pricing_sources import (
+    RESALE_DOMAINS, RETAIL_COMPARABLE_DOMAINS, SOURCE_POLICY_VERSION,
+    retail_comparable_rejection, brand_key, official_domains, url_in_domains,
+)
 
 VERSION = "controlled-research-snapshot-v2"
 SITES = {
+    "Cettire": RETAIL_COMPARABLE_DOMAINS,
     "The RealReal": ("therealreal.com",),
     "Poshmark": ("poshmark.com", "poshmark.ca"),
     "Vestiaire Collective": ("vestiairecollective.com",),
@@ -68,6 +72,9 @@ def research_payload(plan, identity, model):
             "Extract displayed regular USD prices, not promotional/offer prices, crossed-out prices or assumed final payments. "
             "Sold displayed prices are not proof of payment. Copy a short price-containing excerpt into price_quote. "
             "No currency conversion. Inaccessible or unpriced pages must have null price and unknown price_type. "
+            "Cettire is a retail market: report only regular new-item asking prices, price_type asking, "
+            "condition New or explicitly evidenced NewWithTags. Never report used/sold prices from Cettire. "
+            "Explain condition differences; its prices are not original MSRP. "
             "Official brand pages are retail context only, not resale prices or automatically exact MSRP. "
             "No category/search pages. Return no candidates if unsupported; explain in coverage_notes. "
             "Include native URL citations for retrieval provenance."),
@@ -94,6 +101,8 @@ def candidate_rejection(row, plan, identity, retrieved):
         return "no_positive_displayed_price"
     if row.get("currency") != "USD":
         return "non_usd_price"
+    if retail_comparable_rejection(row):
+        return retail_comparable_rejection(row)
     if row.get("price_type") not in ({"retail"} if plan["role"] == "retail" else {"asking", "sold_displayed"}):
         return "wrong_price_type_for_source_role"
     numbers = [float(s.replace(",", "")) for s in re.findall(r"\d[\d,]*(?:\.\d+)?", row.get("price_quote") or "")]
@@ -129,6 +138,8 @@ def shared_evidence(artifact):
             if reason:
                 rejected.append(dict(site=research["plan"]["site"], url=row.get("url"), reason=reason))
                 continue
+            if url_in_domains(row.get("url"), RETAIL_COMPARABLE_DOMAINS):
+                row["source_market"] = "retail"
             row.update(url=canonical_url(row["url"]), site=research["plan"]["site"], source_role=research["plan"]["role"],
                 verification="Provider-retrieved URL and model-reported price excerpt; no independent price verification")
             old = pool.get(row["url"])

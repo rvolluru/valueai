@@ -741,6 +741,36 @@ applicable brand can generate warnings or an authenticity-receipt photo request.
 
 ## 8. Research and estimate value with OpenAI
 
+### Cettire source expansion (implemented locally; not deployed — November 17, 2026)
+
+The pending source policy `approved-pricing-sources-v2` adds `cettire.com`, including
+`www` and other subdomains, to the approved comparable-search filter and server-side
+evidence validation. The seven resale sites below remain approved. Cettire is an
+additional multi-brand retail source, not an official brand site: only displayed
+regular new-item asking comparables are eligible (`price_type=asking`, condition
+`New` or explicitly evidenced `NewWithTags`). Used-condition claims and sold/retail
+price-type claims from Cettire are rejected. Accepted rows record
+`source_market=retail`; Cettire is separately recorded in
+`approved_retail_listing_domains`, not `approved_resale_domains`.
+
+The pricing prompt requires condition differences to be explained when valuing a
+used target against a new retail listing. Cettire does not authorize official-brand
+MSRP evidence, unverified prices, different-brand/product-family matches, or sale/
+promotional prices. All existing identity, retrieval, USD-price and comparable
+checks still apply. HTTPS hostname-boundary validation rejects lookalikes, userinfo
+and nonstandard ports. Complete-analysis policy advances to
+`same-brand-comparables-v6`, so previously cached v5 complete analyses require fresh
+research when rerun; no existing listing is automatically repriced.
+
+The optional controlled-research planner adds a Cettire request (eight comparable
+sites, plus a ninth request when an official brand is registered). Its `resale`
+source role means eligibility for the resale-valuation evidence pool; Cettire rows
+also carry their actual `source_market=retail` classification and the new-item
+asking-price checks. Research snapshot keys include the new source-policy version.
+The legacy Firecrawl agent classifies Cettire as a new/retail market. These changes
+are local source changes, not verified production behavior; the deployed policy
+is described below.
+
 ### Approved sources (deployed and enforced in production)
 
 Production release `9bbe8f5` includes policy `same-brand-comparables-v5`, with

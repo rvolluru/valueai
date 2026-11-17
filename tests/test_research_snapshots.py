@@ -51,7 +51,7 @@ def database(tmp_path):
 def test_plan_and_validation_generalize_beyond_denim(model, product):
     identity = dict(IDENTITY, candidate_model=model)
     plan = research_plan(identity)
-    assert len(plan) == 8
+    assert len(plan) == 9
     assert 'denim' not in json.dumps(plan)
     assert plan == research_plan(dict(identity, user_condition='NewWithTags', size='XL'))
     payload = research_payload(plan[1], identity, 'gpt-5')
@@ -186,8 +186,8 @@ def test_runtime_no_search_valuation_reuses_snapshot_across_conditions(database,
             condition_grade=condition, research_scope=SCOPE)
         policy = value['pricing_evidence_policy']
         assert policy['status'] == ('qualified' if mode == 'valid' else 'needs_review')
-    assert len([p for p in calls if p.get('tools')]) == 8
-    assert len(calls) == 10
+    assert len([p for p in calls if p.get('tools')]) == 9
+    assert len(calls) == 11
     assert policy['controlled_research']['reused']
 
 

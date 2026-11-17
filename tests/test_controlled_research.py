@@ -21,7 +21,7 @@ def candidate():
 
 def test_required_site_coverage_and_real_domain_filters():
     plan = module.research_plan(IDENTITY)
-    assert len(plan) == 8
+    assert len(plan) == 9
     assert {p["site"] for p in plan} == {*module.SITES, "Official brand"}
     for p in plan:
         payload = module.research_payload(p, IDENTITY, "gpt-5")
@@ -31,7 +31,7 @@ def test_required_site_coverage_and_real_domain_filters():
 
 
 def test_no_guess_for_unknown_official_site():
-    assert len(module.research_plan({**IDENTITY, "candidate_brand": "Unregistered"})) == 7
+    assert len(module.research_plan({**IDENTITY, "candidate_brand": "Unregistered"})) == 8
 
 
 def test_candidate_requires_provenance_site_and_supported_price_excerpt():
@@ -146,3 +146,15 @@ def test_retail_context_only_can_inform_guided_valuation_without_forced_weight()
         resale_price_estimate=dict(estimated_price=2000, references=[]), retail_derived_resale_anchors=[],
         retail_guidance_assessment=dict(retail_reference_ids=["C1"], retail_context_used=True, verified_exact_msrp_id=None)))
     assert module.audit_valuation(result, evidence, True)["status"] == "passed_experimental_controls"
+
+
+def test_cettire_research_accepts_only_new_asking_prices_and_preserves_market_role():
+    plan = next(p for p in module.research_plan(IDENTITY) if p["site"] == "Cettire")
+    row = {**candidate(), "url": "https://www.cettire.com/products/1", "condition": "New"}
+    assert plan["domains"] == ["cettire.com"]
+    assert module.candidate_rejection(row, plan, IDENTITY, {row["url"]}) is None
+    for bad in [{"condition": "Good"}, {"price_type": "sold_displayed"}, {"price_type": "retail"}]:
+        assert module.candidate_rejection({**row, **bad}, plan, IDENTITY, {row["url"]}) == "retail_listing_requires_new_asking_price"
+    artifact = {"identity": IDENTITY, "research": [{"status": "returned", "plan": plan,
+        "data": {"candidates": [row]}, "raw_response": {"output": [{"type": "web_search_call", "action": {"sources": [{"url": row["url"], "title": row["title"]}]}}]}}]}
+    assert module.shared_evidence(artifact)["comparables"][0]["source_market"] == "retail"

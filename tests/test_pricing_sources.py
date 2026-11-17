@@ -1,7 +1,7 @@
 import pytest
 
 from app.gpt_item_profile import GptItemProfiler
-from app.pricing_sources import RESALE_DOMAINS, allowed_domains, official_domains, url_in_domains
+from app.pricing_sources import COMPARABLE_DOMAINS, RESALE_DOMAINS, allowed_domains, official_domains, url_in_domains
 from app.pricing_evidence import validate_valuation
 
 
@@ -42,7 +42,7 @@ def test_legacy_trust_check_cannot_use_a_source_label_or_hostname_substring():
 def test_pre_allowlist_policy_is_not_eligible_for_complete_analysis_reuse():
     from app.main import _cached_analysis_is_strong_enough_for_reuse
     cached = {"brand": {"name": "Prada", "confidence": .99},
-        "item_profile": {"pricing_evidence_policy": {"version": "same-brand-comparables-v4", "status": "qualified"}}}
+        "item_profile": {"pricing_evidence_policy": {"version": "same-brand-comparables-v5", "status": "qualified"}}}
     assert not _cached_analysis_is_strong_enough_for_reuse(cached)
 
 
@@ -92,3 +92,35 @@ def test_retail_requires_identified_brand_site_without_blocking_resale(retail_ur
     assert result["pricing_evidence_policy"]["status"] == "qualified"
     assert result["resale_price_estimate"]["estimated_price"] == 900
     assert result["retail_price_estimate"]["estimated_price"] == expected
+
+
+@pytest.mark.parametrize("url", ["https://cettire.com/products/1", "https://www.cettire.com/products/1", "https://au.cettire.com/products/1"])
+def test_cettire_new_asking_comparable_is_approved(url):
+    data, raw = valuation(url)
+    data["pricing_comparables"][0]["condition"] = "New"
+    result = validate_valuation(data, {"candidate_brand": "Prada", "candidate_model": "Galleria Leather Bag"}, raw)
+    assert url_in_domains(url, COMPARABLE_DOMAINS)
+    assert result["pricing_evidence_policy"]["status"] == "qualified"
+    assert result["pricing_evidence_policy"]["accepted"][0]["source_market"] == "retail"
+    assert "cettire.com" in allowed_domains({"candidate_brand": "Prada"})
+
+
+@pytest.mark.parametrize("url", ["https://cettire.com.evil.test/p", "https://fakecettire.com/p", "https://user@cettire.com/p", "http://cettire.com/p"])
+def test_cettire_lookalikes_and_unsafe_urls_rejected(url):
+    assert not url_in_domains(url, COMPARABLE_DOMAINS)
+
+
+@pytest.mark.parametrize("condition,price_type", [("LikeNew", "asking"), ("New", "sold_displayed"), ("New", "retail")])
+def test_cettire_cannot_supply_used_or_sold_comparables(condition, price_type):
+    data, raw = valuation("https://www.cettire.com/products/1")
+    data["pricing_comparables"][0].update(condition=condition, price_type=price_type)
+    result = validate_valuation(data, {"candidate_brand": "Prada", "candidate_model": "Galleria Leather Bag"}, raw)
+    assert result["pricing_evidence_policy"]["status"] == "needs_review"
+    assert result["pricing_evidence_policy"]["rejected"][0]["reason"] == "retail_listing_requires_new_asking_price"
+
+
+def test_cettire_is_not_an_official_brand_msrp_reference():
+    data, raw = valuation("https://www.therealreal.com/product/1", "https://www.cettire.com/products/1")
+    result = validate_valuation(data, {"candidate_brand": "Prada", "candidate_model": "Galleria Leather Bag"}, raw)
+    assert result["pricing_evidence_policy"]["status"] == "qualified"
+    assert result["retail_price_estimate"]["estimated_price"] is None

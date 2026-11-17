@@ -14,7 +14,7 @@ import httpx
 from PIL import Image
 
 from brand.types import ImageInput
-from .pricing_sources import RESALE_DOMAINS, allowed_domains, source_prompt, url_in_domains
+from .pricing_sources import COMPARABLE_DOMAINS, RESALE_DOMAINS, allowed_domains, source_prompt, url_in_domains
 
 
 @dataclass(slots=True)
@@ -29,7 +29,7 @@ class GptItemProfiler:
     controlled_research_enabled = False
     pricing_model_routing_enabled = False
     _pricing_assignment_bound = False
-    TRUSTED_PRICING_DOMAINS = RESALE_DOMAINS
+    TRUSTED_PRICING_DOMAINS = COMPARABLE_DOMAINS
     def __init__(
         self,
         *,
@@ -430,7 +430,7 @@ class GptItemProfiler:
             for ref in refs:
                 if not isinstance(ref, dict):
                     continue
-                if url_in_domains(ref.get("url"), RESALE_DOMAINS):
+                if url_in_domains(ref.get("url"), COMPARABLE_DOMAINS):
                     trusted_refs += 1
 
         priced_rows = []
@@ -1662,6 +1662,7 @@ class GptItemProfiler:
                     "Stage 2/4 - High-Precision Grounded Search. "
                     f"Search for the item described by these visual signatures:\n{visual_signatures}\n\n"
                     "Use only these resale sources: Rebag, Poshmark, The RealReal, Vestiaire Collective, Depop, Vinted, eBay. "
+                    "Cettire is also approved for identity research and new-item asking-price evidence, never used/sold prices or official MSRP. "
                     "De-prioritize eBay unless no strong matches are found on the preferred domains. "
                     "Identify likely Maison (brand) and specific collection/model candidates with evidence and URLs. "
                     "Provide a breakdown including the median price and price ranges based on condition."
@@ -2703,7 +2704,7 @@ class GptItemProfiler:
         return cleaned[:8]
 
     def _is_trusted_pricing_ref(self, ref: dict[str, str | None]) -> bool:
-        return url_in_domains(ref.get("url"), RESALE_DOMAINS)
+        return url_in_domains(ref.get("url"), COMPARABLE_DOMAINS)
 
     @staticmethod
     def _normalize_receipt_present(value: Any) -> str:

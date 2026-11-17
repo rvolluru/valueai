@@ -4,9 +4,12 @@ import math
 import re
 import unicodedata
 from urllib.parse import parse_qsl, unquote, urlencode, urlsplit, urlunsplit
-from .pricing_sources import RESALE_DOMAINS, SOURCE_POLICY_VERSION, official_domains, url_in_domains
+from .pricing_sources import (
+    RESALE_DOMAINS, RETAIL_COMPARABLE_DOMAINS, COMPARABLE_DOMAINS,
+    SOURCE_POLICY_VERSION, official_domains, url_in_domains, retail_comparable_rejection,
+)
 
-POLICY_VERSION = "same-brand-comparables-v5"
+POLICY_VERSION = "same-brand-comparables-v6"
 MATCHING_POLICY = "same-brand-model-flexible-v3"
 
 
@@ -28,7 +31,7 @@ def core_product_tokens(value):
 # Descriptors can be abbreviated/omitted by search titles. Remaining name tokens
 # distinguish exact claims from supported same-brand related comparables.
 TITLE_DESCRIPTORS = set("monogram workwear denim zip up button front print graphic leather calf lambskin cotton wool silk studded moto motorcycle biker bomber jacket jackets coat coats shirt shirts dress dresses bag bags tote shoulder flap shorts pants skirt blue black brown white grey gray indigo dark light men mens women womens pristine excellent good fair limited edition full point collar ribbed patch pocket pockets utility quilted metallic distressed slim fit".split())
-TITLE_DESCRIPTORS.add("patchwork")
+TITLE_DESCRIPTORS.update({"patchwork", "cettire"})
 TITLE_DESCRIPTORS.update("green beige pink red navy cream purple orange yellow tan burgundy multicolor multicolour removable shearling embellished embroidery embroidered fleece jacquard through hood hooded rtw outerwear large medium small extra size xs xl xxl xxs xxxl authentic authenticity sale sold soldout sold out asking price usd dollars used excellent very condition tag tags nwt nwd nwot nwb nwt pristine with for of in on at to by listing item product details clothing accessories poshmark realreal trr ebay vestiaire collective rebag depop vinted".split())
 TITLE_DESCRIPTORS.update({"related", "variant", "colorway", "colourway"})
 
@@ -186,8 +189,10 @@ def validate_valuation(data, identity, raw):
             row["variant_match"] = "unconfirmed"
             exact = False
         support = source_identity_support(brand, row.get("model"), key, titles, retrieved, summaries, row.get("match_evidence")) if key else None
-        if not url_in_domains(row.get("url"), RESALE_DOMAINS):
+        if not url_in_domains(row.get("url"), COMPARABLE_DOMAINS):
             reason = "unapproved_resale_source"
+        elif retail_comparable_rejection(row):
+            reason = retail_comparable_rejection(row)
         elif row.get("match_type") not in {"exact", "related"}:
             reason = "not_a_comparable"
         elif not brand or product_tokens(row.get("brand"), brand) != brand or not row_model:
@@ -207,6 +212,8 @@ def validate_valuation(data, identity, raw):
         if reason:
             rejected.append({"url": row.get("url"), "reason": reason})
         elif key not in {url_key(r["url"]) for r in accepted}:
+            if url_in_domains(row.get("url"), RETAIL_COMPARABLE_DOMAINS):
+                row["source_market"] = "retail"
             accepted.append(row)
             source_support[key] = support
     allowed = {url_key(row["url"]) for row in accepted}
@@ -216,6 +223,7 @@ def validate_valuation(data, identity, raw):
     result["pricing_evidence_policy"] = {"version": POLICY_VERSION, "matching_policy": MATCHING_POLICY,
         "source_policy_version": SOURCE_POLICY_VERSION,
         "approved_resale_domains": list(RESALE_DOMAINS),
+        "approved_retail_listing_domains": list(RETAIL_COMPARABLE_DOMAINS),
         "official_brand_domains": list(official_domains(identity)),
         "status": "qualified" if passed else "needs_review", "accepted": accepted, "rejected": rejected,
         "source_support": source_support,

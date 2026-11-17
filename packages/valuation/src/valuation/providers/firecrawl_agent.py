@@ -13,6 +13,7 @@ from .http_utils import _firecrawl_scrape_data  # reuse Firecrawl scrape transpo
 
 
 RETAIL_DOMAINS = {
+    "cettire.com",
     "jimmychoo.com",
     "gucci.com",
     "prada.com",
