@@ -4207,9 +4207,6 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
             </TouchableOpacity>
           </View>
           <View style={styles.offerDetailBody}>
-            <TouchableOpacity style={styles.secondaryBtnCompact} onPress={() => openListingSupport(selectedListing)}>
-              <Text style={styles.secondaryBtnText}>Report an Issue</Text>
-            </TouchableOpacity>
             {closetMarketplaceMatchesLoading ? <ActivityIndicator color={theme.brand} /> : closetMatches.length > 0 ? closetMatches.map((item) => {
               const isOwnListing = isOwnMarketplaceListing(item);
               return (
@@ -4298,11 +4295,6 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                 <Text style={styles.secondaryBtnText}>Publish without mannequin image</Text>
               </TouchableOpacity> : null}
             </View>
-          ) : null}
-          {(selectedListingSource === 'closet' || isOwnListing) ? (
-            <TouchableOpacity style={styles.secondaryBtnCompact} onPress={() => openListingSupport(selectedListing)}>
-              <Text style={styles.secondaryBtnText}>Report an Issue</Text>
-            </TouchableOpacity>
           ) : null}
         </View>
 

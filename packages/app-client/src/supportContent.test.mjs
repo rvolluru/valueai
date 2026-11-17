@@ -14,7 +14,7 @@ test('help articles have unique stable anchors and valid topic categories', () =
 });
 
 test('search finds user problems in titles, text and plain-language synonyms', () => {
-  for (const [query, id] of [['forgot password', 'sign-in'], [' MANNEQUIN ', 'ai-preview'], ['$0', 'wrong-analysis'], ['unsubscribe', 'email-updates'], ['cancel subscription', 'billing'], ['camera permissions', 'app-problem'], ['counterfeit', 'trade-problem']]) {
+  for (const [query, id] of [['forgot password', 'sign-in'], [' MANNEQUIN ', 'ai-preview'], ['$0', 'wrong-analysis'], ['unsubscribe', 'email-updates'], ['cancel subscription', 'billing'], ['camera permissions', 'app-problem'], ['counterfeit', 'trade-problem'], ['new with tags', 'item-condition'], ['lightly used', 'item-condition'], ['unused', 'item-condition']]) {
     assert.ok(searchSupportArticles(query).some(article => article.id === id), query);
   }
   assert.equal(searchSupportArticles().length, SUPPORT_ARTICLES.length);
@@ -39,4 +39,13 @@ test('contact action creates a reviewable email draft without private account da
   assert.match(body, /Steps to reproduce:\n/);
   assert.match(body, /do not include passwords, verification codes, or full payment details/);
   assert.match(SUPPORT_CONTACT.phoneUrl, /^tel:\+\d+$/);
+});
+
+test('every help topic has readable articles without a search filter', () => {
+  for (const category of SUPPORT_CATEGORIES) {
+    const articles = searchSupportArticles('', category);
+    assert.ok(articles.length > 0, `${category} must not be empty`);
+    assert.ok(articles.every(article => article.body.every(paragraph => paragraph.trim())));
+  }
+  assert.deepEqual(searchSupportArticles('', 'Getting started').map(article => article.id), ['sign-in', 'profile']);
 });

@@ -10328,7 +10328,7 @@ async def _generate_verified_mannequin_asset(*, client, reference_files, all_fil
                                             fidelity_model, endpoint, asset_kind, category, item_id, settings, db, storage):
     from .mannequin_fidelity import generate_candidate, review_candidate, review_passes
     try:
-        from .mannequin_fidelity import coverage_passes, clothing_attempts, orientation_passes
+        from .mannequin_fidelity import coverage_passes, clothing_attempts, orientation_passes, front_alignment_passes
         for attempt, display_mode, attempt_prompt in clothing_attempts(prompt, asset_kind):
             candidate = await generate_candidate(client=client, api_key=settings.gemini_api_key, model=model,
                                                  files=reference_files, prompt=attempt_prompt)
@@ -10345,12 +10345,12 @@ async def _generate_verified_mannequin_asset(*, client, reference_files, all_fil
             except Exception as exc:
                 review = {"verdict": "unavailable", "checks": [], "additional_changes": [], "error": str(exc)[:500]}
                 log_json("mannequin_fidelity_review_unavailable", item_id=item_id, category=category)
-            if coverage_passes(review) and orientation_passes(review):
+            if coverage_passes(review) and orientation_passes(review) and front_alignment_passes(review):
                 prompt = attempt_prompt
                 break
             log_json("mannequin_presentation_rejected", item_id=item_id, category=category,
                      attempt=attempt, display_mode=display_mode, coverage=review.get("clothing_coverage"),
-                     orientation=review.get("orientation"))
+                     orientation=review.get("orientation"), front_alignment=review.get("front_alignment"))
         else:
             return None
         if not review_passes(review, len(plan["constraints"])):
@@ -10376,7 +10376,7 @@ async def _generate_verified_mannequin_asset(*, client, reference_files, all_fil
             "model": model,
             "reference_image_count": len(reference_files),
             "prompt": prompt,
-            "fidelity_version": 3,
+            "fidelity_version": 4,
             "generation_strategy": "front_only_minimal",
             "clothing_attempt": attempt,
             "display_mode": display_mode,

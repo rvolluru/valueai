@@ -1,5 +1,22 @@
 # Jouft listing analysis: complete process
 
+Front-view mannequin alignment — November 17, 2026 (implemented locally, not deployed):
+generation explicitly requires the recognized front photo’s viewing direction and
+front details, without mirroring. Candidate review now separately checks
+`front_alignment` with visible evidence. Failed, uncertain, missing or unavailable
+front alignment prevents persistence, alongside upright orientation and clothing
+coverage checks; existing bounded generation attempts apply. Shoe previews must
+match the recognized front/front three-quarter view rather than show only heels.
+Fidelity metadata version is 4. Existing production images are not regenerated
+or replaced by this change.
+
+Listing issue controls — November 17, 2026 (implemented locally, not deployed):
+web listing menus and native listing detail/match screens temporarily hide the
+Report Issue action. Existing reporting endpoints and stored reports remain
+unchanged. Help directs listing problems to support email with the listing ID or
+link. Trade issue reporting remains available. Analysis, reruns, mannequin review
+and publication rules are unchanged.
+
 Archive visibility update — November 9, 2026 (deployed and verified in production,
 release `6bdacb6`, workflow `42705131275`):
 `GET /v1/listings?mine=true` excludes `Archived` listings before search pagination

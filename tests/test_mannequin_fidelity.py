@@ -242,7 +242,7 @@ def test_pipeline_generates_from_front_only_but_keeps_all_originals_for_review(m
     assert result["review_decision"] == "pending"
 
 
-@pytest.mark.parametrize("outcome", ["changed", "uncertain", "unavailable", "underdressed", "bottom_fallback", "sideways", "orientation_missing"])
+@pytest.mark.parametrize("outcome", ["changed", "uncertain", "unavailable", "underdressed", "bottom_fallback", "sideways", "orientation_missing", "rear_facing", "front_missing"])
 def test_flagged_candidate_is_saved_only_as_pending_owner_preview(monkeypatch, outcome):
     from app import main, mannequin_fidelity
     from app.settings import Settings
@@ -268,7 +268,7 @@ def test_flagged_candidate_is_saved_only_as_pending_owner_preview(monkeypatch, o
 
     class Storage:
         def save_upload(self, **kwargs):
-            assert outcome not in {"unavailable", "underdressed", "sideways", "orientation_missing"}, "Unsafe preview must not be persisted"
+            assert outcome not in {"unavailable", "underdressed", "sideways", "orientation_missing", "rear_facing", "front_missing"}, "Unsafe preview must not be persisted"
             return "test-preview.png"
 
         def save_debug_artifact(self, **kwargs):
@@ -284,6 +284,9 @@ def test_flagged_candidate_is_saved_only_as_pending_owner_preview(monkeypatch, o
         if outcome == "unavailable":
             raise TimeoutError("Diagnostic review timed out")
         result = review()
+        if outcome != "front_missing":
+            result["front_alignment"] = {"verdict": "failed" if outcome == "rear_facing" else "passed",
+                                         "evidence": "Rear of item" if outcome == "rear_facing" else "Matches recognized front"}
         if outcome != "orientation_missing":
             result["orientation"] = {"verdict": "failed" if outcome == "sideways" else "passed",
                                      "evidence": "Neck points left" if outcome == "sideways" else "Mannequin is upright"}
@@ -300,7 +303,7 @@ def test_flagged_candidate_is_saved_only_as_pending_owner_preview(monkeypatch, o
         endpoint="https://example.test", asset_kind="mannequin_bottom" if outcome == "bottom_fallback" else "mannequin_dress", category="clothes", item_id="test",
         settings=Settings(gemini_api_key="test"), db=Database(), storage=Storage(),
     ))
-    if outcome in {"unavailable", "underdressed", "sideways", "orientation_missing"}:
+    if outcome in {"unavailable", "underdressed", "sideways", "orientation_missing", "rear_facing", "front_missing"}:
         assert result is None
         return
     assert result["review_decision"] == "pending"
@@ -389,3 +392,14 @@ def test_generation_requests_portrait_and_upright_subject():
             assert "Never rotate the mannequin 90 or 180 degrees" in prompt
             return Response()
     assert asyncio.run(generate_candidate(client=Client(), api_key="test", model="test", files=[], prompt="Product")) is None
+
+
+@pytest.mark.parametrize("alignment,expected", [
+    (None, False), ({"verdict": "uncertain", "evidence": "Obscured"}, False),
+    ({"verdict": "failed", "evidence": "Back visible"}, False),
+    ({"verdict": "passed", "evidence": ""}, False),
+    ({"verdict": "passed", "evidence": "Front details match source"}, True),
+])
+def test_front_alignment_requires_explicit_evidence(alignment, expected):
+    from app.mannequin_fidelity import front_alignment_passes
+    assert front_alignment_passes({"front_alignment": alignment}) is expected

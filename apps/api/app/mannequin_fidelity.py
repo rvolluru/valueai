@@ -23,6 +23,9 @@ def generation_parts(files: list[dict], prompt: str) -> list[dict]:
     parts.append({"text": prompt + " Output an upright portrait product photograph. The mannequin must stand vertically, "
                   "with its neck/shoulders (or waist for a lower-body form) toward the TOP and hem/feet toward the BOTTOM. "
                   "For shoe close-ups, ankles extend toward the TOP and soles toward the BOTTOM. "
+                  "Show the FRONT of the listed item, aligned to the recognized front source photo. Never show its back, "
+                  "a rear-facing mannequin, or a mirrored/reversed product. Preserve the front-facing product details and "
+                  "left/right arrangement. For shoes preserve the recognized front or front three-quarter view, not heel-only. "
                   "Do not copy a sideways source-photo orientation. Never rotate the mannequin 90 or 180 degrees, "
                   "lay it horizontally, or tilt the camera."})
     return parts
@@ -96,6 +99,12 @@ def orientation_passes(review: dict) -> bool:
     orientation = review.get("orientation")
     return (isinstance(orientation, dict) and orientation.get("verdict") == "passed"
             and isinstance(orientation.get("evidence"), str) and bool(orientation["evidence"].strip()))
+
+
+def front_alignment_passes(review: dict) -> bool:
+    alignment = review.get("front_alignment")
+    return (isinstance(alignment, dict) and alignment.get("verdict") == "passed"
+            and isinstance(alignment.get("evidence"), str) and bool(alignment["evidence"].strip()))
 
 
 def clothing_attempts(prompt: str, asset_kind: str) -> list[tuple[int, str, str]]:
@@ -262,6 +271,11 @@ async def review_candidate(*, client, api_key, model, files: list[dict], plan: d
                       "Do not excuse design changes as draping. If a feature cannot be verified, use uncertain. "
                       "For footwear also check toe/heel shape, sole profile, straps, laces, hardware, logos, "
                       "boot shafts and wear against source evidence; do not excuse invented or repaired details. "
+                      "Also return front_alignment: {verdict: passed/failed/uncertain, evidence: visible explanation}. "
+                      "Compare against the recognized SOURCE front view. Require the FRONT of the listed item, "
+                      "with matching front details and left/right arrangement; fail rear-facing, back-view, "
+                      "mirrored or reversed products. For shoes match the front or front three-quarter source view, "
+                      "not a heel-only view. Return uncertain if front alignment cannot be verified. "
                       "Also return orientation: {verdict: passed/failed/uncertain, evidence: visible explanation}. "
                       "Require an upright mannequin: neck/shoulders or waist at the top, hem/feet at the bottom. "
                       "For shoes require ankles above soles. Fail sideways, horizontal, upside-down or strongly tilted "

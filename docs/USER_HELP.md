@@ -34,6 +34,18 @@ Use your own photos in good light. Keep the item in focus and avoid filters that
 
 Confirm the category, size, and actual condition, then continue with the analysis. Creating or analyzing an item does not publish it; review the results and confirm publication separately.
 
+### What do the item condition types mean?
+
+New with tags: The item is unused and unworn, with its original tags still attached. Show the tags clearly in your photos and disclose any missing packaging or accessories.
+
+New: The item is unused and unworn, but does not have attached original tags. This is different from an item that has been worn, even briefly.
+
+Like new: The item has been lightly used and is in excellent condition, with little or no visible wear. It is not the same as unused or new.
+
+Choose the condition that describes your actual item, and photograph and describe any wear, marks, damage, alterations, or missing accessories. An original box alone does not make a worn item new. Jouft currently offers these three condition choices; if none accurately describes your item, contact support before publishing rather than overstating its condition.
+
+Check the selected condition during listing review. Condition affects estimated value, and an AI-generated preview does not establish the item’s condition.
+
 ### Why is my listing a draft or waiting for review?
 
 A draft or listing awaiting review has not completed publication. Analyzing means processing is still in progress; return to My Closet and refresh to check its latest status.
@@ -66,7 +78,7 @@ A missing or zero value can mean pricing evidence was insufficient or analysis d
 
 Check that the photos, category, size, and condition describe the correct item. Review any request for clearer photos or more information, then save corrections through the available listing controls.
 
-Use Report issue or Report an Issue on your listing, choose the closest reason, and explain the expected result and what appears incorrect. If that control is unavailable, email support with the listing ID or link. A report is a request for review; it does not itself change the value or guarantee a rerun.
+Email support with the listing ID or link, the expected result, and what appears incorrect. The in-app listing Report Issue control is temporarily hidden. A report is a request for review; it does not itself change the value or guarantee a rerun.
 
 ### How do I choose whether to use an AI mannequin image?
 

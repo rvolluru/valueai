@@ -29,7 +29,7 @@ export default function HelpSupport({ buttonStyle, textStyle }) {
           <Text style={s.label}>Search help</Text>
           <TextInput style={s.input} accessibilityLabel="Search help" placeholder="Try publish, AI preview, or shipping" value={query} onChangeText={setQuery} maxLength={160} autoCapitalize="none" autoCorrect={false} clearButtonMode="while-editing" returnKeyType="search" />
           <ScrollView horizontal showsHorizontalScrollIndicator contentContainerStyle={s.topics} keyboardShouldPersistTaps="handled">
-            {['All topics', ...SUPPORT_CATEGORIES].map(topic => <TouchableOpacity key={topic} accessibilityRole="button" accessibilityState={{ selected: category === topic }} style={[s.topic, category === topic && s.selected]} onPress={() => setCategory(topic)}><Text style={[s.buttonText, category === topic && s.selectedText]}>{topic}</Text></TouchableOpacity>)}
+            {['All topics', ...SUPPORT_CATEGORIES].map(topic => <TouchableOpacity key={topic} accessibilityRole="button" accessibilityState={{ selected: category === topic }} style={[s.topic, category === topic && s.selected]} onPress={() => { setCategory(topic); setQuery(''); setExpanded(''); }}><Text style={[s.buttonText, category === topic && s.selectedText]}>{topic}</Text></TouchableOpacity>)}
           </ScrollView>
           <Text accessibilityRole="header" style={s.heading}>{category === 'All topics' ? 'Common questions' : category}</Text>
           <Text accessibilityLiveRegion="polite" style={s.text}>{articles.length} {articles.length === 1 ? 'answer' : 'answers'}</Text>
@@ -39,7 +39,7 @@ export default function HelpSupport({ buttonStyle, textStyle }) {
           </View>)}
           <View style={s.card} onLayout={event => { contactPosition.current = event.nativeEvent.layout.y; }}>
             <Text accessibilityRole="header" style={s.heading}>Contact Jouft</Text>
-            <Text style={s.text}>For a listing problem, use Report an Issue on that listing when available. Otherwise, email us with your account email, listing or trade reference, device/app version, and what happened.</Text>
+            <Text style={s.text}>For a listing problem, email us with your account email, listing or trade reference, device/app version, and what happened.</Text>
             <TouchableOpacity accessibilityRole="link" style={[s.button, s.selected]} onPress={() => openLink(supportEmailUrl(category === 'All topics' ? '' : category))}><Text style={s.selectedText}>Email support</Text></TouchableOpacity>
             <Text style={s.text}>Opens a draft in your email app. Review and send it to contact us; opening a draft does not submit a request.</Text>
             <Text selectable style={s.text}>{SUPPORT_CONTACT.email}</Text>

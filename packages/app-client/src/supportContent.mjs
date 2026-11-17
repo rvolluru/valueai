@@ -15,6 +15,12 @@ export const SUPPORT_ARTICLES = [
     'Open Create Listing and add clear photos of one item. Follow the photo prompts for its category: show the full item and relevant labels, size markings, details, and signs of wear.',
     'Use your own photos in good light. Keep the item in focus and avoid filters that change its color or hide its condition. Include any flaws.',
     'Confirm the category, size, and actual condition, then continue with the analysis. Creating or analyzing an item does not publish it; review the results and confirm publication separately.' ] },
+  { id: 'item-condition', category: 'Listings & photos', title: 'What do the item condition types mean?', keywords: 'condition grades new with tags NWT unused unworn like new lightly used wear', body: [
+    'New with tags: The item is unused and unworn, with its original tags still attached. Show the tags clearly in your photos and disclose any missing packaging or accessories.',
+    'New: The item is unused and unworn, but does not have attached original tags. This is different from an item that has been worn, even briefly.',
+    'Like new: The item has been lightly used and is in excellent condition, with little or no visible wear. It is not the same as unused or new.',
+    'Choose the condition that describes your actual item, and photograph and describe any wear, marks, damage, alterations, or missing accessories. An original box alone does not make a worn item new. Jouft currently offers these three condition choices; if none accurately describes your item, contact support before publishing rather than overstating its condition.',
+    'Check the selected condition during listing review. Condition affects estimated value, and an AI-generated preview does not establish the item’s condition.' ] },
   { id: 'listing-status', category: 'Listings & photos', title: 'Why is my listing a draft or waiting for review?', keywords: 'status analyzing active failed archived private publish', body: [
     'A draft or listing awaiting review has not completed publication. Analyzing means processing is still in progress; return to My Closet and refresh to check its latest status.',
     'Open Review and Publish when available. Check the product details, condition, value, size, and photos, and complete any missing information before confirming publication.',
@@ -30,7 +36,7 @@ export const SUPPORT_ARTICLES = [
   { id: 'wrong-analysis', category: 'Analysis & AI previews', title: 'What if the analysis is wrong or the value is $0?', keywords: 'incorrect wrong price zero missing value retry report issue', body: [
     'A missing or zero value can mean pricing evidence was insufficient or analysis did not complete. It does not mean the item is free.',
     'Check that the photos, category, size, and condition describe the correct item. Review any request for clearer photos or more information, then save corrections through the available listing controls.',
-    'Use Report issue or Report an Issue on your listing, choose the closest reason, and explain the expected result and what appears incorrect. If that control is unavailable, email support with the listing ID or link. A report is a request for review; it does not itself change the value or guarantee a rerun.' ] },
+    'Email support with the listing ID or link, the expected result, and what appears incorrect. The in-app listing Report Issue control is temporarily hidden. A report is a request for review; it does not itself change the value or guarantee a rerun.' ] },
   { id: 'ai-preview', category: 'Analysis & AI previews', title: 'How do I choose whether to use an AI mannequin image?', keywords: 'mannequin generated synthetic preview include exclude original photos publish gallery', body: [
     'When an AI styling preview is available, inspect it alongside your original photos. Look for changes to the product’s shape, color, details, or fit.',
     'During listing review, choose Include mannequin image or Use original photos only when prompted. Complete the choice before confirming publication.',

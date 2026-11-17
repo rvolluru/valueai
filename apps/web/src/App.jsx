@@ -6865,7 +6865,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                 {accountMenuOpen && <nav id="user-account-menu" className="account-menu-dropdown" aria-label="User account options">
                   <button type="button" onClick={() => { setProfileSection('general'); navigateToTab('profile') }}>My Profile</button>
                   <button type="button" onClick={() => navigateToTab('notifications')}>Notifications</button>
-                  <a href="/support" target="_blank" rel="noopener noreferrer" aria-label="Support (opens in a new tab)" onClick={() => setAccountMenuOpen(false)}>Support</a>
+                  <a href="/support" onClick={() => setAccountMenuOpen(false)}>Support</a>
                   <button type="button" className="account-sign-out" onClick={() => { setAccountMenuOpen(false); onLogout?.() }}>Sign Out</button>
                 </nav>}
               </div>
@@ -10136,7 +10136,7 @@ function ListingCard({ item, own = false, onEditDraft = null, onReviewListing = 
         <button type="button" className="listing-social-circle" onClick={shareToFacebook} title="Share on Facebook" aria-label="Share on Facebook"><FaFacebookF aria-hidden="true" /></button>
         <button type="button" className="listing-social-circle" onClick={shareToPinterest} title="Share on Pinterest" aria-label="Share on Pinterest"><FaPinterestP aria-hidden="true" /></button>
       </span>
-      {(typeof onRemoveListing === 'function' || typeof onReportIssue === 'function') && <details className="listing-action-menu" onClick={(event) => event.stopPropagation()} onKeyDown={(event) => {
+      {typeof onRemoveListing === 'function' && <details className="listing-action-menu" onClick={(event) => event.stopPropagation()} onKeyDown={(event) => {
         event.stopPropagation()
         if (event.key === 'Escape') {
           event.currentTarget.removeAttribute('open')
@@ -10145,7 +10145,6 @@ function ListingCard({ item, own = false, onEditDraft = null, onReviewListing = 
       }}>
         <summary className={buttonClass} aria-label="More listing options">More ⋯</summary>
         <div className="listing-action-menu-options">
-          {typeof onReportIssue === 'function' && <button type="button" onClick={(event) => { closeMenu(event); onReportIssue(item) }}>Report issue</button>}
           {typeof onRemoveListing === 'function' && <button type="button" className="listing-menu-delete" onClick={(event) => { closeMenu(event); onRemoveListing(item) }}>Delete listing</button>}
         </div>
       </details>}

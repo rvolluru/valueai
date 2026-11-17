@@ -4,14 +4,14 @@ Updated November 17, 2026. Implemented locally; not deployed. Native device acce
 
 ## User entry points
 
-- Web account menu **Support** opens public `/support` in a new tab, preserving work in the original tab. Footer **HELP & SUPPORT** reaches the same page. `/support/` also works.
+- Web account menu **Support** opens public `/support` in the current tab. Footer **HELP & SUPPORT** reaches the same page. `/support/` also works.
 - Help renders without a Clerk provider; signed-out users and users having sign-in problems can read it.
 - Mobile **Help & Support** is available in Profile and in the signed-out Contact Us section. It opens a full-screen, safe-area-aware modal; Close and Android Back return to the previous screen.
 - Existing listing-specific reporting and trade issue reporting are unchanged. General contact opens a reviewable email draft or telephone link, not a server-side ticket. No message was sent in development verification.
 
 ## Content maintenance
 
-The canonical 16 articles are in `packages/app-client/src/supportContent.mjs` and are rendered by both clients. The readable edition is [USER_HELP.md](../USER_HELP.md). Run `node scripts/build_user_help.mjs` after changing the articles, then use `--check` to verify the edition matches.
+The canonical 17 articles are in `packages/app-client/src/supportContent.mjs` and are rendered by both clients. The readable edition is [USER_HELP.md](../USER_HELP.md). Run `node scripts/build_user_help.mjs` after changing the articles, then use `--check` to verify the edition matches.
 
 Cover account access and onboarding, listing creation/status/search, analysis and missing values, optional AI image choices, Marketplace matching, trades and issue reporting, shipping, billing, email preferences, privacy/deletion, and app troubleshooting. Keep wording aligned with actual controls. Do not promise response times, refunds, authenticity certification, or features that are not enabled. Identify website-only controls where native does not expose them.
 
@@ -24,7 +24,7 @@ Cover account access and onboarding, listing creation/status/search, analysis an
 
 ## Manual acceptance before release
 
-1. Open Support from a signed-in web account. Verify the original tab retains its current form state and the new tab shows help.
+1. Open Support from a signed-in web account. Verify help opens in the current tab without creating another window or tab; verify browser Back returns to the application.
 2. Open `/support` and `/support/` while signed out. Confirm there is no sign-in redirect. Verify help can load without a successful Clerk initialization.
 3. Search `mannequin`, `$0`, `forgot password`, `unsubscribe`, and `shipping`. Open matching answers and check that content is readable.
 4. Combine a search with a topic that has no match; verify the empty state, clear action, and contact options remain usable.
@@ -37,3 +37,9 @@ Cover account access and onboarding, listing creation/status/search, analysis an
 11. Open a listing issue report separately and confirm its existing submission flow is unaffected. Do not submit test reports or modify real production listings.
 
 Deployment requires a web/API release for `/support` and fresh mobile builds for the native entry points. This implementation does not change listing analysis, pricing or publication behavior.
+
+Condition help update (November 17, 2026): shared web/mobile help now defines New with tags, New, and Like new, including wear disclosure and guidance when no choice fits. The focused help tests and generated-guide check passed. This content update is not deployed.
+
+Topic navigation update (November 17, 2026, not deployed): selecting a topic clears the previous search on web and mobile; mobile also collapses the previous answer. Verify that searching for “shipping” and then choosing Getting started displays its sign-in and profile questions with an empty search field. Searching within the selected topic still filters its answers.
+
+Help styling update (November 17, 2026, not deployed): web Help uses the application background and panel color tokens, with the existing Jouft logo asset and superscript trademark. Verify the logo, trademark, and header fit on narrow screens and the help panels match the application surfaces.

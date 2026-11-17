@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import jouftLogo from '../assets/jouft-logo.png'
 import { SUPPORT_CATEGORIES, SUPPORT_CONTACT, searchSupportArticles, supportEmailUrl } from '../../../../packages/app-client/src/supportContent.mjs'
 
 export default function SupportPage() {
@@ -10,7 +11,7 @@ export default function SupportPage() {
   return (
     <main className="support-page">
       <header className="support-page-header">
-        <a className="legal-wordmark" href="/" aria-label="Jouft home">JOUFT</a>
+        <a className="app-brandmark" href="/" aria-label="Jouft home"><span className="auth-brand-wordmark"><img className="app-brand-logo" src={jouftLogo} alt="JOUFT" /><sup className="auth-brand-trademark" aria-label="trademark">™</sup></span></a>
         <a href="/">Back to Jouft</a>
       </header>
       <section className="support-hero" aria-labelledby="support-title">
@@ -22,7 +23,7 @@ export default function SupportPage() {
         <input id="support-search" className="support-search" type="search" value={query} onChange={event => setQuery(event.target.value)} maxLength={160} placeholder="Try “publish”, “AI preview”, or “shipping”" />
       </section>
       <nav className="support-categories" aria-label="Help topics">
-        {['All topics', ...SUPPORT_CATEGORIES].map(topic => <button type="button" key={topic} aria-pressed={category === topic} onClick={() => setCategory(topic)}>{topic}</button>)}
+        {['All topics', ...SUPPORT_CATEGORIES].map(topic => <button type="button" key={topic} aria-pressed={category === topic} onClick={() => { setCategory(topic); setQuery(''); }}>{topic}</button>)}
       </nav>
       <div className="support-layout">
         <section className="support-answers" aria-labelledby="support-answers-title">
@@ -41,7 +42,7 @@ export default function SupportPage() {
         <aside id="contact-jouft" className="support-contact" aria-labelledby="support-contact-title">
           <p className="eyebrow">Still need a hand?</p>
           <h2 id="support-contact-title">Contact Jouft</h2>
-          <p>For a listing problem, use <strong>Report issue</strong> on that listing when available so the request includes its context.</p>
+          <p>For a listing problem, email the team with the listing ID or link and a description of the problem.</p>
           <label htmlFor="support-contact-topic">What do you need help with?</label>
           <select id="support-contact-topic" value={contactTopic} onChange={event => setContactTopic(event.target.value)}>
             <option value="">General support</option>

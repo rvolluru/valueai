@@ -5604,8 +5604,8 @@ textarea:focus-visible,
 .profile-setup-field-group select[aria-invalid="true"] { border: 2px solid #b42318; background: #fff7f6; }
 
 /* Public help center */
-.support-page { --support-accent: #53191f; max-width: 1180px; margin: 0 auto; padding: 24px clamp(18px, 4vw, 48px) 64px; }
-.support-page-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-bottom: 28px; }
+.support-page { --support-accent: #53191f; min-height: 100%; background: var(--bg); max-width: 1420px; margin: 0 auto; padding: 24px clamp(18px, 4vw, 48px) 64px; }
+.support-page-header { background: var(--panel); border: 1px solid var(--line); padding: 20px 24px; margin-bottom: 10px; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .support-page a { color: var(--support-accent); text-underline-offset: 3px; }
 .support-hero { padding: 32px 0 24px; max-width: 760px; }
 .support-hero h1 { font-size: clamp(36px, 6vw, 60px); line-height: 1.1; margin: 12px 0; color: var(--support-accent); }
@@ -5617,7 +5617,7 @@ textarea:focus-visible,
 .support-categories button { min-height: 44px; padding: 10px 14px; border: 1px solid #d7cec5; background: transparent; color: var(--ink); cursor: pointer; }
 .support-categories button[aria-pressed="true"] { background: var(--support-accent); border-color: var(--support-accent); color: #fff; }
 .support-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, 320px); gap: 40px; align-items: start; padding-top: 28px; }
-.support-answers { min-width: 0; }
+.support-answers { min-width: 0; background: var(--panel); border: 1px solid var(--line); padding: 24px; }
 .support-answers h2, .support-contact h2 { font-size: 28px; margin: 0 0 10px; }
 .support-result-count { color: var(--muted); font-size: 14px; margin-bottom: 20px; }
 .support-article { border-bottom: 1px solid var(--line); padding: 0; }
@@ -5625,7 +5625,7 @@ textarea:focus-visible,
 .support-article-body { padding: 0 4px 16px; color: var(--muted); line-height: 1.75; overflow-wrap: anywhere; }
 .support-article-body p { margin: 0 0 14px; }
 .support-empty { padding: 24px; background: #fff; border: 1px solid var(--line); line-height: 1.7; }
-.support-contact { background: #fffaf5; border: 1px solid #d7cec5; padding: 24px; min-width: 0; overflow-wrap: anywhere; }
+.support-contact { background: var(--panel); border: 1px solid var(--line); padding: 24px; min-width: 0; overflow-wrap: anywhere; }
 .support-contact p, .support-contact li { color: var(--muted); line-height: 1.7; font-size: 14px; }
 .support-contact label { display: block; font-size: 14px; font-weight: 600; margin: 22px 0 8px; }
 .support-contact select { width: 100%; min-height: 44px; padding: 10px; border: 1px solid #b8aca2; background: #fff; color: var(--ink); font-size: 16px; }
