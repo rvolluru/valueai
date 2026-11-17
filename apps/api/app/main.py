@@ -2808,6 +2808,13 @@ def ui_index():
     return _spa_index_response()
 
 
+@app.get("/support")
+@app.get("/support/")
+def support_page():
+    # Public help must remain reachable when someone cannot sign in.
+    return _spa_index_response()
+
+
 @app.get("/privacy")
 def privacy_page():
     return _spa_index_response()

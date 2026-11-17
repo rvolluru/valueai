@@ -1,3 +1,4 @@
+import SupportPage from './components/SupportPage'
 import { JOUFT_GOAL_OPTIONS, normalizeProfileGoals, needsGoalSelection } from './lib/profileGoals'
 import { Fragment, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import { MANNEQUIN_DISCLAIMER, isMannequinImage, closetCardImages, marketplaceCardImages } from '../../../packages/app-client/src/mannequinDisclosure'
@@ -1592,7 +1593,7 @@ function SiteFooter() {
     <footer className="auth-site-footer">
       <strong>JOUFT<sup className="auth-footer-trademark" aria-label="trademark">™</sup></strong>
       <nav className="auth-footer-links" aria-label="Footer">
-        <span>ABOUT</span><a href="/#contact">CONTACT US</a><span>FAQ</span><a href="/terms">TERMS</a><a href="/privacy">PRIVACY</a>
+        <span>ABOUT</span><a href="/#contact">CONTACT US</a><a href="/support">HELP &amp; SUPPORT</a><a href="/terms">TERMS</a><a href="/privacy">PRIVACY</a>
       </nav>
       <small>© {new Date().getFullYear()} JOUFT. ALL RIGHTS RESERVED.</small>
     </footer>
@@ -1609,6 +1610,9 @@ export default function App() {
 }
 
 function AppContent() {
+  if (typeof window !== 'undefined' && window.location.pathname.replace(/\/$/, '') === '/support') {
+    return <SupportPage />
+  }
   if (typeof window !== 'undefined' && ['/docs/home', '/docs/system-architecture', '/docs/listing-analysis'].includes(window.location.pathname)) {
     return CLERK_ENABLED ? <AnalysisGuidePage apiBaseUrl={API_DEFAULT} document={window.location.pathname.split('/').pop()} /> : <p>Sign-in is required to access this guide.</p>
   }
@@ -6861,7 +6865,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                 {accountMenuOpen && <nav id="user-account-menu" className="account-menu-dropdown" aria-label="User account options">
                   <button type="button" onClick={() => { setProfileSection('general'); navigateToTab('profile') }}>My Profile</button>
                   <button type="button" onClick={() => navigateToTab('notifications')}>Notifications</button>
-                  <a href="mailto:admin@jouft.com?subject=Jouft%20account%20support" onClick={() => setAccountMenuOpen(false)}>Support</a>
+                  <a href="/support" target="_blank" rel="noopener noreferrer" aria-label="Support (opens in a new tab)" onClick={() => setAccountMenuOpen(false)}>Support</a>
                   <button type="button" className="account-sign-out" onClick={() => { setAccountMenuOpen(false); onLogout?.() }}>Sign Out</button>
                 </nav>}
               </div>

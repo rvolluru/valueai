@@ -1,3 +1,4 @@
+import HelpSupport from './src/components/HelpSupport';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { shareSocialListing, socialWebUrl } from './src/lib/socialSharing.mjs';
 import { MANNEQUIN_DISCLAIMER, isMannequinImage, closetCardImages, marketplaceCardImages, hasSyntheticReviewAssets } from '../../packages/app-client/src/mannequinDisclosure';
@@ -5290,6 +5291,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
         {activeTab === 'profile' && (
           <View style={styles.section}>
             <SectionHeader title="Profile" subtitle="SETTINGS" />
+            <HelpSupport buttonStyle={styles.secondaryBtn} textStyle={styles.secondaryBtnText} />
             <TouchableOpacity style={styles.secondaryBtn} onPress={() => handleTabPress('notifications')}><Text style={styles.secondaryBtnText}>Notifications — View all activity</Text></TouchableOpacity>
 
             {clerkEnabled ? (
@@ -7084,6 +7086,7 @@ function ClerkAuthScreen() {
           <View style={styles.mobileAuthSectionHeader}>
             <Text style={styles.sectionEyebrow}>Contact Us</Text>
             <Text style={styles.mobileAuthSectionTitle}>JOUFT LLC</Text>
+            <HelpSupport buttonStyle={styles.secondaryBtn} textStyle={styles.secondaryBtnText} />
           </View>
           <View style={styles.mobileAuthContactBlock}>
             {CONTACT_ADDRESS_LINES.map((line) => (

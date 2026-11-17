@@ -242,3 +242,13 @@ Clerk bearer token and listing ownership required:
   final/authenticated booleans, retake state and eligible certificate URL.
 
 No listing writes or publication changes. See [setup and contracts](ENTRUPY_INTEGRATION.md).
+
+## Public Help & Support (implemented locally; not deployed)
+
+`GET /support` and `GET /support/` return the public web application shell without
+authentication. The client renders searchable help before entering the sign-in
+flow and without initializing a Clerk provider. This is user documentation, not
+a new ticket-submission endpoint. Listing-specific support APIs are unchanged.
+General email contact opens a draft for the user to review and send.
+
+See [user help](USER_HELP.md) and [acceptance notes](qa/HELP_SUPPORT_ACCEPTANCE.md).

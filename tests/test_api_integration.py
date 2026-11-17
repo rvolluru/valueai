@@ -26,6 +26,18 @@ def test_data_deletion_page_is_public(path, monkeypatch):
     assert 'public app shell' in response.text
 
 
+@pytest.mark.parametrize('path', ['/support', '/support/'])
+def test_support_page_is_public_without_sign_in(path, monkeypatch):
+    client = _build_client()
+    from app import main
+    from fastapi.responses import HTMLResponse
+    monkeypatch.setattr(main, '_spa_index_response', lambda: HTMLResponse('<html>support shell</html>'))
+    response = client.get(path)
+    assert response.status_code == 200
+    assert response.headers['content-type'].startswith('text/html')
+    assert 'support shell' in response.text
+
+
 def _make_image(text: str = "") -> bytes:
     img = Image.new("RGB", (320, 320), color="white")
     d = ImageDraw.Draw(img)
