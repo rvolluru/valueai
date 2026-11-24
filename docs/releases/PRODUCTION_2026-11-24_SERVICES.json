@@ -1,0 +1,26 @@
+{
+  "valueai-mvp-api": {
+    "revision": 200,
+    "running": 2,
+    "desired": 2,
+    "changed_environment_names": [
+      "IMAGE_STAGING_ENABLED",
+      "IMAGE_STAGING_PHOTOROOM_ENABLED"
+    ],
+    "secret_references_unchanged": true,
+    "image": "537595754494.dkr.ecr.us-east-1.amazonaws.com/valueai-mvp-api:prod-152-73bf2f420abe5f287dee4cccc6e3715da3d2a03d",
+    "rollout_state": "COMPLETED"
+  },
+  "valueai-mvp-analysis-worker": {
+    "revision": 68,
+    "running": 2,
+    "desired": 2,
+    "changed_environment_names": [
+      "IMAGE_STAGING_ENABLED",
+      "IMAGE_STAGING_PHOTOROOM_ENABLED"
+    ],
+    "secret_references_unchanged": true,
+    "image": "537595754494.dkr.ecr.us-east-1.amazonaws.com/valueai-mvp-api:prod-152-73bf2f420abe5f287dee4cccc6e3715da3d2a03d",
+    "rollout_state": "COMPLETED"
+  }
+}

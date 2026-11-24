@@ -1,6 +1,14 @@
 # Jouft listing analysis: complete process
 
-All-accessory mannequin previews — November 23, 2026 (implemented locally, not deployed):
+Updated November 24, 2026: web/API and worker release `73bf2f4` is deployed
+and verified in production (workflow `45506303091`; API revision 200, worker 68).
+Android build 12 is available as an APK; iOS build 70 was uploaded to existing
+App Store Connect app 6791465341 and requires Apple processing. Native device
+acceptance remains pending. Existing keys, model settings and Secrets Manager
+references are preserved; only background-processing flags were changed.
+See `docs/releases/PRODUCTION_2026-11-24.md` for verification and rollout notes.
+
+All-accessory mannequin previews — November 23, 2026 (deployed in production November 24, 2026):
 all listings in the accessories category are eligible for mannequin generation,
 including jewelry, watches, belts, scarves, hats, eyewear, gloves and other types.
 Prompts request close-ups of the appropriate mannequin support (wrist, hand, ear,
@@ -13,7 +21,7 @@ accessory-close-up mode with those coverage and framing rules; original-product
 constraints, orientation and front-alignment checks remain mandatory. This does
 not re-enable original-photo background processing or regenerate existing assets.
 
-Background processing paused — November 23, 2026 (implemented locally, not deployed):
+Background processing paused — November 23, 2026 (deployed in production November 24, 2026):
 Photoroom integration and original-photo background staging default to disabled
 (`IMAGE_STAGING_PHOTOROOM_ENABLED=false`, `IMAGE_STAGING_ENABLED=false`). Local
 configuration and deployment configuration disable both, including API and worker
@@ -23,24 +31,24 @@ orientation handling and mannequin generation remain enabled under their existin
 settings. Existing saved display variants are not removed or rewritten. This
 supersedes the enabled-background-processing descriptions below until re-enabled.
 
-Published Closet navigation — November 23, 2026 (implemented locally, not deployed):
+Published Closet navigation — November 23, 2026 (deployed in production November 24, 2026):
 clicking a published (Active) listing in Closet opens the existing Edit Listing
 page on web and the listing editor on native mobile, rather than Marketplace
 Matches. The matches-count label is a separate button that opens Marketplace
 Matches without opening the editor. Listings awaiting review retain their Review
 and Publish action.
-Publication validation and analysis behavior are unchanged. Native distribution
-and device acceptance are pending.
+Publication validation and analysis behavior are unchanged. Android build 12 is available and iOS build 70 is uploaded; native device
+acceptance remains pending.
 
 
-Review details — November 23, 2026 (implemented locally, not deployed):
+Review details — November 23, 2026 (deployed in production November 24, 2026):
 the web Review Listing summary presents brand, product title, public @username, price,
 condition, size, then description. Display-only description cleanup removes exact
 standalone facts already in the summary and repeated sentences, retaining prose
 with additional details such as wear or damage. Saved descriptions and analysis
 outputs are unchanged.
 
-Publication controls — November 23, 2026 (implemented locally, not deployed):
+Publication controls — November 23, 2026 (deployed in production November 24, 2026):
 web and native review screens use a single **Publish** action. When mannequin
 assets exist, **Use mannequin image** is an On/Off switch, defaulting to **On**
 when selecting a listing for review. Publish sends `mannequin_choice=include`
@@ -48,11 +56,11 @@ when On and `exclude` when Off. The web review screen has no separate AI
 mannequin preview section or feedback field; the toggle sits beside Edit and
 Publish. Existing gallery images and their AI disclosure remain available. The existing approval, exclusion feedback,
 public gallery filtering and publication validation remain unchanged. Without
-mannequin assets, Publish sends no mannequin choice. Native distribution and
-device acceptance are pending. This supersedes the separate publish actions
+mannequin assets, Publish sends no mannequin choice. Android build 12 is available and iOS build 70 is uploaded; native device
+acceptance remains pending. This supersedes the separate publish actions
 described in the historical November 7 verification below.
 
-Membership invitation trials — November 20, 2026 (implemented locally, not deployed):
+Membership invitation trials — November 20, 2026 (deployed in production November 24, 2026):
 valid non-renewing trial grants satisfy the existing subscription entitlement
 check until their server-side expiry. Profile responses show the granted plan and
 trial end while valid; profile saves cannot persist trial billing fields. Renewing

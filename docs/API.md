@@ -243,7 +243,7 @@ Clerk bearer token and listing ownership required:
 
 No listing writes or publication changes. See [setup and contracts](ENTRUPY_INTEGRATION.md).
 
-## Public Help & Support (implemented locally; not deployed)
+## Public Help & Support (production deployed November 24, 2026)
 
 `GET /support` and `GET /support/` return the public web application shell without
 authentication. The client renders searchable help before entering the sign-in
@@ -254,7 +254,7 @@ General email contact opens a draft for the user to review and send.
 See [user help](USER_HELP.md) and [acceptance notes](qa/HELP_SUPPORT_ACCEPTANCE.md).
 
 
-## Admin-managed membership trial invitations (implemented, not deployed — November 20, 2026)
+## Admin-managed membership trial invitations (production deployed November 24, 2026)
 
 Migrations `0012_invitation_trials` and `0013_trial_listing_allowances` are required before starting the updated API.
 Admin endpoints require an authenticated Clerk administrator; member endpoints
@@ -314,7 +314,7 @@ acceptance and physical-device acceptance are still pending; automated provider
 checks use mocked Stripe responses, never production charges.
 
 
-Trial listing allowances (November 20, 2026, implemented locally; not deployed):
+Trial listing allowances (production deployed November 24, 2026):
 `listing_limit` defaults to 25; any positive integer up to 2,147,483,647 is a finite
 allowance and JSON `null` means unlimited. It is a total number of new listing
 records during the trial, not a monthly reset or an active-inventory cap. Listings
@@ -334,7 +334,7 @@ trial end while the matching Stripe subscription is current; the normal paid
 plan takes over afterward. This does not introduce new quotas for non-trial plans.
 
 
-## Public profile usernames (November 23, 2026 — local, not deployed)
+## Public profile usernames (production deployed November 24, 2026)
 
 `GET /v1/me/profile-quiz` returns `username`. `PUT /v1/me/profile-quiz`
 accepts an optional username: 1–40 ASCII letters, numbers, or underscores.
@@ -353,7 +353,7 @@ older listings. Legal, billing, shipping and trade participant contact names rem
 separate. No existing authentication credentials are changed.
 
 
-## Signup-interest requests (November 23, 2026 — local, not deployed)
+## Signup-interest requests (production deployed November 24, 2026)
 
 Home-page **Request Access** links to `/request-access`, a public information form
 instead of account registration. Mobile opens the hosted form in its browser.
@@ -385,7 +385,7 @@ in daily marketplace feeds. Existing profile onboarding is unchanged; the form
 stores name, location, sizes, and brand preferences for later onboarding use.
 
 
-### City/state autocomplete for access requests (local, November 23, 2026)
+### City/state autocomplete for access requests (production deployed November 24, 2026)
 
 The form combines City / State into one searchable input. After three typed
 characters and a 300 ms debounce it calls public
@@ -402,7 +402,7 @@ returned to the browser. The dropdown includes Google attribution.
 Provider reference: https://developers.google.com/maps/documentation/places/web-service/place-autocomplete
 
 
-### Access request CSV and admin notification (local, November 23, 2026)
+### Access request CSV and admin notification (production deployed November 24, 2026)
 
 Admin → Access requests includes Download CSV. Authenticated Clerk admins can
 fetch `GET /v1/admin/access-requests/export.csv`; it exports all requests across
@@ -418,4 +418,4 @@ all submitted details and its UTC timestamp to the fixed recipient
 provider (`auto` tries SES, then configured SMTP). Validation, honeypot and
 rate-limit failures do not notify. Delivery failures are logged without changing
 the successful saved request; this background notification has no automatic
-retry or durable outbox. Provider delivery has not been verified live locally.
+retry or durable outbox. End-to-end inbox delivery has not been verified live; production SES configuration is verified.

@@ -44,4 +44,4 @@ Topic navigation update (November 17, 2026, web deployed in `55e275f`; native de
 
 Help styling update (November 17, 2026, web deployed in `55e275f`; native delivery tracked separately): web Help uses the application background and panel color tokens, with the existing Jouft logo asset and superscript trademark. Verify the logo, trademark, and header fit on narrow screens and the help panels match the application surfaces.
 
-November 20, 2026: membership trial invitation guidance added locally, not deployed. Verify the new article and search for “invitation code” after the trial feature is released.
+November 24, 2026: membership trial invitation guidance deployed in production release `73bf2f4`. Verify the new article and search for “invitation code” after the trial feature is released.
