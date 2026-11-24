@@ -38,7 +38,7 @@ function buildVariant(config, env = process.env) {
     }
     if (env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY && env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY !== key) throw Error('Conflicting Clerk configuration');
   }
-  const identifier = production ? 'com.jouft.app' : 'com.jouft.app.dev';
+  const identifier = 'com.jouft.app.dev';
   return {
     ...config, name: production ? 'JOUFT' : 'Jouft Testing', version: production ? '1.0.0' : '0.1.0', scheme: identifier,
     ios: { ...config.ios, bundleIdentifier: identifier }, android: { ...config.android, package: identifier },
