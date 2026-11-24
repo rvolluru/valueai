@@ -1017,3 +1017,98 @@ Clean up only your recorded disposable listings/proposals and test subscriptions
 - [Device Farm test guide](../../tests/devicefarm/README.md): automated harness and known device limitations; automated status is independent of manual results.
 
 This QA document changes no app behavior, deployment, user data or listing-analysis rules.
+
+
+### Invitation membership trials — November 20, 2026 (local implementation; not deployed)
+
+Use staging with Stripe test credentials and dedicated accounts only. Do not run
+renewal/charge tests against production. Native admin management is web-only.
+
+1. As an admin, create no-card and card-required trials. Vary plan, days, dates,
+   cap, email/domain rules, first-trial/new-subscriber eligibility and billing cycle.
+   Verify invalid settings fail, and non-admin/API-key access is rejected.
+2. Copy the one-time code/link, reload admin, and verify only its suffix remains.
+   Edit settings and disable/enable the offer. Existing trial terms must not change.
+3. As an eligible signed-in member, preview the terms in web and Android/iOS
+   Subscription. Confirm accurate duration, card requirement, renewal price/cycle,
+   exclusions and explicit consent. No access begins from preview alone.
+4. Redeem a no-card offer. Verify plan/status/end date, no Stripe call or charge,
+   duplicate redemption behavior, and fallback to the saved plan after server expiry.
+5. Try the last remaining place concurrently from two eligible accounts: only one
+   succeeds. Try a different account with the same verified email and confirm the
+   first-trial restriction. Edited-profile email must not establish eligibility.
+6. For card-required/non-renewing trials, complete Stripe test Setup Checkout;
+   refresh in the original client. Verify access starts once and no subscription
+   is created. Abandoned/expired checkout must not grant access.
+7. For renewing trials, verify displayed recurring terms, Stripe trial dates and
+   correct existing plan price. In Stripe test mode, advance the clock through
+   trial end, payment success/failure and cancellation; verify signed webhooks,
+   duplicate/reordered delivery and member refresh yield the correct billing state.
+8. Tamper with another account's checkout/session ID, code, version and dates;
+   verify rejection. Edit the offer after preview: redemption must require a fresh
+   preview. Verify rate limiting and recovery after provider errors/app restart.
+9. End an active no-charge trial as admin: access ends immediately, history stays,
+   and the previous redemption still counts. Disabling a code must not revoke
+   existing grants or alter recurring subscriptions.
+10. Test small screens, large text, keyboard access, native refresh after external
+    checkout, errors with no email/Stripe configuration, and signup/onboarding
+    routing from an invitation link. Record evidence and any blockers.
+
+
+Trial listing allowance checks (local implementation, not deployed): configure 1,
+25 and unlimited new listings; reject zero/negative/fractional values. Verify the
+preview, consent and web/native status show the correct total and remaining count.
+Create the final slot concurrently: exactly one request succeeds and the other
+returns 409 without saving a draft. Repeat via assistant creation. Existing
+pre-trial listings do not count; edits/publication/reruns do not use extra slots;
+archive/delete do not refund a slot. Offer edits must not alter existing grants.
+Verify a paid upgrade and original trial expiry stop the old custom cap, including
+Stripe-renewing trials. Unlimited still records usage but never rejects on count.
+
+
+### Public username acceptance (local implementation, November 23, 2026)
+
+- On web and mobile profile setup, verify Username defaults to `first_name_last_name`.
+- Save a custom handle; verify it survives reload and appears as `@handle` on Closet,
+  Marketplace and Review Listing, including listings created before the change.
+- Change the handle in account settings; verify listing labels show the new handle.
+- Attempt another account's handle (including uppercase spelling); expect a clear
+  duplicate error and verify the old handle remains saved.
+- Reject spaces/punctuation and handles longer than 40 characters. Test accents in
+  names and two accounts sharing a name; automatic defaults must remain distinct.
+- Verify shipping/billing contact names and sign-in details remain unchanged.
+
+
+### Request Access signup-interest form (local, November 23, 2026)
+
+- Click every home-page Request Access CTA: open `/request-access`, without a
+  sign-up/password modal. Verify direct navigation and Back to home.
+- Complete all ten requested groups, including city and state. Verify US clothing
+  XS–XXL, US shoes 5–12 in half sizes, quantity and price-range choices.
+- Search both brand lists, add an unlisted brand, and remove selected brands.
+  Five selections per list is the limit, including custom brands. Require at
+  least one brand in each list and explicit contact consent.
+- Submit: show a receipt, create no Clerk account, send an internal notification
+  to admin@jouft.com with submitted details and UTC time; send no applicant email.
+  Invalid/missing fields must not create records. Retry errors without losing input.
+- Admin → Access requests shows all submitted details and consent date. A
+  non-admin cannot retrieve submissions. Duplicate email updates one record.
+- Check narrow/mobile layout, keyboard navigation, labels, scrollable brand
+  choices, loading, errors and successful submission on the hosted mobile page.
+- Mobile Request Access opens the hosted page after web deployment/new build;
+  current simulator binaries and production remain unchanged until rollout.
+
+
+Request Access location autocomplete: type at least three characters in the
+combined City / State field; select a US suggestion and verify both city and
+state in the admin submission. Changing the text must clear the old selection;
+unselected text cannot be submitted. Verify keyboard selection, loading/no-results,
+provider failure, and rapid typing without stale suggestions. No street address
+is required. Existing shipping autocomplete should still require street details.
+
+
+Access requests export: download CSV as admin with more than one page of records;
+verify all rows, original/latest submission UTC timestamps, consent, multi-value
+sizes/brands, Unicode, commas/quotes, and formula-safe custom text. Non-admins
+must be denied. Verify admin email delivery in the deployed mail environment and
+that provider failure leaves the request saved and visible in Admin.

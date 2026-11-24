@@ -11,7 +11,7 @@ Updated November 17, 2026. Web/API deployed in production release `55e275f` (wor
 
 ## Content maintenance
 
-The canonical 17 articles are in `packages/app-client/src/supportContent.mjs` and are rendered by both clients. The readable edition is [USER_HELP.md](../USER_HELP.md). Run `node scripts/build_user_help.mjs` after changing the articles, then use `--check` to verify the edition matches.
+The canonical 18 articles are in `packages/app-client/src/supportContent.mjs` and are rendered by both clients. The readable edition is [USER_HELP.md](../USER_HELP.md). Run `node scripts/build_user_help.mjs` after changing the articles, then use `--check` to verify the edition matches.
 
 Cover account access and onboarding, listing creation/status/search, analysis and missing values, optional AI image choices, Marketplace matching, trades and issue reporting, shipping, billing, email preferences, privacy/deletion, and app troubleshooting. Keep wording aligned with actual controls. Do not promise response times, refunds, authenticity certification, or features that are not enabled. Identify website-only controls where native does not expose them.
 
@@ -43,3 +43,5 @@ Condition help update (November 17, 2026): shared web/mobile help now defines Ne
 Topic navigation update (November 17, 2026, web deployed in `55e275f`; native delivery tracked separately): selecting a topic clears the previous search on web and mobile; mobile also collapses the previous answer. Verify that searching for “shipping” and then choosing Getting started displays its sign-in and profile questions with an empty search field. Searching within the selected topic still filters its answers.
 
 Help styling update (November 17, 2026, web deployed in `55e275f`; native delivery tracked separately): web Help uses the application background and panel color tokens, with the existing Jouft logo asset and superscript trademark. Verify the logo, trademark, and header fit on narrow screens and the help panels match the application surfaces.
+
+November 20, 2026: membership trial invitation guidance added locally, not deployed. Verify the new article and search for “invitation code” after the trial feature is released.

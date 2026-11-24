@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from .usernames import UsernameError
+
 import json
 import base64
 import os
@@ -23,7 +25,7 @@ import boto3
 import httpx
 from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.responses import HTMLResponse
 from fastapi.responses import RedirectResponse
 from fastapi.responses import StreamingResponse
@@ -35,11 +37,12 @@ from brand.types import ImageInput
 from valuation import ValuationConfig, ValuationService
 from valuation.types import ValuationRequest
 
+from .invitation_trials import router as invitation_trials_router, active_grant, effective_profile, complete_checkout
 from .auth import AuthPrincipal, create_impersonation_token, get_request_principal, principal_has_admin_role, require_admin_or_api_key, require_admin_user, require_clerk_user
 from .analysis_execution import guard_analysis_job, recover_analysis_success
 from .pipeline_results import StalePipelineResult, merge_result, mark_pricing_failure, original_urls, photo_key
 from .analysis_queue import enqueue_listing_analysis
-from .db import Database, PersistedImage, TradeListingUnavailableError, ActiveTradeRequestError, utc_now_iso
+from .db import TrialListingLimitError, Database, PersistedImage, TradeListingUnavailableError, ActiveTradeRequestError, utc_now_iso
 from .deps import (
     get_db,
     get_gpt_item_profiler,
@@ -172,6 +175,19 @@ SUBSCRIPTION_PLANS = {
     },
 }
 PAYMENT_TERMS_VERSION = "2026-09-22"
+app.include_router(invitation_trials_router)
+from .access_requests import router as access_requests_router
+app.include_router(access_requests_router)
+
+
+@app.exception_handler(UsernameError)
+async def username_error_handler(request, exc):
+    return JSONResponse(status_code=409 if 'already taken' in str(exc) else 400, content={'detail': str(exc)})
+
+
+@app.exception_handler(TrialListingLimitError)
+async def trial_listing_limit_error(request: Request, exc: TrialListingLimitError):
+    return JSONResponse(status_code=409, content={"detail":str(exc)})
 
 
 @app.middleware("http")
@@ -700,6 +716,8 @@ def _profile_owner_display_name(db: Database, owner_subject: object, fallback: o
     subject = str(owner_subject or "").strip()
     profile = db.get_user_profile_quiz(subject) if subject else None
     if profile:
+        if profile.get("username"):
+            return profile["username"]
         profile_name = " ".join(
             p for p in [profile.get("first_name"), profile.get("last_name")]
             if isinstance(p, str) and p.strip()
@@ -2808,6 +2826,8 @@ def ui_index():
     return _spa_index_response()
 
 
+@app.get("/request-access")
+@app.get("/request-access/")
 @app.get("/support")
 @app.get("/support/")
 def support_page():
@@ -2883,7 +2903,7 @@ def get_profile_quiz(
     row = db.get_user_profile_quiz(principal.subject)
     if row is None:
         now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-        return UserProfileQuizResponse(
+        blank_profile = UserProfileQuizResponse(
             owner_subject=principal.subject,
             first_name=None,
             last_name=None,
@@ -2915,7 +2935,8 @@ def get_profile_quiz(
             created_at=now,
             updated_at=now,
         )
-    return UserProfileQuizResponse(**row)
+        return UserProfileQuizResponse(**effective_profile(db, principal.subject, blank_profile.model_dump()))
+    return UserProfileQuizResponse(**effective_profile(db, principal.subject, row))
 
 
 @app.put("/v1/me/profile-quiz", response_model=UserProfileQuizResponse)
@@ -2978,6 +2999,7 @@ def put_profile_quiz(
     primary_shipping = shipping_addresses_payload[0] if shipping_addresses_payload else {}
     saved = db.upsert_user_profile_quiz(
         owner_subject=principal.subject,
+        username=payload.username,
         first_name=first_name,
         last_name=last_name,
         email=email,
@@ -3032,13 +3054,13 @@ def put_profile_quiz(
             ((payload.shipping_phone if "shipping_phone" in payload.model_fields_set else existing.get("shipping_phone")) or "").strip() or None
         ),
         shipping_addresses=shipping_addresses_payload,
-        subscription_plan=payload.subscription_plan,
-        subscription_billing_cycle=payload.subscription_billing_cycle,
-        subscription_status=payload.subscription_status,
-        subscription_renewal_date=payload.subscription_renewal_date,
+        subscription_plan=existing.get("subscription_plan"),
+        subscription_billing_cycle=existing.get("subscription_billing_cycle"),
+        subscription_status=existing.get("subscription_status"),
+        subscription_renewal_date=existing.get("subscription_renewal_date"),
         payment_methods=payload.payment_methods,
     )
-    return UserProfileQuizResponse(**saved)
+    return UserProfileQuizResponse(**effective_profile(db, principal.subject, saved))
 
 
 def _default_client_state(owner_subject: str) -> ClientStateResponse:
@@ -3490,6 +3512,8 @@ def _subscription_status_has_entitlement(status: str | None) -> bool:
 
 
 def _subject_has_subscription_entitlement(db: Database, subject: str) -> bool:
+    if active_grant(db, subject):
+        return True
     billing = db.get_billing_profile(subject) or {}
     profile = db.get_user_profile_quiz(subject) or {}
     plan = str(billing.get("subscription_plan") or profile.get("subscription_plan") or "").strip()
@@ -3861,6 +3885,14 @@ async def stripe_webhook(
         raise HTTPException(status_code=400, detail="Invalid Stripe webhook payload")
     event_type = str(event.get("type") or "").strip()
     event_id = str(event.get("id") or "").strip()
+    trial_object = (event.get("data") or {}).get("object") or {}
+    if event_type in {"checkout.session.completed", "checkout.session.expired"} and (trial_object.get("metadata") or {}).get("trial_redemption_id"):
+        # Fulfillment is idempotent. Mark delivery only after successful processing,
+        # so a transient provider failure can be retried by Stripe.
+        result = complete_checkout(db, settings, trial_object)
+        if event_id:
+            db.record_stripe_webhook_event(event_id, event_type, event)
+        return {"received": True, "type": event_type, **result}
     if event_id and not db.record_stripe_webhook_event(event_id, event_type, event):
         return {"received": True, "type": event_type, "duplicate": True}
     data = event.get("data") if isinstance(event.get("data"), dict) else {}
@@ -4823,6 +4855,7 @@ def _google_places_address_suggest(
     latitude: float | None = None,
     longitude: float | None = None,
     settings: Settings,
+    cities_only: bool = False,
 ) -> dict:
     key = (settings.google_places_api_key or "").strip()
     query = " ".join(
@@ -4846,6 +4879,8 @@ def _google_places_address_suggest(
         "includedRegionCodes": ["us"],
         "languageCode": "en-US",
     }
+    if cities_only:
+        payload["includedPrimaryTypes"] = ["(cities)"]
     if latitude is not None and longitude is not None:
         payload["locationBias"] = {
             "circle": {
@@ -4920,7 +4955,10 @@ def _google_places_address_suggest(
             postal = zip_code if not zip_suffix else f"{zip_code}-{zip_suffix}"
             country = comp_short("country").upper() or "US"
             formatted_address = str(detail.get("formattedAddress") or formatted).strip()
-            if not street_line:
+            if cities_only:
+                if not city_name or not state_code or country != "US":
+                    continue
+            elif not street_line:
                 continue
             suggestions.append(
                 {
@@ -4952,6 +4990,24 @@ def shippo_address_suggest(
         postal_code=postal_code,
         settings=settings,
     )
+
+
+@app.get("/v1/google/places/city-suggest")
+def google_places_city_suggest(
+    q: str = Query(default="", min_length=0, max_length=120),
+    settings: Settings = Depends(get_settings),
+):
+    if not str(settings.google_places_api_key or '').strip():
+        raise HTTPException(503, 'City search is temporarily unavailable. Please try again later.')
+    result = _google_places_address_suggest(q=q, city=None, state=None, postal_code=None, settings=settings, cities_only=True)
+    seen = set()
+    suggestions = []
+    for entry in result['suggestions']:
+        key = (entry['city'], entry['state'])
+        if key not in seen:
+            seen.add(key)
+            suggestions.append({'city': entry['city'], 'state': entry['state'], 'label': f"{entry['city']}, {entry['state']}"})
+    return {'suggestions': suggestions}
 
 
 @app.get("/v1/google/places/address-suggest")
@@ -5694,6 +5750,7 @@ def _create_listing_for_owner(payload, background_tasks, principal, db, settings
             owner_name = owner_name.strip()
     if not owner_name:
         owner_name = "Member"
+    owner_name = _profile_owner_display_name(db, principal.subject, owner_name)
     created_at = db.insert_listing(
         listing_id=listing_id,
         owner_subject=principal.subject,
@@ -6299,7 +6356,7 @@ def update_listing(
             brand_changed=brand_changed,
             stage_images_after_analysis=stage_images_after_analysis,
         )
-    return ListingResponse(**record)
+    return ListingResponse(**_hydrate_listing_owner_name(db, record))
 
 
 def _record_mannequin_rejection(db: Database, *, listing: dict, assets: list[dict],
@@ -10211,6 +10268,39 @@ def _mannequin_generation_prompt(*, category: str, title: str, description: str)
             "invent hidden shoe details or a different matching shoe. "
             "Neutral off-white studio background, soft even lighting, sharp product focus. "
             "No human model, collage, text or added accessories. Generate one image only."
+        )
+    if normalized_category == "accessories":
+        # Match the title first; incidental styling mentions must not determine framing.
+        accessory_text = normalized_title.lower() or item_text
+        framing_rules = [
+            (r"\b(watch|watches|bracelet|bracelets|bangle|bangles|cuff|cuffs)\b", "wrist and a short section of forearm"),
+            (r"\b(ring|rings)\b", "hand and fingers"),
+            (r"\b(earring|earrings|ear cuff|ear cuffs)\b", "ear and a small part of the side of the mannequin head"),
+            (r"\b(necklace|necklaces|pendant|pendants|choker|chokers|brooch|brooches|tie|ties|scarf|scarves)\b", "neck, shoulders and upper chest"),
+            (r"\b(sunglasses|glasses|eyewear|hat|hats|cap|caps|headband|headbands|hair|beanie|beanies)\b", "mannequin head and only the neck needed to support it"),
+            (r"\b(belt|belts|buckle|buckles)\b", "waist with simple neutral clothing beneath the accessory"),
+            (r"\b(glove|gloves)\b", "hands and wrists"),
+        ]
+        framing = next((view for pattern, view in framing_rules if re.search(pattern, accessory_text)),
+                       "anatomically appropriate support area for the accessory identified in the source photos")
+        if is_bag:
+            framing = "hand or shoulder and the minimal clothed torso area needed to support the complete bag using its existing handles or straps"
+        return "mannequin_accessory", (
+            "Create a CLOSE-UP accessory product photograph of the exact listed accessory in the ORIGINAL source photos "
+            f"on a matte white retail mannequin. Frame only the {framing}. "
+            "Use the source photos to confirm the accessory type and choose the correct natural wearing position. "
+            "Never show a full-body mannequin. Keep the complete listed accessory inside the frame, including its "
+            "chains, straps, fastenings and dangling details; widen the crop only enough to show the entire product. "
+            "Crop mannequin support naturally at the image borders; never show cut surfaces, end caps, hollow openings "
+            "or detached stump-like body parts. A mannequin head is allowed only for head-worn or ear-worn accessories. "
+            "Bare matte white hands, wrists, neck and head need no clothing. If torso or waist is visible, use simple "
+            "opaque neutral clothing that contrasts with the product, covers chest and pelvis, and does not obscure it. "
+            "No human model, extra jewelry, added accessories or invented matching pieces. "
+            "Preserve the exact product design, color, material, texture, dimensions, hardware, logos, engraving, stones, "
+            "fastenings, visible wear and image-left/image-right orientation. Do not mirror, redesign, repair or invent "
+            "hidden details. Match the recognized front photo's viewing direction and visible front details. "
+            "Use a neutral off-white studio background, soft even lighting and sharp product focus. "
+            "No collage or added text. Generate one image only."
         )
     if is_bag:
         return "mannequin_handbag", (

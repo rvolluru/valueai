@@ -962,7 +962,7 @@ def test_admin_recent_analyses_includes_linked_listing_mannequin():
     ]
 
 
-def test_mannequin_generation_prompt_is_limited_to_handbags_and_dresses() -> None:
+def test_mannequin_generation_prompt_supports_clothing_shoes_bags_and_accessories() -> None:
     from app.main import _mannequin_generation_prompt
 
     bag = _mannequin_generation_prompt(category="handbag", title="Prada tote", description="Black leather bag")
@@ -1004,7 +1004,8 @@ def test_mannequin_generation_prompt_is_limited_to_handbags_and_dresses() -> Non
         description="Chain strap bag",
     )
     assert accessory_clutch is not None
-    assert accessory_clutch[0] == "mannequin_handbag"
+    assert accessory_clutch[0] == "mannequin_accessory"
+    assert "CLOSE-UP" in accessory_clutch[1]
     legacy_bag = _mannequin_generation_prompt(category="bags", title="Leather tote", description="")
     assert legacy_bag is not None
     assert legacy_bag[0] == "mannequin_handbag"
@@ -5059,3 +5060,33 @@ def test_listing_assistant_null_client_fields_do_not_erase_confirmed_state(monke
     assert conversation["context"]["workflow_stage"] == "review"
     assert conversation["context"]["step"] == 2
     assert conversation["messages"][-1]["metadata"]["event"] == "analysis_completed"
+
+
+def test_profile_username_validation_and_listing_display():
+    client = _build_client()
+    headers = {'x-api-key': 'test-key'}
+    payload = {'first_name': 'Jane', 'last_name': 'Doe', 'email': 'jane@example.com', 'birthday': '1990-01-01'}
+    response = client.put('/v1/me/profile-quiz', json=payload, headers=headers)
+    assert response.status_code == 200, response.text
+    assert response.json()['username'] == 'jane_doe'
+    response = client.put('/v1/me/profile-quiz', json={**payload, 'username': '@Style_Closet'}, headers=headers)
+    assert response.status_code == 200, response.text
+    assert response.json()['username'] == 'style_closet'
+    invalid = client.put('/v1/me/profile-quiz', json={**payload, 'username': 'bad handle!'}, headers=headers)
+    assert invalid.status_code == 400
+    assert client.get('/v1/me/profile-quiz', headers=headers).json()['username'] == 'style_closet'
+
+    created = client.post('/v1/listings', json={'title': 'Handle display test', 'category': 'shoes', 'brand': 'Test', 'condition': 'LikeNew', 'estimated_value': 100}, headers=headers)
+    assert created.status_code == 200, created.text
+    assert created.json()['owner_name'] == 'style_closet'
+    renamed = client.put('/v1/me/profile-quiz', json={**payload, 'username': 'new_handle'}, headers=headers)
+    assert renamed.status_code == 200, renamed.text
+    listings = client.get('/v1/listings?mine=true', headers=headers).json()['items']
+    assert next(item for item in listings if item['listing_id'] == created.json()['listing_id'])['owner_name'] == 'new_handle'
+    from app.deps import get_db
+    db = get_db()
+    db.execute('INSERT INTO user_profiles (owner_subject, username, created_at, updated_at) VALUES (?, ?, ?, ?)', ('other-account', 'taken_name', '2026-11-23', '2026-11-23'))
+    db.commit()
+    duplicate = client.put('/v1/me/profile-quiz', json={**payload, 'username': 'TAKEN_NAME'}, headers=headers)
+    assert duplicate.status_code == 409, duplicate.text
+    assert client.get('/v1/me/profile-quiz', headers=headers).json()['username'] == 'new_handle'

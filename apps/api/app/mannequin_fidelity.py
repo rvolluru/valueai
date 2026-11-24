@@ -108,6 +108,8 @@ def front_alignment_passes(review: dict) -> bool:
 
 
 def clothing_attempts(prompt: str, asset_kind: str) -> list[tuple[int, str, str]]:
+    if asset_kind == "mannequin_accessory":
+        return [(1, "accessory_closeup", prompt)]
     if asset_kind == "mannequin_shoes":
         return [(1, "shoe_legs", prompt)]
     attempts = [(1, "full", prompt)]
@@ -262,7 +264,18 @@ async def review_candidate(*, client, api_key, model, files: list[dict], plan: d
                          "No supporting clothing is required or permitted: fail added trousers, skirts, dresses, "
                          "socks, tights or clothing hems. Bare matte mannequin feet and ankles pass coverage. "
                          "This mode overrides all full-body clothing coverage rules below. "
-                         if display_mode == "shoe_legs" else "") +
+                         if display_mode == "shoe_legs" else
+                         "This is an ACCESSORY-CLOSE-UP preview. Determine the accessory type from the source photos. "
+                         "Require its anatomically appropriate wearing position on matte white mannequin support and "
+                         "a tight product-focused crop, never a full body. A mannequin head is permitted for head-worn "
+                         "and ear-worn accessories. Bare hands, wrists, neck and head pass coverage; visible torso or "
+                         "waist requires opaque neutral supporting clothing covering chest and pelvis. Bags may use "
+                         "a cropped clothed shoulder or hand; no full-body requirement applies. Require the entire "
+                         "accessory including chains, straps, fastenings and dangling details. Fail invented matching "
+                         "pieces, extra jewelry, cut surfaces, end caps or hollow stump-like support ends. "
+                         "Natural camera crops through mannequin support at the image border are allowed. "
+                         "This mode overrides full-body, headless mannequin and bag clothing requirements below. "
+                         if display_mode == "accessory_closeup" else "") +
                       "Return JSON: verdict (passed/failed/uncertain), checks (one object for EVERY constraint, "
                       "with constraint_index, result matched/changed/uncertain, evidence), additional_changes "
                       "(array of other invented or altered product details). Fail altered neckline, added shoulder "

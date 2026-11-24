@@ -32,3 +32,5 @@ Device Farm guide and need separate triage if they recur.
 | DF-020 | [Nested listing accessibility labels](bugs/DF-020_NESTED_LISTING_ACCESSIBILITY.md) | Automation | Medium | P1 | Closed | Codex | All three affected gallery checks passed on staging build 4; ambiguity guard retained |
 
 Follow [the workflow](DEVICE_FARM_DEFECT_WORKFLOW.md) when adding or changing a report.
+
+| DF-021 | [Mobile login keyboard occlusion](bugs/DF-021_IOS_LOGIN_KEYBOARD_OCCLUSION.md) | Application UI | High | P1 | Ready for device retest | Codex | Local simulator password visibility passed; Android/physical-device and long-form acceptance pending; not distributed |

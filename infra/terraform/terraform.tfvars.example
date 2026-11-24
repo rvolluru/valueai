@@ -43,7 +43,7 @@ gpt_item_profile_vertex_search_max_results = 10
 openai_api_key          = "replace-me"
 gemini_api_key          = "replace-me"
 photoroom_api_key       = "replace-me"
-image_staging_photoroom_enabled = true
+image_staging_photoroom_enabled = false
 photoroom_background_color = "#FFFFFF"
 photoroom_output_format = "jpg"
 photoroom_output_size   = "full"
@@ -74,3 +74,5 @@ public_api_url         = "https://api.jouft.com"
 
 # Optional shared AI-provider JSON secret; leaves database and payment keys separate.
 ai_provider_secret_arn = ""
+
+image_staging_enabled = false

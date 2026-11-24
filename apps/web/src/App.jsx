@@ -1,3 +1,8 @@
+import AccessRequestPage from './components/AccessRequestPage'
+import AdminAccessRequests from './components/AdminAccessRequests'
+import { defaultUsername } from '../../../packages/app-client/src/username.mjs'
+import { reviewDescription } from './lib/reviewDescription.mjs'
+import TrialInvitations from './components/TrialInvitations'
 import SupportPage from './components/SupportPage'
 import { JOUFT_GOAL_OPTIONS, normalizeProfileGoals, needsGoalSelection } from './lib/profileGoals'
 import { Fragment, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
@@ -130,8 +135,7 @@ function listingIdFromLocation() {
 function ownerFirstName(name, fallback = 'Member') {
   const value = String(name || '').trim()
   if (!value) return fallback
-  const first = value.split(/\s+/).find(Boolean)
-  return first || fallback
+  return `@${value.replace(/^@/, '').replace(/\s+/g, '_')}`
 }
 
 const seedListings = [
@@ -1610,6 +1614,7 @@ export default function App() {
 }
 
 function AppContent() {
+  if (window.location.pathname.replace(/\/$/, '') === '/request-access') return <AccessRequestPage apiBaseUrl={API_DEFAULT} />
   if (typeof window !== 'undefined' && window.location.pathname.replace(/\/$/, '') === '/support') {
     return <SupportPage />
   }
@@ -2283,7 +2288,7 @@ function WebClerkAuthModal({ mode: initialMode, entryPoint = 'login', onClose })
     }
   }
 
-  const title = mode === 'reset_password' ? 'Reset Password' : entryPoint === 'request_access' ? 'Request Access' : mode === 'login' ? 'Sign In' : 'Create Account'
+  const title = mode === 'reset_password' ? 'Reset Password' : entryPoint === 'request_access' ? 'Join waiting list' : mode === 'login' ? 'Sign In' : 'Create Account'
   const verificationPending = pendingSignInVerification || pendingSignUpVerification
   const shouldShowPasswordRequirements = (mode === 'signup' && !verificationPending) || (mode === 'reset_password' && pendingPasswordReset)
   const submitText = busy
@@ -2463,7 +2468,7 @@ function ClerkMarketplaceApp() {
         actions={(
         <div className="auth-cta-actions auth-cta-actions-fixed">
           <button className="ghost" type="button" onClick={() => openFreshAuthPanel('login')}>Log In</button>
-          <button className="primary" type="button" onClick={() => openFreshAuthPanel('signup')}>Request Access</button>
+          <button className="primary waitlist-logo-font" type="button" onClick={() => window.location.assign('/request-access')}>Join waiting list</button>
         </div>
         )}
       >
@@ -2576,7 +2581,7 @@ function LocalMarketplaceApp() {
         actions={(
         <div className="auth-cta-actions auth-cta-actions-fixed">
           <button className="ghost" type="button" onClick={() => { setAuthMode('login'); setAuthConfirmPassword(''); setShowAuthPassword(false); setAuthPanelOpen(true) }}>Log In</button>
-          <button className="primary" type="button" onClick={() => { setAuthMode('signup'); setAuthConfirmPassword(''); setShowAuthPassword(false); setAuthPanelOpen(true) }}>Request Access</button>
+          <button className="primary waitlist-logo-font" type="button" onClick={() => window.location.assign('/request-access')}>Join waiting list</button>
         </div>
         )}
       >
@@ -2692,7 +2697,7 @@ function AuthShell({ children, actions = null }) {
               Trade authentic, new and like-new fashion with our curated community. No listing fees. No marketplace clutter. Just the right match.
             </p>
             <div className="auth-hero-actions">
-              <button className="primary" type="button">Request Access</button>
+              <button className="primary waitlist-logo-font" type="button" onClick={() => window.location.assign('/request-access')}>Join waiting list</button>
               <a className="ghost arrow" href="#how-it-works">How It Works</a>
             </div>
           </div>
@@ -2884,8 +2889,9 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   const [editingListingId, setEditingListingId] = useState(null)
   const [reviewListingId, setReviewListingId] = useState(null)
   const [selectedReviewListing, setSelectedReviewListing] = useState(null)
-  const [mannequinFeedback, setMannequinFeedback] = useState('')
   const [reviewPublishBusy, setReviewPublishBusy] = useState(false)
+  const [useMannequinImage, setUseMannequinImage] = useState(true)
+  useEffect(() => { setUseMannequinImage(true) }, [reviewListingId])
   const [showCreateListingModal, setShowCreateListingModal] = useState(false)
   const [createListingStep, setCreateListingStep] = useState(1)
   const [createListingMode, setCreateListingMode] = useState('standard')
@@ -2928,6 +2934,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   const [offerAcceptedListingById, setOfferAcceptedListingById] = useState({})
   const [selectedShippingLabel, setSelectedShippingLabel] = useState(null)
   const [profileQuiz, setProfileQuiz] = useState({
+    username: '',
     first_name: profileData?.firstName || '', last_name: profileData?.lastName || '', email: profileData?.email || session?.email || '',
     gender: '', birthday: '', tops_size: [], dresses_size: [], bottoms_size: [], shoes_size: [], category_preferences: [],
     style_descriptors: [], jouft_goals: [],
@@ -3015,7 +3022,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
   const [closetSearchResults, setClosetSearchResults] = useState([])
   const [closetSearchLoading, setClosetSearchLoading] = useState(false)
   const [closetSearchError, setClosetSearchError] = useState('')
-  const [profileSection, setProfileSection] = useState(TEMP_SHOW_PROFILE_QUESTIONNAIRE_ON_LOGIN ? 'style' : 'general')
+  const [profileSection, setProfileSection] = useState(() => { const params = new URLSearchParams(window.location.search); return ['invitation', 'trial_session_id', 'trial_canceled'].some(key => params.has(key)) ? 'subscription' : TEMP_SHOW_PROFILE_QUESTIONNAIRE_ON_LOGIN ? 'style' : 'general' })
   const [shippingLabelsByOffer, setShippingLabelsByOffer] = useState({})
   const [offerReceiveAddressById, setOfferReceiveAddressById] = useState({})
   const [shippingQuoteByOffer, setShippingQuoteByOffer] = useState({})
@@ -3543,6 +3550,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     const primaryShippingAddress = hydratedShippingAddresses[0] || emptyShippingAddress()
     if (!(profileSetupDirtyRef.current && activeTabRef.current === 'profile_setup')) {
       setProfileQuiz({
+        username: data?.username || '',
         first_name: data?.first_name || profileData?.firstName || '',
         last_name: data?.last_name || profileData?.lastName || '',
         email: data?.email || profileData?.email || session?.email || '',
@@ -4105,6 +4113,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     const primaryAddress = normalizedAddresses[0] || emptyShippingAddress()
     return {
       ...profileQuiz,
+      username: profileQuiz.username || null,
       first_name: String(profileQuiz.first_name || profileData?.firstName || '').trim(),
       last_name: String(profileQuiz.last_name || profileData?.lastName || '').trim(),
       email: String(profileQuiz.email || profileData?.email || session?.email || '').trim().toLowerCase(),
@@ -4149,6 +4158,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     setSubscriptionSelectionDirty(false)
     const savedShippingAddresses = normalizeShippingAddresses(saved?.shipping_addresses, saved)
     setProfileQuiz({
+      username: saved?.username || '',
       first_name: saved?.first_name || profileData?.firstName || '',
       last_name: saved?.last_name || profileData?.lastName || '',
       email: saved?.email || profileData?.email || session?.email || '',
@@ -4192,6 +4202,11 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
       payload: profilePayloadForSave(),
     })
     applySavedProfileQuiz(saved)
+    if (saved?.username) {
+      const updateOwner = items => items.map(item => item.ownerSubject === saved.owner_subject ? { ...item, owner: saved.username } : item)
+      setMyListings(updateOwner)
+      setMarketListings(updateOwner)
+    }
     trackExperience('profile_saved', { screen: 'profile', entityType: 'profile' })
     return saved
   }
@@ -4347,7 +4362,6 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     const isCurrentUserListing = ownerSubjectRaw && String(session?.id || '').trim() === ownerSubjectRaw
     const ownerNameLooksLikeSubject = ownerNameRaw && (
       ownerNameRaw === ownerSubjectRaw
-      || /^user_[a-z0-9]+$/i.test(ownerNameRaw)
     )
     const displayOwnerName = !ownerNameRaw || ownerNameLooksLikeSubject
       ? (isCurrentUserListing ? (session.name || 'You') : 'Member')
@@ -5320,7 +5334,6 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
 
   useEffect(() => {
     setSelectedReviewImageIndex(0)
-    setMannequinFeedback('')
   }, [reviewListing?.id])
 
   useEffect(() => {
@@ -6648,7 +6661,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
     const next = {
       ...listing,
       mannequinChoice,
-      mannequinFeedback,
+      mannequinFeedback: '',
       status: 'Active',
       tags: [
         listing.condition || 'LikeNew',
@@ -6987,7 +7000,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                 </div>
                 <div className="latest-meta">
                   <h3 className="editorial-title latest-title">{item.title || 'Untitled listing'}</h3>
-                  <p className="editorial-byline">BY {ownerFirstName(item.owner, 'Member').toUpperCase()}</p>
+                  <p className="editorial-byline">BY {ownerFirstName(item.owner, 'Member')}</p>
                   <p className="editorial-meta">
                     EST. {money(item.estimatedValue)}
                   </p>
@@ -7046,6 +7059,13 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                         }}
                         required
                       />
+                    </label>
+                    <label>
+                      <span>Username</span>
+                      <input value={profileQuiz.username || defaultUsername(profileQuiz.first_name, profileQuiz.last_name)}
+                        onChange={(e) => { profileSetupDirtyRef.current = true; setProfileQuiz(p => ({ ...p, username: e.target.value.replace(/^@/, '').toLowerCase() })) }}
+                        placeholder="first_name_last_name" maxLength={40} pattern="[a-z0-9_]+" autoCapitalize="none" autoComplete="nickname" />
+                      <small>Your public @handle on listings. Letters, numbers, and underscores only.</small>
                     </label>
                     <label>
                       <span>Email Address</span>
@@ -7463,6 +7483,13 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                         />
                       </label>
                       <label>
+                      <span>Username</span>
+                      <input value={profileQuiz.username || defaultUsername(profileQuiz.first_name, profileQuiz.last_name)}
+                        onChange={(e) => { profileSetupDirtyRef.current = true; setProfileQuiz(p => ({ ...p, username: e.target.value.replace(/^@/, '').toLowerCase() })) }}
+                        placeholder="first_name_last_name" maxLength={40} pattern="[a-z0-9_]+" autoCapitalize="none" autoComplete="nickname" />
+                      <small>Your public @handle on listings. Letters, numbers, and underscores only.</small>
+                    </label>
+                      <label>
                         <span>Email</span>
                         <input
                           type="email"
@@ -7670,6 +7697,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                   {profileSection === 'subscription' && (
                     <div style={{ marginTop: 4 }}>
                       <p className="eyebrow" style={{ marginBottom: 8 }}>Subscription</p>
+                      {clerkEnabled && <TrialInvitations apiBaseUrl={apiBaseUrl} getToken={getBearerToken} onChanged={() => window.location.reload()} />}
                       <div className="billing-cycle-toggle">
                         <button
                           className={selectedBillingCycle === 'monthly' ? 'nav-item active' : 'nav-item'}
@@ -8389,28 +8417,28 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                     {isMannequinImage(reviewListing, reviewListingGallery[selectedReviewImageIndex]) && <p className="mannequin-disclaimer">{MANNEQUIN_DISCLAIMER}</p>}
                   </div>
                   <div className="listing-review-details">
+                    <p className="listing-review-brand">{reviewListing.brand || 'Unknown brand'}</p>
                     <h2>{reviewListing.title || 'Untitled listing'}</h2>
-                    <p className="editorial-byline">BY {ownerFirstName(reviewListing.owner, 'Member').toUpperCase()}</p>
-                    <p className="editorial-meta">
-                      EST. {money(reviewListing.estimatedValue)} · {String(reviewListing.brand || 'Unknown').toUpperCase()} · {displayConditionLabel(reviewListing.condition).toUpperCase()} · SIZE {String(reviewListing.size || 'N/A').toUpperCase()}
-                    </p>
-                    <p className="listing-review-description">{getListingDescription(reviewListing) || 'No description provided.'}</p>
-                    {reviewListing.generatedImages?.length > 0 && (
-                      <div className="mannequin-review">
-                        <h3>AI mannequin preview</h3>
-                        <p className="mannequin-disclaimer">{MANNEQUIN_DISCLAIMER}</p>
-                        <p>Check that the garment matches your photos. You can publish with or without this optional image.</p>
-                        {reviewListing.generatedImages.map((src) => <img key={src} src={src} alt="Optional AI-generated mannequin preview" style={{ maxWidth: '100%', maxHeight: 360, objectFit: 'contain' }} />)}
-                        <label>What looks wrong? (optional)<textarea value={mannequinFeedback} onChange={(event) => setMannequinFeedback(event.target.value)} maxLength={2000} rows={2} placeholder="For example: the sleeve or zipper is different" /></label>
-                        <p>If you publish without it, we’ll send the image and your feedback to our team for review. Your listing can go live right away.</p>
-                      </div>
-                    )}
+                    <p className="editorial-byline">By {ownerFirstName(reviewListing.owner, 'Member')}</p>
+                    <dl className="listing-review-facts">
+                      <div><dt>Price</dt><dd>{money(reviewListing.estimatedValue)}</dd></div>
+                      <div><dt>Condition</dt><dd>{displayConditionLabel(reviewListing.condition)}</dd></div>
+                      <div><dt>Size</dt><dd>{reviewListing.size || 'N/A'}</dd></div>
+                    </dl>
+                    <div className="listing-review-description-block">
+                      <h3>Description</h3>
+                      <p className="listing-review-description">{reviewDescription(getListingDescription(reviewListing), {
+                        title: reviewListing.title, brand: reviewListing.brand,
+                        condition: displayConditionLabel(reviewListing.condition), size: reviewListing.size,
+                        price: money(reviewListing.estimatedValue), model: reviewListing.analysis?.item_profile?.model_identification?.name,
+                      }) || 'No additional description provided.'}</p>
+                    </div>
                     {analysisError && <p className="error-text">{analysisError}</p>}
                     {savedListingNotice && <p className="ok-text">{savedListingNotice}</p>}
                     <div className="button-row listing-review-actions">
+                      {reviewListing.generatedImages?.length > 0 && (<button type="button" className="mannequin-use-toggle" role="switch" aria-label="Use mannequin image" aria-checked={useMannequinImage} disabled={reviewPublishBusy} onClick={() => setUseMannequinImage(value => !value)}>Use mannequin image <span className="mannequin-toggle-track" aria-hidden="true"><span /></span><span className="mannequin-toggle-state">{useMannequinImage ? 'On' : 'Off'}</span></button>)}
                       <button className="ghost" type="button" onClick={() => openEditListingModal(reviewListing)}>Edit</button>
-                      <button className="primary" type="button" disabled={reviewPublishBusy} onClick={() => publishListingToMarketplace(reviewListing, reviewListing.generatedImages?.length ? 'include' : null)}>{reviewPublishBusy ? 'Publishing…' : reviewListing.generatedImages?.length ? 'Publish with mannequin image' : 'Publish'}</button>
-                      {reviewListing.generatedImages?.length > 0 && <button className="ghost" type="button" disabled={reviewPublishBusy} onClick={() => publishListingToMarketplace(reviewListing, 'exclude')}>Publish without mannequin image</button>}
+                      <button className="primary" type="button" disabled={reviewPublishBusy} onClick={() => publishListingToMarketplace(reviewListing, reviewListing.generatedImages?.length ? (useMannequinImage ? 'include' : 'exclude') : null)}>{reviewPublishBusy ? 'Publishing…' : 'Publish'}</button>
                     </div>
                   </div>
                 </div>
@@ -8458,7 +8486,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                   {savedListingNotice && <p className="ok-text">{savedListingNotice}</p>}
                   <div className="listing-grid closet-listing-grid">{filteredClosetListings.map((item) => {
                     const isPublished = String(item.status || '').toLowerCase() === 'active'
-                    return <ListingCard key={item.id} item={item} own onEditDraft={openEditListingModal} onReviewListing={openReviewListing} onPublishListing={publishListingToMarketplace} onRemoveListing={removeListingFromCloset} onReportIssue={openListingSupport} onOpenDetails={isPublished ? openClosetListingMatches : null} matchCount={isPublished ? Number(item.matchCount || 0) : null} editorialStyle />
+                    return <ListingCard key={item.id} item={item} own onEditDraft={openEditListingModal} onReviewListing={openReviewListing} onPublishListing={publishListingToMarketplace} onRemoveListing={removeListingFromCloset} onReportIssue={openListingSupport} onOpenDetails={isPublished ? openEditListingModal : null} onOpenMatches={openClosetListingMatches} matchCount={isPublished ? Number(item.matchCount || 0) : null} editorialStyle />
                   })}</div>
                   {!closetSearch.trim() && closetFilter === 'all' && myListingsHasMore ? (
                     <div ref={closetLoadMoreRef} className="load-more-row lazy-load-sentinel" role="status" aria-label="Loading more closet listings">
@@ -8798,7 +8826,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                             <div className="market-selected-head">
                               <div>
                                 <h3>{item.title || 'Untitled listing'}</h3>
-                                <p className="editorial-byline">BY {ownerFirstName(item.owner, 'Member').toUpperCase()}</p>
+                                <p className="editorial-byline">BY {ownerFirstName(item.owner, 'Member')}</p>
                                 <p className="editorial-meta">
                                   EST. {money(item.estimatedValue)} · {String(item.brand || 'Unknown').toUpperCase()} · {displayConditionLabel(item.condition).toUpperCase()} · SIZE {String(item.size || 'N/A').toUpperCase()}
                                 </p>
@@ -9086,10 +9114,12 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                       ['experience', 'User experience', adminExperienceReport?.findings?.length],
                       ['marketplace_intelligence', 'Marketplace insights', adminMarketplaceReport?.summary?.active_listings],
                       ['users', 'Users', adminUsers.length],
+                      ['trial_invitations', 'Trial invitations', 0],
+                      ['access_requests', 'Access requests', 0],
                       ['analysis', 'Recent debug', adminFiltered.length],
                     ].map(([key, label, count]) => (
                       <button key={key} type="button" className={adminQueue === key ? 'primary small' : 'ghost small'} onClick={() => setAdminQueue(key)}>
-                        {label} ({Number(count || 0)})
+                        {label}{key === 'access_requests' ? '' : ` (${Number(count || 0)})`}
                       </button>
                     ))}
                   </div>
@@ -9181,6 +9211,8 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                   {adminQueue === 'marketplace_intelligence' && (
                     <AdminMarketplaceIntelligence report={adminMarketplaceReport} />
                   )}
+                  {adminQueue === 'access_requests' && <AdminAccessRequests apiBaseUrl={apiBaseUrl} getToken={getAdminBearerToken || getBearerToken} />}
+                  {adminQueue === 'trial_invitations' && <TrialInvitations admin apiBaseUrl={apiBaseUrl} apiKey={clerkEnabled ? '' : apiKey} getToken={getAdminBearerToken || getBearerToken} />}
                   {adminQueue === 'users' && (
                     <div className="admin-data-table-wrap"><table className="admin-data-table"><thead><tr><th>User</th><th>Email</th><th>Subscription</th><th /></tr></thead><tbody>
                       {adminUsers.filter((entry) => JSON.stringify(entry).toLowerCase().includes(adminSearch.trim().toLowerCase())).map((entry) => (
@@ -9367,7 +9399,7 @@ function MarketplaceWorkspace({ session, profileData = null, onLogout, clerkEnab
                       <div className="market-selected-head">
                         <div>
                           <h3>{tradeDetailListing.title || 'Untitled listing'}</h3>
-                          <p className="editorial-byline">BY {ownerFirstName(ownerName, 'Member').toUpperCase()}</p>
+                          <p className="editorial-byline">BY {ownerFirstName(ownerName, 'Member')}</p>
                           <p className="editorial-meta">
                             EST. {money(detailValue)} · {String(tradeDetailListing.brand || 'Unknown').toUpperCase()} · {displayConditionLabel(tradeDetailListing.condition).toUpperCase()} · SIZE {String(tradeDetailListing.size || 'N/A').toUpperCase()}
                           </p>
@@ -10182,9 +10214,9 @@ function ListingCard({ item, own = false, onEditDraft = null, onReviewListing = 
         )}
         {own && !isEditorial && normalizedStatus !== 'review' && <span className={`status-badge ${badgeClass}`}>{badgeLabel}</span>}
         {own && Number.isFinite(matchCount) && matchCount > 0 && (
-          <span className="closet-match-count" aria-label={`${matchCount} matched ${matchCount === 1 ? 'item' : 'items'}`}>
+          <button type="button" className="closet-match-count" aria-label={`View ${matchCount} matched ${matchCount === 1 ? 'item' : 'items'}`} onClick={(event) => { event.stopPropagation(); onOpenMatches?.(item) }} onKeyDown={(event) => event.stopPropagation()}>
             {matchCount} {matchCount === 1 ? 'MATCH' : 'MATCHES'}
-          </span>
+          </button>
         )}
       </div>
       <div className="listing-body">
@@ -10214,7 +10246,7 @@ function ListingCard({ item, own = false, onEditDraft = null, onReviewListing = 
               </p>
             ) : (
               <>
-                <p className="editorial-byline">BY {ownerFirstName(item.owner, 'Member').toUpperCase()}</p>
+                <p className="editorial-byline">BY {ownerFirstName(item.owner, 'Member')}</p>
                 <p className="editorial-meta">
                   {money(item.estimatedValue)} · SIZE {sizeLabel.toUpperCase()} · {conditionLabel.toUpperCase()}
                 </p>

@@ -119,6 +119,65 @@ def _daily_match_feed(db):
     db.commit()
 
 
+def _invitation_trials(db):
+    db.execute("""CREATE TABLE IF NOT EXISTS invitation_trial_offers (
+        offer_id TEXT PRIMARY KEY, code_hash TEXT NOT NULL UNIQUE, code_hint TEXT NOT NULL,
+        config_json TEXT NOT NULL, active INTEGER NOT NULL, created_by TEXT NOT NULL,
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL)""")
+    db.execute("""CREATE TABLE IF NOT EXISTS invitation_trial_redemptions (
+        redemption_id TEXT PRIMARY KEY, offer_id TEXT NOT NULL REFERENCES invitation_trial_offers(offer_id),
+        owner_subject TEXT NOT NULL, email TEXT NOT NULL, plan TEXT NOT NULL, state TEXT NOT NULL,
+        starts_at TEXT, ends_at TEXT, end_behavior TEXT NOT NULL, config_json TEXT NOT NULL,
+        checkout_session_id TEXT UNIQUE, reserved_until TEXT NOT NULL, created_at TEXT NOT NULL,
+        consent_at TEXT NOT NULL, consent_text TEXT NOT NULL)""")
+    db.execute("CREATE INDEX IF NOT EXISTS invitation_trial_owner ON invitation_trial_redemptions(owner_subject,state)")
+    db.execute("CREATE INDEX IF NOT EXISTS invitation_trial_offer ON invitation_trial_redemptions(offer_id,state)")
+    db.execute("""CREATE TABLE IF NOT EXISTS invitation_trial_attempts (
+        owner_subject TEXT NOT NULL, bucket TEXT NOT NULL, attempts INTEGER NOT NULL,
+        PRIMARY KEY(owner_subject,bucket))""")
+    db.execute("""CREATE TABLE IF NOT EXISTS invitation_trial_audit (
+        audit_id TEXT PRIMARY KEY, offer_id TEXT NOT NULL, actor_subject TEXT NOT NULL,
+        action TEXT NOT NULL, created_at TEXT NOT NULL)""")
+    db.commit()
+
+
+def _trial_listing_allowances(db):
+    if db._sqlite_conn is not None:
+        columns = {row[1] for row in db.fetchall('PRAGMA table_info(invitation_trial_redemptions)')}
+        if 'stripe_subscription_id' not in columns:
+            db.execute('ALTER TABLE invitation_trial_redemptions ADD COLUMN stripe_subscription_id TEXT')
+    else:
+        db.execute('ALTER TABLE invitation_trial_redemptions ADD COLUMN IF NOT EXISTS stripe_subscription_id TEXT')
+    db.execute("""CREATE TABLE IF NOT EXISTS invitation_trial_listing_usage (
+        listing_id TEXT PRIMARY KEY, redemption_id TEXT NOT NULL REFERENCES invitation_trial_redemptions(redemption_id),
+        created_at TEXT NOT NULL)""")
+    db.execute("CREATE INDEX IF NOT EXISTS invitation_trial_usage_grant ON invitation_trial_listing_usage(redemption_id)")
+    db.commit()
+
+
+def _profile_usernames(db):
+    from .usernames import resolve_username
+    if db._sqlite_conn is not None:
+        columns = {row[1] for row in db.fetchall('PRAGMA table_info(user_profiles)')}
+        if 'username' not in columns:
+            db.execute('ALTER TABLE user_profiles ADD COLUMN username TEXT')
+    else:
+        db.execute('ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS username TEXT')
+    for row in db.fetchall('SELECT owner_subject, first_name, last_name FROM user_profiles WHERE username IS NULL ORDER BY created_at, owner_subject'):
+        username = resolve_username(db, row[0], None, row[1], row[2])
+        db.execute(f'UPDATE user_profiles SET username = {db.param} WHERE owner_subject = {db.param}', (username, row[0]))
+    db.execute('CREATE UNIQUE INDEX IF NOT EXISTS user_profiles_username_unique ON user_profiles(username)')
+    db.commit()
+
+
+def _access_requests(db):
+    db.execute("""CREATE TABLE IF NOT EXISTS access_requests (
+        request_id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, data_json TEXT NOT NULL,
+        consent_text TEXT NOT NULL, consent_at TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)""")
+    db.execute('CREATE TABLE IF NOT EXISTS access_request_attempts (identity TEXT NOT NULL, bucket TEXT NOT NULL, attempts INTEGER NOT NULL, PRIMARY KEY(identity, bucket))')
+    db.commit()
+
+
 MIGRATIONS = (
     ("0001_application_schema", _baseline),
     ("0002_analysis_listing_links", _analysis_history),
@@ -131,6 +190,10 @@ MIGRATIONS = (
     ("0009_listing_agent_sessions", _listing_agent_sessions),
     ("0010_assistant_conversations", _assistant_conversations),
     ("0011_daily_match_feed", _daily_match_feed),
+    ("0012_invitation_trials", _invitation_trials),
+    ("0013_trial_listing_allowances", _trial_listing_allowances),
+    ("0014_profile_usernames", _profile_usernames),
+    ("0015_access_requests", _access_requests),
 )
 
 

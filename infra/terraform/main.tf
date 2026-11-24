@@ -434,6 +434,7 @@ resource "aws_ecs_task_definition" "api" {
         { name = "S3_REGION", value = var.aws_region },
         { name = "SQS_ANALYSIS_QUEUE_URL", value = var.analysis_queue_enabled ? aws_sqs_queue.analysis[0].url : "" },
         { name = "SHIPPING_REMINDER_ENABLED", value = tostring(!var.analysis_queue_enabled) },
+        { name = "IMAGE_STAGING_ENABLED", value = tostring(var.image_staging_enabled) },
         { name = "IMAGE_STAGING_PHOTOROOM_ENABLED", value = tostring(var.image_staging_photoroom_enabled) },
         { name = "PHOTOROOM_BACKGROUND_COLOR", value = var.photoroom_background_color },
         { name = "PHOTOROOM_OUTPUT_FORMAT", value = var.photoroom_output_format },

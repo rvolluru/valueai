@@ -1,3 +1,6 @@
+import BirthdayPicker from './src/components/BirthdayPicker';
+import { defaultUsername } from '../../packages/app-client/src/username.mjs';
+import TrialInvitation from './src/components/TrialInvitation';
 import HelpSupport from './src/components/HelpSupport';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { shareSocialListing, socialWebUrl } from './src/lib/socialSharing.mjs';
@@ -15,6 +18,7 @@ import {
   Share,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   TouchableOpacity,
@@ -415,7 +419,6 @@ function listingOwnerDisplayName(item, fallback = 'Unknown member') {
   const ownerSubjectRaw = String(item?.owner_subject || item?.ownerSubject || '').trim();
   const ownerNameLooksLikeSubject = ownerNameRaw && (
     ownerNameRaw === ownerSubjectRaw
-    || /^user_[a-z0-9]+$/i.test(ownerNameRaw)
   );
   if (!ownerNameRaw || ownerNameLooksLikeSubject) return fallback;
   return ownerNameRaw;
@@ -424,8 +427,7 @@ function listingOwnerDisplayName(item, fallback = 'Unknown member') {
 function ownerFirstName(name, fallback = 'Member') {
   const value = String(name || '').trim();
   if (!value) return fallback;
-  const first = value.split(/\s+/).find(Boolean);
-  return first || fallback;
+  return `@${value.replace(/^@/, '').replace(/\s+/g, '_')}`;
 }
 
 function isSameListingOwner(left, right, currentSubject = '') {
@@ -754,6 +756,7 @@ function normalizeProfileQuiz(profile) {
   if (!profile) return null;
   return {
     ...profile,
+    username: profile?.username || '',
     first_name: profile?.first_name || '',
     last_name: profile?.last_name || '',
     email: profile?.email || '',
@@ -900,6 +903,7 @@ function ListingCard({
   onMatchPreviewSelect = null,
   startTradeDisabled = false,
   onOpenDetails = null,
+  onOpenMatches = null,
   onEditDraft = null,
   onReviewListing = null,
   onPublishListing = null,
@@ -1022,9 +1026,9 @@ function ListingCard({
       ) : null}
       </View>
       {closet && Number.isFinite(matchCount) && matchCount > 0 ? (
-        <View style={styles.closetMatchCount} pointerEvents="none">
+        <TouchableOpacity style={styles.closetMatchCount} accessibilityRole="button" accessibilityLabel={`View ${matchCount} matched items`} onPress={(event) => runCardAction(event, () => onOpenMatches?.(item))}>
           <Text style={styles.closetMatchCountText}>{matchCount} {matchCount === 1 ? 'MATCH' : 'MATCHES'}</Text>
-        </View>
+        </TouchableOpacity>
       ) : null}
       <View style={[styles.listingBody, closetCardDisabled && styles.listingCardContentDisabled]}>
         <Text numberOfLines={1} style={styles.listingBrand}>{String(brandLabel).toUpperCase()}</Text>
@@ -1045,7 +1049,7 @@ function ListingCard({
         </View>
         {!closet ? (
           <Text numberOfLines={1} style={styles.listingByline}>
-            BY {ownerName.toUpperCase()}
+            BY {ownerName}
           </Text>
         ) : null}
         <Text numberOfLines={2} style={styles.listingMeta}>
@@ -1182,7 +1186,7 @@ function OfferCard({ offer, apiBaseUrl, onPress = null, actorSubject = '' }) {
           <View style={styles.listingBody}>
           <Text style={styles.listingBrand}>{targetListing?.brand || 'Unknown'}</Text>
           <Text style={styles.listingTitle} numberOfLines={3}>{targetListing?.title || 'Target listing'}</Text>
-          <Text style={styles.listingByline}>BY {ownerFirstName(listingOwnerDisplayName(targetListing, offerParticipantName(offer, 'to')), 'Member').toUpperCase()}</Text>
+          <Text style={styles.listingByline}>BY {ownerFirstName(listingOwnerDisplayName(targetListing, offerParticipantName(offer, 'to')), 'Member')}</Text>
           <Text style={styles.listingMeta} numberOfLines={2}>
             {money(targetListing?.estimated_value)} · SIZE {String(targetListing?.size || 'N/A').toUpperCase()} · {displayConditionLabel(targetListing?.condition || 'unknown').toUpperCase()}
           </Text>
@@ -1215,6 +1219,8 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
   const [incomingOffers, setIncomingOffers] = useState([]);
   const [selectedOfferId, setSelectedOfferId] = useState(null);
   const [selectedListing, setSelectedListing] = useState(null);
+  const [useMannequinImage, setUseMannequinImage] = useState(true);
+  useEffect(() => { setUseMannequinImage(true); }, [selectedListing?.listing_id, selectedListing?.id]);
   const [isListingDetailOpen, setIsListingDetailOpen] = useState(false);
   const [selectedListingSource, setSelectedListingSource] = useState(null);
   const [selectedListingIndex, setSelectedListingIndex] = useState(-1);
@@ -2096,6 +2102,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
       const profile = await apiClient.fetchProfileQuiz(auth);
       setProfileQuiz(normalizeProfileQuiz({
         ...(profile || {}),
+        username: profile?.username || '',
         first_name: profile?.first_name || clerkUserProfile?.firstName || '',
         last_name: profile?.last_name || clerkUserProfile?.lastName || '',
         email: profile?.email || clerkUserProfile?.email || '',
@@ -2150,6 +2157,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
       if (cancelled) return;
       const normalized = normalizeProfileQuiz({
         ...(profile || {}),
+        username: profile?.username || '',
         first_name: profile?.first_name || clerkUserProfile?.firstName || '',
         last_name: profile?.last_name || clerkUserProfile?.lastName || '',
         email: profile?.email || clerkUserProfile?.email || '',
@@ -2519,6 +2527,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
     const lastName = String(profileQuiz?.last_name || clerkUserProfile?.lastName || '').trim();
     const email = String(profileQuiz?.email || clerkUserProfile?.email || '').trim().toLowerCase();
     return {
+      username: profileQuiz?.username || null,
       first_name: firstName,
       last_name: lastName,
       email,
@@ -2591,6 +2600,8 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
       const saved = await apiClient.saveProfileQuiz(payload, await authContext());
       setProfileQuiz(normalizeProfileQuiz(saved));
       trackExperience('profile_saved', { screen: 'profile', entityType: 'profile', properties: { section: 'style' } });
+      await loadCloset();
+      await loadMarketplace();
       await reloadProfileTabAfterSave('Profile saved.');
     } catch (e) {
       setError(e.message || 'Failed to save style preferences.');
@@ -4276,24 +4287,29 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
               >
                 <Text style={styles.secondaryBtnText}>Edit</Text>
               </TouchableOpacity>
+              {hasReviewImages ? <View style={styles.mannequinToggleRow}>
+                <Text style={styles.mannequinToggleLabel}>Use mannequin image</Text>
+                <Switch
+                  value={useMannequinImage}
+                  onValueChange={setUseMannequinImage}
+                  disabled={loading}
+                  accessibilityLabel="Use mannequin image"
+                  trackColor={{ false: '#b8b6b1', true: '#264c39' }}
+                  thumbColor="#ffffff"
+                  ios_backgroundColor="#b8b6b1"
+                />
+                <Text style={styles.mannequinToggleState}>{useMannequinImage ? 'On' : 'Off'}</Text>
+              </View> : null}
               <TouchableOpacity
                 style={styles.primaryBtnCompact}
                 disabled={loading}
                 accessibilityRole="button"
-                accessibilityLabel={hasReviewImages ? 'Publish with mannequin image' : 'Publish'}
-                onPress={() => publishListingToMarketplace(selectedListing, hasReviewImages ? 'include' : null)}
+                accessibilityLabel="Publish"
+                onPress={() => publishListingToMarketplace(selectedListing, hasReviewImages ? (useMannequinImage ? 'include' : 'exclude') : null)}
               >
-                <Text style={styles.primaryBtnText}>{hasReviewImages ? 'Publish with mannequin image' : 'Publish'}</Text>
+                <Text style={styles.primaryBtnText}>Publish</Text>
               </TouchableOpacity>
-              {hasReviewImages ? <TouchableOpacity
-                style={styles.secondaryBtnCompact}
-                disabled={loading}
-                accessibilityRole="button"
-                accessibilityLabel="Publish without mannequin image"
-                onPress={() => publishListingToMarketplace(selectedListing, 'exclude')}
-              >
-                <Text style={styles.secondaryBtnText}>Publish without mannequin image</Text>
-              </TouchableOpacity> : null}
+
             </View>
           ) : null}
         </View>
@@ -4639,7 +4655,8 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
                         apiBaseUrl={apiBaseUrl}
                         closet
                         matchCount={matchCount}
-                        onOpenDetails={(listing) => openListingDetails(listing, 'closet')}
+                        onOpenDetails={(listing) => isPublished ? openEditListingDraft(listing) : openListingDetails(listing, 'closet')}
+                        onOpenMatches={(listing) => openListingDetails(listing, 'closet')}
                         onEditDraft={openEditListingDraft}
                         onReviewListing={(listing) => openListingDetails(listing, 'closet')}
                         onPublishListing={publishListingToMarketplace}
@@ -5334,6 +5351,14 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
               placeholder="Last name"
               autoCapitalize="words"
             />
+            <Text style={styles.label}>Username</Text>
+            <TextInput
+              value={profileQuiz?.username || defaultUsername(profileQuiz?.first_name || clerkUserProfile?.firstName, profileQuiz?.last_name || clerkUserProfile?.lastName)}
+              onChangeText={(value) => updateProfileStyleField('username', value.replace(/^@/, '').toLowerCase())}
+              style={styles.input} placeholder="first_name_last_name" maxLength={40}
+              autoCapitalize="none" autoCorrect={false} accessibilityLabel="Username"
+            />
+            <Text style={styles.helperText}>Your public @handle on listings. Letters, numbers, and underscores only.</Text>
             <Text style={styles.label}>Email Address</Text>
             <TextInput
               value={profileQuiz?.email || ''}
@@ -5352,12 +5377,10 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
               keyboardType="phone-pad"
             />
             <Text style={styles.label}>Birthday</Text>
-            <TextInput
+            <BirthdayPicker
               value={profileQuiz?.birthday || ''}
-              onChangeText={(value) => updateProfileStyleField('birthday', value)}
-              style={styles.input}
-              placeholder="YYYY-MM-DD"
-              keyboardType="numbers-and-punctuation"
+              onChange={(value) => updateProfileStyleField('birthday', value)}
+              inputStyle={styles.input}
             />
             {!!profileSaveMsg && <Text style={styles.notice}>{profileSaveMsg}</Text>}
             <View style={styles.profileDivider} />
@@ -5698,6 +5721,7 @@ function MarketplaceMobileApp({ clerkEnabled = false, getBearerToken = null, cle
               <>
             <View style={styles.profileDivider} />
             <Text style={styles.label}>Subscription</Text>
+            {clerkEnabled ? <TrialInvitation apiBaseUrl={apiBaseUrl} getToken={getBearerToken} styles={styles} onChanged={async () => { const data = await apiClient.fetchProfileQuiz(await authContext()); setProfileQuiz(normalizeProfileQuiz(data)); setSubscriptionPlan(normalizeSelectableSubscriptionPlan(data?.subscription_plan)); }} /> : null}
             <View style={styles.profilePlanList}>
               {SUBSCRIPTION_PLANS.map((plan) => {
                 const selected = subscriptionPlan === plan.key;
@@ -6934,7 +6958,7 @@ function ClerkAuthScreen() {
 
   function authTitleForMode() {
     if (mode === 'reset_password') return 'Reset Password';
-    if (authEntryPoint === 'request_access') return 'Request Access';
+    if (authEntryPoint === 'request_access') return 'Join waiting list';
     return mode === 'sign_in' ? 'Sign In' : 'Create Account';
   }
 
@@ -6994,8 +7018,8 @@ function ClerkAuthScreen() {
               Trade authenticated luxury pieces with a curated community built around style, value, and trust.
             </Text>
             <View style={styles.authHeroActions}>
-              <TouchableOpacity style={styles.primaryBtn} onPress={() => openAuth('sign_up')}>
-                <Text style={styles.primaryBtnText}>Request Access</Text>
+              <TouchableOpacity style={styles.primaryBtn} onPress={() => WebBrowser.openBrowserAsync('https://jouft.com/request-access')}>
+                <Text style={[styles.primaryBtnText, { fontFamily: fonts.display, fontWeight: '500' }]}>Join waiting list</Text>
               </TouchableOpacity>
               <TouchableOpacity style={styles.secondaryBtn} onPress={() => openAuth('sign_in')}>
                 <Text style={styles.secondaryBtnText}>Log In</Text>
@@ -7106,7 +7130,13 @@ function ClerkAuthScreen() {
           transparent
           onRequestClose={() => setAuthPanelOpen(false)}
         >
-          <View style={styles.authModalOverlay}>
+          <SafeAreaProvider>
+          <KeyboardAvoidingView
+            style={styles.authModalOverlay}
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            keyboardVerticalOffset={0}
+          >
+            <SafeAreaView style={styles.authModalSafeArea}>
             <ScrollView
               style={styles.authModalScroll}
               contentContainerStyle={styles.authModalContent}
@@ -7227,7 +7257,9 @@ function ClerkAuthScreen() {
 
               </View>
             </ScrollView>
-          </View>
+            </SafeAreaView>
+          </KeyboardAvoidingView>
+          </SafeAreaProvider>
         </Modal>
       </ScrollView>
     </SafeAreaView>
@@ -7373,12 +7405,13 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(16, 14, 12, 0.48)',
     justifyContent: 'center',
   },
+  authModalSafeArea: { flex: 1 },
   authModalScroll: {
     flex: 1,
   },
   authModalContent: {
     flexGrow: 1,
-    justifyContent: 'center',
+    justifyContent: 'flex-start',
     paddingHorizontal: 16,
     paddingVertical: 26,
   },
@@ -8098,13 +8131,16 @@ const styles = StyleSheet.create({
     lineHeight: 21,
     fontWeight: '400',
   },
+  mannequinToggleRow: { flexDirection: 'row', alignItems: 'center', gap: 10, flexWrap: 'wrap', paddingVertical: 6 },
+  mannequinToggleLabel: { fontSize: 14, color: '#171511' },
+  mannequinToggleState: { fontSize: 13, color: '#5f5a53', minWidth: 22 },
   listingByline: {
     color: '#171511',
     fontSize: 12,
     lineHeight: 16,
     fontWeight: '800',
     letterSpacing: 2,
-    textTransform: 'uppercase',
+    textTransform: 'none',
   },
   likeButton: {
     width: 38,

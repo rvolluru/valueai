@@ -101,8 +101,8 @@ class Settings(BaseSettings):
     gpt_item_profile_vertex_search_max_results: int = Field(default=10, ge=1, le=10)
 
     condition_rembg_enabled: bool = False
-    image_staging_enabled: bool = True
-    image_staging_photoroom_enabled: bool = True
+    image_staging_enabled: bool = False
+    image_staging_photoroom_enabled: bool = False
     image_staging_photoroom_fallback_enabled: bool = False
     photoroom_api_key: str | None = None
     photoroom_segment_url: str = "https://sdk.photoroom.com/v1/segment"

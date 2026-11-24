@@ -403,3 +403,21 @@ def test_generation_requests_portrait_and_upright_subject():
 def test_front_alignment_requires_explicit_evidence(alignment, expected):
     from app.mannequin_fidelity import front_alignment_passes
     assert front_alignment_passes({"front_alignment": alignment}) is expected
+
+
+@pytest.mark.parametrize('title, framing', [
+    ('Gold watch', 'wrist'), ('Diamond ring', 'hand and fingers'),
+    ('Pearl earrings', 'ear and a small'), ('Gold necklace', 'neck, shoulders'),
+    ('Silk scarf', 'neck, shoulders'), ('Sunglasses', 'mannequin head'),
+    ('Leather belt', 'waist'), ('Leather gloves', 'hands and wrists'),
+    ('Canvas tote bag', 'hand or shoulder'), ('Unique accessory', 'appropriate support'),
+])
+def test_all_accessories_use_closeup_mannequin(title, framing):
+    from app.main import _mannequin_generation_prompt
+    from app.mannequin_fidelity import clothing_attempts
+    kind, prompt = _mannequin_generation_prompt(category='accessories', title=title, description='')
+    assert kind == 'mannequin_accessory'
+    assert framing in prompt
+    assert 'Never show a full-body mannequin' in prompt
+    assert 'complete listed accessory' in prompt
+    assert clothing_attempts(prompt, kind) == [(1, 'accessory_closeup', prompt)]

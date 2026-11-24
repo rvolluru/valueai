@@ -76,7 +76,7 @@ valuation_max_comps = 25
 
 valuation_currency = "USD"
 
-image_staging_photoroom_enabled = true
+image_staging_photoroom_enabled = false
 
 photoroom_background_color = "#FFFFFF"
 
@@ -89,3 +89,5 @@ brand_enable_gpt_vision = true
 photoroom_output_size = "full"
 
 photoroom_output_format = "jpg"
+
+image_staging_enabled = false

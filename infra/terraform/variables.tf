@@ -227,7 +227,7 @@ variable "photoroom_api_key" {
 
 variable "image_staging_photoroom_enabled" {
   type    = bool
-  default = true
+  default = false
 }
 
 variable "photoroom_background_color" {
@@ -589,4 +589,9 @@ variable "daily_match_feed_utc_hour" {
     condition     = var.daily_match_feed_utc_hour >= 0 && var.daily_match_feed_utc_hour <= 23 && floor(var.daily_match_feed_utc_hour) == var.daily_match_feed_utc_hour
     error_message = "Digest hour must be an integer from 0 to 23."
   }
+}
+
+variable "image_staging_enabled" {
+  type    = bool
+  default = false
 }

@@ -267,6 +267,23 @@ def run_listing_flow(*, publish=False, existing=False, after_save=None):
         report.write_text(json.dumps(decision, indent=2))
         # Inspect the complete review screen, including controls below gallery.
         for _ in range(8):
+            toggles = matches('Use mannequin image')
+            if toggles:
+                toggle = toggles[0]
+                checked = toggle.get_attribute('checked')
+                if checked not in ('true', 'false', True, False):
+                    checked = toggle.get_attribute('value')
+                assert str(checked).lower() in {'true', 'false', '1', '0'}, 'Cannot determine mannequin toggle state'
+                enabled = str(checked).lower() in {'true', '1'}
+                if enabled != (choice == 'include'):
+                    toggle.click()
+                decision.update(control_found=True, control='Use mannequin image')
+                report.write_text(json.dumps(decision, indent=2))
+                driver.save_screenshot(str(artifacts / 'mannequin-decision.png'))
+                text('Publish', scroll=True).click()
+                decision['publish_clicked'] = True
+                report.write_text(json.dumps(decision, indent=2))
+                return
             direct = matches(direct_label)
             if direct:
                 decision.update(control_found=True, control=direct_label)
@@ -555,8 +572,8 @@ def run_listing_flow(*, publish=False, existing=False, after_save=None):
             assert not any('analysis failed' in value.lower() or
                            'unable to complete' in value.lower() for value in values), 'Listing analysis failed'
             if all(last_summary.values()):
-                generated_preview_ready = (visible('Publish with mannequin image')
-                                           and visible('Publish without mannequin image'))
+                generated_preview_ready = (visible('Use mannequin image') or
+                                           (visible('Publish with mannequin image') and visible('Publish without mannequin image')))
                 driver.save_screenshot(str(artifacts / 'listing-analysis-success.png'))
                 if find_mannequin():
                     driver.save_screenshot(str(artifacts / 'listing-mannequin-success.png'))

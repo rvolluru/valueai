@@ -132,6 +132,18 @@ If you want to stop a subscription, use Cancel Subscription when offered and che
 
 For a failed, unexpected, or duplicate charge, contact support with the date, amount, currency, and related trade or payment reference. Never send a full card number, security code, or banking password. A support request does not itself cancel a payment or promise a refund.
 
+### How do I use a membership trial invitation?
+
+Sign in with the account that received the invitation and verify your primary account email. In Profile, open Subscription, enter the invitation code, and choose Check invitation. Invitations do not replace Jouft’s admission or onboarding requirements.
+
+Review the membership plan, number of trial days, total new-listing allowance (or unlimited), whether a card is required, and what happens when the trial ends. Some trials expire without a charge; others renew at the displayed price and billing cycle until canceled. Confirm the terms only if you agree. A required card is collected through secure Stripe checkout, not in the invitation form.
+
+The listing allowance covers new listings saved during the entire trial, including drafts. Existing listings do not count. Editing or publishing the same listing does not use another slot; archiving or deleting it does not restore the slot. You can keep editing existing listings after using the allowance. After a paid upgrade or a renewing trial’s end, the normal paid plan applies.
+
+After checkout, return to Subscription and choose Refresh trial status. A checkout link or success screen alone does not activate access; the server must confirm completion. Shipping and trade charges are separate from membership trials.
+
+Codes may expire, reach their redemption limit, or be restricted to particular verified emails, email domains, or new subscribers. An existing paid subscription cannot be replaced by a trial. If a code fails, check the invitation terms or contact support; repeated attempts may be temporarily limited.
+
 ## Account & privacy
 
 ### How do I unsubscribe from daily match emails?

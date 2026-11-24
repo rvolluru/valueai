@@ -6,7 +6,7 @@ import threading
 import uuid
 import hashlib
 import tempfile
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -15,6 +15,10 @@ from urllib.parse import urlparse
 
 
 VALID_LISTING_CONDITIONS = frozenset({"NewWithTags", "New", "LikeNew"})
+
+
+class TrialListingLimitError(RuntimeError):
+    """An invitation trial has used its configured listing allowance."""
 
 
 class TradeListingUnavailableError(RuntimeError):
@@ -752,6 +756,7 @@ class Database:
             "ALTER TABLE listings ADD COLUMN updated_at TEXT",
             "ALTER TABLE user_profiles ADD COLUMN gender TEXT",
             "ALTER TABLE user_profiles ADD COLUMN first_name TEXT",
+            "ALTER TABLE user_profiles ADD COLUMN username TEXT",
             "ALTER TABLE user_profiles ADD COLUMN last_name TEXT",
             "ALTER TABLE user_profiles ADD COLUMN email TEXT",
             "ALTER TABLE user_profiles ADD COLUMN birthday TEXT",
@@ -2751,7 +2756,11 @@ class Database:
                 return analysis
         return None
 
-    def insert_listing(
+    def insert_listing(self, **values) -> str:
+        from .invitation_trials import insert_listing_with_allowance
+        return insert_listing_with_allowance(self, values)
+
+    def _insert_listing_unchecked(
         self,
         *,
         listing_id: str,
@@ -2773,6 +2782,7 @@ class Database:
         source_item_id: str | None,
         analysis: dict | None,
         status: str,
+        _commit: bool = True,
     ) -> str:
         condition = validate_listing_condition(condition)
         created_at = utc_now_iso()
@@ -2812,8 +2822,9 @@ class Database:
                 updated_at,
             ),
         )
-        self.commit()
-        if source_item_id:
+        if _commit:
+            self.commit()
+        if source_item_id and _commit:
             self.link_analysis_item(source_item_id, listing_id, owner_subject)
         return created_at
 
@@ -3674,7 +3685,7 @@ class Database:
 
     def get_user_profile_quiz(self, owner_subject: str) -> dict | None:
         query = (
-            f"SELECT owner_subject, first_name, last_name, email, gender, birthday, tops_size, dresses_size, bottoms_size, shoes_size, "
+            f"SELECT owner_subject, username, first_name, last_name, email, gender, birthday, tops_size, dresses_size, bottoms_size, shoes_size, "
             f"category_preferences_json, style_descriptors_json, jouft_goals_json, shipping_full_name, shipping_address_line1, shipping_address_line2, "
             f"shipping_city, shipping_state, shipping_postal_code, shipping_country, shipping_email, shipping_phone, shipping_addresses_json, "
             f"subscription_plan, subscription_billing_cycle, subscription_status, subscription_renewal_date, payment_methods_json, "
@@ -3695,7 +3706,7 @@ class Database:
             data = dict(row)
         else:
             keys = [
-                "owner_subject", "first_name", "last_name", "email", "gender", "birthday", "tops_size", "dresses_size", "bottoms_size", "shoes_size",
+                "owner_subject", "username", "first_name", "last_name", "email", "gender", "birthday", "tops_size", "dresses_size", "bottoms_size", "shoes_size",
                 "category_preferences_json", "style_descriptors_json", "jouft_goals_json", "shipping_full_name", "shipping_address_line1", "shipping_address_line2",
                 "shipping_city", "shipping_state", "shipping_postal_code", "shipping_country",
                 "shipping_email", "shipping_phone", "shipping_addresses_json",
@@ -3752,6 +3763,7 @@ class Database:
         primary_address = shipping_addresses[0] if shipping_addresses else {}
         return {
             "owner_subject": data["owner_subject"],
+            "username": data.get("username"),
             "first_name": data.get("first_name"),
             "last_name": data.get("last_name"),
             "email": data.get("email"),
@@ -3804,6 +3816,7 @@ class Database:
         self,
         *,
         owner_subject: str,
+        username: str | None = None,
         first_name: str | None,
         last_name: str | None,
         email: str | None,
@@ -3832,133 +3845,149 @@ class Database:
         subscription_renewal_date: str | None,
         payment_methods: list[str],
     ) -> dict:
-        now = utc_now_iso()
-        cats = json.dumps([c for c in category_preferences if isinstance(c, str)])
-        styles = json.dumps([s for s in style_descriptors if isinstance(s, str) and s.strip()])
-        goals = json.dumps([g for g in jouft_goals if isinstance(g, str) and g.strip()])
-        payment_methods_json = json.dumps([m for m in payment_methods if isinstance(m, str) and m.strip()])
-        shipping_addresses_json = json.dumps(self._normalize_shipping_addresses(shipping_addresses))
-        if self._sqlite_conn is not None:
-            with self._sqlite_lock:
-                self._sqlite_conn.execute(
-                    """INSERT INTO user_profiles
-                    (owner_subject, first_name, last_name, email, gender, birthday, tops_size, dresses_size, bottoms_size, shoes_size, category_preferences_json, style_descriptors_json, jouft_goals_json, shipping_full_name, shipping_address_line1, shipping_address_line2, shipping_city, shipping_state, shipping_postal_code, shipping_country, shipping_email, shipping_phone, shipping_addresses_json, subscription_plan, subscription_billing_cycle, subscription_status, subscription_renewal_date, payment_methods_json, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(owner_subject) DO UPDATE SET
-                      first_name=excluded.first_name,
-                      last_name=excluded.last_name,
-                      email=excluded.email,
-                      gender=excluded.gender,
-                      birthday=excluded.birthday,
-                      tops_size=excluded.tops_size,
-                      dresses_size=excluded.dresses_size,
-                      bottoms_size=excluded.bottoms_size,
-                      shoes_size=excluded.shoes_size,
-                      category_preferences_json=excluded.category_preferences_json,
-                      style_descriptors_json=excluded.style_descriptors_json,
-                  jouft_goals_json=excluded.jouft_goals_json,
-                  shipping_full_name=excluded.shipping_full_name,
-                  shipping_address_line1=excluded.shipping_address_line1,
-                  shipping_address_line2=excluded.shipping_address_line2,
-                  shipping_city=excluded.shipping_city,
-                  shipping_state=excluded.shipping_state,
-                  shipping_postal_code=excluded.shipping_postal_code,
-                  shipping_country=excluded.shipping_country,
-                  shipping_email=excluded.shipping_email,
-                  shipping_phone=excluded.shipping_phone,
-                  shipping_addresses_json=excluded.shipping_addresses_json,
-                  subscription_plan=excluded.subscription_plan,
-                  subscription_billing_cycle=excluded.subscription_billing_cycle,
-                  subscription_status=excluded.subscription_status,
-                  subscription_renewal_date=excluded.subscription_renewal_date,
-                  payment_methods_json=excluded.payment_methods_json,
-                  updated_at=excluded.updated_at
-                """,
-                (
-                    owner_subject, first_name, last_name, email, gender, birthday, tops_size, dresses_size, bottoms_size, shoes_size, cats, styles, goals,
-                    shipping_full_name, shipping_address_line1, shipping_address_line2, shipping_city, shipping_state,
-                    shipping_postal_code, shipping_country, shipping_email, shipping_phone, shipping_addresses_json, subscription_plan, subscription_billing_cycle, subscription_status, subscription_renewal_date,
-                    payment_methods_json, now, now,
-                ),
-            )
-                self._sqlite_conn.commit()
-        else:
-            cur = self._pg_cursor()
-            cur.execute(
-                f"""INSERT INTO user_profiles
-                (owner_subject, first_name, last_name, email, gender, birthday, tops_size, dresses_size, bottoms_size, shoes_size, category_preferences_json, style_descriptors_json, jouft_goals_json, shipping_full_name, shipping_address_line1, shipping_address_line2, shipping_city, shipping_state, shipping_postal_code, shipping_country, shipping_email, shipping_phone, shipping_addresses_json, subscription_plan, subscription_billing_cycle, subscription_status, subscription_renewal_date, payment_methods_json, created_at, updated_at)
-                VALUES ({self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param})
-                ON CONFLICT (owner_subject) DO UPDATE SET
-                  first_name=EXCLUDED.first_name,
-                  last_name=EXCLUDED.last_name,
-                  email=EXCLUDED.email,
-                  gender=EXCLUDED.gender,
-                  birthday=EXCLUDED.birthday,
-                  tops_size=EXCLUDED.tops_size,
-                  dresses_size=EXCLUDED.dresses_size,
-                  bottoms_size=EXCLUDED.bottoms_size,
-                  shoes_size=EXCLUDED.shoes_size,
-                  category_preferences_json=EXCLUDED.category_preferences_json,
-                  style_descriptors_json=EXCLUDED.style_descriptors_json,
-                  jouft_goals_json=EXCLUDED.jouft_goals_json,
-                  shipping_full_name=EXCLUDED.shipping_full_name,
-                  shipping_address_line1=EXCLUDED.shipping_address_line1,
-                  shipping_address_line2=EXCLUDED.shipping_address_line2,
-                  shipping_city=EXCLUDED.shipping_city,
-                  shipping_state=EXCLUDED.shipping_state,
-                  shipping_postal_code=EXCLUDED.shipping_postal_code,
-                  shipping_country=EXCLUDED.shipping_country,
-                  shipping_email=EXCLUDED.shipping_email,
-                  shipping_phone=EXCLUDED.shipping_phone,
-                  shipping_addresses_json=EXCLUDED.shipping_addresses_json,
-                  subscription_plan=EXCLUDED.subscription_plan,
-                  subscription_billing_cycle=EXCLUDED.subscription_billing_cycle,
-                  subscription_status=EXCLUDED.subscription_status,
-                  subscription_renewal_date=EXCLUDED.subscription_renewal_date,
-                  payment_methods_json=EXCLUDED.payment_methods_json,
-                  updated_at=EXCLUDED.updated_at
-                """,
-                (
-                    owner_subject, first_name, last_name, email, gender, birthday, tops_size, dresses_size, bottoms_size, shoes_size, cats, styles, goals,
-                    shipping_full_name, shipping_address_line1, shipping_address_line2, shipping_city, shipping_state,
-                    shipping_postal_code, shipping_country, shipping_email, shipping_phone, shipping_addresses_json, subscription_plan, subscription_billing_cycle, subscription_status, subscription_renewal_date,
-                    payment_methods_json, now, now,
-                ),
-            )
-            cur.close()
-            self._pg.commit()
-        return self.get_user_profile_quiz(owner_subject) or {
-            "owner_subject": owner_subject,
-            "first_name": first_name,
-            "last_name": last_name,
-            "email": email,
-            "gender": gender,
-            "birthday": birthday,
-            "tops_size": tops_size,
-            "dresses_size": dresses_size,
-            "bottoms_size": bottoms_size,
-            "shoes_size": shoes_size,
-            "category_preferences": category_preferences,
-            "style_descriptors": [s for s in style_descriptors if isinstance(s, str) and s.strip()],
-            "jouft_goals": [g for g in jouft_goals if isinstance(g, str) and g.strip()],
-            "shipping_full_name": shipping_full_name,
-            "shipping_address_line1": shipping_address_line1,
-            "shipping_address_line2": shipping_address_line2,
-            "shipping_city": shipping_city,
-            "shipping_state": shipping_state,
-            "shipping_postal_code": shipping_postal_code,
-            "shipping_country": shipping_country,
-            "shipping_email": shipping_email,
-            "shipping_phone": shipping_phone,
-            "shipping_addresses": self._normalize_shipping_addresses(shipping_addresses),
-            "subscription_plan": subscription_plan,
-            "subscription_billing_cycle": subscription_billing_cycle,
-            "subscription_status": subscription_status,
-            "subscription_renewal_date": subscription_renewal_date,
-            "payment_methods": [m for m in payment_methods if isinstance(m, str) and m.strip()],
-            "created_at": now,
-            "updated_at": now,
-        }
+        from .usernames import resolve_username
+        with self._sqlite_lock if self._sqlite_conn is not None else nullcontext():
+            if self._pg is not None:
+                self.execute('SELECT pg_advisory_xact_lock(1967052027)')
+            if self._sqlite_conn is not None and not self._sqlite_conn.in_transaction:
+                self._sqlite_conn.execute('BEGIN IMMEDIATE')
+            try:
+                username = resolve_username(self, owner_subject, username, first_name, last_name)
+            except Exception:
+                if self._pg is not None:
+                    self._pg.rollback()
+                else:
+                    self._sqlite_conn.rollback()
+                raise
+            now = utc_now_iso()
+            cats = json.dumps([c for c in category_preferences if isinstance(c, str)])
+            styles = json.dumps([s for s in style_descriptors if isinstance(s, str) and s.strip()])
+            goals = json.dumps([g for g in jouft_goals if isinstance(g, str) and g.strip()])
+            payment_methods_json = json.dumps([m for m in payment_methods if isinstance(m, str) and m.strip()])
+            shipping_addresses_json = json.dumps(self._normalize_shipping_addresses(shipping_addresses))
+            if self._sqlite_conn is not None:
+                with self._sqlite_lock:
+                    self._sqlite_conn.execute(
+                        """INSERT INTO user_profiles
+                        (owner_subject, username, first_name, last_name, email, gender, birthday, tops_size, dresses_size, bottoms_size, shoes_size, category_preferences_json, style_descriptors_json, jouft_goals_json, shipping_full_name, shipping_address_line1, shipping_address_line2, shipping_city, shipping_state, shipping_postal_code, shipping_country, shipping_email, shipping_phone, shipping_addresses_json, subscription_plan, subscription_billing_cycle, subscription_status, subscription_renewal_date, payment_methods_json, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(owner_subject) DO UPDATE SET
+                          username=excluded.username,
+                          first_name=excluded.first_name,
+                          last_name=excluded.last_name,
+                          email=excluded.email,
+                          gender=excluded.gender,
+                          birthday=excluded.birthday,
+                          tops_size=excluded.tops_size,
+                          dresses_size=excluded.dresses_size,
+                          bottoms_size=excluded.bottoms_size,
+                          shoes_size=excluded.shoes_size,
+                          category_preferences_json=excluded.category_preferences_json,
+                          style_descriptors_json=excluded.style_descriptors_json,
+                      jouft_goals_json=excluded.jouft_goals_json,
+                      shipping_full_name=excluded.shipping_full_name,
+                      shipping_address_line1=excluded.shipping_address_line1,
+                      shipping_address_line2=excluded.shipping_address_line2,
+                      shipping_city=excluded.shipping_city,
+                      shipping_state=excluded.shipping_state,
+                      shipping_postal_code=excluded.shipping_postal_code,
+                      shipping_country=excluded.shipping_country,
+                      shipping_email=excluded.shipping_email,
+                      shipping_phone=excluded.shipping_phone,
+                      shipping_addresses_json=excluded.shipping_addresses_json,
+                      subscription_plan=excluded.subscription_plan,
+                      subscription_billing_cycle=excluded.subscription_billing_cycle,
+                      subscription_status=excluded.subscription_status,
+                      subscription_renewal_date=excluded.subscription_renewal_date,
+                      payment_methods_json=excluded.payment_methods_json,
+                      updated_at=excluded.updated_at
+                    """,
+                    (
+                        owner_subject, username, first_name, last_name, email, gender, birthday, tops_size, dresses_size, bottoms_size, shoes_size, cats, styles, goals,
+                        shipping_full_name, shipping_address_line1, shipping_address_line2, shipping_city, shipping_state,
+                        shipping_postal_code, shipping_country, shipping_email, shipping_phone, shipping_addresses_json, subscription_plan, subscription_billing_cycle, subscription_status, subscription_renewal_date,
+                        payment_methods_json, now, now,
+                    ),
+                )
+                    self._sqlite_conn.commit()
+            else:
+                cur = self._pg_cursor()
+                cur.execute(
+                    f"""INSERT INTO user_profiles
+                    (owner_subject, username, first_name, last_name, email, gender, birthday, tops_size, dresses_size, bottoms_size, shoes_size, category_preferences_json, style_descriptors_json, jouft_goals_json, shipping_full_name, shipping_address_line1, shipping_address_line2, shipping_city, shipping_state, shipping_postal_code, shipping_country, shipping_email, shipping_phone, shipping_addresses_json, subscription_plan, subscription_billing_cycle, subscription_status, subscription_renewal_date, payment_methods_json, created_at, updated_at)
+                    VALUES ({self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param})
+                    ON CONFLICT (owner_subject) DO UPDATE SET
+                      username=EXCLUDED.username,
+                      first_name=EXCLUDED.first_name,
+                      last_name=EXCLUDED.last_name,
+                      email=EXCLUDED.email,
+                      gender=EXCLUDED.gender,
+                      birthday=EXCLUDED.birthday,
+                      tops_size=EXCLUDED.tops_size,
+                      dresses_size=EXCLUDED.dresses_size,
+                      bottoms_size=EXCLUDED.bottoms_size,
+                      shoes_size=EXCLUDED.shoes_size,
+                      category_preferences_json=EXCLUDED.category_preferences_json,
+                      style_descriptors_json=EXCLUDED.style_descriptors_json,
+                      jouft_goals_json=EXCLUDED.jouft_goals_json,
+                      shipping_full_name=EXCLUDED.shipping_full_name,
+                      shipping_address_line1=EXCLUDED.shipping_address_line1,
+                      shipping_address_line2=EXCLUDED.shipping_address_line2,
+                      shipping_city=EXCLUDED.shipping_city,
+                      shipping_state=EXCLUDED.shipping_state,
+                      shipping_postal_code=EXCLUDED.shipping_postal_code,
+                      shipping_country=EXCLUDED.shipping_country,
+                      shipping_email=EXCLUDED.shipping_email,
+                      shipping_phone=EXCLUDED.shipping_phone,
+                      shipping_addresses_json=EXCLUDED.shipping_addresses_json,
+                      subscription_plan=EXCLUDED.subscription_plan,
+                      subscription_billing_cycle=EXCLUDED.subscription_billing_cycle,
+                      subscription_status=EXCLUDED.subscription_status,
+                      subscription_renewal_date=EXCLUDED.subscription_renewal_date,
+                      payment_methods_json=EXCLUDED.payment_methods_json,
+                      updated_at=EXCLUDED.updated_at
+                    """,
+                    (
+                        owner_subject, username, first_name, last_name, email, gender, birthday, tops_size, dresses_size, bottoms_size, shoes_size, cats, styles, goals,
+                        shipping_full_name, shipping_address_line1, shipping_address_line2, shipping_city, shipping_state,
+                        shipping_postal_code, shipping_country, shipping_email, shipping_phone, shipping_addresses_json, subscription_plan, subscription_billing_cycle, subscription_status, subscription_renewal_date,
+                        payment_methods_json, now, now,
+                    ),
+                )
+                cur.close()
+                self._pg.commit()
+            return self.get_user_profile_quiz(owner_subject) or {
+                "owner_subject": owner_subject,
+                "first_name": first_name,
+                "last_name": last_name,
+                "email": email,
+                "gender": gender,
+                "birthday": birthday,
+                "tops_size": tops_size,
+                "dresses_size": dresses_size,
+                "bottoms_size": bottoms_size,
+                "shoes_size": shoes_size,
+                "category_preferences": category_preferences,
+                "style_descriptors": [s for s in style_descriptors if isinstance(s, str) and s.strip()],
+                "jouft_goals": [g for g in jouft_goals if isinstance(g, str) and g.strip()],
+                "shipping_full_name": shipping_full_name,
+                "shipping_address_line1": shipping_address_line1,
+                "shipping_address_line2": shipping_address_line2,
+                "shipping_city": shipping_city,
+                "shipping_state": shipping_state,
+                "shipping_postal_code": shipping_postal_code,
+                "shipping_country": shipping_country,
+                "shipping_email": shipping_email,
+                "shipping_phone": shipping_phone,
+                "shipping_addresses": self._normalize_shipping_addresses(shipping_addresses),
+                "subscription_plan": subscription_plan,
+                "subscription_billing_cycle": subscription_billing_cycle,
+                "subscription_status": subscription_status,
+                "subscription_renewal_date": subscription_renewal_date,
+                "payment_methods": [m for m in payment_methods if isinstance(m, str) and m.strip()],
+                "created_at": now,
+                "updated_at": now,
+            }
 
     @staticmethod
     def _normalize_alert_preferences(raw: object) -> dict[str, bool]:

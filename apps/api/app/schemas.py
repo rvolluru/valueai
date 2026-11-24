@@ -240,6 +240,7 @@ class ShippingAddress(BaseModel):
 
 
 class UserProfileQuizUpdateRequest(BaseModel):
+    username: str | None = Field(default=None, max_length=41)
     first_name: str | None = None
     last_name: str | None = None
     email: str | None = None
@@ -270,6 +271,7 @@ class UserProfileQuizUpdateRequest(BaseModel):
 
 
 class UserProfileQuizResponse(UserProfileQuizUpdateRequest):
+    subscription_trial: dict | None = None
     owner_subject: str
     created_at: str
     updated_at: str

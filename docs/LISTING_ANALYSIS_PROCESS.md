@@ -1,5 +1,73 @@
 # Jouft listing analysis: complete process
 
+All-accessory mannequin previews — November 23, 2026 (implemented locally, not deployed):
+all listings in the accessories category are eligible for mannequin generation,
+including jewelry, watches, belts, scarves, hats, eyewear, gloves and other types.
+Prompts request close-ups of the appropriate mannequin support (wrist, hand, ear,
+neck, head or waist); unrecognized types use source-photo-based wearing position.
+Bags categorized as accessories also receive close-ups using a hand or clothed
+shoulder. The entire accessory must remain visible. No full-body preview or
+visible cut support ends are allowed. Bare white hands, wrists, neck and head
+need no clothing; visible torso/waist must be clothed. Fidelity review uses an
+accessory-close-up mode with those coverage and framing rules; original-product
+constraints, orientation and front-alignment checks remain mandatory. This does
+not re-enable original-photo background processing or regenerate existing assets.
+
+Background processing paused — November 23, 2026 (implemented locally, not deployed):
+Photoroom integration and original-photo background staging default to disabled
+(`IMAGE_STAGING_PHOTOROOM_ENABLED=false`, `IMAGE_STAGING_ENABLED=false`). Local
+configuration and deployment configuration disable both, including API and worker
+rollout settings. Background staging jobs return before provider calls or display
+variant creation, and direct staging retains original bytes. Original-photo EXIF
+orientation handling and mannequin generation remain enabled under their existing
+settings. Existing saved display variants are not removed or rewritten. This
+supersedes the enabled-background-processing descriptions below until re-enabled.
+
+Published Closet navigation — November 23, 2026 (implemented locally, not deployed):
+clicking a published (Active) listing in Closet opens the existing Edit Listing
+page on web and the listing editor on native mobile, rather than Marketplace
+Matches. The matches-count label is a separate button that opens Marketplace
+Matches without opening the editor. Listings awaiting review retain their Review
+and Publish action.
+Publication validation and analysis behavior are unchanged. Native distribution
+and device acceptance are pending.
+
+
+Review details — November 23, 2026 (implemented locally, not deployed):
+the web Review Listing summary presents brand, product title, public @username, price,
+condition, size, then description. Display-only description cleanup removes exact
+standalone facts already in the summary and repeated sentences, retaining prose
+with additional details such as wear or damage. Saved descriptions and analysis
+outputs are unchanged.
+
+Publication controls — November 23, 2026 (implemented locally, not deployed):
+web and native review screens use a single **Publish** action. When mannequin
+assets exist, **Use mannequin image** is an On/Off switch, defaulting to **On**
+when selecting a listing for review. Publish sends `mannequin_choice=include`
+when On and `exclude` when Off. The web review screen has no separate AI
+mannequin preview section or feedback field; the toggle sits beside Edit and
+Publish. Existing gallery images and their AI disclosure remain available. The existing approval, exclusion feedback,
+public gallery filtering and publication validation remain unchanged. Without
+mannequin assets, Publish sends no mannequin choice. Native distribution and
+device acceptance are pending. This supersedes the separate publish actions
+described in the historical November 7 verification below.
+
+Membership invitation trials — November 20, 2026 (implemented locally, not deployed):
+valid non-renewing trial grants satisfy the existing subscription entitlement
+check until their server-side expiry. Profile responses show the granted plan and
+trial end while valid; profile saves cannot persist trial billing fields. Renewing
+trials use verified Stripe subscriptions and the normal billing lifecycle.
+Invitations do not bypass photo coverage, analysis, manual review, mannequin
+include/exclude decisions, or publication validation. Analysis evidence, pricing
+models and mannequin generation are unchanged. See `docs/API.md` for the invitation
+configuration, authorization and redemption rules. Trial offers also configure
+1 or more new listings, or unlimited, across the whole trial. Every saved draft
+consumes one slot atomically with creation; existing pre-trial listings, edits,
+analysis reruns and publication do not consume additional slots. Archive/delete
+does not refund usage. Exhausted trials cannot create new drafts (HTTP 409),
+while existing listings remain editable and reviewable. Paid upgrades stop the
+old trial cap; renewing trials use it only until the original trial end.
+
 Front-view mannequin alignment — November 17, 2026 (deployed and verified in production, release `55e275f`, workflow `44138546290`):
 generation explicitly requires the recognized front photo’s viewing direction and
 front details, without mirroring. Candidate review now separately checks

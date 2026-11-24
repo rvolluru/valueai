@@ -3,6 +3,11 @@ name: Deploy Production
 on:
   workflow_dispatch:
     inputs:
+      preserve_runtime:
+        description: "Use current ECS configuration for an application/environment-only rollout"
+        required: false
+        default: false
+        type: boolean
       full_terraform:
         description: "Run full Terraform apply (required for infra changes)"
         required: false
@@ -105,9 +110,9 @@ jobs:
             sed -i.bak -E 's#^[[:space:]]*aws_assume_role_arn[[:space:]]*=.*#aws_assume_role_arn               = null#' "${TF_DIR}/terraform.tfvars"
           fi
           if grep -qE '^[[:space:]]*image_staging_photoroom_enabled[[:space:]]*=' "${TF_DIR}/terraform.tfvars"; then
-            sed -i.bak -E 's#^[[:space:]]*image_staging_photoroom_enabled[[:space:]]*=.*#image_staging_photoroom_enabled = true#' "${TF_DIR}/terraform.tfvars"
+            sed -i.bak -E 's#^[[:space:]]*image_staging_photoroom_enabled[[:space:]]*=.*#image_staging_photoroom_enabled = false#' "${TF_DIR}/terraform.tfvars"
           else
-            echo 'image_staging_photoroom_enabled = true' >> "${TF_DIR}/terraform.tfvars"
+            echo 'image_staging_photoroom_enabled = false' >> "${TF_DIR}/terraform.tfvars"
           fi
           if grep -qE '^[[:space:]]*gpt_item_profile_timeout_s[[:space:]]*=' "${TF_DIR}/terraform.tfvars"; then
             sed -i.bak -E 's#^[[:space:]]*gpt_item_profile_timeout_s[[:space:]]*=.*#gpt_item_profile_timeout_s = 240#' "${TF_DIR}/terraform.tfvars"
@@ -209,7 +214,9 @@ jobs:
               infra_changed=true
             fi
           fi
-          if [[ "${{ github.event.inputs.full_terraform || 'false' }}" == "true" || "${infra_changed}" == "true" ]]; then
+          if [[ "${{ github.event.inputs.preserve_runtime || 'false' }}" == "true" && "${{ github.event.inputs.full_terraform || 'false' }}" != "true" ]]; then
+            echo "use_terraform=false" >> "$GITHUB_OUTPUT"
+          elif [[ "${{ github.event.inputs.full_terraform || 'false' }}" == "true" || "${infra_changed}" == "true" ]]; then
             echo "use_terraform=true" >> "$GITHUB_OUTPUT"
           else
             echo "use_terraform=false" >> "$GITHUB_OUTPUT"
@@ -289,25 +296,8 @@ jobs:
                 if .name == "api"
                 then
                   (.image = $IMAGE
-                  | upsert_env("OPENAI_API_KEY"; $OPENAI_API_KEY)
-                  | upsert_env("PHOTOROOM_API_KEY"; $PHOTOROOM_API_KEY)
-                  | upsert_env("IMAGE_STAGING_PHOTOROOM_ENABLED"; "true")
-                  | upsert_env("GPT_ITEM_PROFILE_PROVIDER_ORDER"; "hybrid,gemini,openai")
-                  | upsert_env("GPT_ITEM_PROFILE_MODEL"; "gpt-5")
-                  | upsert_env("GPT_PRICING_MODEL_ROUTING_ENABLED"; "true")
-                  | upsert_env("GPT_NEW_LISTING_PRICING_MODEL"; "gpt-6.1-sol")
-                  | upsert_env("GPT_CONTROLLED_RESEARCH_ENABLED"; "false")
-                  | upsert_env("LISTING_AGENT_ENABLED"; "true")
-                  | upsert_env("ASSISTANT_CONVERSATIONS_ENABLED"; "true")
-                  | upsert_env("GPT_ITEM_PROFILE_TIMEOUT_S"; "240")
-                  | upsert_env("LISTING_ANALYSIS_ATTEMPT_TIMEOUT_S"; "300")
-                  | upsert_env("STRIPE_SECRET_KEY"; $STRIPE_SECRET_KEY)
-                  | upsert_env("STRIPE_PUBLISHABLE_KEY"; $STRIPE_PUBLISHABLE_KEY)
-                  | upsert_env("STRIPE_WEBHOOK_SECRET"; $STRIPE_WEBHOOK_SECRET)
-                  | upsert_env("EXPO_PUSH_HEALTH_TOKEN"; $EXPO_PUSH_HEALTH_TOKEN)
-                  | upsert_env("SHIPPO_API_KEY"; $SHIPPO_API_KEY)
-                  | upsert_env("SHIPPO_DEFAULT_CONTACT_EMAIL"; $SHIPPO_DEFAULT_CONTACT_EMAIL)
-                  | upsert_env("SHIPPO_DEFAULT_CONTACT_PHONE"; $SHIPPO_DEFAULT_CONTACT_PHONE))
+                  | upsert_env("IMAGE_STAGING_PHOTOROOM_ENABLED"; "false")
+                  | upsert_env("IMAGE_STAGING_ENABLED"; "false"))
                 else . end
               )
           ' /tmp/current-td.json > /tmp/new-td.json
@@ -351,13 +341,8 @@ jobs:
               )
             | .containerDefinitions |= map(
                 .image = $IMAGE
-                | upsert_env("IMAGE_STAGING_PHOTOROOM_ENABLED"; "true")
-                | upsert_env("GPT_ITEM_PROFILE_MODEL"; "gpt-5")
-                | upsert_env("GPT_PRICING_MODEL_ROUTING_ENABLED"; "true")
-                | upsert_env("GPT_NEW_LISTING_PRICING_MODEL"; "gpt-6.1-sol")
-                | upsert_env("GPT_CONTROLLED_RESEARCH_ENABLED"; "false")
-                | upsert_env("GPT_ITEM_PROFILE_TIMEOUT_S"; "240")
-                | upsert_env("LISTING_ANALYSIS_ATTEMPT_TIMEOUT_S"; "300")
+                | upsert_env("IMAGE_STAGING_PHOTOROOM_ENABLED"; "false")
+                  | upsert_env("IMAGE_STAGING_ENABLED"; "false")
               )
           ' /tmp/current-worker-td.json > /tmp/new-worker-td.json
           NEW_WORKER_TASK_DEF_ARN=$(aws ecs register-task-definition \
