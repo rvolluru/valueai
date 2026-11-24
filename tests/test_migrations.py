@@ -111,7 +111,7 @@ def test_deployment_gate_precedes_both_rollout_modes_and_uses_new_image():
     assert original["containerDefinitions"][0]["image"] == "old"
 
 
-def test_assistant_release_enables_build_and_api_flags_and_smokes_migrated_tables():
+def test_assistant_release_enables_build_flags_preserves_runtime_and_smokes_migrated_tables():
     root = Path(__file__).resolve().parents[1]
     workflow = (root / '.github/workflows/deploy-prod.yml').read_text()
     docker = (root / 'apps/api/Dockerfile').read_text()
@@ -119,7 +119,8 @@ def test_assistant_release_enables_build_and_api_flags_and_smokes_migrated_table
         assert '--build-arg ' + flag + '=true' in workflow
         assert 'ARG ' + flag + '="false"' in docker
     for flag in ('LISTING_AGENT_ENABLED', 'ASSISTANT_CONVERSATIONS_ENABLED'):
-        assert 'upsert_env("' + flag + '"; "true")' in workflow
+        assert 'upsert_env("' + flag + '"; "true")' not in workflow
+    assert 'preserve_runtime:' in workflow
     assert 'SELECT COUNT(*) FROM assistant_conversations' in workflow
 
 
