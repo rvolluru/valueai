@@ -198,6 +198,12 @@ MIGRATIONS = (
 
 
 def migrate(db: Database) -> list[str]:
+    # Schema changes need a longer bounded wait than ordinary API queries.
+    # These settings affect this migration connection only, never live services.
+    if db._pg is not None:
+        db.execute("SET lock_timeout = '30s'")
+        db.execute("SET statement_timeout = '180s'")
+        db.commit()
     with db.analysis_execution_lock("schema-migrations") as acquired:
         if not acquired:
             raise RuntimeError("Another schema migration is running; no changes applied by this runner")
