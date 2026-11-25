@@ -5740,3 +5740,7 @@ button.closet-match-count:focus-visible { outline: 2px solid #5a121b; outline-of
 .access-places-attribution img { max-width: 120px; height: auto; }
 
 .waitlist-logo-font { font-family: var(--font-logo); font-weight: 500; }
+
+/* Keep the entire marketplace mannequin image visible within the hero frame. */
+.listing-card .image-wrap.mannequin-safe-fit { background: var(--surface, #f7f4ef); }
+.listing-card .image-wrap.mannequin-safe-fit img { object-fit: contain; object-position: center; }

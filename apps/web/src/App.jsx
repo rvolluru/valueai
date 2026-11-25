@@ -10198,7 +10198,7 @@ function ListingCard({ item, own = false, onEditDraft = null, onReviewListing = 
           }
         } : undefined}
       >
-        <div className={`image-wrap ${cardGallery.length > 1 ? 'multi-images' : ''}`}>
+        <div className={`image-wrap ${!own && isMannequinImage(item, imageSrc) ? 'mannequin-safe-fit' : ''} ${cardGallery.length > 1 ? 'multi-images' : ''}`}>
         {cardGallery.length > 1 ? (
           <div className="listing-image-grid" role="img" aria-label={`${item.title || 'Listing'} images`}>
             {cardGallery.map((src, idx) => (
