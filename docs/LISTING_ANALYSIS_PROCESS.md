@@ -8,14 +8,15 @@ acceptance remains pending. Existing keys, model settings and Secrets Manager
 references are preserved; only background-processing flags were changed.
 See `docs/releases/PRODUCTION_2026-11-24.md` for verification and rollout notes.
 
-Marketplace mannequin safe fitting — November 24, 2026 (implemented locally, not deployed):
+Marketplace mannequin safe fitting — November 24, 2026 (web deployed and verified in production):
 Web marketplace listing cards center and contain the complete selected
 mannequin image inside the existing hero frame, with an application-background
 fill for unused space. Original-photo heroes and Closet cards retain their existing
 fit. Image selection, publication approval, generation and saved image bytes are
 unchanged. This prevents display cropping but cannot restore product parts missing
 from a generated image; existing generation fidelity rules still apply. Native safe fitting is implemented
-locally but is not included in this web deployment.
+locally but is not included in this web deployment. Production web assets were
+verified after rollout of `cdda9db` (workflow `45516039539`); API health passed.
 
 All-accessory mannequin previews — November 23, 2026 (deployed in production November 24, 2026):
 all listings in the accessories category are eligible for mannequin generation,
