@@ -28,9 +28,10 @@ def setup_pipeline(tmp_path):
     return settings, db, snapshot
 
 
-def test_shoe_mannequin_component_is_not_skipped(tmp_path, monkeypatch):
+@pytest.mark.parametrize('category', ['shoes', 'clothes', 'handbag', 'accessories'])
+def test_supported_mannequin_component_is_not_skipped(tmp_path, monkeypatch, category):
     settings, db, snapshot = setup_pipeline(tmp_path)
-    snapshot['inputs']['category'] = 'shoes'
+    snapshot['inputs']['category'] = category
     calls = []
 
     async def generate(component_db, component_snapshot, files, component_settings):
@@ -38,7 +39,7 @@ def test_shoe_mannequin_component_is_not_skipped(tmp_path, monkeypatch):
 
     monkeypatch.setattr(pipeline, '_mannequin', generate)
     pipeline._run_component('mannequin', snapshot, [], settings, None, None)
-    assert calls == ['shoes']
+    assert calls == [category]
     state = next(row for row in db.list_pipeline_components('job') if row['component'] == 'mannequin')
     assert state['status'] == 'succeeded'
     assert state['attempts'] == 1

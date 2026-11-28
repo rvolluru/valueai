@@ -8,14 +8,38 @@ acceptance remains pending. Existing keys, model settings and Secrets Manager
 references are preserved; only background-processing flags were changed.
 See `docs/releases/PRODUCTION_2026-11-24.md` for verification and rollout notes.
 
+Accessory pipeline eligibility fix — November 28, 2026 (implemented locally, not deployed):
+the parallel listing pipeline now includes `accessories` in its mannequin-component
+category gate, alongside clothes, handbags and shoes. Previously, accessory prompts
+were supported by generation but the parallel pipeline skipped this component,
+so new scarves and other accessory listings could complete analysis without a
+preview. The earlier accessory rollout description did not account for this gate.
+The correction enables the normal generation and review path for all accessory
+types; it does not automatically backfill already analyzed listings.
+
+Product-first mannequin close-ups — November 24, 2026 (implemented locally, not deployed):
+all mannequin generation attempts, including corrective and lower-body retries,
+now request a close-up dominated by the complete product, minimal mannequin support,
+and a small margin around every product detail inside a central landscape 4:3
+hero-safe area. This applies to clothes, shoes, handbags and every accessory type,
+including unrecognized accessories using source-based support positioning. Long
+garments retain the body area necessary to show the entire garment. Supporting
+clothing remains secondary; coverage review applies to visible support regions.
+Fidelity review rejects cropped/obscured products, products outside the safe area,
+and unnecessarily distant framing through its existing overall verdict gate.
+Generation output dimensions are unchanged; the prompt requests safe composition
+within whatever canvas the provider returns. No existing previews are regenerated.
+Local web and native marketplace cards use their original cover fitting; safe
+fitting has been disabled locally for evaluation. Production web safe fitting
+remains enabled; this local removal has not been deployed.
+
 Marketplace mannequin safe fitting — November 24, 2026 (web deployed and verified in production):
 Web marketplace listing cards center and contain the complete selected
 mannequin image inside the existing hero frame, with an application-background
 fill for unused space. Original-photo heroes and Closet cards retain their existing
 fit. Image selection, publication approval, generation and saved image bytes are
 unchanged. This prevents display cropping but cannot restore product parts missing
-from a generated image; existing generation fidelity rules still apply. Native safe fitting is implemented
-locally but is not included in this web deployment. Production web assets were
+from a generated image; existing generation fidelity rules still apply. Native safe fitting was never deployed and has now been removed locally. Production web assets were
 verified after rollout of `cdda9db` (workflow `45516039539`); API health passed.
 
 All-accessory mannequin previews — November 23, 2026 (deployed in production November 24, 2026):

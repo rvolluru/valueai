@@ -32,7 +32,7 @@ def test_shoe_generation_uses_ankle_crop_without_clothing_and_preserves_boot_sha
         assert "Hide their upper ends outside the camera frame" in kwargs['prompt']
         assert "flat cut 2–3 cm" not in kwargs['prompt']
         assert mannequin_fidelity.clothing_attempts(kwargs['prompt'], kwargs['asset_kind']) == [
-            (1, 'shoe_legs', kwargs['prompt'])]
+            (1, 'shoe_legs', mannequin_fidelity.PRODUCT_CLOSEUP_RULES + kwargs['prompt'])]
         return {'review_decision': 'pending'}
 
     monkeypatch.setattr(mannequin_fidelity, 'plan_references', inspect)
@@ -413,6 +413,7 @@ def test_front_alignment_requires_explicit_evidence(alignment, expected):
     ('Canvas tote bag', 'hand or shoulder'), ('Unique accessory', 'appropriate support'),
 ])
 def test_all_accessories_use_closeup_mannequin(title, framing):
+    from app import mannequin_fidelity
     from app.main import _mannequin_generation_prompt
     from app.mannequin_fidelity import clothing_attempts
     kind, prompt = _mannequin_generation_prompt(category='accessories', title=title, description='')
@@ -420,4 +421,18 @@ def test_all_accessories_use_closeup_mannequin(title, framing):
     assert framing in prompt
     assert 'Never show a full-body mannequin' in prompt
     assert 'complete listed accessory' in prompt
-    assert clothing_attempts(prompt, kind) == [(1, 'accessory_closeup', prompt)]
+    assert clothing_attempts(prompt, kind) == [(1, 'accessory_closeup', mannequin_fidelity.PRODUCT_CLOSEUP_RULES + prompt)]
+
+
+@pytest.mark.parametrize("category,title", [
+    ("clothes", "Silk blouse"), ("clothes", "Jeans"), ("clothes", "Evening gown"),
+    ("clothes", "Jumpsuit"), ("handbag", "Tote"), ("shoes", "Tall boots"),
+    ("accessories", "Unknown accessory"),
+])
+def test_every_generation_attempt_requires_complete_product_closeup(category, title):
+    from app import main, mannequin_fidelity
+    kind, prompt = main._mannequin_generation_prompt(category=category, title=title, description="")
+    for _, _, attempt in mannequin_fidelity.clothing_attempts(prompt, kind):
+        assert "PRODUCT-FIRST CLOSE-UP FRAMING" in attempt
+        assert "central 4:3 safe area" in attempt
+        assert "Do not crop the product" in attempt

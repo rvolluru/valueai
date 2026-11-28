@@ -1,3 +1,4 @@
+import { isAlreadySignedInError } from './lib/authSession.mjs'
 import AccessRequestPage from './components/AccessRequestPage'
 import AdminAccessRequests from './components/AdminAccessRequests'
 import { defaultUsername } from '../../../packages/app-client/src/username.mjs'
@@ -2021,6 +2022,20 @@ function WebClerkAuthModal({ mode: initialMode, entryPoint = 'login', onClose })
   const [oauthBusy, setOauthBusy] = useState('')
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+  const { isLoaded: authLoaded, isSignedIn } = useAuth()
+  useEffect(() => {
+    if (authLoaded && isSignedIn) window.location.replace('/?tab=portfolio')
+  }, [authLoaded, isSignedIn])
+
+  function handleAuthError(error, fallback) {
+    if (isAlreadySignedInError(error)) {
+      // Restore the existing browser session directly in My Closet.
+      window.location.replace('/?tab=portfolio')
+      return
+    }
+    setError(clerkAuthErrorMessage(error, fallback))
+  }
+
   const { isLoaded: signInLoaded, signIn, setActive: setSignInActive } = useSignIn()
   const { isLoaded: signUpLoaded, signUp, setActive: setSignUpActive } = useSignUp()
 
@@ -2117,7 +2132,7 @@ function WebClerkAuthModal({ mode: initialMode, entryPoint = 'login', onClose })
         redirectUrlComplete: window.location.origin,
       })
     } catch (e) {
-      setError(clerkAuthErrorMessage(e, `${providerLabel} sign-in failed.`))
+      handleAuthError(e, `${providerLabel} sign-in failed.`)
       setOauthBusy('')
     }
   }
@@ -2143,7 +2158,7 @@ function WebClerkAuthModal({ mode: initialMode, entryPoint = 'login', onClose })
       }
       setError('Additional sign-in steps are required for this account.')
     } catch (e) {
-      setError(clerkAuthErrorMessage(e, 'Verification failed.'))
+      handleAuthError(e, 'Verification failed.')
     } finally {
       setBusy(false)
     }
@@ -2172,7 +2187,7 @@ function WebClerkAuthModal({ mode: initialMode, entryPoint = 'login', onClose })
       }
       await prepareSignInEmailCode(result)
     } catch (e) {
-      setError(clerkAuthErrorMessage(e, 'Sign in failed.'))
+      handleAuthError(e, 'Sign in failed.')
     } finally {
       setBusy(false)
     }
@@ -2191,7 +2206,7 @@ function WebClerkAuthModal({ mode: initialMode, entryPoint = 'login', onClose })
       }
       setError('Additional sign-up steps are required for this account.')
     } catch (e) {
-      setError(clerkAuthErrorMessage(e, 'Verification failed.'))
+      handleAuthError(e, 'Verification failed.')
     } finally {
       setBusy(false)
     }
@@ -2225,7 +2240,7 @@ function WebClerkAuthModal({ mode: initialMode, entryPoint = 'login', onClose })
       setPendingSignUpVerification(true)
       setNotice('Enter the verification code Clerk sent to your email.')
     } catch (e) {
-      setError(clerkAuthErrorMessage(e, 'Sign up failed.'))
+      handleAuthError(e, 'Sign up failed.')
     } finally {
       setBusy(false)
     }
@@ -2271,7 +2286,7 @@ function WebClerkAuthModal({ mode: initialMode, entryPoint = 'login', onClose })
       }
       setError('Additional password reset steps are required for this account.')
     } catch (e) {
-      setError(clerkAuthErrorMessage(e, 'Password reset failed.'))
+      handleAuthError(e, 'Password reset failed.')
     } finally {
       setBusy(false)
     }
@@ -10198,7 +10213,7 @@ function ListingCard({ item, own = false, onEditDraft = null, onReviewListing = 
           }
         } : undefined}
       >
-        <div className={`image-wrap ${!own && isMannequinImage(item, imageSrc) ? 'mannequin-safe-fit' : ''} ${cardGallery.length > 1 ? 'multi-images' : ''}`}>
+        <div className={`image-wrap ${cardGallery.length > 1 ? 'multi-images' : ''}`}>
         {cardGallery.length > 1 ? (
           <div className="listing-image-grid" role="img" aria-label={`${item.title || 'Listing'} images`}>
             {cardGallery.map((src, idx) => (
