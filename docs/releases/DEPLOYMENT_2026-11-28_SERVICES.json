@@ -1,0 +1,38 @@
+{
+  "production": [
+    {
+      "service": "valueai-mvp-api",
+      "task_definition": "arn:aws:ecs:us-east-1:537595754494:task-definition/valueai-mvp-api:203",
+      "image": "537595754494.dkr.ecr.us-east-1.amazonaws.com/valueai-mvp-api:prod-155-b1ae31bf7531bf29d84962ef144dda3f5ebfebca",
+      "running": 2,
+      "desired": 2,
+      "rollout": "COMPLETED"
+    },
+    {
+      "service": "valueai-mvp-analysis-worker",
+      "task_definition": "arn:aws:ecs:us-east-1:537595754494:task-definition/valueai-mvp-analysis-worker:71",
+      "image": "537595754494.dkr.ecr.us-east-1.amazonaws.com/valueai-mvp-api:prod-155-b1ae31bf7531bf29d84962ef144dda3f5ebfebca",
+      "running": 2,
+      "desired": 2,
+      "rollout": "COMPLETED"
+    }
+  ],
+  "staging": [
+    {
+      "service": "valueai-staging-api",
+      "task_definition": "arn:aws:ecs:us-east-1:537595754494:task-definition/valueai-staging-api:23",
+      "image": "537595754494.dkr.ecr.us-east-1.amazonaws.com/valueai-staging-api:staging-b1ae31bf7531bf29d84962ef144dda3f5ebfebca",
+      "running": 1,
+      "desired": 1,
+      "rollout": "COMPLETED"
+    },
+    {
+      "service": "valueai-staging-analysis-worker",
+      "task_definition": "arn:aws:ecs:us-east-1:537595754494:task-definition/valueai-staging-analysis-worker:14",
+      "image": "537595754494.dkr.ecr.us-east-1.amazonaws.com/valueai-staging-api:staging-b1ae31bf7531bf29d84962ef144dda3f5ebfebca",
+      "running": 1,
+      "desired": 1,
+      "rollout": "COMPLETED"
+    }
+  ]
+}

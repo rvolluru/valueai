@@ -1,5 +1,15 @@
 # Jouft listing analysis: complete process
 
+Updated November 28, 2026: release `b1ae31b` is deployed and verified in staging
+and production (production workflow `46183586360`). API and worker services are
+stable in both environments; health and live web assets passed checks. Current
+runtime settings and secret bindings were preserved. This deploys the accessory
+pipeline eligibility fix, product-first close-up rules and removal of web safe
+fitting below. No native build or existing-image regeneration was performed.
+See `docs/releases/DEPLOYMENT_2026-11-28.md` for deployment details.
+
+Previous release verification:
+
 Updated November 24, 2026: web/API and worker release `73bf2f4` is deployed
 and verified in production (workflow `45506303091`; API revision 200, worker 68).
 Android build 12 is available as an APK; iOS build 70 was uploaded to existing
@@ -8,7 +18,7 @@ acceptance remains pending. Existing keys, model settings and Secrets Manager
 references are preserved; only background-processing flags were changed.
 See `docs/releases/PRODUCTION_2026-11-24.md` for verification and rollout notes.
 
-Accessory pipeline eligibility fix — November 28, 2026 (implemented locally, not deployed):
+Accessory pipeline eligibility fix — November 28, 2026 (deployed to staging and production):
 the parallel listing pipeline now includes `accessories` in its mannequin-component
 category gate, alongside clothes, handbags and shoes. Previously, accessory prompts
 were supported by generation but the parallel pipeline skipped this component,
@@ -17,7 +27,7 @@ preview. The earlier accessory rollout description did not account for this gate
 The correction enables the normal generation and review path for all accessory
 types; it does not automatically backfill already analyzed listings.
 
-Product-first mannequin close-ups — November 24, 2026 (implemented locally, not deployed):
+Product-first mannequin close-ups — November 24, 2026 (deployed to staging and production November 28):
 all mannequin generation attempts, including corrective and lower-body retries,
 now request a close-up dominated by the complete product, minimal mannequin support,
 and a small margin around every product detail inside a central landscape 4:3
@@ -29,11 +39,10 @@ Fidelity review rejects cropped/obscured products, products outside the safe are
 and unnecessarily distant framing through its existing overall verdict gate.
 Generation output dimensions are unchanged; the prompt requests safe composition
 within whatever canvas the provider returns. No existing previews are regenerated.
-Local web and native marketplace cards use their original cover fitting; safe
-fitting has been disabled locally for evaluation. Production web safe fitting
-remains enabled; this local removal has not been deployed.
+Web marketplace cards use their original cover fitting in staging and production
+as of November 28. Native safe fitting was never released.
 
-Marketplace mannequin safe fitting — November 24, 2026 (web deployed and verified in production):
+Marketplace mannequin safe fitting — November 24, 2026 (historical; removed in staging and production November 28):
 Web marketplace listing cards center and contain the complete selected
 mannequin image inside the existing hero frame, with an application-background
 fill for unused space. Original-photo heroes and Closet cards retain their existing
